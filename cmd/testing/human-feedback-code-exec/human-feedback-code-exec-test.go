@@ -46,7 +46,7 @@ Examples:
 
 func init() {
 	humanFeedbackCodeExecTestCmd.Flags().String("model", "", "Model ID to use (e.g., gpt-4.1)")
-	viper.BindPFlag("model", humanFeedbackCodeExecTestCmd.Flags().Lookup("model"))
+	_ = viper.BindPFlag("model", humanFeedbackCodeExecTestCmd.Flags().Lookup("model")) //nolint:gosec // BindPFlag errors are non-critical in test init
 }
 
 // GetHumanFeedbackCodeExecTestCmd returns the human feedback code exec test command

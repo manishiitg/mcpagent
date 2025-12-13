@@ -75,9 +75,9 @@ func init() {
 	largeToolOutputTestCmd.Flags().String("output-type", "json", "Output type: 'json' or 'text'")
 	largeToolOutputTestCmd.Flags().Int("output-size", 0, "Size of output to generate (default: 2x threshold)")
 
-	viper.BindPFlag("threshold", largeToolOutputTestCmd.Flags().Lookup("threshold"))
-	viper.BindPFlag("output-type", largeToolOutputTestCmd.Flags().Lookup("output-type"))
-	viper.BindPFlag("output-size", largeToolOutputTestCmd.Flags().Lookup("output-size"))
+	_ = viper.BindPFlag("threshold", largeToolOutputTestCmd.Flags().Lookup("threshold"))     //nolint:gosec // BindPFlag errors are non-critical in test init
+	_ = viper.BindPFlag("output-type", largeToolOutputTestCmd.Flags().Lookup("output-type")) //nolint:gosec // BindPFlag errors are non-critical in test init
+	_ = viper.BindPFlag("output-size", largeToolOutputTestCmd.Flags().Lookup("output-size")) //nolint:gosec // BindPFlag errors are non-critical in test init
 }
 
 // GetLargeToolOutputTestCmd returns the large tool output test command

@@ -59,8 +59,8 @@ func init() {
 	tokenTrackingTestCmd.Flags().String("model", "", "Model ID to use (e.g., gpt-4.1)")
 	tokenTrackingTestCmd.Flags().Int("num-calls", 3, "Number of agent calls to make (default: 3)")
 
-	viper.BindPFlag("model", tokenTrackingTestCmd.Flags().Lookup("model"))
-	viper.BindPFlag("num-calls", tokenTrackingTestCmd.Flags().Lookup("num-calls"))
+	_ = viper.BindPFlag("model", tokenTrackingTestCmd.Flags().Lookup("model"))         //nolint:gosec // BindPFlag errors are non-critical in test init
+	_ = viper.BindPFlag("num-calls", tokenTrackingTestCmd.Flags().Lookup("num-calls")) //nolint:gosec // BindPFlag errors are non-critical in test init
 }
 
 // GetTokenTrackingTestCmd returns the token tracking test command

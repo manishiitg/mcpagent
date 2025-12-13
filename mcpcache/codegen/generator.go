@@ -58,7 +58,7 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 
 	// Create package directory
 	packageDir := filepath.Join(generatedDir, packageName)
-	if err := os.MkdirAll(packageDir, 0755); err != nil {
+	if err := os.MkdirAll(packageDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for generated code directories
 		return fmt.Errorf("failed to create package directory: %w", err)
 	}
 
@@ -66,7 +66,7 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 	apiClientFile := filepath.Join(packageDir, "api_client.go")
 	apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
 	// Always overwrite to ensure it matches current templates
-	if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
+	if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 		logger.Warn("Failed to write API client file", loggerv2.Error(err))
 	} else {
 		logger.Debug("Generated/updated common API client file", loggerv2.String("file", apiClientFile))
@@ -108,7 +108,7 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 		codeBuilder.WriteString(GenerateFunctionWithParams(toolName, goStruct, actualToolName, toolDescription, serverName, timeout))
 
 		// Write file
-		if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {
+		if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 			logger.Warn("Failed to write Go file for tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 			continue
 		}
@@ -127,7 +127,7 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 	goModPath := filepath.Join(packageDir, "go.mod")
 	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
 		goModContent := fmt.Sprintf("module %s\n\ngo 1.21\n", packageName)
-		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
+		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 			logger.Warn("Failed to create go.mod for package", loggerv2.String("package", packageName), loggerv2.Error(err))
 			// Don't fail the whole operation, but log the warning
 		} else {
@@ -204,7 +204,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 		// Create package directory
 		packageDir := filepath.Join(generatedDir, packageName)
-		if err := os.MkdirAll(packageDir, 0755); err != nil {
+		if err := os.MkdirAll(packageDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for generated code directories
 			if logger != nil {
 				logger.Warn("Failed to create package directory", loggerv2.Error(err), loggerv2.String("package_dir", packageDir))
 			}
@@ -215,7 +215,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 		apiClientFile := filepath.Join(packageDir, "api_client.go")
 		apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
 		// Always overwrite to ensure it matches current templates
-		if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
+		if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 			if logger != nil {
 				logger.Warn("Failed to write API client file", loggerv2.Error(err))
 			}
@@ -264,7 +264,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 			codeBuilder.WriteString(GenerateCustomToolFunction(toolName, goStruct, actualToolName, toolDescription, timeout))
 
 			// Write file
-			if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {
+			if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 				logger.Warn("Failed to write Go file for custom tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 				continue
 			}
@@ -287,7 +287,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 		goModPath := filepath.Join(packageDir, "go.mod")
 		if _, err := os.Stat(goModPath); os.IsNotExist(err) {
 			goModContent := fmt.Sprintf("module %s\n\ngo 1.21\n", packageName)
-			if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
+			if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 				if logger != nil {
 					logger.Warn("Failed to create go.mod for package", loggerv2.String("package", packageName), loggerv2.Error(err))
 				}
@@ -363,7 +363,7 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 
 	// Create package directory
 	packageDir := filepath.Join(generatedDir, "virtual_tools")
-	if err := os.MkdirAll(packageDir, 0755); err != nil {
+	if err := os.MkdirAll(packageDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for generated code directories
 		return fmt.Errorf("failed to create virtual_tools directory: %w", err)
 	}
 
@@ -371,7 +371,7 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 	apiClientFile := filepath.Join(packageDir, "api_client.go")
 	apiClientCode := GeneratePackageHeader("virtual_tools") + "\n" + GenerateAPIClient(timeout)
 	// Always overwrite to ensure it matches current templates
-	if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
+	if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 		logger.Warn("Failed to write API client file", loggerv2.Error(err))
 	} else {
 		logger.Debug("Generated/updated common API client file", loggerv2.String("file", apiClientFile))
@@ -413,7 +413,7 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 		codeBuilder.WriteString(GenerateVirtualToolFunction(toolName, goStruct, actualToolName, toolDescription, timeout))
 
 		// Write file
-		if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {
+		if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 			logger.Warn("Failed to write Go file for virtual tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 			continue
 		}
@@ -459,7 +459,7 @@ func GenerateIndexFile(generatedDir string, logger loggerv2.Logger) error {
 // Available tool packages:
 // No packages have been generated yet.
 `
-		if err := os.WriteFile(indexFile, []byte(emptyIndex), 0644); err != nil {
+		if err := os.WriteFile(indexFile, []byte(emptyIndex), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 			return fmt.Errorf("failed to write empty index file: %w", err)
 		}
 		return nil
@@ -483,7 +483,7 @@ func GenerateIndexFile(generatedDir string, logger loggerv2.Logger) error {
 	}
 
 	// Write file
-	if err := os.WriteFile(indexFile, []byte(codeBuilder.String()), 0644); err != nil {
+	if err := os.WriteFile(indexFile, []byte(codeBuilder.String()), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
 		return fmt.Errorf("failed to write index file: %w", err)
 	}
 

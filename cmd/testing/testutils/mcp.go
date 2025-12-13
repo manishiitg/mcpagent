@@ -73,13 +73,13 @@ func CreateTempMCPConfig(servers map[string]interface{}, logger loggerv2.Logger)
 
 	// Write config to file
 	if _, err := tmpFile.Write(jsonData); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+		_ = tmpFile.Close() //nolint:gosec // Close errors are non-critical in cleanup
+		_ = os.Remove(tmpPath) //nolint:gosec // Cleanup errors are non-critical
 		return "", nil, fmt.Errorf("failed to write temp config: %w", err)
 	}
 
 	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) //nolint:gosec // Cleanup errors are non-critical
 		return "", nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 

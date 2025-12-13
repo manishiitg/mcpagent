@@ -46,7 +46,7 @@ Examples:
 
 func init() {
 	agentMCPTestCmd.Flags().String("model", "", "Model ID to use (e.g., gpt-4.1-mini, gpt-4o, claude-sonnet-4)")
-	viper.BindPFlag("model", agentMCPTestCmd.Flags().Lookup("model"))
+	_ = viper.BindPFlag("model", agentMCPTestCmd.Flags().Lookup("model")) //nolint:gosec // BindPFlag errors are non-critical in test init
 }
 
 // GetAgentMCPTestCmd returns the agent MCP test command

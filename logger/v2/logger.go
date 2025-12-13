@@ -72,7 +72,7 @@ func New(cfg Config) (Logger, error) {
 		if cfg.Output != "" {
 			// Create log directory if it doesn't exist
 			logDir := filepath.Dir(cfg.Output)
-			if err := os.MkdirAll(logDir, 0755); err != nil {
+			if err := os.MkdirAll(logDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for user-accessible log directories
 				return nil, fmt.Errorf("failed to create log directory: %w", err)
 			}
 
@@ -92,7 +92,7 @@ func New(cfg Config) (Logger, error) {
 	if cfg.EnableFile && cfg.FilePath != "" {
 		// Create log directory if it doesn't exist
 		logDir := filepath.Dir(cfg.FilePath)
-		if err := os.MkdirAll(logDir, 0755); err != nil {
+		if err := os.MkdirAll(logDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for user-accessible log directories
 			return nil, fmt.Errorf("failed to create log directory: %w", err)
 		}
 

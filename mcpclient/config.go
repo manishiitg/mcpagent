@@ -224,7 +224,7 @@ func SaveConfig(configPath string, config *MCPConfig) error {
 		return err
 	}
 	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible config files
 		return err
 	}
 	return os.Rename(tmpPath, configPath)

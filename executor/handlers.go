@@ -97,7 +97,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	var req MCPExecuteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Warn("Failed to decode MCP execute request", loggerv2.Error(err))
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
+		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Invalid request body: %v", err),
 		})
@@ -110,7 +110,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 
 	// Validate request
 	if req.Server == "" {
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
+		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   "server parameter is required",
 		})
@@ -118,7 +118,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	}
 
 	if req.Tool == "" {
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
+		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   "tool parameter is required",
 		})
@@ -133,7 +133,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	client, err := GetOrCreateMCPClient(ctx, req.Server, h.configPath, h.logger)
 	if err != nil {
 		h.logger.Error("Failed to get MCP client", err, loggerv2.String("server", req.Server))
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
+		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Failed to connect to server %s: %v", req.Server, err),
 		})
@@ -175,7 +175,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		h.logger.Error("Tool execution failed", err,
 			loggerv2.String("tool", req.Tool),
 			loggerv2.String("server", req.Server))
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
+		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Tool execution failed: %v", err),
 		})
@@ -190,7 +190,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		loggerv2.Int("result_length", len(resultStr)))
 
 	// Return success response
-	json.NewEncoder(w).Encode(MCPExecuteResponse{
+	_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 		Success: true,
 		Result:  resultStr,
 	})
@@ -216,7 +216,7 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	var req CustomExecuteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Warn("Failed to decode custom execute request", loggerv2.Error(err))
-		json.NewEncoder(w).Encode(CustomExecuteResponse{
+		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Invalid request body: %v", err),
 		})
@@ -227,7 +227,7 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 
 	// Validate request
 	if req.Tool == "" {
-		json.NewEncoder(w).Encode(CustomExecuteResponse{
+		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   "tool parameter is required",
 		})
@@ -243,7 +243,7 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	result, err := codeexec.CallCustomTool(ctx, req.Tool, req.Args)
 	if err != nil {
 		h.logger.Error("Custom tool execution failed", err, loggerv2.String("tool", req.Tool))
-		json.NewEncoder(w).Encode(CustomExecuteResponse{
+		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Custom tool execution failed: %v", err),
 		})
@@ -255,7 +255,7 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		loggerv2.Int("result_length", len(result)))
 
 	// Return success response
-	json.NewEncoder(w).Encode(CustomExecuteResponse{
+	_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 		Success: true,
 		Result:  result,
 	})
@@ -281,7 +281,7 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 	var req VirtualExecuteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Warn("Failed to decode virtual execute request", loggerv2.Error(err))
-		json.NewEncoder(w).Encode(VirtualExecuteResponse{
+		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Invalid request body: %v", err),
 		})
@@ -292,7 +292,7 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 
 	// Validate request
 	if req.Tool == "" {
-		json.NewEncoder(w).Encode(VirtualExecuteResponse{
+		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   "tool parameter is required",
 		})
@@ -308,7 +308,7 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 	result, err := codeexec.CallVirtualTool(ctx, req.Tool, req.Args)
 	if err != nil {
 		h.logger.Error("Virtual tool execution failed", err, loggerv2.String("tool", req.Tool))
-		json.NewEncoder(w).Encode(VirtualExecuteResponse{
+		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Virtual tool execution failed: %v", err),
 		})
@@ -320,7 +320,7 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 		loggerv2.Int("result_length", len(result)))
 
 	// Return success response
-	json.NewEncoder(w).Encode(VirtualExecuteResponse{
+	_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 		Success: true,
 		Result:  result,
 	})

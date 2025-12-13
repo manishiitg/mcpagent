@@ -583,7 +583,7 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 	cacheFile := cm.getCacheFilePath(GenerateUnifiedCacheKey(entry.ServerName, config))
 
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(cacheFile), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cacheFile), 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for cache directories
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
@@ -595,7 +595,7 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 
 	// Write to file
 	cm.logger.Debug("About to write cache file", loggerv2.String("file", cacheFile), loggerv2.String("server", entry.ServerName), loggerv2.Int("data_size", len(data)))
-	if err := os.WriteFile(cacheFile, data, 0644); err != nil {
+	if err := os.WriteFile(cacheFile, data, 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for cache files
 		cm.logger.Error("Failed to write cache file", err, loggerv2.String("file", cacheFile), loggerv2.String("server", entry.ServerName))
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}

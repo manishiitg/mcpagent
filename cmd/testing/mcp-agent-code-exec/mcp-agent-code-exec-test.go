@@ -103,8 +103,9 @@ func startExecutorServer(log loggerv2.Logger) (string, func(), error) {
 
 	// Start server on port 8000 (default MCP_API_URL)
 	server := &http.Server{
-		Addr:    "127.0.0.1:8000",
-		Handler: mux,
+		Addr:              "127.0.0.1:8000",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	// Start server in background

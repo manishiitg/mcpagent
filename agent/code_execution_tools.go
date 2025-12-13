@@ -368,7 +368,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	workspaceDir := filepath.Join(baseWorkspaceDir, executionDir)
 
 	// Ensure execution directory exists
-	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for user-accessible workspace directories
 		return "", fmt.Errorf("failed to create execution directory: %w", err)
 	}
 
@@ -376,7 +376,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 
 	// Write code to file
 	filePath := filepath.Join(workspaceDir, filename)
-	if err := os.WriteFile(filePath, []byte(code), 0644); err != nil {
+	if err := os.WriteFile(filePath, []byte(code), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible code files
 		return "", fmt.Errorf("failed to write code file: %w", err)
 	}
 
@@ -894,7 +894,7 @@ func (a *Agent) getAgentGeneratedDir() string {
 	// Only create directory if code execution mode is enabled
 	// In simple agent mode, we don't need the generated directory
 	if a.UseCodeExecutionMode {
-		if err := os.MkdirAll(agentDir, 0755); err != nil {
+		if err := os.MkdirAll(agentDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for user-accessible directories
 			if a.Logger != nil {
 				a.Logger.Warn("Failed to create agent generated directory", loggerv2.String("agent_dir", agentDir), loggerv2.Error(err))
 			}
@@ -921,7 +921,7 @@ func (a *Agent) ensureAgentWorkspaceToolsGenerated(agentDir string) error {
 // generateWorkspaceToolsWithFolderGuards generates workspace_tools package with runtime path validation
 func (a *Agent) generateWorkspaceToolsWithFolderGuards(workspaceToolsDir string) error {
 	// Ensure directory exists
-	if err := os.MkdirAll(workspaceToolsDir, 0755); err != nil {
+	if err := os.MkdirAll(workspaceToolsDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for user-accessible directories
 		return fmt.Errorf("failed to create workspace_tools directory: %w", err)
 	}
 
@@ -931,21 +931,21 @@ func (a *Agent) generateWorkspaceToolsWithFolderGuards(workspaceToolsDir string)
 	// Create go.mod for workspace_tools package
 	goModPath := filepath.Join(workspaceToolsDir, "go.mod")
 	goModContent := "module workspace_tools\n\ngo 1.21\n"
-	if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
+	if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 		return fmt.Errorf("failed to create go.mod for workspace_tools: %w", err)
 	}
 
 	// Generate API client
 	apiClientCode := codegen.GeneratePackageHeader("workspace_tools") + "\n" + codegen.GenerateAPIClient(toolTimeout)
 	apiClientFile := filepath.Join(workspaceToolsDir, "api_client.go")
-	if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
+	if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 		return fmt.Errorf("failed to write API client: %w", err)
 	}
 
 	// Generate path validation helper
 	pathValidationCode := a.generatePathValidationHelper()
 	pathValidationFile := filepath.Join(workspaceToolsDir, "path_validation.go")
-	if err := os.WriteFile(pathValidationFile, []byte(pathValidationCode), 0644); err != nil {
+	if err := os.WriteFile(pathValidationFile, []byte(pathValidationCode), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 		return fmt.Errorf("failed to write path validation: %w", err)
 	}
 
@@ -969,7 +969,7 @@ func (a *Agent) generateWorkspaceToolsWithFolderGuards(workspaceToolsDir string)
 		// Write function file
 		fileName := toolName + ".go"
 		funcFile := filepath.Join(workspaceToolsDir, fileName)
-		if err := os.WriteFile(funcFile, []byte(funcCode), 0644); err != nil {
+		if err := os.WriteFile(funcFile, []byte(funcCode), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 			if a.Logger != nil {
 				a.Logger.Warn("Failed to write workspace tool", loggerv2.String("tool_name", toolName), loggerv2.Error(err))
 			}
@@ -1272,7 +1272,7 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 	goModPath := filepath.Join(workspaceDir, "go.mod")
 	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
 		goModContent := "module workspace\n\ngo 1.21\n"
-		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
+		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 			return fmt.Errorf("failed to create go.mod: %w", err)
 		}
 	}
@@ -1306,7 +1306,7 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 		pkgGoModPath := filepath.Join(packageDir, "go.mod")
 		if _, err := os.Stat(pkgGoModPath); os.IsNotExist(err) {
 			pkgGoModContent := fmt.Sprintf("module %s\n\ngo 1.21\n", packageName)
-			if err := os.WriteFile(pkgGoModPath, []byte(pkgGoModContent), 0644); err != nil {
+			if err := os.WriteFile(pkgGoModPath, []byte(pkgGoModContent), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 				if a.Logger != nil {
 					a.Logger.Error(fmt.Sprintf("❌ Failed to create go.mod for package %s: %v", packageName, err), err)
 				}
@@ -1408,7 +1408,7 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 
 	// Write go.work file
 	goWorkPath := filepath.Join(workspaceDir, "go.work")
-	if err := os.WriteFile(goWorkPath, []byte(builder.String()), 0644); err != nil {
+	if err := os.WriteFile(goWorkPath, []byte(builder.String()), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 		return fmt.Errorf("failed to create go.work: %w", err)
 	}
 

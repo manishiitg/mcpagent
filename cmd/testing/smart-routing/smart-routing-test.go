@@ -53,11 +53,11 @@ func init() {
 	smartRoutingTestCmd.Flags().Int("max-servers-threshold", 2, "Maximum servers threshold for smart routing (default: 2)")
 	smartRoutingTestCmd.Flags().Float64("temperature", 0.1, "Temperature for smart routing LLM call (default: 0.1)")
 	smartRoutingTestCmd.Flags().Int("max-tokens", 1000, "Max tokens for smart routing LLM call (default: 1000)")
-	viper.BindPFlag("model", smartRoutingTestCmd.Flags().Lookup("model"))
-	viper.BindPFlag("max-tools-threshold", smartRoutingTestCmd.Flags().Lookup("max-tools-threshold"))
-	viper.BindPFlag("max-servers-threshold", smartRoutingTestCmd.Flags().Lookup("max-servers-threshold"))
-	viper.BindPFlag("temperature", smartRoutingTestCmd.Flags().Lookup("temperature"))
-	viper.BindPFlag("max-tokens", smartRoutingTestCmd.Flags().Lookup("max-tokens"))
+	_ = viper.BindPFlag("model", smartRoutingTestCmd.Flags().Lookup("model"))                                 //nolint:gosec // BindPFlag errors are non-critical in test init
+	_ = viper.BindPFlag("max-tools-threshold", smartRoutingTestCmd.Flags().Lookup("max-tools-threshold"))     //nolint:gosec // BindPFlag errors are non-critical in test init
+	_ = viper.BindPFlag("max-servers-threshold", smartRoutingTestCmd.Flags().Lookup("max-servers-threshold")) //nolint:gosec // BindPFlag errors are non-critical in test init
+	_ = viper.BindPFlag("temperature", smartRoutingTestCmd.Flags().Lookup("temperature"))                     //nolint:gosec // BindPFlag errors are non-critical in test init
+	_ = viper.BindPFlag("max-tokens", smartRoutingTestCmd.Flags().Lookup("max-tokens"))                       //nolint:gosec // BindPFlag errors are non-critical in test init
 }
 
 // GetSmartRoutingTestCmd returns the smart routing test command

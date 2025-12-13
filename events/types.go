@@ -60,12 +60,12 @@ const (
 	Debug         EventType = "debug"
 	Performance   EventType = "performance"
 	TokenUsage    EventType = "token_usage"
-	LLMTokenUsage EventType = "llm_token_usage" // Per-call token usage (advanced mode only)
+	LLMTokenUsage EventType = "llm_token_usage" //nolint:gosec // Per-call token usage (advanced mode only) - false positive, not a credential
 	ErrorDetail   EventType = "error_detail"
 
 	// Event type aliases for backward compatibility
 	TokenUsageEventType    EventType = "token_usage"
-	LLMTokenUsageEventType EventType = "llm_token_usage"
+	LLMTokenUsageEventType EventType = "llm_token_usage" //nolint:gosec // false positive, not a credential
 	ErrorDetailEventType   EventType = "error_detail"
 
 	// Large output events

@@ -120,8 +120,9 @@ func startTestServer(logger loggerv2.Logger, t *testing.T) (string, func(), erro
 
 	// Start server on fixed port for testing
 	server := &http.Server{
-		Addr:    "127.0.0.1:18765",
-		Handler: mux,
+		Addr:              "127.0.0.1:18765",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	// Start server in background

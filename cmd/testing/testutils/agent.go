@@ -74,13 +74,13 @@ func CreateMinimalAgent(ctx context.Context, llm llmtypes.Model, tracer observab
 	// Create temporary minimal config
 	tempConfig := "/tmp/minimal-mcp-config.json"
 	minimalConfig := `{"mcpServers": {}}`
-	if err := os.WriteFile(tempConfig, []byte(minimalConfig), 0644); err != nil {
+	if err := os.WriteFile(tempConfig, []byte(minimalConfig), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for test config files
 		return nil, fmt.Errorf("failed to create temp config: %w", err)
 	}
 
 	// Cleanup function
 	defer func() {
-		os.Remove(tempConfig)
+		_ = os.Remove(tempConfig) //nolint:gosec // Cleanup errors are non-critical
 	}()
 
 	cfg := &TestAgentConfig{

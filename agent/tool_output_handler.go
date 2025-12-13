@@ -106,7 +106,7 @@ func (h *ToolOutputHandler) WriteToolOutputToFile(content, toolName string) (str
 	}
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(sessionFolder, 0755); err != nil {
+	if err := os.MkdirAll(sessionFolder, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for user-accessible directories
 		return "", fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -115,7 +115,7 @@ func (h *ToolOutputHandler) WriteToolOutputToFile(content, toolName string) (str
 	filePath := filepath.Join(sessionFolder, filename)
 
 	// Write actual content to file (without prefix)
-	if err := os.WriteFile(filePath, []byte(actualContent), 0644); err != nil {
+	if err := os.WriteFile(filePath, []byte(actualContent), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 		return "", fmt.Errorf("failed to write tool output to file: %w", err)
 	}
 
