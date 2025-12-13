@@ -190,6 +190,9 @@ const (
 	// Learning events
 	LearningSkipped EventType = "learning_skipped"
 	TempLLMSkipped  EventType = "temp_llm_skipped"
+
+	// Decision step evaluation events
+	DecisionEvaluated EventType = "decision_evaluated"
 )
 
 // Unified Event structure with hierarchy support
