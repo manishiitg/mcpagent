@@ -38,8 +38,28 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		}
 	}
 
-	// Only add get_prompt and get_resource if MCP servers exist
-	if hasMCPServers {
+	// Check if prompts actually exist (not just if servers exist)
+	hasPrompts := false
+	if hasMCPServers && a.prompts != nil {
+		totalPrompts := 0
+		for _, serverPrompts := range a.prompts {
+			totalPrompts += len(serverPrompts)
+		}
+		hasPrompts = totalPrompts > 0
+	}
+
+	// Check if resources actually exist (not just if servers exist)
+	hasResources := false
+	if hasMCPServers && a.resources != nil {
+		totalResources := 0
+		for _, serverResources := range a.resources {
+			totalResources += len(serverResources)
+		}
+		hasResources = totalResources > 0
+	}
+
+	// Only add get_prompt if prompts actually exist
+	if hasPrompts {
 		// Add get_prompt tool
 		getPromptTool := llmtypes.Tool{
 			Type: "function",
@@ -63,7 +83,10 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 			},
 		}
 		virtualTools = append(virtualTools, getPromptTool)
+	}
 
+	// Only add get_resource if resources actually exist
+	if hasResources {
 		// Add get_resource tool
 		getResourceTool := llmtypes.Tool{
 			Type: "function",

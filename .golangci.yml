@@ -79,6 +79,7 @@ linters:
     - misspell          # Spelling checker - easy fixes
     - errname           # Error naming conventions
     - errorlint         # Error wrapping lint - important
+    - unused            # Unused variables, functions, constants, and types - important
 
 linters-settings:
   # govet settings - disable printf check to allow %w in fmt.Sprintf/log.Fatalf
@@ -173,23 +174,24 @@ issues:
       linters:
         - revive
     
-    # Allow long lines in test files
-    - path: _test\.go
+    # Exclude file permission warnings in code generation files (permissions are intentional)
+    # Exclude all gosec issues in generator.go (permissions are intentional for generated code)
+    - path: mcpcache/codegen/generator\.go
       linters:
-        - lll
+        - gosec
     
     # Exclude lower-priority gosec checks (focus on critical security issues)
     # Only critical issues remain: G201/G202 (SQL injection), G204 (command injection), G304 (path traversal)
     # Note: G204 and G304 are handled with nolint comments where they're intentional (code execution mode)
     - linters:
         - gosec
-      text: "G104: Errors unhandled"
+      text: "^G104: Errors unhandled"
     - linters:
         - gosec
-      text: "G301: Expect directory permissions"
+      text: "^G301: Expect directory permissions to be"
     - linters:
         - gosec
-      text: "G306: Expect WriteFile permissions"
+      text: "^G306: Expect WriteFile permissions to be"
     - linters:
         - gosec
       text: "G107: Potential HTTP request"

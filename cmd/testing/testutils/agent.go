@@ -18,11 +18,11 @@ type TestAgentConfig struct {
 	LLM        llmtypes.Model
 	ServerName string
 	ConfigPath string
-	ModelID    string
-	Tracer     observability.Tracer
-	TraceID    observability.TraceID
-	Logger     loggerv2.Logger
-	Options    []mcpagent.AgentOption
+	// ModelID is no longer needed - it's automatically extracted from LLM
+	Tracer  observability.Tracer
+	TraceID observability.TraceID
+	Logger  loggerv2.Logger
+	Options []mcpagent.AgentOption
 }
 
 // CreateTestAgent creates a test agent with the specified configuration.
@@ -39,17 +39,27 @@ func CreateTestAgent(ctx context.Context, cfg *TestAgentConfig) (*mcpagent.Agent
 		cfg.Logger = loggerv2.NewNoop()
 	}
 
+	// Build options from config
+	options := cfg.Options
+	if cfg.ServerName != "" {
+		options = append(options, mcpagent.WithServerName(cfg.ServerName))
+	}
+	if cfg.Tracer != nil {
+		options = append(options, mcpagent.WithTracer(cfg.Tracer))
+	}
+	if cfg.TraceID != "" {
+		options = append(options, mcpagent.WithTraceID(cfg.TraceID))
+	}
+	if cfg.Logger != nil {
+		options = append(options, mcpagent.WithLogger(cfg.Logger))
+	}
+
 	// Create agent
 	agent, err := mcpagent.NewAgent(
 		ctx,
 		cfg.LLM,
-		cfg.ServerName,
 		cfg.ConfigPath,
-		cfg.ModelID,
-		cfg.Tracer,
-		cfg.TraceID,
-		cfg.Logger,
-		cfg.Options...,
+		options...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent: %w", err)
@@ -76,7 +86,6 @@ func CreateMinimalAgent(ctx context.Context, llm llmtypes.Model, tracer observab
 	cfg := &TestAgentConfig{
 		LLM:        llm,
 		ConfigPath: tempConfig,
-		ModelID:    "test-model",
 		Tracer:     tracer,
 		TraceID:    traceID,
 		Logger:     logger,
@@ -90,7 +99,6 @@ func CreateAgentWithTracer(ctx context.Context, llm llmtypes.Model, configPath s
 	cfg := &TestAgentConfig{
 		LLM:        llm,
 		ConfigPath: configPath,
-		ModelID:    "test-model",
 		Tracer:     tracer,
 		TraceID:    traceID,
 		Logger:     logger,

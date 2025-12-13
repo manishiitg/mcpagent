@@ -145,27 +145,15 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 		Tools    []string `json:"tools"`
 	}
 
-	type WorkspaceToolsInfo struct {
-		Package string   `json:"package"`
-		Tools   []string `json:"tools"`
-	}
-
-	type HumanToolsInfo struct {
-		Package string   `json:"package"`
-		Tools   []string `json:"tools"`
-	}
-
 	type VirtualToolsInfo struct {
 		Package string   `json:"package"`
 		Tools   []string `json:"tools"`
 	}
 
 	type DiscoveryResult struct {
-		Servers        []ServerInfo        `json:"servers"`
-		CustomTools    []CustomToolsInfo   `json:"custom_tools,omitempty"`
-		WorkspaceTools *WorkspaceToolsInfo `json:"workspace_tools,omitempty"`
-		HumanTools     *HumanToolsInfo     `json:"human_tools,omitempty"`
-		VirtualTools   *VirtualToolsInfo   `json:"virtual_tools,omitempty"`
+		Servers      []ServerInfo      `json:"servers"`
+		CustomTools  []CustomToolsInfo `json:"custom_tools,omitempty"`
+		VirtualTools *VirtualToolsInfo `json:"virtual_tools,omitempty"`
 	}
 
 	var result DiscoveryResult
@@ -276,44 +264,14 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 			// Skip adding them to the discovery result
 			continue
 		} else if isCategoryDirectory {
-			// This is a category-specific directory (workspace_tools, human_tools, etc.)
+			// This is a category-specific directory (workspace_tools, human_tools, data_tools, etc.)
 			// Category directories are created by GenerateCustomToolsCode based on tool categories
-			// Dynamically determine which info struct to use based on the category name
-			// Check registered tools to see what categories exist, or use virtual tools functions as fallback
-			workspaceCategory := "workspace"
-			humanCategory := "human"
-
-			// Also check registered tools for any additional categories
-			allCategories := a.GetCustomToolCategories()
-			categorySet := make(map[string]bool)
-			categorySet[workspaceCategory] = true
-			categorySet[humanCategory] = true
-			for _, cat := range allCategories {
-				categorySet[cat] = true
-			}
-
-			// Use specific info structs for workspace and human (for backward compatibility with JSON structure)
-			// All other categories use CustomToolsInfo
-			switch serverName {
-			case workspaceCategory:
-				// Workspace tools directory
-				result.WorkspaceTools = &WorkspaceToolsInfo{
-					Package: dirName,
-					Tools:   tools,
-				}
-			case humanCategory:
-				// Human tools directory
-				result.HumanTools = &HumanToolsInfo{
-					Package: dirName,
-					Tools:   tools,
-				}
-				// Append to CustomTools array - supports multiple custom tool categories
-				result.CustomTools = append(result.CustomTools, CustomToolsInfo{
-					Category: serverName, // Category name (e.g., "tavily_search", "custom")
-					Package:  dirName,    // Package name (e.g., "tavily_search_tools", "custom_tools")
-					Tools:    tools,
-				})
-			}
+			// All categories are added to CustomTools array for consistency
+			result.CustomTools = append(result.CustomTools, CustomToolsInfo{
+				Category: serverName, // Category name (e.g., "workspace", "human", "data", "utility")
+				Package:  dirName,    // Package name (e.g., "workspace_tools", "human_tools", "data_tools")
+				Tools:    tools,
+			})
 		} else {
 			// MCP server tools - check if server should be included
 			// Try both the serverName (from directory) and check if it matches any configured server names
@@ -352,12 +310,6 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 		}
 		for _, c := range result.CustomTools {
 			totalTools += len(c.Tools)
-		}
-		if result.WorkspaceTools != nil {
-			totalTools += len(result.WorkspaceTools.Tools)
-		}
-		if result.HumanTools != nil {
-			totalTools += len(result.HumanTools.Tools)
 		}
 		a.Logger.Info("🔍 [DISCOVERY] Discovery complete",
 			loggerv2.Int("mcp_servers", totalServers),
@@ -428,7 +380,13 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 		return "", fmt.Errorf("failed to write code file: %w", err)
 	}
 
-	// Code file writing is internal - no need to log
+	// Log the code that was written for debugging
+	if a.Logger != nil {
+		a.Logger.Info("📝 [CODE_EXECUTION] Code written",
+			loggerv2.String("file_path", filePath),
+			loggerv2.Int("code_length", len(code)),
+			loggerv2.String("code", code))
+	}
 
 	// Validate code for forbidden file I/O operations before execution
 	if err := a.validateCodeForForbiddenFileIO(code); err != nil {
@@ -486,8 +444,8 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	if len(importedPackages) > 0 {
 		if err := a.setupGoWorkspace(workspaceDir, importedPackages); err != nil {
 			if a.Logger != nil {
-				a.Logger.Error(fmt.Sprintf("❌ Failed to set up Go workspace: %v", err), err)
-				a.Logger.Error(fmt.Sprintf("❌ This will cause 'package not found' errors during code execution"), nil)
+				a.Logger.Error("❌ Failed to set up Go workspace", err, loggerv2.Any("error", err))
+				a.Logger.Error("❌ This will cause 'package not found' errors during code execution", nil)
 			}
 			// Return error immediately - workspace setup is required for generated packages
 			errorMsg := fmt.Sprintf("**❌ WORKSPACE SETUP FAILED**\n\nFailed to set up Go workspace (required for generated packages): %v\n\nThis error occurs when the workspace cannot be configured to find generated tool packages.\nPlease check that:\n- Generated packages exist in the generated/ directory\n- Package directories have go.mod files\n- File permissions allow creating go.work file", err)
@@ -497,7 +455,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 			a.Logger.Info(fmt.Sprintf("✅ Go workspace set up successfully with %d packages", len(importedPackages)))
 		}
 	} else if a.Logger != nil {
-		a.Logger.Debug(fmt.Sprintf("ℹ️ No generated packages detected in code, skipping workspace setup"))
+		a.Logger.Debug("ℹ️ No generated packages detected in code, skipping workspace setup")
 	}
 
 	// Execute the Go code in-process and capture output
@@ -571,8 +529,13 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 	cmd.Dir = workspaceDir
 
 	// Set environment variables for code to use
+	// Check if MCP_API_URL is already set in environment, otherwise use default
+	mcpAPIURL := os.Getenv("MCP_API_URL")
+	if mcpAPIURL == "" {
+		mcpAPIURL = "http://localhost:8000"
+	}
 	cmd.Env = append(os.Environ(),
-		"MCP_API_URL=http://localhost:8000",
+		"MCP_API_URL="+mcpAPIURL,
 		// Note: MCP_SERVER_NAME is NOT needed - server name is hardcoded in generated functions
 	)
 
@@ -581,9 +544,20 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 
 	if err != nil {
 		if a.Logger != nil {
-			a.Logger.Error("❌ go run failed", err, loggerv2.String("output", string(output)))
+			a.Logger.Error("❌ [CODE_EXECUTION] go run failed", err,
+				loggerv2.String("file_path", filePath),
+				loggerv2.String("output", string(output)),
+				loggerv2.String("code", code))
 		}
 		return "", fmt.Errorf("go run failed: %w\nOutput:\n%s", err, string(output))
+	}
+
+	// Log the successful execution output for debugging
+	if a.Logger != nil {
+		a.Logger.Info("✅ [CODE_EXECUTION] Code executed successfully",
+			loggerv2.String("file_path", filePath),
+			loggerv2.Int("output_length", len(output)),
+			loggerv2.String("output", string(output)))
 	}
 
 	return string(output), nil
@@ -912,14 +886,18 @@ func formatFileIOValidationError(err error, code string) string {
 
 // getAgentGeneratedDir returns the agent-specific generated directory
 // Format: generated/agents/<trace_id>/
+// Only creates the directory if code execution mode is enabled
 func (a *Agent) getAgentGeneratedDir() string {
 	baseDir := a.getGeneratedDir()
 	agentDir := filepath.Join(baseDir, "agents", string(a.TraceID))
 
-	// Ensure directory exists
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
-		if a.Logger != nil {
-			a.Logger.Warn("Failed to create agent generated directory", loggerv2.String("agent_dir", agentDir), loggerv2.Error(err))
+	// Only create directory if code execution mode is enabled
+	// In simple agent mode, we don't need the generated directory
+	if a.UseCodeExecutionMode {
+		if err := os.MkdirAll(agentDir, 0755); err != nil {
+			if a.Logger != nil {
+				a.Logger.Warn("Failed to create agent generated directory", loggerv2.String("agent_dir", agentDir), loggerv2.Error(err))
+			}
 		}
 	}
 

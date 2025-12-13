@@ -69,11 +69,12 @@ func (ce *CacheEntry) UpdateAccessTime() {
 
 // CacheManager manages MCP server connection caching
 type CacheManager struct {
-	cacheDir   string
-	ttlMinutes int
-	logger     loggerv2.Logger
-	mu         sync.RWMutex
-	cache      map[string]*CacheEntry // cache key -> entry
+	cacheDir             string
+	ttlMinutes           int
+	logger               loggerv2.Logger
+	mu                   sync.RWMutex
+	cache                map[string]*CacheEntry // cache key -> entry
+	enableCodeGeneration bool                   // Only generate code when code execution mode is enabled
 }
 
 // Singleton instance
@@ -108,25 +109,37 @@ func GetCacheManager(logger loggerv2.Logger) *CacheManager {
 		}
 
 		instance = &CacheManager{
-			cacheDir:   cacheDir,
-			ttlMinutes: ttlMinutes, // Configurable TTL via environment variable
-			logger:     logger,
-			cache:      make(map[string]*CacheEntry),
+			cacheDir:             cacheDir,
+			ttlMinutes:           ttlMinutes, // Configurable TTL via environment variable
+			logger:               logger,
+			cache:                make(map[string]*CacheEntry),
+			enableCodeGeneration: false, // Default to false - only enable when code execution mode is active
 		}
 
-		// Initialize cache directory
-		if err := os.MkdirAll(cacheDir, 0755); err != nil {
-			if logger != nil {
-				logger.Warn("Failed to create cache directory",
-					loggerv2.Error(err),
-					loggerv2.String("cache_dir", cacheDir))
-			}
-		}
+		// NOTE: Cache directory is created lazily when actually saving entries
+		// This prevents unnecessary directory creation when cache is disabled
+		// The directory will be created in saveToFile() when needed
 
-		// Load existing cache entries
+		// Load existing cache entries (this will create directory if cache files exist)
 		instance.loadExistingCache()
 	})
 	return instance
+}
+
+// SetCodeGenerationEnabled enables or disables code generation in the cache manager
+// Code generation should only be enabled when code execution mode is active
+func (cm *CacheManager) SetCodeGenerationEnabled(enabled bool) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.enableCodeGeneration = enabled
+	if cm.logger != nil {
+		enabledStr := "false"
+		if enabled {
+			enabledStr = "true"
+		}
+		cm.logger.Debug("Code generation setting updated",
+			loggerv2.String("enabled", enabledStr))
+	}
 }
 
 // GenerateServerConfigHash creates a hash of the server configuration
@@ -235,8 +248,9 @@ func (cm *CacheManager) Get(cacheKey string) (*CacheEntry, bool) {
 
 // Put stores a cache entry using configuration-aware cache key
 func (cm *CacheManager) Put(entry *CacheEntry, config mcpclient.MCPServerConfig) error {
+	cm.logger.Debug("Put: Acquiring lock", loggerv2.String("server", entry.ServerName))
 	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	cm.logger.Debug("Put: Lock acquired", loggerv2.String("server", entry.ServerName))
 
 	// Use configuration-aware cache key
 	cacheKey := GenerateUnifiedCacheKey(entry.ServerName, config)
@@ -246,9 +260,21 @@ func (cm *CacheManager) Put(entry *CacheEntry, config mcpclient.MCPServerConfig)
 
 	// Store in memory cache
 	cm.cache[cacheKey] = entry
+	cm.logger.Debug("Put: Stored in memory cache", loggerv2.String("server", entry.ServerName))
 
-	// Persist to file using configuration-aware naming
-	return cm.saveToFile(entry, config)
+	// Get code generation flag while holding the lock (read it directly, no need for RLock)
+	shouldGenerateCode := cm.enableCodeGeneration
+
+	// Release lock before calling saveToFile to avoid deadlock
+	// saveToFile may need to acquire RLock for code generation check
+	cm.logger.Debug("Put: Releasing lock before saveToFile", loggerv2.String("server", entry.ServerName))
+	cm.mu.Unlock()
+
+	// Persist to file using configuration-aware naming (without holding the lock)
+	cm.logger.Debug("Put: Calling saveToFile", loggerv2.String("server", entry.ServerName))
+	err := cm.saveToFile(entry, config, shouldGenerateCode)
+	cm.logger.Debug("Put: saveToFile returned", loggerv2.String("server", entry.ServerName), loggerv2.Error(err))
+	return err
 }
 
 // Invalidate removes a cache entry
@@ -480,10 +506,13 @@ func (cm *CacheManager) Cleanup() error {
 
 // loadExistingCache loads cache entries from the filesystem
 func (cm *CacheManager) loadExistingCache() {
+	// Try to read cache directory - if it doesn't exist, that's fine (lazy creation)
+	// Only create directory if cache files actually exist
 	files, err := os.ReadDir(cm.cacheDir)
 	if err != nil {
+		// Directory doesn't exist yet - that's fine, it will be created when saving entries
 		if cm.logger != nil {
-			cm.logger.Debug("Cache directory does not exist or cannot be read", loggerv2.Error(err))
+			cm.logger.Debug("Cache directory does not exist yet (will be created lazily)", loggerv2.String("cache_dir", cm.cacheDir))
 		}
 		return
 	}
@@ -504,7 +533,12 @@ func (cm *CacheManager) loadExistingCache() {
 
 				// Ensure Go code is generated for this cache entry if it's missing
 				// This handles cases where cache exists but generated code was deleted
-				if entry.IsValid && len(entry.Tools) > 0 {
+				// Only generate code if code generation is enabled (code execution mode)
+				cm.mu.RLock()
+				shouldGenerateCode := cm.enableCodeGeneration
+				cm.mu.RUnlock()
+
+				if shouldGenerateCode && entry.IsValid && len(entry.Tools) > 0 {
 					generatedDir := cm.getGeneratedDir()
 					packageName := codegen.GetPackageName(entry.ServerName)
 					packageDir := filepath.Join(generatedDir, packageName)
@@ -543,7 +577,8 @@ func (cm *CacheManager) loadExistingCache() {
 }
 
 // saveToFile persists a cache entry to the filesystem using configuration-aware naming
-func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServerConfig) error {
+// shouldGenerateCode is passed in to avoid needing to acquire RLock (which would deadlock if called from Put with write lock)
+func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServerConfig, shouldGenerateCode bool) error {
 	// Use configuration-aware cache key for file naming
 	cacheFile := cm.getCacheFilePath(GenerateUnifiedCacheKey(entry.ServerName, config))
 
@@ -559,27 +594,49 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 	}
 
 	// Write to file
+	cm.logger.Debug("About to write cache file", loggerv2.String("file", cacheFile), loggerv2.String("server", entry.ServerName), loggerv2.Int("data_size", len(data)))
 	if err := os.WriteFile(cacheFile, data, 0644); err != nil {
+		cm.logger.Error("Failed to write cache file", err, loggerv2.String("file", cacheFile), loggerv2.String("server", entry.ServerName))
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 
-	cm.logger.Debug("Saved cache entry to file", loggerv2.String("file", cacheFile))
-
-	// Generate Go code for tools
-	generatedDir := cm.getGeneratedDir()
-	entryForCodeGen := &codegen.CacheEntryForCodeGen{
-		ServerName: entry.ServerName,
-		Tools:      entry.Tools,
-	}
-	// Use default 5-minute timeout for cache manager (same as agent default)
-	defaultTimeout := 5 * time.Minute
-	if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger, defaultTimeout); err != nil {
-		cm.logger.Warn("Failed to generate Go code for server",
-			loggerv2.Error(err),
-			loggerv2.String("server", entry.ServerName))
-		// Don't fail cache save if code generation fails
+	// Verify file was written
+	if stat, err := os.Stat(cacheFile); err != nil {
+		cm.logger.Error("Cache file not found after write", err, loggerv2.String("file", cacheFile), loggerv2.String("server", entry.ServerName))
+		return fmt.Errorf("cache file not found after write: %w", err)
+	} else {
+		cm.logger.Info("Saved cache entry to file",
+			loggerv2.String("file", cacheFile),
+			loggerv2.String("server", entry.ServerName),
+			loggerv2.Int("file_size", int(stat.Size())))
 	}
 
+	// Generate Go code for tools (only if code generation is enabled)
+	// Code generation is only needed in code execution mode
+	// Note: shouldGenerateCode is passed as parameter to avoid deadlock (no need to acquire lock here)
+	cm.logger.Debug("Checking code generation", loggerv2.String("server", entry.ServerName), loggerv2.String("enabled", fmt.Sprintf("%v", shouldGenerateCode)))
+
+	if shouldGenerateCode {
+		cm.logger.Debug("Code generation enabled, generating code", loggerv2.String("server", entry.ServerName))
+		generatedDir := cm.getGeneratedDir()
+		entryForCodeGen := &codegen.CacheEntryForCodeGen{
+			ServerName: entry.ServerName,
+			Tools:      entry.Tools,
+		}
+		// Use default 5-minute timeout for cache manager (same as agent default)
+		defaultTimeout := 5 * time.Minute
+		if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger, defaultTimeout); err != nil {
+			cm.logger.Warn("Failed to generate Go code for server",
+				loggerv2.Error(err),
+				loggerv2.String("server", entry.ServerName))
+			// Don't fail cache save if code generation fails
+		}
+		cm.logger.Debug("Code generation completed", loggerv2.String("server", entry.ServerName))
+	} else {
+		cm.logger.Debug("Code generation disabled, skipping", loggerv2.String("server", entry.ServerName))
+	}
+
+	cm.logger.Debug("saveToFile completed", loggerv2.String("server", entry.ServerName))
 	return nil
 }
 
@@ -663,22 +720,22 @@ func (cm *CacheManager) getCacheFilePath(cacheKey string) string {
 }
 
 // getGeneratedDir returns the path to the generated/ directory
+// Only creates the directory if code generation is enabled
 func (cm *CacheManager) getGeneratedDir() string {
-	// Use environment variable if set, otherwise default to generated/
-	generatedDir := os.Getenv("MCP_GENERATED_DIR")
-	if generatedDir == "" {
-		// Default to generated/ directory (relative to working directory)
-		generatedDir = filepath.Join(".", "generated")
+	// Use shared utility for path calculation (single source of truth)
+	path := GetGeneratedDirPath()
+
+	// Only create directory if code generation is enabled
+	// This prevents unnecessary directory creation in simple agent mode
+	cm.mu.RLock()
+	shouldCreate := cm.enableCodeGeneration
+	cm.mu.RUnlock()
+
+	if shouldCreate {
+		_ = EnsureGeneratedDir(path, cm.logger)
 	}
-	// Ensure directory exists
-	if err := os.MkdirAll(generatedDir, 0755); err != nil {
-		if cm.logger != nil {
-			cm.logger.Warn("Failed to create generated directory",
-				loggerv2.Error(err),
-				loggerv2.String("dir", generatedDir))
-		}
-	}
-	return generatedDir
+
+	return path
 }
 
 // clearCacheDirectory removes all files from the cache directory

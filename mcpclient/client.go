@@ -393,13 +393,41 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 
 // ListResources lists all available resources from the server
 func (c *Client) ListResources(ctx context.Context) ([]mcp.Resource, error) {
+	c.logger.Debug("ListResources: Starting call")
+
 	if c.mcpClient == nil {
+		c.logger.Debug("ListResources: Client not connected")
 		return nil, fmt.Errorf("client not connected")
 	}
 
+	c.logger.Debug("ListResources: Calling mcpClient.ListResources")
 	result, err := c.mcpClient.ListResources(ctx, mcp.ListResourcesRequest{})
 	if err != nil {
+		c.logger.Error("ListResources: Error from mcpClient", err)
 		return nil, fmt.Errorf("failed to list resources: %w", err)
+	}
+
+	resourceCount := 0
+	if result != nil {
+		resourceCount = len(result.Resources)
+		c.logger.Debug("ListResources: Successfully received result",
+			loggerv2.Int("resource_count", resourceCount))
+
+		// Log resource details if any are found
+		if resourceCount > 0 {
+			for i, resource := range result.Resources {
+				c.logger.Debug("ListResources: Resource details",
+					loggerv2.Int("index", i),
+					loggerv2.String("uri", resource.URI),
+					loggerv2.String("name", resource.Name),
+					loggerv2.String("description", resource.Description),
+					loggerv2.String("mime_type", resource.MIMEType))
+			}
+		} else {
+			c.logger.Debug("ListResources: Result received but Resources slice is empty")
+		}
+	} else {
+		c.logger.Debug("ListResources: Result is nil")
 	}
 
 	return result.Resources, nil

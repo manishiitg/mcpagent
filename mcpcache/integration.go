@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	loggerv2 "mcpagent/logger/v2"
@@ -184,12 +185,14 @@ func (e *ComprehensiveCacheEvent) GetParentID() string {
 
 // GetCachedOrFreshConnection attempts to get MCP connection data from cache first,
 // falling back to fresh connection if cache is unavailable or expired
+// If disableCache is true, skips cache lookup entirely and always performs fresh connections
 func GetCachedOrFreshConnection(
 	ctx context.Context,
 	llm llmtypes.Model,
 	serverName, configPath string,
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
+	disableCache bool,
 ) (*CachedConnectionResult, error) {
 
 	// Track cache operation start time
@@ -205,7 +208,71 @@ func GetCachedOrFreshConnection(
 		Resources:    make(map[string][]mcp.Resource),
 	}
 
-	// Get cache manager
+	// If cache is disabled, skip cache lookup and go directly to fresh connection
+	if disableCache {
+		logger.Info("Cache disabled - performing fresh connection",
+			loggerv2.String("server_name", serverName),
+			loggerv2.String("disable_cache", "true"))
+
+		// Load merged MCP configuration to get server details (base + user)
+		config, err := mcpclient.LoadMergedConfig(configPath, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
+		}
+
+		// Determine which servers to connect to
+		var servers []string
+		if serverName == "all" || serverName == "" {
+			servers = config.ListServers()
+		} else if serverName == mcpclient.NoServers {
+			servers = []string{}
+		} else {
+			requestedServers := strings.Split(serverName, ",")
+			for _, reqServer := range requestedServers {
+				reqServer = strings.TrimSpace(reqServer)
+				for _, configServer := range config.ListServers() {
+					if configServer == reqServer {
+						servers = append(servers, reqServer)
+						break
+					}
+				}
+			}
+		}
+
+		// Perform fresh connection directly
+		freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
+		if err != nil {
+			return nil, err
+		}
+
+		// Copy fresh result data
+		result.Clients = freshResult.Clients
+		result.ToolToServer = freshResult.ToolToServer
+		result.Tools = freshResult.Tools
+		result.Prompts = freshResult.Prompts
+		result.Resources = freshResult.Resources
+		result.SystemPrompt = freshResult.SystemPrompt
+		result.CacheUsed = false
+		result.FreshFallback = true
+
+		// Emit comprehensive cache event (indicating cache was disabled)
+		cacheTime := time.Since(cacheStartTime)
+		EmitComprehensiveCacheEvent(
+			tracers,
+			"complete",
+			configPath,
+			servers,
+			result,
+			serverStatus,
+			time.Duration(0),
+			cacheTime,
+			nil,
+		)
+
+		return result, nil
+	}
+
+	// Get cache manager (only if cache is enabled)
 	cacheManager := GetCacheManager(logger)
 
 	// Load merged MCP configuration to get server details (base + user)
@@ -456,12 +523,11 @@ func GetCachedOrFreshConnection(
 			result.Resources[serverName] = resources
 		}
 
-		// Cache the fresh connection data for missed servers (async with timeout)
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			cacheFreshConnectionData(cacheCtx, cacheManager, config, configPath, missedServers, freshResult, tracers, logger)
-		}()
+		// Cache the fresh connection data for missed servers (synchronous to ensure all servers are cached)
+		// Use a timeout context to prevent hanging
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		cacheFreshConnectionData(cacheCtx, cacheManager, config, configPath, missedServers, freshResult, tracers, logger, disableCache)
 
 		logger.Info("Hybrid cache complete",
 			loggerv2.Int("total_servers", len(servers)),
@@ -509,12 +575,11 @@ func GetCachedOrFreshConnection(
 	result.Resources = freshResult.Resources
 	result.SystemPrompt = freshResult.SystemPrompt
 
-	// Cache the fresh connection data (async with timeout)
-	go func() {
-		cacheCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		cacheFreshConnectionData(cacheCtx, cacheManager, config, configPath, servers, freshResult, tracers, logger)
-	}()
+	// Cache the fresh connection data (synchronous to ensure all servers are cached)
+	// Use a timeout context to prevent hanging
+	cacheCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cacheFreshConnectionData(cacheCtx, cacheManager, config, configPath, servers, freshResult, tracers, logger, disableCache)
 
 	// Emit comprehensive cache event with all details
 	cacheTime := time.Since(cacheStartTime)
@@ -911,18 +976,58 @@ func performOriginalConnectionLogic(
 		}
 
 		// Discover resources
+		logger.Info("Starting resource discovery", loggerv2.String("server", serverName))
 		resources, err := client.ListResources(discoveryCtx)
 		if err != nil {
 			logger.Error("Error listing resources", err, loggerv2.String("server", serverName))
-		} else if len(resources) > 0 {
-			allResources[serverName] = resources
-			logger.Info("Found resources", loggerv2.Int("count", len(resources)))
+			// Check if it's a "method not found" error (server doesn't support resources)
+			if strings.Contains(err.Error(), "method not found") || strings.Contains(err.Error(), "Method not found") {
+				logger.Info("Server does not support resources (method not found)", loggerv2.String("server", serverName))
+			} else {
+				logger.Warn("Unexpected error listing resources", loggerv2.Error(err), loggerv2.String("server", serverName))
+			}
+		} else {
+			resourceCount := len(resources)
+			logger.Info("ListResources completed successfully",
+				loggerv2.String("server", serverName),
+				loggerv2.Int("resource_count", resourceCount))
+
+			if resourceCount > 0 {
+				allResources[serverName] = resources
+				logger.Info("Found resources",
+					loggerv2.String("server", serverName),
+					loggerv2.Int("count", resourceCount))
+
+				// Log each resource for debugging
+				for i, resource := range resources {
+					logger.Info("Resource details",
+						loggerv2.String("server", serverName),
+						loggerv2.Int("index", i),
+						loggerv2.String("uri", resource.URI),
+						loggerv2.String("name", resource.Name),
+						loggerv2.String("description", resource.Description),
+						loggerv2.String("mime_type", resource.MIMEType))
+				}
+			} else {
+				logger.Info("ListResources returned empty slice (no resources available)",
+					loggerv2.String("server", serverName))
+			}
 		}
+	}
+
+	// Calculate total resource count across all servers
+	totalResources := 0
+	for serverName, serverResources := range allResources {
+		totalResources += len(serverResources)
+		logger.Debug("Server resource count",
+			loggerv2.String("server", serverName),
+			loggerv2.Int("count", len(serverResources)))
 	}
 
 	logger.Info("Summary: prompts and resources discovered",
 		loggerv2.Int("prompts", len(allPrompts)),
-		loggerv2.Int("resources", len(allResources)))
+		loggerv2.Int("servers_with_resources", len(allResources)),
+		loggerv2.Int("total_resources", totalResources))
 
 	// Log detailed discovery completion (events handled by connection.go)
 
@@ -934,6 +1039,8 @@ func performOriginalConnectionLogic(
 }
 
 // cacheFreshConnectionData caches the results of a fresh connection
+// Processes all servers in parallel for better performance
+// If disableCache is true, skips caching entirely
 func cacheFreshConnectionData(
 	ctx context.Context,
 	cacheManager *CacheManager,
@@ -943,71 +1050,156 @@ func cacheFreshConnectionData(
 	result *CachedConnectionResult,
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
+	disableCache bool,
 ) {
-	for _, srvName := range servers {
-		serverConfig, exists := config.MCPServers[srvName]
-		if !exists {
-			continue
-		}
-
-		// Extract server-specific tools
-		serverTools := extractServerTools(result.Tools, result.ToolToServer, srvName)
-
-		// IMPORTANT: Normalize tools BEFORE caching to ensure all array parameters have 'items' field
-		// This prevents race conditions from normalizing after cache retrieval
-		// Normalization is required for LLM providers (especially Gemini/Vertex)
-		mcpclient.NormalizeLLMTools(serverTools)
-
-		// Build ToolOwnership map to mark which tools this server owns
-		// This prevents duplicate tool detection issues when loading from cache
-		toolOwnership := make(map[string]string)
-		for _, tool := range serverTools {
-			toolName := tool.Function.Name
-			owningServer, exists := result.ToolToServer[toolName]
-			if !exists {
-				// Tool not in ToolToServer map (shouldn't happen, but be defensive)
-				logger.Warn("Tool not found in ToolToServer map",
-					loggerv2.String("tool", toolName),
-					loggerv2.String("server", srvName))
-				toolOwnership[toolName] = "primary" // Assume primary by default
-				continue
-			}
-
-			if owningServer == srvName {
-				// This server is the primary owner of this tool
-				toolOwnership[toolName] = "primary"
-			} else {
-				// Another server owns this tool (this server has a duplicate)
-				toolOwnership[toolName] = "duplicate"
-				logger.Debug("Tool marked as duplicate",
-					loggerv2.String("tool", toolName),
-					loggerv2.String("server", srvName),
-					loggerv2.String("primary", owningServer))
-			}
-		}
-
-		// Create cache entry with pre-normalized tools and ownership info
-		entry := &CacheEntry{
-			ServerName:    srvName,
-			Tools:         serverTools, // Already normalized
-			Prompts:       result.Prompts[srvName],
-			Resources:     result.Resources[srvName],
-			SystemPrompt:  result.SystemPrompt,
-			CreatedAt:     time.Now(),
-			LastAccessed:  time.Now(),
-			TTLMinutes:    cacheManager.GetTTL(), // Use configured TTL instead of hardcoded 30 minutes
-			Protocol:      string(serverConfig.Protocol),
-			IsValid:       true,
-			ToolOwnership: toolOwnership, // Add ownership tracking
-		}
-
-		// Store in cache using configuration-aware cache key
-		if err := cacheManager.Put(entry, serverConfig); err != nil {
-			logger.Warn("Failed to cache connection data", loggerv2.Error(err), loggerv2.String("server", srvName))
-		} else {
-			logger.Debug("Successfully cached connection data (tools pre-normalized)", loggerv2.String("server", srvName))
-		}
+	// If cache is disabled, skip caching entirely
+	if disableCache {
+		logger.Info("Cache disabled - skipping cache save", loggerv2.Any("servers", servers))
+		return
 	}
+	logger.Info("Starting parallel cache save for servers", loggerv2.Any("servers", servers), loggerv2.Int("count", len(servers)))
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errors []string
+
+	for _, srvName := range servers {
+		// Check if context is cancelled before starting new goroutine
+		select {
+		case <-ctx.Done():
+			logger.Warn("Cache save cancelled by context", loggerv2.Error(ctx.Err()), loggerv2.String("last_server", srvName))
+			return
+		default:
+		}
+
+		wg.Add(1)
+		go func(srvName string) {
+			defer wg.Done()
+
+			// Check if context is cancelled
+			select {
+			case <-ctx.Done():
+				logger.Warn("Cache save cancelled for server", loggerv2.Error(ctx.Err()), loggerv2.String("server", srvName))
+				mu.Lock()
+				errors = append(errors, fmt.Sprintf("%s: cancelled", srvName))
+				mu.Unlock()
+				return
+			default:
+			}
+
+			serverConfig, exists := config.MCPServers[srvName]
+			if !exists {
+				logger.Warn("Server config not found, skipping cache", loggerv2.String("server", srvName))
+				return
+			}
+
+			logger.Info("Processing cache save for server", loggerv2.String("server", srvName))
+
+			// Extract server-specific tools
+			serverTools := extractServerTools(result.Tools, result.ToolToServer, srvName)
+
+			// IMPORTANT: Normalize tools BEFORE caching to ensure all array parameters have 'items' field
+			// This prevents race conditions from normalizing after cache retrieval
+			// Normalization is required for LLM providers (especially Gemini/Vertex)
+			mcpclient.NormalizeLLMTools(serverTools)
+
+			// Build ToolOwnership map to mark which tools this server owns
+			// This prevents duplicate tool detection issues when loading from cache
+			toolOwnership := make(map[string]string)
+			for _, tool := range serverTools {
+				toolName := tool.Function.Name
+				owningServer, exists := result.ToolToServer[toolName]
+				if !exists {
+					// Tool not in ToolToServer map (shouldn't happen, but be defensive)
+					logger.Warn("Tool not found in ToolToServer map",
+						loggerv2.String("tool", toolName),
+						loggerv2.String("server", srvName))
+					toolOwnership[toolName] = "primary" // Assume primary by default
+					continue
+				}
+
+				if owningServer == srvName {
+					// This server is the primary owner of this tool
+					toolOwnership[toolName] = "primary"
+				} else {
+					// Another server owns this tool (this server has a duplicate)
+					toolOwnership[toolName] = "duplicate"
+					logger.Debug("Tool marked as duplicate",
+						loggerv2.String("tool", toolName),
+						loggerv2.String("server", srvName),
+						loggerv2.String("primary", owningServer))
+				}
+			}
+
+			// Get resources for this server
+			serverResources := result.Resources[srvName]
+			resourceCount := 0
+			if serverResources != nil {
+				resourceCount = len(serverResources)
+			}
+
+			logger.Debug("Preparing cache entry",
+				loggerv2.String("server", srvName),
+				loggerv2.Int("tools_count", len(serverTools)),
+				loggerv2.Int("prompts_count", len(result.Prompts[srvName])),
+				loggerv2.Int("resources_count", resourceCount),
+				loggerv2.String("resources_nil", fmt.Sprintf("%v", serverResources == nil)))
+
+			// Log resource details if present
+			if resourceCount > 0 {
+				for i, resource := range serverResources {
+					logger.Debug("Resource in cache entry",
+						loggerv2.String("server", srvName),
+						loggerv2.Int("index", i),
+						loggerv2.String("uri", resource.URI),
+						loggerv2.String("name", resource.Name))
+				}
+			}
+
+			// Create cache entry with pre-normalized tools and ownership info
+			entry := &CacheEntry{
+				ServerName:    srvName,
+				Tools:         serverTools, // Already normalized
+				Prompts:       result.Prompts[srvName],
+				Resources:     serverResources,
+				SystemPrompt:  result.SystemPrompt,
+				CreatedAt:     time.Now(),
+				LastAccessed:  time.Now(),
+				TTLMinutes:    cacheManager.GetTTL(), // Use configured TTL instead of hardcoded 30 minutes
+				Protocol:      string(serverConfig.Protocol),
+				IsValid:       true,
+				ToolOwnership: toolOwnership, // Add ownership tracking
+			}
+
+			// Store in cache using configuration-aware cache key
+			logger.Debug("Calling cacheManager.Put", loggerv2.String("server", srvName), loggerv2.Int("tools_count", len(serverTools)))
+
+			// Call Put directly (no anonymous function wrapper that might cause issues)
+			if err := cacheManager.Put(entry, serverConfig); err != nil {
+				logger.Warn("Failed to cache connection data", loggerv2.Error(err), loggerv2.String("server", srvName))
+				mu.Lock()
+				errors = append(errors, fmt.Sprintf("%s: %v", srvName, err))
+				mu.Unlock()
+			} else {
+				logger.Info("Successfully cached connection data",
+					loggerv2.String("server", srvName),
+					loggerv2.Int("tools_count", len(serverTools)),
+					loggerv2.Int("prompts_count", len(result.Prompts[srvName])),
+					loggerv2.Int("resources_count", len(result.Resources[srvName])))
+			}
+
+			logger.Debug("Completed cache save for server", loggerv2.String("server", srvName))
+		}(srvName)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	if len(errors) > 0 {
+		logger.Warn("Some cache saves failed", loggerv2.Int("error_count", len(errors)), loggerv2.Any("errors", errors))
+	}
+
+	logger.Info("Completed parallel cache save for all servers", loggerv2.Int("servers_processed", len(servers)), loggerv2.Int("servers_requested", len(servers)), loggerv2.Int("errors", len(errors)))
 }
 
 // extractServerTools extracts tools specific to a server from the aggregated tool list
@@ -1041,6 +1233,7 @@ func GetFreshConnection(ctx context.Context, serverName, configPath string, logg
 	}
 
 	// Get fresh connection using existing infrastructure
+	// Pass disableCache=false since we want to use cache infrastructure but force fresh connection via invalidation
 	result, err := GetCachedOrFreshConnection(
 		ctx,
 		nil, // No LLM needed for tool execution
@@ -1048,6 +1241,7 @@ func GetFreshConnection(ctx context.Context, serverName, configPath string, logg
 		configPath,
 		nil, // No tracers needed
 		logger,
+		false, // disableCache=false - we invalidated cache above, so it will miss and create fresh
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fresh connection for server %s: %w", serverName, err)

@@ -255,8 +255,8 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 		resourcesSection = "" // Empty resources section when discovery is disabled or in code execution mode
 	}
 
-	// Build virtual tools section
-	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode)
+	// Build virtual tools section (only mention tools that are actually available)
+	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode, prompts, resources)
 
 	// Get current date and time
 	now := time.Now()
@@ -494,7 +494,8 @@ func buildResourcesSection(resources map[string][]mcp.Resource) string {
 }
 
 // buildVirtualToolsSection builds the virtual tools section
-func buildVirtualToolsSection(useCodeExecutionMode bool) string {
+// Only mentions tools that are actually available (prompts/resources must exist)
+func buildVirtualToolsSection(useCodeExecutionMode bool, prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource) string {
 	if useCodeExecutionMode {
 		// Code execution mode: Show simplified virtual tools section
 		return `🔧 AVAILABLE FUNCTIONS:
@@ -507,5 +508,46 @@ func buildVirtualToolsSection(useCodeExecutionMode bool) string {
   Use fmt.Println() to output results
   Optional 'args' parameter: Array of strings passed as CLI arguments (accessible via os.Args[1], os.Args[2], etc.)`
 	}
-	return VirtualToolsSectionTemplate
+
+	// Check if prompts actually exist
+	hasPrompts := false
+	if prompts != nil {
+		totalPrompts := 0
+		for _, serverPrompts := range prompts {
+			totalPrompts += len(serverPrompts)
+		}
+		hasPrompts = totalPrompts > 0
+	}
+
+	// Check if resources actually exist
+	hasResources := false
+	if resources != nil {
+		totalResources := 0
+		for _, serverResources := range resources {
+			totalResources += len(serverResources)
+		}
+		hasResources = totalResources > 0
+	}
+
+	// Build virtual tools list based on what's actually available
+	var toolsList []string
+	if hasPrompts {
+		toolsList = append(toolsList, "- **get_prompt**: Fetch full prompt content (server + name) from an mcp server")
+	}
+	if hasResources {
+		toolsList = append(toolsList, "- **get_resource**: Fetch resource content (server + uri) from an mcp server")
+	}
+
+	// If no tools are available, return empty string (section will be empty)
+	if len(toolsList) == 0 {
+		return ""
+	}
+
+	// Build the section with only available tools
+	toolsText := strings.Join(toolsList, "\n")
+	return `🔧 VIRTUAL TOOLS:
+
+` + toolsText + `
+
+These are internal tools - just specify server and identifier.`
 }

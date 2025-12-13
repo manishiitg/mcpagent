@@ -27,7 +27,8 @@ import (
 // NewAgentConnection handles MCP config loading, server connection, tool discovery, and returns all connection artifacts for agent construction.
 // Now uses caching to avoid redundant connections and discoveries.
 // Always connects to servers even when using cached data.
-func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger loggerv2.Logger) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+// If disableCache is true, skips cache lookup and always performs fresh connections.
+func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger loggerv2.Logger, disableCache bool) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Start timing the entire connection process
 	connectionStartTime := time.Now()
@@ -52,14 +53,19 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 		}
 	}
 
-	logger.Info("NewAgentConnection started (with caching)",
+	cacheStatus := "with caching"
+	if disableCache {
+		cacheStatus = "cache disabled"
+	}
+	logger.Info("NewAgentConnection started ("+cacheStatus+")",
 		loggerv2.String("server_name", serverName),
 		loggerv2.String("config_path", configPath),
 		loggerv2.String("trace_id", traceID),
-		loggerv2.String("start_time", connectionStartTime.Format(time.RFC3339)))
+		loggerv2.String("start_time", connectionStartTime.Format(time.RFC3339)),
+		loggerv2.String("disable_cache", fmt.Sprintf("%v", disableCache)))
 
 	// Try to get cached or fresh connection data (always connects to servers)
-	result, err := mcpcache.GetCachedOrFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
+	result, err := mcpcache.GetCachedOrFreshConnection(ctx, llm, serverName, configPath, tracers, logger, disableCache)
 	if err != nil {
 		connectionDuration := time.Since(connectionStartTime)
 

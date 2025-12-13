@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +59,26 @@ func WithMode(mode AgentMode) AgentOption {
 func WithLogger(logger loggerv2.Logger) AgentOption {
 	return func(a *Agent) {
 		a.Logger = logger
+	}
+}
+
+// WithTracer sets a tracer for observability
+// The tracer will be wrapped in a StreamingTracer and added to the Tracers slice
+func WithTracer(tracer observability.Tracer) AgentOption {
+	return func(a *Agent) {
+		if tracer != nil {
+			// Create streaming tracer that wraps the base tracer
+			streamingTracer := NewStreamingTracer(tracer, 100)
+			// Add to tracers slice
+			a.Tracers = append(a.Tracers, streamingTracer)
+		}
+	}
+}
+
+// WithTraceID sets the trace ID for observability
+func WithTraceID(traceID observability.TraceID) AgentOption {
+	return func(a *Agent) {
+		a.TraceID = traceID
 	}
 }
 
@@ -193,6 +212,24 @@ func WithCodeExecutionMode(enabled bool) AgentOption {
 	}
 }
 
+// WithDisableCache disables MCP server connection caching
+// When enabled: Skips cache lookup and always performs fresh connections
+// When disabled (default): Uses cache to speed up connection establishment
+func WithDisableCache(disable bool) AgentOption {
+	return func(a *Agent) {
+		a.DisableCache = disable
+	}
+}
+
+// WithServerName sets the server name(s) to connect to
+// Default: AllServers (connects to all configured servers)
+// Can be a single server name, comma-separated list, or mcpclient.AllServers
+func WithServerName(serverName string) AgentOption {
+	return func(a *Agent) {
+		a.serverName = serverName
+	}
+}
+
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
 // It is generic enough to be reused by CLI commands, services, or tests.
 type Agent struct {
@@ -227,6 +264,7 @@ type Agent struct {
 	SystemPrompt string
 	TraceID      observability.TraceID
 	configPath   string // Path to MCP config file for on-demand connections
+	serverName   string // Server name(s) to connect to (default: AllServers)
 
 	// cached list of server names (for metadata convenience)
 	servers []string
@@ -298,6 +336,11 @@ type Agent struct {
 	// MCP tools and custom tools are NOT added directly - LLM must use generated Go code via write_code
 	// When disabled (default): All MCP tools are added directly as LLM tools
 	UseCodeExecutionMode bool
+
+	// Cache configuration
+	// When enabled: Skips cache lookup and always performs fresh connections
+	// When disabled (default): Uses cache to speed up connection establishment (60-85% faster)
+	DisableCache bool
 
 	// Folder guard paths for code execution mode
 	// These paths are validated at AST level before code execution
@@ -395,57 +438,45 @@ func (a *Agent) GetFolderGuardPaths() (readPaths, writePaths []string) {
 	return a.FolderGuardReadPaths, a.FolderGuardWritePaths
 }
 
+// extractModelIDFromLLM extracts the model ID from the LLM instance
+// Returns the model ID from llm.GetModelID(), or "unknown" if empty
+//
+// GetModelID() is now part of the llmtypes.Model interface, so all implementations
+// must provide it. This makes the extraction straightforward and type-safe.
+func extractModelIDFromLLM(llm llmtypes.Model) string {
+	modelID := llm.GetModelID()
+	if modelID == "" {
+		return "unknown"
+	}
+	return modelID
+}
+
 // NewAgent creates a new Agent with the given options
-func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, options ...AgentOption) (*Agent, error) {
-	// Use default logger if nil is passed
-	if logger == nil {
-		logger = loggerv2.NewDefault()
-	}
-
-	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
-
-	// Load merged MCP servers configuration (base + user)
-	config, err := mcpclient.LoadMergedConfig(configPath, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
-	}
-
-	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
-	for name := range config.MCPServers {
-		logger.Debug("Server found", loggerv2.String("server_name", name))
-	}
-
-	// If tracer is nil, don't use any tracer (empty tracers array)
-	// If traceID is empty when tracer is nil, that's fine - no tracing will occur
-	var tracers []observability.Tracer
-	if tracer != nil {
-		// Create streaming tracer that wraps the base tracer
-		streamingTracer := NewStreamingTracer(tracer, 100)
-		// Create tracers array with streaming tracer
-		tracers = []observability.Tracer{streamingTracer}
-	} else {
-		// No tracer provided - use empty array (no tracing)
-		tracers = []observability.Tracer{}
-	}
-
+// The modelID is automatically extracted from the LLM instance
+// By default, connects to all servers (AllServers). Use WithServerName() to filter.
+func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
 	if llm == nil {
 		return nil, fmt.Errorf("LLM cannot be nil")
 	}
+
+	// Extract model ID from LLM instance
+	// This ensures the modelID matches the actual LLM being used
+	modelID := extractModelIDFromLLM(llm)
 
 	// Create agent with default values
 	ag := &Agent{
 		ctx:                           ctx,
 		LLM:                           llm,
-		Tracers:                       tracers,
+		Tracers:                       []observability.Tracer{},        // Default: empty tracers array
 		MaxTurns:                      GetDefaultMaxTurns(SimpleAgent), // Default to simple mode
 		Temperature:                   0.0,                             // Default temperature
 		ToolChoice:                    "auto",                          // Default tool choice
 		ModelID:                       modelID,
-		AgentMode:                     SimpleAgent, // Default to simple mode
-		TraceID:                       traceID,
+		AgentMode:                     SimpleAgent,                 // Default to simple mode
+		TraceID:                       "",                          // Default: empty trace ID
 		provider:                      "",                          // Will be set by caller
 		EnableLargeOutputVirtualTools: true,                        // Default to enabled
-		Logger:                        logger,                      // Use the passed logger parameter
+		Logger:                        loggerv2.NewDefault(),       // Default logger
 		customTools:                   make(map[string]CustomTool), // Initialize custom tools map
 
 		// Smart routing configuration with defaults
@@ -481,6 +512,12 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 
 		// Initialize prompt discovery (default: true - include prompts in system prompt)
 		DiscoverPrompt: true,
+
+		// Initialize cache (default: false - caching enabled by default)
+		DisableCache: false,
+
+		// Initialize server name (default: AllServers - connect to all servers)
+		serverName: mcpclient.AllServers,
 	}
 
 	// Apply all options
@@ -488,7 +525,43 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 		option(ag)
 	}
 
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(traceID), tracers, logger)
+	// Use logger from options (or default if not set)
+	logger := ag.Logger
+	if logger == nil {
+		logger = loggerv2.NewDefault()
+		ag.Logger = logger
+	}
+
+	// Use serverName from options (or default AllServers)
+	serverName := ag.serverName
+	if serverName == "" {
+		serverName = mcpclient.AllServers
+	}
+
+	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
+
+	// Load merged MCP servers configuration (base + user)
+	config, err := mcpclient.LoadMergedConfig(configPath, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
+	}
+
+	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
+	for name := range config.MCPServers {
+		logger.Debug("Server found", loggerv2.String("server_name", name))
+	}
+
+	if modelID == "unknown" {
+		logger.Warn("Could not extract model ID from LLM instance, using 'unknown'",
+			loggerv2.String("fallback", "unknown"))
+	}
+
+	// Enable code generation in cache manager if code execution mode is enabled
+	// This ensures MCP server code is only generated when needed
+	cacheManager := mcpcache.GetCacheManager(logger)
+	cacheManager.SetCodeGenerationEnabled(ag.UseCodeExecutionMode)
+
+	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
 
 	if err != nil {
 		logger.Error("NewAgentConnection failed", err)
@@ -512,7 +585,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	toolOutputHandler.SetServerAvailable(true) // Always available with virtual tools
 
 	// Set session ID for organizing files by conversation
-	toolOutputHandler.SetSessionID(string(traceID))
+	toolOutputHandler.SetSessionID(string(ag.TraceID))
 
 	// Update the existing agent with connection data
 	ag.Client = firstClient
@@ -718,20 +791,18 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	// Initialize registry with virtual tools
 	codeexec.InitRegistryWithVirtualTools(ag.Clients, customToolExecutors, virtualToolExecutors, ag.toolToServer, logger)
 
-	// Generate Go code for virtual tools
-	generatedDir := ag.getGeneratedDir()
-	// Use agent's ToolTimeout (same as used for normal tool calls)
-	toolTimeout := getToolExecutionTimeout(ag)
-	if err := codegen.GenerateVirtualToolsCode(virtualTools, generatedDir, logger, toolTimeout); err != nil {
-		logger.Warn("Failed to generate Go code for virtual tools", loggerv2.Error(err))
-		// Don't fail agent initialization if code generation fails
-	}
-
-	// Note: MCP server code generation is handled by the cache manager
-	// - When cache entries are saved, code is generated automatically
-	// - When cache entries are loaded, code is generated if missing
-	// - No need to regenerate here - cache manager handles it
+	// Generate Go code for virtual tools (only needed in code execution mode)
+	// In simple agent mode, virtual tools are called directly via HandleVirtualTool()
+	// The generated code is only used when LLM writes Go code that imports these packages
+	var generatedDir string
 	if ag.UseCodeExecutionMode {
+		generatedDir = ag.getGeneratedDir()
+		// Use agent's ToolTimeout (same as used for normal tool calls)
+		toolTimeout := getToolExecutionTimeout(ag)
+		if err := codegen.GenerateVirtualToolsCode(virtualTools, generatedDir, logger, toolTimeout); err != nil {
+			logger.Warn("Failed to generate Go code for virtual tools", loggerv2.Error(err))
+			// Don't fail agent initialization if code generation fails
+		}
 		logger.Debug("MCP server code generation handled by cache manager (no regeneration needed)")
 	}
 
@@ -936,13 +1007,15 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 		a.cacheEnabledCallCount++
 	}
 
-	// Token usage is tracked via events - only log summary at debug level
+	// Token usage is tracked via events - log at debug level for per-turn, but also log cumulative
 	logger := getLogger(a)
 	logger.Debug("Turn tokens",
 		loggerv2.Int("turn", turn),
 		loggerv2.Int("input_tokens", usageMetrics.PromptTokens),
 		loggerv2.Int("output_tokens", usageMetrics.CompletionTokens),
 		loggerv2.Int("total_tokens", usageMetrics.TotalTokens),
+		loggerv2.Int("cache_tokens", cacheTokens),
+		loggerv2.Int("reasoning_tokens", reasoningTokens),
 		loggerv2.Int("cumulative_total", a.cumulativeTotalTokens))
 }
 
@@ -1023,16 +1096,17 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 
 	a.EmitTypedEvent(ctx, totalTokenEvent)
 
-	// Log total token usage summary (debug level only - events track this in detail)
+	// Log total token usage summary at Info level for visibility
 	logger := getLogger(a)
-	logger.Debug("Conversation token usage",
-		loggerv2.Int("total", a.cumulativeTotalTokens),
-		loggerv2.Int("input", a.cumulativePromptTokens),
-		loggerv2.Int("output", a.cumulativeCompletionTokens),
-		loggerv2.Int("cache", a.cumulativeCacheTokens),
-		loggerv2.Int("reasoning", a.cumulativeReasoningTokens),
-		loggerv2.Int("calls", a.llmCallCount))
-	logger.Info("Conversation duration", loggerv2.Any("duration", conversationDuration))
+	logger.Info("🔧 [TOKEN_USAGE] Conversation total token usage",
+		loggerv2.Int("total_tokens", a.cumulativeTotalTokens),
+		loggerv2.Int("input_tokens", a.cumulativePromptTokens),
+		loggerv2.Int("output_tokens", a.cumulativeCompletionTokens),
+		loggerv2.Int("cache_tokens", a.cumulativeCacheTokens),
+		loggerv2.Int("reasoning_tokens", a.cumulativeReasoningTokens),
+		loggerv2.Int("llm_calls", a.llmCallCount),
+		loggerv2.Int("cache_enabled_calls", a.cacheEnabledCallCount),
+		loggerv2.Any("duration", conversationDuration))
 	logger.Info("============================================================")
 }
 
@@ -1074,8 +1148,10 @@ func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.D
 	)
 	a.EmitTypedEvent(ctx, agentEndEvent)
 
-	// Cleanup agent-specific generated directory
-	a.cleanupAgentGeneratedDir()
+	// Cleanup agent-specific generated directory (only in code execution mode)
+	if a.UseCodeExecutionMode {
+		a.cleanupAgentGeneratedDir()
+	}
 }
 
 // cleanupAgentGeneratedDir removes the agent-specific generated directory
@@ -1189,24 +1265,74 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 }
 
 // NewAgentWithObservability creates a new Agent with observability configuration
-func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, logger loggerv2.Logger, options ...AgentOption) (*Agent, error) {
+// The modelID is automatically extracted from the LLM instance
+// This function automatically sets up a noop tracer and generates a trace ID if not provided via options
+// By default, connects to all servers (AllServers). Use WithServerName() to filter.
+func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
 	if llm == nil {
 		return nil, fmt.Errorf("LLM cannot be nil")
 	}
 
-	// Create tracers - we always get at least a noop tracer
-	baseTracer := observability.GetTracerWithLogger("noop", logger)
+	// Extract model ID from LLM instance
+	modelID := extractModelIDFromLLM(llm)
 
-	// Create streaming tracer that wraps the base tracer
-	streamingTracer := NewStreamingTracer(baseTracer, 100)
+	// Create agent with default values first to apply options
+	ag := &Agent{
+		ctx:                           ctx,
+		LLM:                           llm,
+		Tracers:                       []observability.Tracer{}, // Default: empty tracers array
+		MaxTurns:                      GetDefaultMaxTurns(SimpleAgent),
+		Temperature:                   0.0,
+		ToolChoice:                    "auto",
+		ModelID:                       modelID,
+		AgentMode:                     SimpleAgent,
+		TraceID:                       "", // Will be generated if not set via options
+		EnableLargeOutputVirtualTools: true,
+		Logger:                        loggerv2.NewDefault(), // Default logger
+		customTools:                   make(map[string]CustomTool),
+		EnableSmartRouting:            false,
+		DiscoverResource:              true,
+		DiscoverPrompt:                true,
+		DisableCache:                  false,                // Default: cache enabled
+		serverName:                    mcpclient.AllServers, // Default: all servers
+	}
 
-	// Create tracers array with streaming tracer
-	tracers := []observability.Tracer{streamingTracer}
+	// Apply all options
+	for _, option := range options {
+		option(ag)
+	}
 
-	// Generate a simple trace ID for this agent session
-	traceID := observability.TraceID(fmt.Sprintf("agent-session-%s-%d", modelID, time.Now().UnixNano()))
+	// Use logger from options (or default if not set)
+	logger := ag.Logger
+	if logger == nil {
+		logger = loggerv2.NewDefault()
+		ag.Logger = logger
+	}
 
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(traceID), tracers, logger)
+	// Use serverName from options (or default AllServers)
+	serverName := ag.serverName
+	if serverName == "" {
+		serverName = mcpclient.AllServers
+	}
+
+	if modelID == "unknown" {
+		logger.Warn("Could not extract model ID from LLM instance, using 'unknown'",
+			loggerv2.String("fallback", "unknown"))
+	}
+
+	// If no tracer was provided via options, create a noop tracer
+	if len(ag.Tracers) == 0 {
+		baseTracer := observability.GetTracerWithLogger("noop", logger)
+		streamingTracer := NewStreamingTracer(baseTracer, 100)
+		ag.Tracers = []observability.Tracer{streamingTracer}
+	}
+
+	// If no trace ID was provided via options, generate one
+	if ag.TraceID == "" {
+		ag.TraceID = observability.TraceID(fmt.Sprintf("agent-session-%s-%d", modelID, time.Now().UnixNano()))
+	}
+
+	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
 	if err != nil {
 		return nil, err
 	}
@@ -1228,7 +1354,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverNa
 	toolOutputHandler.SetServerAvailable(true) // Always available with virtual tools
 
 	// Set session ID for organizing files by conversation
-	toolOutputHandler.SetSessionID(string(traceID))
+	toolOutputHandler.SetSessionID(string(ag.TraceID))
 
 	// Debug logging for virtual tools availability (observability version)
 	// Use the logger we created earlier
@@ -1237,33 +1363,17 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverNa
 		loggerv2.Int("total_clients", len(clients)),
 		loggerv2.Any("client_names", getClientNames(clients)))
 
-	ag := &Agent{
-		Client:                        firstClient,
-		Clients:                       clients,
-		toolToServer:                  toolToServer,
-		LLM:                           llm,
-		Tracers:                       tracers, // Support multiple tracers
-		Tools:                         allLLMTools,
-		MaxTurns:                      GetDefaultMaxTurns(SimpleAgent), // Default to simple mode
-		Temperature:                   0.0,                             // Default temperature
-		ToolChoice:                    "auto",                          // Default tool choice
-		ModelID:                       modelID,
-		SystemPrompt:                  systemPrompt,
-		TraceID:                       traceID,
-		servers:                       servers,
-		provider:                      "", // Will be set by caller
-		toolOutputHandler:             toolOutputHandler,
-		EnableLargeOutputVirtualTools: true, // Default to enabled
-		prompts:                       prompts,
-		resources:                     resources,
-		Logger:                        logger,                      // Set the logger on the agent
-		customTools:                   make(map[string]CustomTool), // Initialize custom tools map
-	}
-
-	// Apply all options
-	for _, option := range options {
-		option(ag)
-	}
+	// Update the agent struct with connection data
+	ag.Client = firstClient
+	ag.Clients = clients
+	ag.toolToServer = toolToServer
+	ag.LLM = llm
+	ag.Tools = allLLMTools
+	ag.SystemPrompt = systemPrompt
+	ag.servers = servers
+	ag.toolOutputHandler = toolOutputHandler
+	ag.prompts = prompts
+	ag.resources = resources
 
 	// No more event listeners - events go directly to tracer
 	// Tracing is handled by the tracer itself based on TRACING_PROVIDER
@@ -1274,8 +1384,9 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverNa
 }
 
 // Convenience constructors for common use cases
-func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, options ...AgentOption) (*Agent, error) {
-	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(SimpleAgent))...)
+// By default, connects to all servers (AllServers). Use WithServerName() to filter.
+func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
+	return NewAgent(ctx, llm, configPath, append(options, WithMode(SimpleAgent))...)
 }
 
 // Legacy constructors have been removed to enforce proper logger usage
@@ -2033,6 +2144,22 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		}
 	}
 
+	// 🔧 CRITICAL: Rebuild system prompt with updated tool structure in code execution mode
+	// This ensures custom tools appear in the system prompt's tool structure JSON
+	// so the LLM knows they exist and can use them via generated Go code
+	if a.UseCodeExecutionMode {
+		if err := a.rebuildSystemPromptWithUpdatedToolStructure(); err != nil {
+			if a.Logger != nil {
+				a.Logger.Warn("⚠️ [CODE_EXECUTION] Failed to rebuild system prompt with updated tool structure", loggerv2.Error(err))
+			}
+			// Don't fail tool registration if system prompt rebuild fails
+		} else {
+			if a.Logger != nil {
+				a.Logger.Info("✅ [CODE_EXECUTION] System prompt rebuilt with updated tool structure (custom tool now included)", loggerv2.String("tool", name))
+			}
+		}
+	}
+
 	// Debug logging
 	if a.Logger != nil {
 		a.Logger.Info("🔧 Registered custom tool", loggerv2.String("tool", name), loggerv2.String("category", toolCategory))
@@ -2201,25 +2328,16 @@ func (a *Agent) GetAppendedPromptSummary() string {
 }
 
 // getGeneratedDir returns the path to the generated/ directory
+// Only creates the directory if code execution mode is enabled
 func (a *Agent) getGeneratedDir() string {
-	// Use environment variable if set, otherwise default to generated/
-	generatedDir := os.Getenv("MCP_GENERATED_DIR")
-	if generatedDir == "" {
-		// Default to generated/ directory (relative to working directory)
-		// Try to get absolute path to ensure we're in the right directory
-		absPath, err := filepath.Abs("generated")
-		if err == nil {
-			generatedDir = absPath
-		} else {
-			// Fallback to relative path
-			generatedDir = filepath.Join(".", "generated")
-		}
+	// Use shared utility for path calculation (single source of truth)
+	path := mcpcache.GetGeneratedDirPath()
+
+	// Only create directory if code execution mode is enabled
+	// In simple agent mode, we don't need the generated directory
+	if a.UseCodeExecutionMode {
+		_ = mcpcache.EnsureGeneratedDir(path, a.Logger)
 	}
-	// Ensure directory exists
-	if err := os.MkdirAll(generatedDir, 0755); err != nil {
-		if a.Logger != nil {
-			a.Logger.Warn("Failed to create generated directory", loggerv2.Error(err), loggerv2.String("directory", generatedDir))
-		}
-	}
-	return generatedDir
+
+	return path
 }

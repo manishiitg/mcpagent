@@ -53,21 +53,20 @@ func main() {
 	defer cancel()
 
 	// Step 5: Create the agent (passing nil for logger and tracer - no tracing when tracer is nil)
-	serverName := "" // Use all servers, or specify a specific server name
-	modelID := "gpt-4.1"
+	// By default, connects to all servers. Use WithServerName() to filter to specific server(s).
+	// modelID is automatically extracted from llmModel
 
 	agent, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
-		serverName, // server name (empty = all servers)
 		configPath, // path to MCP config file
-		modelID,    // model ID for tracking
-		nil,        // tracer - nil means no tracing (traceID can be empty)
-		"",         // trace ID - empty when tracer is nil (no tracing)
-		nil,        // logger - nil will use default logger internally
 		// Optional: Add agent options here
 		// mcpagent.WithMaxTurns(10),
 		// mcpagent.WithTemperature(0.7),
+		// mcpagent.WithTracer(tracer),
+		// mcpagent.WithTraceID("trace-id"),
+		// mcpagent.WithLogger(logger),
+		// mcpagent.WithServerName("server-name"), // Filter to specific server(s)
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create agent: %v\n", err)

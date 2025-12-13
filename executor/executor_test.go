@@ -84,12 +84,9 @@ func initializeAgentRegistry(ctx context.Context, logger loggerv2.Logger, t *tes
 	agent, err := mcpagent.NewAgent(
 		ctx,
 		llmInstance,
-		"configs/mcp_servers_simple.json", // Config path
-		"test-session",                    // Session ID
-		"test-query",                      // Query ID
-		nil,                               // No tracer
-		"",                                // No trace ID
-		logger,
+		"configs/mcp_servers_simple.json",       // Config path
+		mcpagent.WithServerName("test-session"), // Server name
+		mcpagent.WithLogger(logger),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)

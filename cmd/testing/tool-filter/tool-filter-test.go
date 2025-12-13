@@ -620,15 +620,14 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, log loggerv2.Logger)
 		configPath = viper.GetString("config")
 	}
 
+	// modelID is automatically extracted from llmModel
 	agentInstance, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
-		testServerName,
 		configPath,
-		"test-model",
-		nil,
-		"test-trace",
-		log,
+		mcpagent.WithServerName(testServerName),
+		mcpagent.WithTraceID("test-trace"),
+		mcpagent.WithLogger(log),
 		mcpagent.WithSelectedTools([]string{selectedTool}),
 		// NOT using WithCodeExecutionMode - this is normal mode
 	)
@@ -695,15 +694,14 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, log loggerv2.
 		configPath = viper.GetString("config")
 	}
 
+	// modelID is automatically extracted from llmModel
 	agentInstance, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
-		testServerName,
 		configPath,
-		"test-model",
-		nil,
-		"test-trace",
-		log,
+		mcpagent.WithServerName(testServerName),
+		mcpagent.WithTraceID("test-trace"),
+		mcpagent.WithLogger(log),
 		mcpagent.WithSelectedTools([]string{selectedTool}),
 		mcpagent.WithCodeExecutionMode(true), // Enable code execution mode
 	)
@@ -805,15 +803,14 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 	selectedTools := []string{fmt.Sprintf("%s:*", testServerName)}
 
 	// Create agent in normal mode
+	// modelID is automatically extracted from llmModel
 	normalAgent, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
-		testServerName,
 		configPath,
-		"test-model",
-		nil,
-		"test-trace-normal",
-		log,
+		mcpagent.WithServerName(testServerName),
+		mcpagent.WithTraceID("test-trace-normal"),
+		mcpagent.WithLogger(log),
 		mcpagent.WithSelectedTools(selectedTools),
 	)
 	if err != nil {
@@ -823,15 +820,14 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 	defer normalAgent.Close()
 
 	// Create agent in code execution mode
+	// modelID is automatically extracted from llmModel
 	codeExecAgent, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
-		testServerName,
 		configPath,
-		"test-model",
-		nil,
-		"test-trace-codeexec",
-		log,
+		mcpagent.WithServerName(testServerName),
+		mcpagent.WithTraceID("test-trace-codeexec"),
+		mcpagent.WithLogger(log),
 		mcpagent.WithSelectedTools(selectedTools),
 		mcpagent.WithCodeExecutionMode(true),
 	)

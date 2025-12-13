@@ -19,6 +19,10 @@ const (
 
 // Special server name constants
 const (
+	// AllServers indicates that all configured MCP servers should be connected
+	// This is the default behavior when no specific server is requested
+	AllServers = "all"
+
 	// NoServers indicates that no MCP servers should be connected
 	// This is used when an agent should work with pure LLM reasoning without any tools
 	NoServers = "NO_SERVERS"

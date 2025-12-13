@@ -385,6 +385,38 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
+			// 🔧 DEBUG: Log token usage for this LLM call
+			var cacheTokens int
+			var reasoningTokens int
+			if resp.Usage != nil {
+				if resp.Usage.CacheTokens != nil {
+					cacheTokens = *resp.Usage.CacheTokens
+				}
+				if resp.Usage.ReasoningTokens != nil {
+					reasoningTokens = *resp.Usage.ReasoningTokens
+				}
+			}
+			// Fall back to GenerationInfo if not in Usage
+			if (cacheTokens == 0 || reasoningTokens == 0) && resp.Choices[0].GenerationInfo != nil {
+				genInfo := resp.Choices[0].GenerationInfo
+				if cacheTokens == 0 {
+					cacheTokens = extractCacheTokens(genInfo)
+				}
+				if reasoningTokens == 0 && genInfo.ReasoningTokens != nil {
+					reasoningTokens = *genInfo.ReasoningTokens
+				}
+			}
+			v2Logger.Info("🔧 [TOKEN_USAGE] LLM call token usage",
+				loggerv2.Int("turn", turn+1),
+				loggerv2.String("model", a.ModelID),
+				loggerv2.Int("input_tokens", usage.InputTokens),
+				loggerv2.Int("output_tokens", usage.OutputTokens),
+				loggerv2.Int("total_tokens", usage.TotalTokens),
+				loggerv2.Int("cache_tokens", cacheTokens),
+				loggerv2.Int("reasoning_tokens", reasoningTokens),
+				loggerv2.Int("tool_calls", len(resp.Choices[0].ToolCalls)),
+				loggerv2.String("duration", time.Since(llmStartTime).String()))
+
 			a.EndLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
 				PromptTokens:     usage.InputTokens,
 				CompletionTokens: usage.OutputTokens,
@@ -910,6 +942,23 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 				startTime := time.Now()
 
+				// 🔧 DEBUG: Log tool call with arguments
+				toolType := "MCP"
+				if isVirtualTool(tc.FunctionCall.Name) {
+					toolType = "virtual"
+				} else if isCustomTool {
+					toolType = "custom"
+				}
+				argsJSON, _ := json.Marshal(args)
+				v2Logger.Debug("🔧 [TOOL_CALL] Tool called",
+					loggerv2.String("tool_name", tc.FunctionCall.Name),
+					loggerv2.String("tool_type", toolType),
+					loggerv2.String("server_name", serverName),
+					loggerv2.String("tool_call_id", tc.ID),
+					loggerv2.Int("turn", turn+1),
+					loggerv2.String("arguments", string(argsJSON)),
+					loggerv2.String("timeout", toolTimeout.String()))
+
 				// Add cache hit event during tool execution to show cached connection usage
 				if len(a.Tracers) > 0 && serverName != "" && serverName != "virtual-tools" {
 					// Emit connection cache hit event to show we're using cached MCP server connection
@@ -934,6 +983,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Check if this is a virtual tool
 				if isVirtualTool(tc.FunctionCall.Name) {
 					// Handle virtual tool execution
+					v2Logger.Debug("🔧 [TOOL_CALL] Executing virtual tool",
+						loggerv2.String("tool_name", tc.FunctionCall.Name))
 					resultText, toolErr := a.HandleVirtualTool(toolCtx, tc.FunctionCall.Name, args)
 					if toolErr != nil {
 						result = &mcp.CallToolResult{
@@ -980,6 +1031,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					}
 				} else {
 					// Handle regular MCP tool execution
+					v2Logger.Debug("🔧 [TOOL_CALL] Executing MCP tool",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("server_name", serverName))
 					result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
 				}
 
@@ -1003,6 +1057,16 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 				// Handle tool execution errors gracefully - provide feedback to LLM and continue
 				if toolErr != nil {
+					// 🔧 DEBUG: Log tool error
+					v2Logger.Debug("🔧 [TOOL_RESPONSE] Tool execution error",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("tool_type", toolType),
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("tool_call_id", tc.ID),
+						loggerv2.Int("turn", turn+1),
+						loggerv2.String("error", toolErr.Error()),
+						loggerv2.String("duration", duration.String()))
+
 					// 🔧 ENHANCED ERROR RECOVERY HANDLING
 					errorRecoveryHandler := NewErrorRecoveryHandler(a)
 
@@ -1049,6 +1113,22 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Get the tool result as string (without prefix)
 					resultText = mcpclient.ToolResultAsString(result)
+
+					// 🔧 DEBUG: Log tool response
+					resultPreview := resultText
+					if len(resultPreview) > 500 {
+						resultPreview = resultPreview[:500] + "... (truncated)"
+					}
+					v2Logger.Debug("🔧 [TOOL_RESPONSE] Tool response received",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("tool_type", toolType),
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("tool_call_id", tc.ID),
+						loggerv2.Int("turn", turn+1),
+						loggerv2.Int("result_length", len(resultText)),
+						loggerv2.Any("is_error", result.IsError),
+						loggerv2.String("duration", duration.String()),
+						loggerv2.String("result_preview", resultPreview))
 
 					// Ensure resultText is never empty when sending to LLM
 					// This is a safety check for all tool types (virtual, custom, MCP)

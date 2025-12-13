@@ -15,6 +15,8 @@ MCP Agent is a Go library that provides a complete framework for building AI age
 - **Code Execution Mode**: Execute Go code instead of JSON tool calls for complex workflows
 - **Smart Routing**: Dynamically filter tools based on conversation context
 - **Large Output Handling**: Automatically handle tool outputs that exceed context limits
+- **Structured Output**: Get structured data from LLM responses using fixed conversion or tool-based methods
+- **Custom Tools**: Register your own tools with the agent for extended functionality
 - **Observability**: Built-in tracing with Langfuse support
 - **Caching**: Intelligent caching of MCP server metadata and tool definitions
 
@@ -74,7 +76,21 @@ func main() {
 }
 ```
 
-See [examples/](examples/) for complete working examples.
+See [examples/](examples/) for complete working examples:
+
+- **[basic/](examples/basic/)** - Basic agent setup with single MCP server
+- **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with history
+- **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers
+- **[browser-automation/](examples/browser-automation/)** - Browser automation with Playwright
+- **[structured_output/](examples/structured_output/)** - Structured output examples
+  - **[fixed/](examples/structured_output/fixed/)** - Fixed conversion model (2 LLM calls)
+  - **[tool/](examples/structured_output/tool/)** - Tool-based model (1 LLM call)
+- **[custom_tools/](examples/custom_tools/)** - Register and use custom tools
+- **[code_execution/](examples/code_execution/)** - Code execution mode examples
+  - **[simple/](examples/code_execution/simple/)** - Basic code execution (no folder guards)
+  - **[browser-automation/](examples/code_execution/browser-automation/)** - Code execution with browser automation
+  - **[multi-mcp-server/](examples/code_execution/multi-mcp-server/)** - Code execution with tool filtering
+  - **[custom_tools/](examples/code_execution/custom_tools/)** - Custom tools in code execution mode
 
 ## 📚 Core Features
 
@@ -95,6 +111,18 @@ agent, err := mcpagent.NewAgent(
 Execute Go code instead of JSON tool calls for complex logic:
 
 ```go
+// Start HTTP server for tool execution (required)
+handlers := executor.NewExecutorHandlers(configPath, logger)
+mux := http.NewServeMux()
+mux.HandleFunc("/api/mcp/execute", handlers.HandleMCPExecute)
+mux.HandleFunc("/api/custom/execute", handlers.HandleCustomExecute)
+mux.HandleFunc("/api/virtual/execute", handlers.HandleVirtualExecute)
+
+server := &http.Server{Addr: "127.0.0.1:8000", Handler: mux}
+go server.ListenAndServe()
+defer server.Shutdown(ctx)
+
+// Create agent with code execution mode
 agent, err := mcpagent.NewAgent(
     ctx, llmModel, "", "config.json", "model-id",
     nil, "", nil,
@@ -103,7 +131,9 @@ agent, err := mcpagent.NewAgent(
 )
 ```
 
-The LLM can write Go programs that import and use MCP tools as native functions.
+The LLM can write Go programs that import and use MCP tools and custom tools as native functions. Custom tools are automatically generated as Go packages and accessible via HTTP API.
+
+**Note**: Code execution mode requires an HTTP server running (default port 8000, configurable via `MCP_API_URL` environment variable).
 
 ### 3. **Smart Routing**
 
@@ -142,7 +172,118 @@ Intelligent caching reduces connection times by 60-85%:
 // MCP_CACHE_TTL_MINUTES=10080 (7 days)
 ```
 
-### 6. **Observability**
+### 6. **Structured Output**
+
+Get structured data from LLM responses in two ways:
+
+**Fixed Conversion Model** (2 LLM calls - reliable):
+```go
+type Person struct {
+    Name  string `json:"name"`
+    Age   int    `json:"age"`
+    Email string `json:"email"`
+}
+
+person, err := agent.AskStructured[Person](
+    ctx,
+    "Create a person profile for John Doe, age 30, email john@example.com",
+    Person{},
+    schemaString,
+)
+```
+
+**Tool-Based Model** (1 LLM call - faster):
+```go
+result, err := agent.AskWithHistoryStructuredViaTool[Order](
+    ctx,
+    messages,
+    "submit_order",
+    "Submit an order with items",
+    orderSchema,
+)
+if result.HasStructuredOutput {
+    order := result.StructuredResult
+    // Use structured order data
+}
+```
+
+See [examples/structured_output/](examples/structured_output/) for complete examples.
+
+### 7. **Custom Tools**
+
+Register your own tools that work alongside MCP server tools. Custom tools work in both standard mode and code execution mode:
+
+**Standard Mode** (direct tool calls):
+```go
+// Define tool parameters (JSON schema)
+params := map[string]interface{}{
+    "type": "object",
+    "properties": map[string]interface{}{
+        "operation": map[string]interface{}{
+            "type": "string",
+            "enum": []string{"add", "subtract", "multiply", "divide"},
+        },
+        "a": map[string]interface{}{"type": "number"},
+        "b": map[string]interface{}{"type": "number"},
+    },
+    "required": []string{"operation", "a", "b"},
+}
+
+// Register the tool
+err := agent.RegisterCustomTool(
+    "calculator",
+    "Performs mathematical operations",
+    params,
+    calculatorFunction,
+    "utility", // category (required)
+)
+
+// Tool execution function
+func calculatorFunction(ctx context.Context, args map[string]interface{}) (string, error) {
+    // Extract and validate arguments
+    operation := args["operation"].(string)
+    a := args["a"].(float64)
+    b := args["b"].(float64)
+    
+    // Perform calculation
+    var result float64
+    switch operation {
+    case "add": result = a + b
+    case "subtract": result = a - b
+    // ...
+    }
+    
+    return fmt.Sprintf("Result: %.2f", result), nil
+}
+```
+
+**Code Execution Mode** (via generated Go code):
+```go
+// In code execution mode, custom tools are automatically:
+// 1. Generated as Go packages (e.g., data_tools, utility_tools)
+// 2. Accessible via HTTP API endpoint (/api/custom/execute)
+// 3. Included in tool structure JSON for LLM discovery
+
+// Register custom tool (same API)
+err := agent.RegisterCustomTool(
+    "get_weather",
+    "Gets weather data for a location",
+    weatherParams,
+    weatherFunction,
+    "data", // category
+)
+
+// LLM can use it in generated Go code:
+// import "data_tools"
+// result := data_tools.GetWeather(data_tools.GetWeatherParams{
+//     Location: "San Francisco",
+//     Unit: "fahrenheit",
+// })
+```
+
+See [examples/custom_tools/](examples/custom_tools/) for standard mode examples and [examples/code_execution/custom_tools/](examples/code_execution/custom_tools/) for code execution mode examples.
+
+### 8. **Observability**
 
 Built-in tracing with Langfuse support:
 
@@ -167,6 +308,67 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 - **[LLM Resilience](docs/llm_resilience.md)** - Error handling and fallbacks
 - **[Event System](docs/event_type_generation.md)** - Event architecture
 - **[Token Tracking](docs/token-usage-tracking.md)** - Usage monitoring
+
+## 📝 Examples
+
+Complete working examples are available in the [examples/](examples/) directory:
+
+### Basic Examples
+- **[basic/](examples/basic/)** - Simple agent setup with a single MCP server
+- **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with conversation history
+
+### Advanced Examples
+- **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers simultaneously
+- **[browser-automation/](examples/browser-automation/)** - Browser automation using Playwright MCP server
+
+### Structured Output Examples
+- **[structured_output/fixed/](examples/structured_output/fixed/)** - Fixed conversion model for structured output
+  - Uses `AskStructured()` method
+  - 2 LLM calls (text response + JSON conversion)
+  - More reliable, works with complex schemas
+  
+- **[structured_output/tool/](examples/structured_output/tool/)** - Tool-based model for structured output
+  - Uses `AskWithHistoryStructuredViaTool()` method
+  - 1 LLM call (tool call during conversation)
+  - Faster and more cost-effective
+
+### Custom Tools Example
+- **[custom_tools/](examples/custom_tools/)** - Register and use custom tools
+  - Register multiple custom tools with different categories
+  - Tools work alongside MCP server tools
+  - Examples: calculator, text formatter, weather simulator, text counter
+
+### Code Execution Examples
+- **[code_execution/simple/](examples/code_execution/simple/)** - Basic code execution mode
+  - LLM writes and executes Go code instead of JSON tool calls
+  - MCP tools are auto-generated as Go packages
+  - Supports complex logic: loops, conditionals, data transformations
+  - Security features: AST validation, isolated execution
+  - Examples: discover code files, use multiple MCP servers together
+  - No folder guards (simplest example)
+  - HTTP server required (default port 8000)
+
+- **[code_execution/browser-automation/](examples/code_execution/browser-automation/)** - Code execution with browser automation
+  - Combines code execution mode with Playwright MCP server
+  - Complex multi-step browser automation tasks
+  - Example: IPO analysis with web scraping and data collection
+
+- **[code_execution/multi-mcp-server/](examples/code_execution/multi-mcp-server/)** - Code execution with tool filtering
+  - Demonstrates tool filtering in code execution mode
+  - Uses `WithSelectedTools()` and `WithSelectedServers()` to filter available tools
+  - Example: Selective tool access across multiple MCP servers
+
+- **[code_execution/custom_tools/](examples/code_execution/custom_tools/)** - Custom tools in code execution mode
+  - Register custom tools that work in code execution mode
+  - Custom tools are auto-generated as Go packages
+  - Accessible via HTTP API endpoint (`/api/custom/execute`)
+  - Example: Weather tool accessible via generated Go code
+
+Each example includes:
+- Complete working code
+- README with detailed documentation
+- MCP server configuration
+- Setup instructions
 
 ## 🔧 Configuration
 
@@ -223,6 +425,9 @@ agent, err := mcpagent.NewAgent(
     // Tool selection
     mcpagent.WithSelectedTools([]string{"server1:tool1", "server2:*"}),
     mcpagent.WithSelectedServers([]string{"server1", "server2"}),
+    
+    // Custom tool registration (after agent creation)
+    // agent.RegisterCustomTool(name, description, params, execFunc, category)
 )
 ```
 

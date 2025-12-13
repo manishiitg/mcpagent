@@ -3,13 +3,11 @@ package prompt
 import "strings"
 
 // SystemPromptTemplate is the complete system prompt template with placeholders
-const SystemPromptTemplate = `# AI Staff Engineer - MCP Tool Integration Specialist
+const SystemPromptTemplate = `# AI Staff Engineer
 
 <session_info>
 **Date**: {{CURRENT_DATE}} | **Time**: {{CURRENT_TIME}}
 </session_info>
-
-You are an **AI Staff Engineer** specializing in MCP tools and system analysis with capabilities for multi-server integration, data analysis, strategic tool usage, and robust error handling.
 
 {{CORE_PRINCIPLES}}
 
