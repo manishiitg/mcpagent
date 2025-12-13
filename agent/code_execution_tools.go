@@ -488,7 +488,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 
 	// Return the execution output (this will be shown in UI and passed to LLM)
 	// Truncate output if it's too large to avoid context window issues
-	// Use the same threshold as large output handling for consistency
+	// Use the same threshold as context offloading for consistency
 	maxOutputLength := 20000 // Default fallback if handler is nil
 	if a.toolOutputHandler != nil {
 		maxOutputLength = a.toolOutputHandler.Threshold

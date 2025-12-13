@@ -12,20 +12,24 @@ import (
 )
 
 const (
-	// DefaultLargeToolOutputThreshold is the default character threshold for considering tool output as "large"
-	DefaultLargeToolOutputThreshold = 20000
+	// DefaultLargeToolOutputThreshold is the default token threshold for context offloading
+	// When tool outputs exceed this threshold (in tokens), they are offloaded to filesystem (offload context pattern)
+	// Note: The threshold is compared against token count, not character count
+	DefaultLargeToolOutputThreshold = 10000
 
-	// DefaultToolOutputFolder is the default folder for storing large tool outputs
+	// DefaultToolOutputFolder is the default folder for storing offloaded tool outputs
 	DefaultToolOutputFolder = "tool_output_folder"
 )
 
-// ToolOutputHandler handles large tool outputs by writing them to files
+// ToolOutputHandler implements context offloading by writing large tool outputs to files
+// This follows the "offload context" pattern where tool results are stored externally
+// and accessed on-demand to prevent context window overflow
 type ToolOutputHandler struct {
 	Threshold       int
 	OutputFolder    string
 	SessionID       string // Session ID for organizing files by conversation
 	Enabled         bool
-	ServerAvailable bool // Whether the read_large_tool_output server is available
+	ServerAvailable bool // Whether context offloading virtual tools are available
 }
 
 // NewToolOutputHandler creates a new tool output handler with default settings
@@ -50,20 +54,22 @@ func NewToolOutputHandlerWithConfig(threshold int, outputFolder string, sessionI
 	}
 }
 
-// IsLargeToolOutput checks if the tool output exceeds the threshold and server is available
+// IsLargeToolOutput checks if the tool output exceeds the threshold for context offloading
+// Returns true if output should be offloaded to filesystem (offload context pattern)
 func (h *ToolOutputHandler) IsLargeToolOutput(content string) bool {
 	contentLength := len(content)
 
 	if !h.Enabled {
 		return false
 	}
-	// Note: Server availability check is no longer needed since we use virtual tools
-	// Virtual tools handle large output processing directly without MCP server dependency
+	// Context offloading uses virtual tools that handle file operations directly
+	// No MCP server dependency needed for offloading
 
 	return contentLength > h.Threshold
 }
 
 // IsLargeToolOutputWithModel checks if the tool output exceeds the threshold using token counting
+// Used for context offloading to determine when to save outputs to filesystem
 func (h *ToolOutputHandler) IsLargeToolOutputWithModel(content string, model string) bool {
 	if !h.Enabled {
 		return false
@@ -88,7 +94,8 @@ func (h *ToolOutputHandler) CountTokensForModel(content string, model string) in
 	return len(tokens)
 }
 
-// WriteToolOutputToFile writes large tool output to a file and returns the file path
+// WriteToolOutputToFile offloads large tool output to filesystem (context offloading)
+// Returns the file path where the content was saved
 func (h *ToolOutputHandler) WriteToolOutputToFile(content, toolName string) (string, error) {
 	if !h.Enabled {
 		return "", fmt.Errorf("tool output handler is disabled")
@@ -187,10 +194,10 @@ FIRST %d CHARACTERS OF OUTPUT (50%% of threshold):
 
 Make sure to use the virtual tools next to read contents of this file in an efficient manner:
 
-Available virtual tools:
-- read_large_output - read specific characters from a large tool output file
-- search_large_output - search for regex patterns in large tool output files
-- query_large_output - execute jq queries on large JSON tool output files
+Available virtual tools for context offloading:
+- read_large_output - read specific characters from an offloaded tool output file
+- search_large_output - search for regex patterns in offloaded tool output files
+- query_large_output - execute jq queries on offloaded JSON tool output files
 
 Example: "Read characters 1-100 from %s" or "Search for 'error' in %s" or "Query '.name' from %s" (using jq)
 
@@ -215,7 +222,7 @@ func (h *ToolOutputHandler) GetToolOutputFolder() string {
 	return h.OutputFolder
 }
 
-// SetThreshold updates the threshold for large tool outputs
+// SetThreshold updates the threshold for context offloading (when to offload tool outputs)
 func (h *ToolOutputHandler) SetThreshold(threshold int) {
 	h.Threshold = threshold
 }
@@ -230,12 +237,12 @@ func (h *ToolOutputHandler) SetEnabled(enabled bool) {
 	h.Enabled = enabled
 }
 
-// SetServerAvailable sets whether the read_large_tool_output server is available
+// SetServerAvailable sets whether context offloading virtual tools are available
 func (h *ToolOutputHandler) SetServerAvailable(available bool) {
 	h.ServerAvailable = available
 }
 
-// IsServerAvailable returns whether the read_large_tool_output server is available
+// IsServerAvailable returns whether context offloading virtual tools are available
 func (h *ToolOutputHandler) IsServerAvailable() bool {
 	return h.ServerAvailable
 }

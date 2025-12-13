@@ -110,10 +110,48 @@ func WithToolChoice(toolChoice string) AgentOption {
 	}
 }
 
-// WithLargeOutputVirtualTools enables/disables large output virtual tools
+// WithLargeOutputVirtualTools enables/disables context offloading virtual tools
+// When enabled, large tool outputs are automatically offloaded to filesystem (offload context pattern)
 func WithLargeOutputVirtualTools(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.EnableLargeOutputVirtualTools = enabled
+	}
+}
+
+// WithLargeOutputThreshold sets the token threshold for context offloading
+// When tool outputs exceed this threshold (in tokens), they are offloaded to filesystem (offload context pattern)
+// Default is 10000 tokens if not set
+// Note: The threshold is compared against token count using tiktoken encoding, not character count
+func WithLargeOutputThreshold(threshold int) AgentOption {
+	return func(a *Agent) {
+		a.LargeOutputThreshold = threshold
+	}
+}
+
+// WithContextSummarization enables/disables context summarization
+// When enabled and SummarizeOnMaxTurns is true, conversation history is summarized when max turns is reached
+func WithContextSummarization(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.EnableContextSummarization = enabled
+		if enabled {
+			a.SummarizeOnMaxTurns = true // Default to true when enabled
+		}
+	}
+}
+
+// WithSummarizeOnMaxTurns enables/disables summarization when max turns is reached
+// Requires EnableContextSummarization to be true
+func WithSummarizeOnMaxTurns(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.SummarizeOnMaxTurns = enabled
+	}
+}
+
+// WithSummaryKeepLastMessages sets the number of recent messages to keep when summarizing
+// Default is 8 messages (roughly 3-4 turns)
+func WithSummaryKeepLastMessages(count int) AgentOption {
+	return func(a *Agent) {
+		a.SummaryKeepLastMessages = count
 	}
 }
 
@@ -274,11 +312,19 @@ type Agent struct {
 	// Provider information
 	provider llm.Provider
 
-	// Large tool output handling
+	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 
-	// Large output virtual tools configuration
+	// Context offloading configuration: enables virtual tools for accessing offloaded outputs
 	EnableLargeOutputVirtualTools bool
+
+	// Context offloading threshold: custom threshold for when to offload tool outputs (0 = use default)
+	LargeOutputThreshold int
+
+	// Context summarization configuration (see context_summarization.go)
+	EnableContextSummarization bool // Enable context summarization feature
+	SummarizeOnMaxTurns        bool // Summarize when max turns is reached
+	SummaryKeepLastMessages    int  // Number of recent messages to keep when summarizing (0 = use default)
 
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
@@ -476,6 +522,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		TraceID:                       "",                          // Default: empty trace ID
 		provider:                      "",                          // Will be set by caller
 		EnableLargeOutputVirtualTools: true,                        // Default to enabled
+		LargeOutputThreshold:          0,                           // Default: 0 means use default threshold (10000)
+		EnableContextSummarization:    false,                       // Default to disabled
+		SummarizeOnMaxTurns:           false,                       // Default to disabled
+		SummaryKeepLastMessages:       0,                           // Default: 0 means use default (8 messages)
 		Logger:                        loggerv2.NewDefault(),       // Default logger
 		customTools:                   make(map[string]CustomTool), // Initialize custom tools map
 
@@ -579,6 +629,12 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Initialize tool output handler
 	toolOutputHandler := NewToolOutputHandler()
+
+	// Apply custom threshold if set via WithLargeOutputThreshold option
+	if ag.LargeOutputThreshold > 0 {
+		toolOutputHandler.SetThreshold(ag.LargeOutputThreshold)
+		logger.Info("Context offloading threshold set", loggerv2.Int("threshold", ag.LargeOutputThreshold))
+	}
 
 	// Large output handling is now done via virtual tools, not MCP server
 	// Virtual tools are enabled by default and handle file operations directly
@@ -1346,19 +1402,25 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		}
 	}
 
-	// Initialize tool output handler
+	// Initialize tool output handler for context offloading
 	toolOutputHandler := NewToolOutputHandler()
 
-	// Large output handling is now done via virtual tools, not MCP server
+	// Apply custom threshold if set via WithLargeOutputThreshold option
+	if ag.LargeOutputThreshold > 0 {
+		toolOutputHandler.SetThreshold(ag.LargeOutputThreshold)
+		logger.Info("Context offloading threshold set", loggerv2.Int("threshold", ag.LargeOutputThreshold))
+	}
+
+	// Context offloading is done via virtual tools, not MCP server
 	// Virtual tools are enabled by default and handle file operations directly
 	toolOutputHandler.SetServerAvailable(true) // Always available with virtual tools
 
 	// Set session ID for organizing files by conversation
 	toolOutputHandler.SetSessionID(string(ag.TraceID))
 
-	// Debug logging for virtual tools availability (observability version)
+	// Debug logging for context offloading (observability version)
 	// Use the logger we created earlier
-	logger.Info("🔍 Large output handling via virtual tools (observability)",
+	logger.Info("🔍 Context offloading via virtual tools (observability)",
 		loggerv2.Any("virtual_tools_enabled", true),
 		loggerv2.Int("total_clients", len(clients)),
 		loggerv2.Any("client_names", getClientNames(clients)))

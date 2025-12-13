@@ -337,17 +337,17 @@ When answering questions:
 </tool_usage>`
 	}
 
-	// Build large output handling section (only for simple mode)
+	// Build context offloading section (only for simple mode)
 	var largeOutputHandlingSection string
 	if useCodeExecutionMode {
 		largeOutputHandlingSection = "" // Not available in code execution mode
 	} else {
 		largeOutputHandlingSection = `
-LARGE TOOL OUTPUT HANDLING:
-Large tool outputs (>1000 chars) are automatically saved to files. Use virtual tools to process them:
-- 'read_large_output': Read specific characters from saved files
-- 'search_large_output': Search for patterns in saved files  
-- 'query_large_output': Execute jq queries on JSON files`
+CONTEXT OFFLOADING:
+Large tool outputs (>1000 chars) are automatically offloaded to filesystem (offload context pattern). Use virtual tools to access them:
+- 'read_large_output': Read specific characters from offloaded files
+- 'search_large_output': Search for patterns in offloaded files  
+- 'query_large_output': Execute jq queries on offloaded JSON files`
 	}
 
 	// Always use Simple system prompt template

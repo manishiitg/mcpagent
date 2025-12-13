@@ -1166,17 +1166,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						}
 					}
 
-					// Check if this is a large tool output that should be written to file
+					// Context offloading: Check if tool output should be offloaded to filesystem
 					if a.toolOutputHandler != nil {
-						// Check if this is a large tool output that should be written to file
+						// Check if output exceeds threshold for context offloading
 						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
 
-							// Emit large tool output detection event
+							// Emit context offloading detection event
 							detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
 							detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
 							a.EmitTypedEvent(ctx, detectedEvent)
 
-							// Write large output to file
+							// Offload large output to filesystem (context offloading)
 							filePath, writeErr := a.toolOutputHandler.WriteToolOutputToFile(resultText, tc.FunctionCall.Name)
 							if writeErr == nil {
 								// Extract first 100 characters for Langfuse observability
@@ -1297,6 +1297,24 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Emit max turns reached event
 	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.MaxTurns, a.MaxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far. If your task is not complete, please provide a summary of what you have accomplished so far and what is missing.", string(a.AgentMode), time.Since(conversationStartTime))
 	a.EmitTypedEvent(ctx, maxTurnsEvent)
+
+	// Context summarization: summarize old history before final call
+	if ShouldSummarizeOnMaxTurns(a) {
+		keepLastMessages := GetSummaryKeepLastMessages(a)
+		v2Logger.Info("Summarizing conversation history before final call",
+			loggerv2.Int("keep_last_messages", keepLastMessages),
+			loggerv2.Int("total_messages", len(messages)))
+
+		summarizedMessages, err := rebuildMessagesWithSummary(a, ctx, messages, keepLastMessages)
+		if err != nil {
+			v2Logger.Warn("Failed to summarize conversation history, using original messages",
+				loggerv2.Error(err))
+		} else {
+			messages = summarizedMessages
+			v2Logger.Info("Conversation history summarized successfully",
+				loggerv2.Int("new_message_count", len(messages)))
+		}
+	}
 
 	// Add a user message asking for final answer
 	finalUserMessage := llmtypes.MessageContent{

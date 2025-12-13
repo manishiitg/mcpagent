@@ -72,6 +72,11 @@ const (
 	LargeToolOutputDetected    EventType = "large_tool_output_detected"
 	LargeToolOutputFileWritten EventType = "large_tool_output_file_written"
 
+	// Context summarization events
+	ContextSummarizationStarted   EventType = "context_summarization_started"
+	ContextSummarizationCompleted EventType = "context_summarization_completed"
+	ContextSummarizationError     EventType = "context_summarization_error"
+
 	// Large output event type aliases for backward compatibility
 	LargeToolOutputDetectedEventType          EventType = "large_tool_output_detected"
 	LargeToolOutputFileWrittenEventType       EventType = "large_tool_output_file_written"

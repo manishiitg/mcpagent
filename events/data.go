@@ -1212,6 +1212,90 @@ func NewLargeToolOutputFileWriteErrorEvent(toolName, error string, outputSize in
 	}
 }
 
+// =============================================================================
+// CONTEXT SUMMARIZATION EVENTS
+// =============================================================================
+
+// ContextSummarizationStartedEvent represents when context summarization begins
+type ContextSummarizationStartedEvent struct {
+	BaseEventData
+	OriginalMessageCount int `json:"original_message_count"`
+	KeepLastMessages     int `json:"keep_last_messages"`
+	DesiredSplitIndex    int `json:"desired_split_index"`
+}
+
+func (e *ContextSummarizationStartedEvent) GetEventType() EventType {
+	return ContextSummarizationStarted
+}
+
+// ContextSummarizationCompletedEvent represents successful completion of context summarization
+type ContextSummarizationCompletedEvent struct {
+	BaseEventData
+	OriginalMessageCount int    `json:"original_message_count"`
+	NewMessageCount      int    `json:"new_message_count"`
+	OldMessagesCount     int    `json:"old_messages_count"`
+	RecentMessagesCount  int    `json:"recent_messages_count"`
+	SummaryLength        int    `json:"summary_length"`
+	SafeSplitIndex       int    `json:"safe_split_index"`
+	DesiredSplitIndex    int    `json:"desired_split_index"`
+	Summary              string `json:"summary,omitempty"` // Optional: include summary in event
+}
+
+func (e *ContextSummarizationCompletedEvent) GetEventType() EventType {
+	return ContextSummarizationCompleted
+}
+
+// ContextSummarizationErrorEvent represents an error during context summarization
+type ContextSummarizationErrorEvent struct {
+	BaseEventData
+	Error                string `json:"error"`
+	OriginalMessageCount int    `json:"original_message_count"`
+	KeepLastMessages     int    `json:"keep_last_messages"`
+}
+
+func (e *ContextSummarizationErrorEvent) GetEventType() EventType {
+	return ContextSummarizationError
+}
+
+// Constructor functions for context summarization events
+func NewContextSummarizationStartedEvent(originalCount, keepLast, desiredSplit int) *ContextSummarizationStartedEvent {
+	return &ContextSummarizationStartedEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		OriginalMessageCount: originalCount,
+		KeepLastMessages:     keepLast,
+		DesiredSplitIndex:    desiredSplit,
+	}
+}
+
+func NewContextSummarizationCompletedEvent(originalCount, newCount, oldCount, recentCount, summaryLength, safeSplit, desiredSplit int, summary string) *ContextSummarizationCompletedEvent {
+	return &ContextSummarizationCompletedEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		OriginalMessageCount: originalCount,
+		NewMessageCount:      newCount,
+		OldMessagesCount:     oldCount,
+		RecentMessagesCount:  recentCount,
+		SummaryLength:        summaryLength,
+		SafeSplitIndex:       safeSplit,
+		DesiredSplitIndex:    desiredSplit,
+		Summary:              summary,
+	}
+}
+
+func NewContextSummarizationErrorEvent(err string, originalCount, keepLast int) *ContextSummarizationErrorEvent {
+	return &ContextSummarizationErrorEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Error:                err,
+		OriginalMessageCount: originalCount,
+		KeepLastMessages:     keepLast,
+	}
+}
+
 func NewLargeToolOutputServerUnavailableEvent(toolName string, outputSize int, serverName, reason string) *LargeToolOutputServerUnavailableEvent {
 	return &LargeToolOutputServerUnavailableEvent{
 		BaseEventData: BaseEventData{
