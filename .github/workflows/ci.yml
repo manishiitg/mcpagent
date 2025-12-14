@@ -13,24 +13,22 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout mcpagent
       uses: actions/checkout@v4
+      with:
+        path: mcpagent
+    
+    - name: Checkout multi-llm-provider-go
+      uses: actions/checkout@v4
+      with:
+        repository: manishiitg/multi-llm-provider-go
+        path: multi-llm-provider-go
     
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.24'
-        cache-dependency-path: go.sum
-    
-    - name: Setup multi-llm-provider-go dependency
-      run: |
-        # Remove the replace directive that points to local path
-        sed -i '/^replace github.com\/manishiitg\/multi-llm-provider-go => \.\.\/multi-llm-provider-go$/d' go.mod
-        # Fetch the latest version from main branch
-        go get github.com/manishiitg/multi-llm-provider-go@main
-        go mod tidy
-        echo "Updated go.mod:"
-        cat go.mod | grep -A 2 -B 2 "multi-llm-provider-go" || echo "No multi-llm-provider-go references found"
+        cache-dependency-path: mcpagent/go.sum
     
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v7
@@ -38,7 +36,7 @@ jobs:
         # Use v2.4.0 or later for Go 1.24 support
         version: v2.4.0
         args: --timeout=5m
-        working-directory: ./
+        working-directory: mcpagent
 
   security-scan:
     name: Secret Scanning with Gitleaks
@@ -80,26 +78,25 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout mcpagent
       uses: actions/checkout@v4
+      with:
+        path: mcpagent
+    
+    - name: Checkout multi-llm-provider-go
+      uses: actions/checkout@v4
+      with:
+        repository: manishiitg/multi-llm-provider-go
+        path: multi-llm-provider-go
     
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.24'
-        cache-dependency-path: go.sum
-    
-    - name: Setup multi-llm-provider-go dependency
-      run: |
-        # Remove the replace directive that points to local path
-        sed -i '/^replace github.com\/manishiitg\/multi-llm-provider-go => \.\.\/multi-llm-provider-go$/d' go.mod
-        # Fetch the latest version from main branch
-        go get github.com/manishiitg/multi-llm-provider-go@main
-        go mod tidy
-        echo "Updated go.mod:"
-        cat go.mod | grep -A 2 -B 2 "multi-llm-provider-go" || echo "No multi-llm-provider-go references found"
+        cache-dependency-path: mcpagent/go.sum
     
     - name: Run tests
+      working-directory: mcpagent
       run: go test ./... -v
 
   build:
@@ -107,33 +104,34 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout mcpagent
       uses: actions/checkout@v4
+      with:
+        path: mcpagent
+    
+    - name: Checkout multi-llm-provider-go
+      uses: actions/checkout@v4
+      with:
+        repository: manishiitg/multi-llm-provider-go
+        path: multi-llm-provider-go
     
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.24'
-        cache-dependency-path: go.sum
+        cache-dependency-path: mcpagent/go.sum
     
     - name: Verify checkout and list directories
+      working-directory: mcpagent
       run: |
         pwd
         ls -la
         ls -la cmd/ || echo "cmd directory not found"
         ls -la cmd/testing/ || echo "cmd/testing directory not found"
-    
-    - name: Setup multi-llm-provider-go dependency
-      run: |
-        # Remove the replace directive that points to local path
-        sed -i '/^replace github.com\/manishiitg\/multi-llm-provider-go => \.\.\/multi-llm-provider-go$/d' go.mod
-        # Fetch the latest version from main branch
-        go get github.com/manishiitg/multi-llm-provider-go@main
-        go mod tidy
-        echo "Updated go.mod:"
-        cat go.mod | grep -A 2 -B 2 "multi-llm-provider-go" || echo "No multi-llm-provider-go references found"
+        ls -la ../multi-llm-provider-go || echo "multi-llm-provider-go not found"
     
     - name: Build binary
+      working-directory: mcpagent
       run: |
         pwd
         ls -la cmd/
