@@ -559,6 +559,16 @@ type TokenUsageEvent struct {
 	// OpenRouter cache information
 	CacheDiscount   float64 `json:"cache_discount,omitempty"`
 	ReasoningTokens int     `json:"reasoning_tokens,omitempty"`
+	// Pricing fields (in USD)
+	InputCost    float64 `json:"input_cost_usd,omitempty"`
+	OutputCost   float64 `json:"output_cost_usd,omitempty"`
+	ReasoningCost float64 `json:"reasoning_cost_usd,omitempty"`
+	CacheCost    float64 `json:"cache_cost_usd,omitempty"`
+	TotalCost    float64 `json:"total_cost_usd,omitempty"`
+	// Context window tracking
+	ContextWindowUsage int     `json:"context_window_usage,omitempty"`
+	ModelContextWindow int     `json:"model_context_window,omitempty"`
+	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"`
 	// Raw GenerationInfo for debugging
 	GenerationInfo map[string]interface{} `json:"generation_info,omitempty"`
 }
@@ -598,8 +608,9 @@ type ToolContext struct {
 // SystemPromptEvent represents a system prompt being used
 type SystemPromptEvent struct {
 	BaseEventData
-	Content string `json:"content"`
-	Turn    int    `json:"turn"`
+	Content    string `json:"content"`
+	Turn       int    `json:"turn"`
+	TokenCount int    `json:"token_count,omitempty"`
 }
 
 func (e *SystemPromptEvent) GetEventType() EventType {
@@ -1081,8 +1092,21 @@ func NewSystemPromptEvent(content string, turn int) *SystemPromptEvent {
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Content: content,
-		Turn:    turn,
+		Content:    content,
+		Turn:       turn,
+		TokenCount: 0, // Will be set by caller if token counting is available
+	}
+}
+
+// NewSystemPromptEventWithTokens creates a new SystemPromptEvent with token count
+func NewSystemPromptEventWithTokens(content string, turn int, tokenCount int) *SystemPromptEvent {
+	return &SystemPromptEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Content:    content,
+		Turn:       turn,
+		TokenCount: tokenCount,
 	}
 }
 
@@ -1209,6 +1233,100 @@ func NewLargeToolOutputFileWriteErrorEvent(toolName, error string, outputSize in
 		OutputSize:   outputSize,
 		OutputFolder: "tool_output_folder", // Default
 		FallbackUsed: true,
+	}
+}
+
+// =============================================================================
+// CONTEXT SUMMARIZATION EVENTS
+// =============================================================================
+
+// ContextSummarizationStartedEvent represents when context summarization begins
+type ContextSummarizationStartedEvent struct {
+	BaseEventData
+	OriginalMessageCount int `json:"original_message_count"`
+	KeepLastMessages     int `json:"keep_last_messages"`
+	DesiredSplitIndex    int `json:"desired_split_index"`
+}
+
+func (e *ContextSummarizationStartedEvent) GetEventType() EventType {
+	return ContextSummarizationStarted
+}
+
+// ContextSummarizationCompletedEvent represents successful completion of context summarization
+type ContextSummarizationCompletedEvent struct {
+	BaseEventData
+	OriginalMessageCount int    `json:"original_message_count"`
+	NewMessageCount      int    `json:"new_message_count"`
+	OldMessagesCount     int    `json:"old_messages_count"`
+	RecentMessagesCount  int    `json:"recent_messages_count"`
+	SummaryLength        int    `json:"summary_length"`
+	SafeSplitIndex       int    `json:"safe_split_index"`
+	DesiredSplitIndex    int    `json:"desired_split_index"`
+	Summary              string `json:"summary,omitempty"`       // Optional: include summary in event
+	PromptTokens         int    `json:"prompt_tokens,omitempty"` // Token usage for summarization
+	CompletionTokens     int    `json:"completion_tokens,omitempty"`
+	TotalTokens          int    `json:"total_tokens,omitempty"`
+	CacheTokens          int    `json:"cache_tokens,omitempty"`     // Cached tokens used
+	ReasoningTokens      int    `json:"reasoning_tokens,omitempty"` // Reasoning tokens (for models like gpt-5.1)
+}
+
+func (e *ContextSummarizationCompletedEvent) GetEventType() EventType {
+	return ContextSummarizationCompleted
+}
+
+// ContextSummarizationErrorEvent represents an error during context summarization
+type ContextSummarizationErrorEvent struct {
+	BaseEventData
+	Error                string `json:"error"`
+	OriginalMessageCount int    `json:"original_message_count"`
+	KeepLastMessages     int    `json:"keep_last_messages"`
+}
+
+func (e *ContextSummarizationErrorEvent) GetEventType() EventType {
+	return ContextSummarizationError
+}
+
+// Constructor functions for context summarization events
+func NewContextSummarizationStartedEvent(originalCount, keepLast, desiredSplit int) *ContextSummarizationStartedEvent {
+	return &ContextSummarizationStartedEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		OriginalMessageCount: originalCount,
+		KeepLastMessages:     keepLast,
+		DesiredSplitIndex:    desiredSplit,
+	}
+}
+
+func NewContextSummarizationCompletedEvent(originalCount, newCount, oldCount, recentCount, summaryLength, safeSplit, desiredSplit int, summary string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int) *ContextSummarizationCompletedEvent {
+	return &ContextSummarizationCompletedEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		OriginalMessageCount: originalCount,
+		NewMessageCount:      newCount,
+		OldMessagesCount:     oldCount,
+		RecentMessagesCount:  recentCount,
+		SummaryLength:        summaryLength,
+		SafeSplitIndex:       safeSplit,
+		DesiredSplitIndex:    desiredSplit,
+		Summary:              summary,
+		PromptTokens:         promptTokens,
+		CompletionTokens:     completionTokens,
+		TotalTokens:          totalTokens,
+		CacheTokens:          cacheTokens,
+		ReasoningTokens:      reasoningTokens,
+	}
+}
+
+func NewContextSummarizationErrorEvent(err string, originalCount, keepLast int) *ContextSummarizationErrorEvent {
+	return &ContextSummarizationErrorEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Error:                err,
+		OriginalMessageCount: originalCount,
+		KeepLastMessages:     keepLast,
 	}
 }
 
@@ -1865,46 +1983,6 @@ func (e *OrchestratorAgentErrorEvent) GetEventType() EventType {
 	return OrchestratorAgentError
 }
 
-// StepTokenUsageEvent represents token usage summary for a workflow step
-type StepTokenUsageEvent struct {
-	BaseEventData
-	Phase                 string `json:"phase"`                // e.g., "execution"
-	Step                  int    `json:"step"`                 // step index (0-based)
-	StepTitle             string `json:"step_title,omitempty"` // optional step title for display
-	PromptTokens          int    `json:"prompt_tokens"`
-	CompletionTokens      int    `json:"completion_tokens"`
-	TotalTokens           int    `json:"total_tokens"`
-	CacheTokens           int    `json:"cache_tokens"`
-	ReasoningTokens       int    `json:"reasoning_tokens"`
-	LLMCallCount          int    `json:"llm_call_count"`
-	CacheEnabledCallCount int    `json:"cache_enabled_call_count"`
-}
-
-func (e *StepTokenUsageEvent) GetEventType() EventType {
-	return StepTokenUsage
-}
-
-// NewStepTokenUsageEvent creates a new StepTokenUsageEvent
-func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) *StepTokenUsageEvent {
-	return &StepTokenUsageEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Phase:                 phase,
-		Step:                  step,
-		StepTitle:             stepTitle,
-		PromptTokens:          promptTokens,
-		CompletionTokens:      completionTokens,
-		TotalTokens:           totalTokens,
-		CacheTokens:           cacheTokens,
-		ReasoningTokens:       reasoningTokens,
-		LLMCallCount:          llmCallCount,
-		CacheEnabledCallCount: cacheEnabledCallCount,
-	}
-}
-
-// Human Verification Events
-
 type HumanVerificationResponseEvent struct {
 	BaseEventData
 	SessionID        string `json:"session_id"`
@@ -1968,71 +2046,87 @@ type TodoStep struct {
 	FailurePatterns     []string `json:"failure_patterns,omitempty"` // what failed (includes tools to avoid)
 }
 
-// TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
-type TodoStepsExtractedEvent struct {
-	BaseEventData
-	TotalStepsExtracted int        `json:"total_steps_extracted"`
-	ExtractedSteps      []TodoStep `json:"extracted_steps"`
-	ExtractionMethod    string     `json:"extraction_method"`
-	PlanSource          string     `json:"plan_source"` // "existing_plan" or "new_plan"
-}
-
-func (e *TodoStepsExtractedEvent) GetEventType() EventType {
-	return TodoStepsExtracted
-}
-
 // BranchStepProgress tracks branch execution progress for conditional steps
+// Note: This is kept here for backward compatibility, but the workflow package uses its own version
 type BranchStepProgress struct {
 	BranchExecuted string   `json:"branch_executed"` // "if_true" or "if_false"
 	CompletedSteps []string `json:"completed_steps"` // e.g., ["step-3-if-true-0", "step-3-if-true-1"]
 }
 
-// StepProgressUpdatedEvent represents the event when step progress is updated (steps_done.json changes)
-type StepProgressUpdatedEvent struct {
+// StepTokenUsageEvent represents token usage summary for a workflow step
+// Note: This is kept here for base_orchestrator_tokens.go which is in a different package
+type StepTokenUsageEvent struct {
 	BaseEventData
-	CompletedStepIndices []int                      `json:"completed_step_indices"` // 0-based indices of completed steps
-	TotalSteps           int                        `json:"total_steps"`            // Total number of steps in the plan
-	WorkspacePath        string                     `json:"workspace_path"`         // Workspace path for file operations
-	RunFolder            string                     `json:"run_folder"`             // Run folder name (e.g., "iteration-1")
-	LastCompletedStep    int                        `json:"last_completed_step"`    // Most recently completed step index (-1 if unknown)
-	BranchSteps          map[int]BranchStepProgress `json:"branch_steps,omitempty"` // Branch step progress for conditional steps
+	Phase                 string `json:"phase"`                // e.g., "execution"
+	Step                  int    `json:"step"`                 // step index (0-based)
+	StepTitle             string `json:"step_title,omitempty"` // optional step title for display
+	PromptTokens          int    `json:"prompt_tokens"`
+	CompletionTokens      int    `json:"completion_tokens"`
+	TotalTokens           int    `json:"total_tokens"`
+	CacheTokens           int    `json:"cache_tokens"`
+	ReasoningTokens       int    `json:"reasoning_tokens"`
+	LLMCallCount          int    `json:"llm_call_count"`
+	CacheEnabledCallCount int    `json:"cache_enabled_call_count"`
+	// Pricing fields (in USD)
+	InputCost    float64 `json:"input_cost_usd,omitempty"`
+	OutputCost   float64 `json:"output_cost_usd,omitempty"`
+	ReasoningCost float64 `json:"reasoning_cost_usd,omitempty"`
+	CacheCost    float64 `json:"cache_cost_usd,omitempty"`
+	TotalCost    float64 `json:"total_cost_usd,omitempty"`
+	// Context window tracking
+	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"`
 }
 
-func (e *StepProgressUpdatedEvent) GetEventType() EventType {
-	return StepProgressUpdated
+func (e *StepTokenUsageEvent) GetEventType() EventType {
+	return StepTokenUsage
 }
 
-// StepStartedEvent represents the event when a step execution starts
-type StepStartedEvent struct {
-	BaseEventData
-	StepID        string `json:"step_id"`        // Step ID from plan
-	StepIndex     int    `json:"step_index"`     // 0-based step index
-	StepTitle     string `json:"step_title"`     // Step title
-	StepPath      string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep  bool   `json:"is_branch_step"` // Whether this is a branch step
-	RunFolder     string `json:"run_folder"`     // Run folder name (e.g., "iteration-1")
-	WorkspacePath string `json:"workspace_path"` // Workspace path for file operations
+// NewStepTokenUsageEvent creates a new StepTokenUsageEvent
+func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) *StepTokenUsageEvent {
+	return &StepTokenUsageEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Phase:                 phase,
+		Step:                  step,
+		StepTitle:             stepTitle,
+		PromptTokens:          promptTokens,
+		CompletionTokens:      completionTokens,
+		TotalTokens:           totalTokens,
+		CacheTokens:           cacheTokens,
+		ReasoningTokens:       reasoningTokens,
+		LLMCallCount:          llmCallCount,
+		CacheEnabledCallCount: cacheEnabledCallCount,
+	}
 }
 
-func (e *StepStartedEvent) GetEventType() EventType {
-	return StepExecutionStart
-}
-
-// StepFinishedEvent represents the event when a step execution completes successfully
-type StepFinishedEvent struct {
-	BaseEventData
-	StepID       string `json:"step_id"`        // Step ID from plan
-	StepIndex    int    `json:"step_index"`     // 0-based step index
-	StepTitle    string `json:"step_title"`     // Step title
-	StepPath     string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep bool   `json:"is_branch_step"` // Whether this is a branch step
-}
-
-func (e *StepFinishedEvent) GetEventType() EventType {
-	return StepExecutionEnd
+// NewStepTokenUsageEventWithPricing creates a new StepTokenUsageEvent with pricing and context usage
+func NewStepTokenUsageEventWithPricing(phase string, step int, stepTitle string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int, inputCost, outputCost, reasoningCost, cacheCost, totalCost float64, contextUsagePercent float64) *StepTokenUsageEvent {
+	return &StepTokenUsageEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Phase:                 phase,
+		Step:                  step,
+		StepTitle:             stepTitle,
+		PromptTokens:          promptTokens,
+		CompletionTokens:      completionTokens,
+		TotalTokens:           totalTokens,
+		CacheTokens:           cacheTokens,
+		ReasoningTokens:       reasoningTokens,
+		LLMCallCount:          llmCallCount,
+		CacheEnabledCallCount: cacheEnabledCallCount,
+		InputCost:             inputCost,
+		OutputCost:            outputCost,
+		ReasoningCost:         reasoningCost,
+		CacheCost:             cacheCost,
+		TotalCost:             totalCost,
+		ContextUsagePercent:   contextUsagePercent,
+	}
 }
 
 // StepFailedEvent represents the event when a step execution fails
+// Note: This is kept here for base_orchestrator_events.go which is in a different package
 type StepFailedEvent struct {
 	BaseEventData
 	StepID       string `json:"step_id"`        // Step ID from plan
@@ -2069,54 +2163,21 @@ func (e *LearningSkippedEvent) GetEventType() EventType {
 // TempLLMSkippedEvent represents the event when temp LLM override is skipped due to learnings folder having files
 type TempLLMSkippedEvent struct {
 	BaseEventData
-	StepID          string `json:"step_id"`                     // Step ID from plan (if available)
-	StepIndex       int    `json:"step_index"`                  // 0-based step index
-	StepTitle       string `json:"step_title,omitempty"`        // Step title (if available)
-	StepPath        string `json:"step_path"`                   // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep    bool   `json:"is_branch_step"`              // Whether this is a branch step
-	Reason          string `json:"reason"`                      // Reason for skipping (e.g., "learnings_folder_has_files")
-	TempLLMProvider string `json:"temp_llm_provider,omitempty"` // Temp override LLM provider that was skipped
-	TempLLMModel    string `json:"temp_llm_model,omitempty"`    // Temp override LLM model that was skipped
-	LearningsPath   string `json:"learnings_path"`              // Path to learnings folder that has files
-	RunFolder       string `json:"run_folder"`                  // Run folder name (e.g., "iteration-1")
-	WorkspacePath   string `json:"workspace_path"`              // Workspace path
+	StepID          string `json:"step_id"`
+	StepIndex       int    `json:"step_index"`
+	StepTitle       string `json:"step_title"`
+	StepPath        string `json:"step_path"`
+	IsBranchStep    bool   `json:"is_branch_step"`
+	Reason          string `json:"reason"`
+	TempLLMProvider string `json:"temp_llm_provider,omitempty"`
+	TempLLMModel    string `json:"temp_llm_model,omitempty"`
+	LearningsPath   string `json:"learnings_path,omitempty"`
+	RunFolder       string `json:"run_folder"`
+	WorkspacePath   string `json:"workspace_path"`
 }
 
 func (e *TempLLMSkippedEvent) GetEventType() EventType {
 	return TempLLMSkipped
-}
-
-// Variable represents a single variable definition extracted from objective
-type Variable struct {
-	Name        string `json:"name"`        // e.g., "AWS_ACCOUNT_ID"
-	Value       string `json:"value"`       // Original value from objective
-	Description string `json:"description"` // e.g., "AWS account number for deployment"
-}
-
-// VariablesExtractedEvent represents the event when variables are extracted from objective
-type VariablesExtractedEvent struct {
-	BaseEventData
-	Variables          []Variable `json:"variables"`
-	TemplatedObjective string     `json:"templated_objective"`
-	WorkspacePath      string     `json:"workspace_path"`       // Workspace path for file operations (required)
-	RunFolder          string     `json:"run_folder,omitempty"` // Run folder name for run-specific configs
-}
-
-func (e *VariablesExtractedEvent) GetEventType() EventType {
-	return VariablesExtracted
-}
-
-// IndependentStepsSelectedEvent represents the event when independent steps are selected for parallel execution
-type IndependentStepsSelectedEvent struct {
-	BaseEventData
-	StepIndices    []int    `json:"step_indices"`    // Indices of steps selected for parallel execution
-	StepTitles     []string `json:"step_titles"`     // Titles of selected steps
-	TotalSteps     int      `json:"total_steps"`     // Total number of steps in plan
-	ExecutionBatch int      `json:"execution_batch"` // Which batch of parallel execution this is
-}
-
-func (e *IndependentStepsSelectedEvent) GetEventType() EventType {
-	return IndependentStepsSelected
 }
 
 // StructuredOutputStartEvent represents the start of structured output extraction
@@ -2213,8 +2274,8 @@ func (e *StreamingErrorEvent) GetEventType() EventType {
 type StreamingProgressEvent struct {
 	BaseEventData
 	ChunksReceived int    `json:"chunks_received"`
-	BytesReceived  int    `json:"bytes_received"`
-	ElapsedTime    string `json:"elapsed_time,omitempty"`
+	TotalChunks    int    `json:"total_chunks,omitempty"`
+	Progress       string `json:"progress,omitempty"` // e.g., "50%"
 }
 
 func (e *StreamingProgressEvent) GetEventType() EventType {
@@ -2234,10 +2295,6 @@ type StreamingConnectionLostEvent struct {
 func (e *StreamingConnectionLostEvent) GetEventType() EventType {
 	return StreamingConnectionLost
 }
-
-// =============================================================================
-// CACHE EVENTS
-// =============================================================================
 
 // CacheHitEvent represents a cache hit
 type CacheHitEvent struct {

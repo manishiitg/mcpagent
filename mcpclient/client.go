@@ -580,7 +580,7 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 					loggerv2.String("timeout", "15m"))
 			}
 
-			logger.Debug("Attempting connection for server", loggerv2.String("server", name))
+			logger.Info("Connecting to MCP server", loggerv2.String("server", name))
 			connectStartTime := time.Now()
 
 			if err := client.ConnectWithRetry(connCtx); err != nil {

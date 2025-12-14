@@ -59,21 +59,22 @@ func validateJqQuery(query string) error {
 	return nil
 }
 
-// CreateLargeOutputVirtualTools creates virtual tools for large tool output handling
+// CreateLargeOutputVirtualTools creates virtual tools for context offloading
+// These tools allow the LLM to access offloaded tool outputs on-demand
 func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
-	// Check if large output virtual tools are enabled
+	// Check if context offloading virtual tools are enabled
 	if !a.EnableLargeOutputVirtualTools {
 		return []llmtypes.Tool{}
 	}
 
 	var virtualTools []llmtypes.Tool
 
-	// Add read_large_output tool
+	// Add read_large_output tool (for context offloading)
 	readLargeOutputTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_large_output",
-			Description: "Read specific characters from a large tool output file",
+			Description: "Read specific characters from an offloaded tool output file (context offloading)",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -96,12 +97,12 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 	}
 	virtualTools = append(virtualTools, readLargeOutputTool)
 
-	// Add search_large_output tool
+	// Add search_large_output tool (for context offloading)
 	searchLargeOutputTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "search_large_output",
-			Description: "Search for regex patterns in large tool output files",
+			Description: "Search for regex patterns in offloaded tool output files (context offloading)",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -130,12 +131,12 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 	}
 	virtualTools = append(virtualTools, searchLargeOutputTool)
 
-	// Add query_large_output tool
+	// Add query_large_output tool (for context offloading)
 	queryLargeOutputTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "query_large_output",
-			Description: "Execute jq queries on large JSON tool output files",
+			Description: "Execute jq queries on offloaded JSON tool output files (context offloading)",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -167,11 +168,12 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 	return virtualTools
 }
 
-// HandleLargeOutputVirtualTool handles large output virtual tool execution
+// HandleLargeOutputVirtualTool handles context offloading virtual tool execution
+// These tools allow accessing offloaded tool outputs on-demand
 func (a *Agent) HandleLargeOutputVirtualTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
-	// Check if large output virtual tools are enabled
+	// Check if context offloading virtual tools are enabled
 	if !a.EnableLargeOutputVirtualTools {
-		return "", fmt.Errorf("large output virtual tools are disabled")
+		return "", fmt.Errorf("context offloading virtual tools are disabled")
 	}
 
 	switch toolName {
@@ -182,11 +184,11 @@ func (a *Agent) HandleLargeOutputVirtualTool(ctx context.Context, toolName strin
 	case "query_large_output":
 		return a.handleQueryLargeOutput(ctx, args)
 	default:
-		return "", fmt.Errorf("unknown large output virtual tool: %s", toolName)
+		return "", fmt.Errorf("unknown context offloading virtual tool: %s", toolName)
 	}
 }
 
-// handleReadLargeOutput handles the read_large_output virtual tool
+// handleReadLargeOutput handles the read_large_output virtual tool (context offloading)
 func (a *Agent) handleReadLargeOutput(ctx context.Context, args map[string]interface{}) (string, error) {
 	filename, ok := args["filename"].(string)
 	if !ok {
@@ -250,7 +252,7 @@ func (a *Agent) handleReadLargeOutput(ctx context.Context, args map[string]inter
 	return result, nil
 }
 
-// handleSearchLargeOutput handles the search_large_output virtual tool
+// handleSearchLargeOutput handles the search_large_output virtual tool (context offloading)
 func (a *Agent) handleSearchLargeOutput(ctx context.Context, args map[string]interface{}) (string, error) {
 	filename, ok := args["filename"].(string)
 	if !ok {
@@ -300,7 +302,7 @@ func (a *Agent) handleSearchLargeOutput(ctx context.Context, args map[string]int
 	return results, nil
 }
 
-// handleQueryLargeOutput handles the query_large_output virtual tool
+// handleQueryLargeOutput handles the query_large_output virtual tool (context offloading)
 func (a *Agent) handleQueryLargeOutput(ctx context.Context, args map[string]interface{}) (string, error) {
 	filename, ok := args["filename"].(string)
 	if !ok {
@@ -350,7 +352,7 @@ func (a *Agent) handleQueryLargeOutput(ctx context.Context, args map[string]inte
 	return result, nil
 }
 
-// BuildLargeOutputFilePath builds the full path to a large output file
+// BuildLargeOutputFilePath builds the full path to an offloaded tool output file (context offloading)
 // Accepts either:
 // - Full relative path: "tool_output_folder/session-id/filename.txt" (use directly)
 // - Just filename: "tool_20250721_091511_tavily-search.json" (build from current session)

@@ -41,8 +41,8 @@ You can configure custom fallback chains via the `WithCrossProviderFallback` opt
 ```go
 agent, err := mcpagent.NewAgent(..., 
     mcpagent.WithCrossProviderFallback(&mcpagent.CrossProviderFallback{
-        Provider: "openai",
-        Models:   []string{"gpt-4o", "gpt-4-turbo"},
+        Provider: string(llm.ProviderOpenAI),
+        Models:   []string{openai.ModelGPT4O, openai.ModelGPT4Turbo},
     }),
 )
 ```

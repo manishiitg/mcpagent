@@ -86,8 +86,8 @@ Creates a test LLM instance with the specified configuration.
 
 ```go
 llm, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
-    Provider: "openai",
-    ModelID:  "gpt-4.1-mini",
+    Provider: string(llm.ProviderOpenAI),
+    ModelID:  openai.ModelGPT41Mini,
     Logger:   logger,
 })
 ```
@@ -192,7 +192,7 @@ if err != nil {
 
 // Create LLM
 llm, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
-    Provider: "openai",
+    Provider: string(llm.ProviderOpenAI),
     Logger:   logger,
 })
 if err != nil {

@@ -1,4 +1,4 @@
-.PHONY: help lint lint-fix install-linter test build clean
+.PHONY: help lint lint-fix install-linter test build clean install-act test-ci test-ci-job list-ci-jobs
 
 # Default target
 help:
@@ -9,6 +9,12 @@ help:
 	@echo "  make test        - Run Go tests"
 	@echo "  make build       - Build the project"
 	@echo "  make clean       - Clean build artifacts"
+	@echo ""
+	@echo "GitHub Actions (local testing with act):"
+	@echo "  make install-act - Install act (tool to run GitHub Actions locally)"
+	@echo "  make test-ci     - Run all CI jobs locally"
+	@echo "  make test-ci-job JOB=<job-name> - Run a specific CI job (e.g., JOB=lint)"
+	@echo "  make list-ci-jobs - List available CI workflows and jobs"
 
 # Install golangci-lint
 install-linter:
@@ -37,10 +43,53 @@ test:
 # Build the project
 build:
 	@echo "Building project..."
-	@go build ./...
+	@go build -o bin/mcpagent-test ./cmd/testing
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
+	@rm -rf bin/
 	@go clean ./...
+
+# Install act (tool to run GitHub Actions locally)
+install-act:
+	@echo "Installing act..."
+	@if command -v brew > /dev/null; then \
+		brew install act; \
+	elif command -v curl > /dev/null; then \
+		curl -s https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash; \
+	else \
+		echo "Please install act manually: https://github.com/nektos/act#installation"; \
+		exit 1; \
+	fi
+	@act --version
+	@echo "✓ act installed successfully"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  Run 'make test-ci' to test all CI jobs locally"
+
+# Test CI workflows locally with act
+test-ci: install-act
+	@echo "Running CI workflow locally with act..."
+	@echo "⚠️  Note: Act can be slow on first run (pulling Docker images)"
+	@echo "⚠️  Output may not appear immediately - be patient..."
+	@act push --container-architecture linux/amd64
+
+# Test a specific CI job locally
+test-ci-job: install-act
+	@if [ -z "$(JOB)" ]; then \
+		echo "❌ Error: JOB parameter is required"; \
+		echo "Usage: make test-ci-job JOB=<job-name>"; \
+		echo "Available jobs: lint, security-scan, test, build"; \
+		exit 1; \
+	fi
+	@echo "Running CI job '$(JOB)' locally with act..."
+	@echo "⚠️  Note: Act can be slow on first run (pulling Docker images)"
+	@echo "⚠️  Output may not appear immediately - be patient..."
+	@act push -j $(JOB) --container-architecture linux/amd64
+
+# List available workflows and jobs
+list-ci-jobs: install-act
+	@echo "Available CI workflows and jobs:"
+	@act -l
 

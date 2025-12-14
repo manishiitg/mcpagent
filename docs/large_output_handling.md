@@ -1,8 +1,10 @@
-# Large Tool Output Handling
+# Context Offloading
 
 ## 📋 Overview
 
-The MCP Agent includes a sophisticated system for handling large tool outputs (e.g., massive JSON files, long logs, or extensive search results) that would otherwise exceed the LLM's context window. The system automatically intercepts large outputs, saves them to files, and provides specialized "Virtual Tools" for efficient data inspection.
+The MCP Agent implements **Context Offloading**, a context engineering pattern where large tool outputs are automatically saved to the filesystem instead of being kept in the LLM's context window. This prevents context window overflow, reduces token costs, and enables efficient on-demand data access through specialized "Virtual Tools".
+
+This pattern follows the "Offload Context" strategy described in [Manus's context engineering approach](https://rlancemartin.github.io/2025/10/15/manus/), where tool results are stored externally and accessed on-demand using utilities like `glob` and `grep`.
 
 **Key Benefits:**
 - Prevents context window overflow
@@ -25,7 +27,7 @@ The MCP Agent includes a sophisticated system for handling large tool outputs (e
 ## 🔄 How It Works
 
 1. **Detection**: After every tool execution, the agent checks output size using token counting via `tiktoken`
-2. **Interception**: If output exceeds threshold (default: 20,000 characters):
+2. **Interception**: If output exceeds threshold (default: 10,000 tokens):
    - Full content is saved to `tool_output_folder/{session_id}/tool_YYYYMMDD_HHMMSS_toolname.ext`
    - Original output is replaced with a summary message
 3. **Notification**: Summary message includes:
@@ -41,8 +43,8 @@ The MCP Agent includes a sophisticated system for handling large tool outputs (e
 ```mermaid
 graph TD
     A[Tool Execution] --> B{Check Output Size}
-    B -->|"< 20k chars"| C[Return Directly to LLM]
-    B -->|">= 20k chars"| D[Token Count Check]
+    B -->|"< 10k tokens"| C[Return Directly to LLM]
+    B -->|">= 10k tokens"| D[Token Count Check]
     D --> E[Write to File]
     E --> F[Generate Summary Message]
     F --> G[Replace Original Output]
@@ -140,7 +142,7 @@ Executes `jq` queries on JSON files.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `WithLargeOutputVirtualTools(enabled)` | `bool` | `true` | Enable/disable virtual tools for large outputs |
-| `WithLargeOutputThreshold(chars)` | `int` | `20000` | Character threshold for considering output as "large" |
+| `WithLargeOutputThreshold(tokens)` | `int` | `10000` | Token threshold for considering output as "large" (uses tiktoken encoding) |
 | `WithToolOutputFolder(path)` | `string` | `"tool_output_folder"` | Directory path for storing large outputs |
 
 ### Example Configuration
@@ -162,8 +164,8 @@ func main() {
         // Enable large output handling (enabled by default)
         mcpagent.WithLargeOutputVirtualTools(true),
         
-        // Set threshold in characters (default: 20000)
-        mcpagent.WithLargeOutputThreshold(20000),
+        // Set threshold in tokens (default: 10000)
+        mcpagent.WithLargeOutputThreshold(10000),
         
         // Set custom output folder (default: "tool_output_folder")
         mcpagent.WithToolOutputFolder("./custom_outputs"),

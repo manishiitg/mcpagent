@@ -6,6 +6,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"mcpagent/llm"
+
 	agentlangfuse "mcpagent/cmd/testing/agent-langfuse"
 	agentmcp "mcpagent/cmd/testing/agent-mcp"
 	executortest "mcpagent/cmd/testing/executor"
@@ -55,7 +57,7 @@ func init() {
 	TestingCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable verbose test output")
 	TestingCmd.PersistentFlags().BoolVar(&showOutput, "show-output", true, "show detailed test output")
 	TestingCmd.PersistentFlags().StringVar(&timeout, "timeout", "5m", "test timeout duration")
-	TestingCmd.PersistentFlags().StringVar(&provider, "provider", "openai", "LLM provider for tests")
+	TestingCmd.PersistentFlags().StringVar(&provider, "provider", string(llm.ProviderOpenAI), "LLM provider for tests")
 	TestingCmd.PersistentFlags().StringVar(&config, "config", "", "MCP config file to use for tests")
 	TestingCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "log file path")
 	TestingCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")

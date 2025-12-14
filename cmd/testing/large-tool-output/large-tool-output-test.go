@@ -13,6 +13,8 @@ import (
 	mcpagent "mcpagent/agent"
 	testutils "mcpagent/cmd/testing/testutils"
 	loggerv2 "mcpagent/logger/v2"
+
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 
 var largeToolOutputTestCmd = &cobra.Command{
@@ -109,7 +111,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 	// Initialize LLM
 	modelID := viper.GetString("model")
 	if modelID == "" {
-		modelID = "gpt-4.1-mini" // Default
+		modelID = openai.ModelGPT41Mini // Default
 	}
 	model, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider: "",      // Empty to use viper/flags

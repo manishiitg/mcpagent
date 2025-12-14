@@ -180,9 +180,9 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			crossProviderName = string(detectProviderFromModelID(crossProviderFallbacks[0]))
 		} else {
 			if provider == llm.ProviderVertex {
-				crossProviderName = "anthropic"
+				crossProviderName = string(llm.ProviderAnthropic)
 			} else {
-				crossProviderName = "openai"
+				crossProviderName = string(llm.ProviderOpenAI)
 			}
 		}
 		v2Logger.Debug("Using default cross-provider fallback",
