@@ -97,7 +97,7 @@ jobs:
     
     - name: Run tests
       working-directory: mcpagent
-      run: go test ./... -v
+      run: go test $(go list ./... | grep -v /generated) -v
 
   build:
     name: Build
