@@ -424,9 +424,14 @@ type Agent struct {
 	cumulativeTotalCost     float64 // Total cumulative cost (in USD)
 
 	// Context window usage tracking
-	currentContextWindowUsage int // Current INPUT tokens used in context window (for percentage calculation)
-	// Note: Context window is based on input tokens only, not output tokens
-	modelContextWindow int // Cached model context window size (0 = not cached yet)
+	// currentContextWindowUsage represents the actual tokens currently in the context window.
+	// This is reset after summarization to reflect only the tokens in the current context
+	// (system + summary + recent messages), and is used for percentage calculation.
+	// Note: This is separate from cumulativePromptTokens which is truly cumulative across
+	// all conversation phases (never reset) for accurate pricing and overall usage reporting.
+	// Context window is based on input tokens only, not output tokens.
+	currentContextWindowUsage int
+	modelContextWindow        int // Cached model context window size (0 = not cached yet)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1153,9 +1158,13 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	a.cumulativeTotalCost += inputCost + outputCost + reasoningCost + cacheCost
 
 	// Update context window usage (current input tokens in conversation)
+	// Set currentContextWindowUsage to the actual prompt tokens from this LLM call.
+	// This represents the actual tokens currently in the context window (the messages sent to LLM).
+	// Note: currentContextWindowUsage represents the actual tokens currently in the
+	// context window (reset after summarization), while cumulativePromptTokens is
+	// truly cumulative across all conversation phases (never reset) for pricing/reporting.
 	// Context window is based on input tokens only, not output tokens
-	// This represents the current size of the conversation context (input side)
-	a.currentContextWindowUsage = a.cumulativePromptTokens
+	a.currentContextWindowUsage = usageMetrics.PromptTokens
 
 	// Token usage is tracked via events - log at debug level for per-turn, but also log cumulative
 	logger := getLogger(a)

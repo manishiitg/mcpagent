@@ -1,6 +1,6 @@
 module offload-context-example
 
-go 1.24.4
+go 1.24.11
 
 replace mcpagent => ../..
 
@@ -8,6 +8,7 @@ replace github.com/manishiitg/multi-llm-provider-go => ../../../multi-llm-provid
 
 require (
 	github.com/joho/godotenv v1.5.1
+	github.com/manishiitg/multi-llm-provider-go v0.0.0-00010101000000-000000000000
 	mcpagent v0.0.0
 )
 
@@ -45,7 +46,6 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/manishiitg/multi-llm-provider-go v0.0.0-00010101000000-000000000000 // indirect
 	github.com/mark3labs/mcp-go v0.43.2 // indirect
 	github.com/openai/openai-go/v3 v3.7.0 // indirect
 	github.com/pkoukk/tiktoken-go v0.1.6 // indirect

@@ -43,13 +43,14 @@ import (
     
     mcpagent "mcpagent/agent"
     "mcpagent/llm"
+    "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 
 func main() {
     // Initialize LLM
     llmModel, err := llm.InitializeLLM(llm.Config{
         Provider: llm.ProviderOpenAI,
-        ModelID:  "gpt-4.1",
+        ModelID:  openai.ModelGPT41,
         APIKeys: &llm.ProviderAPIKeys{
             OpenAI: &openAIKey,
         },
@@ -64,7 +65,7 @@ func main() {
         llmModel,
         "",              // server name (empty = all servers)
         "mcp_servers.json", // MCP config path
-        "gpt-4.1",       // model ID
+        openai.ModelGPT41,       // model ID
         nil,             // tracer (optional)
         "",              // trace ID
         nil,             // logger (optional)
@@ -258,7 +259,28 @@ This enhancement would complete the "Reduce Context" strategy from [Manus's cont
 
 See the [Context Offloading example](examples/offload_context/) for a complete demonstration.
 
-### 5. **MCP Server Caching**
+See the [Context Offloading example](examples/offload_context/) for a complete demonstration.
+
+### 5. **Context Summarization**
+
+Automatically summarize conversation history when token usage exceeds a threshold to maintain long-running conversations:
+
+```go
+agent, err := mcpagent.NewAgent(
+    ctx, llmModel, "", "config.json", "model-id",
+    nil, "", nil,
+    // Enable context summarization
+    mcpagent.WithContextSummarization(true),
+    // Trigger when token usage reaches 70% of context window
+    mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
+    // Keep last 8 messages intact
+    mcpagent.WithSummaryKeepLastMessages(8),
+)
+```
+
+The agent monitors token usage and automatically replaces older messages with a concise LLM-generated summary when the threshold is reached, while preserving recent messages and tool call integrity. This enables "infinite" conversation depth within fixed context windows.
+
+### 6. **MCP Server Caching**
 
 Intelligent caching reduces connection times by 60-85%:
 
@@ -269,7 +291,7 @@ Intelligent caching reduces connection times by 60-85%:
 // MCP_CACHE_TTL_MINUTES=10080 (7 days)
 ```
 
-### 6. **Structured Output**
+### 7. **Structured Output**
 
 Get structured data from LLM responses in two ways:
 
@@ -306,7 +328,7 @@ if result.HasStructuredOutput {
 
 See [examples/structured_output/](examples/structured_output/) for complete examples.
 
-### 7. **Custom Tools**
+### 8. **Custom Tools**
 
 Register your own tools that work alongside MCP server tools. Custom tools work in both standard mode and code execution mode:
 
@@ -380,7 +402,7 @@ err := agent.RegisterCustomTool(
 
 See [examples/custom_tools/](examples/custom_tools/) for standard mode examples and [examples/code_execution/custom_tools/](examples/code_execution/custom_tools/) for code execution mode examples.
 
-### 8. **Observability**
+### 9. **Observability**
 
 Built-in tracing with Langfuse support:
 
@@ -398,6 +420,7 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 
 - **[Code Execution Agent](docs/code_execution_agent.md)** - Execute Go code with MCP tools
 - **[Tool-Use Agent](docs/tool_use_agent.md)** - Standard tool calling mode
+- **[Context Summarization](docs/context_summarization.md)** - Automatic history summarization
 - **[Smart Routing](docs/smart_routing.md)** - Dynamic tool filtering
 - **[Context Offloading](docs/large_output_handling.md)** - Offload large tool outputs to filesystem (offload context pattern)
   - Implements the "offload context" strategy from [Manus's context engineering approach](https://rlancemartin.github.io/2025/10/15/manus/)
@@ -416,6 +439,7 @@ Complete working examples are available in the [examples/](examples/) directory:
 ### Basic Examples
 - **[basic/](examples/basic/)** - Simple agent setup with a single MCP server
 - **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with conversation history
+- **[context_summarization/](examples/context_summarization/)** - Automatic context summarization
 
 ### Advanced Examples
 - **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers simultaneously
@@ -524,6 +548,10 @@ agent, err := mcpagent.NewAgent(
     // Context offloading (offload large tool outputs to filesystem)
     mcpagent.WithLargeOutputVirtualTools(true),
     mcpagent.WithLargeOutputThreshold(10000),
+
+    // Context summarization
+    mcpagent.WithContextSummarization(true),
+    mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
     
     // Custom tools
     mcpagent.WithCustomTools(customTools),

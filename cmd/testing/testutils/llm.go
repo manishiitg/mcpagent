@@ -35,7 +35,7 @@ func CreateTestLLM(cfg *TestLLMConfig) (llmtypes.Model, error) {
 			provider = viper.GetString("test.provider")
 		}
 		if provider == "" {
-			provider = "openai" // Default provider
+			provider = string(llm.ProviderOpenAI) // Default provider
 		}
 	}
 

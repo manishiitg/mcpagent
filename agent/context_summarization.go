@@ -37,7 +37,7 @@ func summarizeConversationHistory(a *Agent, ctx context.Context, oldMessages []l
 	conversationText := buildConversationTextForSummarization(oldMessages)
 
 	// Create summarization prompt
-	summaryPrompt := buildSummarizationPrompt(conversationText)
+	summaryPrompt := buildSummarizationPrompt()
 
 	// Create messages for summarization LLM call
 	summaryMessages := []llmtypes.MessageContent{
@@ -178,8 +178,8 @@ func extractMessageContent(msg llmtypes.MessageContent) string {
 }
 
 // buildSummarizationPrompt creates the prompt for the summarization LLM call
-func buildSummarizationPrompt(conversationText string) string {
-	return `You are an expert conversation summarizer specializing in preserving critical context for AI agents. Your task is to create a concise, comprehensive summary of the conversation history below.
+func buildSummarizationPrompt() string {
+	return `You are an expert conversation summarizer specializing in preserving critical context for AI agents. Your task is to create a concise, comprehensive summary of the conversation history provided by the user.
 
 ## CRITICAL PRESERVATION REQUIREMENTS
 
@@ -203,10 +203,6 @@ Preserve ALL of the following information:
 - Be concise but comprehensive (aim for 20-30% of original length while preserving all critical information)
 - Use clear section headers if the summary is long
 - Preserve exact terminology, especially for technical terms, file paths, and tool names
-
-## CONVERSATION HISTORY TO SUMMARIZE
-
-` + conversationText + `
 
 ## INSTRUCTIONS
 
@@ -382,15 +378,16 @@ func rebuildMessagesWithSummary(
 ) ([]llmtypes.MessageContent, error) {
 	v2Logger := a.Logger
 
-	// Determine desired split point
-	desiredSplitIndex := len(messages) - keepLastMessages
-	if desiredSplitIndex < 0 {
-		desiredSplitIndex = 0
+	// Validate and clamp keepLastMessages
+	if keepLastMessages < 0 {
+		return nil, fmt.Errorf("keepLastMessages must be >= 0, got %d", keepLastMessages)
+	}
+	if keepLastMessages > len(messages) {
+		keepLastMessages = len(messages)
 	}
 
-	// Emit summarization started event
-	startedEvent := events.NewContextSummarizationStartedEvent(len(messages), keepLastMessages, desiredSplitIndex)
-	a.EmitTypedEvent(ctx, startedEvent)
+	// Determine desired split point (now guaranteed to be in range [0, len(messages)])
+	desiredSplitIndex := len(messages) - keepLastMessages
 
 	// Find a safe split point that doesn't break tool call/response pairs
 	splitIndex := findSafeSplitPoint(messages, desiredSplitIndex)
@@ -399,12 +396,16 @@ func rebuildMessagesWithSummary(
 	// Check if the last message in old section is a tool call - if so, all its responses must be in old section
 	splitIndex = ensureToolCallResponseIntegrity(messages, splitIndex)
 
-	// If there's nothing to summarize, return original messages
+	// If there's nothing to summarize, return original messages (and don't emit started/completed)
 	if splitIndex == 0 {
 		v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] No messages to summarize, keeping all messages",
 			loggerv2.Int("total_messages", len(messages)))
 		return messages, nil
 	}
+
+	// Emit summarization started event only when we will actually summarize
+	startedEvent := events.NewContextSummarizationStartedEvent(len(messages), keepLastMessages, desiredSplitIndex)
+	a.EmitTypedEvent(ctx, startedEvent)
 
 	oldMessages := messages[:splitIndex]
 	recentMessages := messages[splitIndex:]
@@ -535,12 +536,16 @@ func ShouldSummarizeOnTokenThreshold(a *Agent, currentTokenUsage int) (bool, err
 
 	metadata, err := a.LLM.GetModelMetadata(modelID)
 	if err != nil || metadata == nil {
-		// If metadata is not available, fall back to max turns check
-		return false, fmt.Errorf("model metadata not available: %w", err)
+		// Metadata unavailable: caller can fall back to max-turns (treat as "no decision" not hard error)
+		return false, nil
 	}
 
 	// Calculate threshold in tokens
-	thresholdTokens := int(float64(metadata.ContextWindow) * a.TokenThresholdPercent)
+	percent := a.TokenThresholdPercent
+	if percent <= 0 || percent > 1 {
+		percent = 0.8
+	}
+	thresholdTokens := int(float64(metadata.ContextWindow) * percent)
 
 	// Check if current usage exceeds threshold
 	shouldSummarize := currentTokenUsage >= thresholdTokens

@@ -142,7 +142,7 @@ func main() {
 	fmt.Println("  - Context summarization: Enabled")
 	fmt.Println("  - Token threshold: 50% of context window")
 	fmt.Println("  - Keep last messages: 8")
-	fmt.Println("  - MCP Servers: filesystem, fetch, memory, sequential-thinking, context7")
+	fmt.Println("  - MCP Servers: filesystem, fetch, memory, sequential-thinking")
 	fmt.Println()
 	fmt.Println("Complex Task: Multi-step research and development workflow")
 	fmt.Println("  This task will use multiple MCP servers:")

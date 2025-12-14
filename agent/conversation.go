@@ -358,15 +358,14 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Check if token-based summarization should be triggered
 		if a.EnableContextSummarization && a.SummarizeOnTokenThreshold {
-			// Calculate current input token usage (input tokens from messages + accumulated input tokens)
+			// Calculate current input token usage (input tokens from messages)
 			// Context window is based on INPUT tokens only, not output tokens
 			// Estimate input tokens from messages
 			estimatedInputTokens := estimateInputTokens(llmMessages)
 
-			// Get accumulated input token usage (cumulative prompt tokens from all previous LLM calls)
-			a.tokenTrackingMutex.Lock()
-			currentInputTokens := estimatedInputTokens + a.cumulativePromptTokens
-			a.tokenTrackingMutex.Unlock()
+			// Use estimated tokens for threshold check
+			// Note: currentContextWindowUsage will be updated with actual tokens after LLM call
+			currentInputTokens := estimatedInputTokens
 
 			// Get model metadata for detailed logging
 			var modelContextWindow int
@@ -423,15 +422,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						loggerv2.Int("original_count", len(messages)),
 						loggerv2.Int("new_count", len(llmMessages)))
 
-					// Reset accumulated tokens after summarization (keep only recent message tokens)
-					// The summary itself will be counted in the next LLM call
+					// Update current context window usage to reflect only the tokens in the
+					// summarized messages (system + summary + recent). This is used for
+					// percentage calculation and should reflect the actual current context size.
+					// Note: cumulativePromptTokens and other cumulative variables are NOT reset
+					// here - they remain truly cumulative across all conversation phases for
+					// accurate pricing and overall usage reporting.
 					a.tokenTrackingMutex.Lock()
 					// Estimate tokens for the summarized messages (system + summary + recent)
 					estimatedAfterSummary := estimateInputTokens(llmMessages)
-					// Reset to just the estimated tokens for the summarized messages
-					a.cumulativeTotalTokens = estimatedAfterSummary
-					a.cumulativePromptTokens = estimatedAfterSummary
-					a.cumulativeCompletionTokens = 0
+					// Reset currentContextWindowUsage to reflect only current in-context tokens
+					// The summary itself will be counted in the next LLM call
+					a.currentContextWindowUsage = estimatedAfterSummary
 					a.tokenTrackingMutex.Unlock()
 				}
 			}
@@ -767,7 +769,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					base64Data, _ := imageResult["data"].(string)
 
 					if query == "" || mimeType == "" || base64Data == "" {
-						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] Missing required fields in read_image result - query: %q, mimeType: %q, base64Data: %q", query != "", mimeType != "", base64Data != ""))
+						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] Missing required fields in read_image result - query: %t, mimeType: %t, base64Data: %t", query != "", mimeType != "", base64Data != ""))
 						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
 						messages = append(messages, llmtypes.MessageContent{
 							Role: llmtypes.ChatMessageTypeTool,

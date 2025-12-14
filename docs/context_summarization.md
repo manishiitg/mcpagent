@@ -19,10 +19,10 @@ When enabled, the agent monitors token usage and uses an LLM to generate a conci
 
 | Component | File | Key Functions |
 |-----------|------|---------------|
-| **Core Logic** | [`context_summarization.go`](file:///Users/mipl/agent-builder/mcpagent/agent/context_summarization.go) | `rebuildMessagesWithSummary()`, `summarizeConversationHistory()`, `findSafeSplitPoint()`, `ensureToolCallResponseIntegrity()`, `ShouldSummarizeOnTokenThreshold()` |
-| **Agent Configuration** | [`agent.go`](file:///Users/mipl/agent-builder/mcpagent/agent/agent.go) | `WithContextSummarization()`, `WithSummarizeOnTokenThreshold()`, `WithSummaryKeepLastMessages()` |
-| **Conversation Integration** | [`conversation.go`](file:///Users/mipl/agent-builder/mcpagent/agent/conversation.go) | Token usage monitoring and summarization triggering |
-| **Events** | [`events/data.go`](file:///Users/mipl/agent-builder/mcpagent/events/data.go) | `ContextSummarizationStartedEvent`, `ContextSummarizationCompletedEvent`, `ContextSummarizationErrorEvent` |
+| **Core Logic** | [`context_summarization.go`](agent/context_summarization.go) | `rebuildMessagesWithSummary()`, `summarizeConversationHistory()`, `findSafeSplitPoint()`, `ensureToolCallResponseIntegrity()`, `ShouldSummarizeOnTokenThreshold()` |
+| **Agent Configuration** | [`agent.go`](agent/agent.go) | `WithContextSummarization()`, `WithSummarizeOnTokenThreshold()`, `WithSummaryKeepLastMessages()` |
+| **Conversation Integration** | [`conversation.go`](agent/conversation.go) | Token usage monitoring and summarization triggering |
+| **Events** | [`events/data.go`](events/data.go) | `ContextSummarizationStartedEvent`, `ContextSummarizationCompletedEvent`, `ContextSummarizationErrorEvent` |
 
 ---
 
@@ -174,7 +174,7 @@ Emitted when summarization fails.
 ```go
 // Create agent with context summarization enabled
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "", "config.json", "gpt-4.1",
+    ctx, llmModel, "", "config.json", openai.ModelGPT41,
     nil, "", nil,
     mcpagent.WithContextSummarization(true),
     // Summarize when token usage reaches 50% of context window
@@ -215,7 +215,7 @@ summarizedMessages, err := mcpagent.SummarizeConversationHistory(
 
 The summary is inserted into the conversation as a user message with this format:
 
-```
+```text
 === CONVERSATION SUMMARY (Previous N messages) ===
 
 [Generated summary text here]
@@ -233,7 +233,7 @@ The summary is inserted into the conversation as a user message with this format
 | `failed to generate conversation summary` | LLM API call failed | Check network connectivity, verify API credentials, check rate limits |
 | `model metadata not available` | Model metadata lookup failed | Verify model ID is correct, check that provider supports `GetModelMetadata()`, ensure model is in metadata registry |
 | Tool calls/responses split incorrectly | Split point calculation error | The `findSafeSplitPoint()` and `ensureToolCallResponseIntegrity()` functions should prevent this. If it occurs, check message structure |
-| Summary too verbose | Default prompt generates long summaries | Customize `buildSummarizationPrompt()` in [`context_summarization.go:179`](file:///Users/mipl/agent-builder/mcpagent/agent/context_summarization.go#L179) |
+| Summary too verbose | Default prompt generates long summaries | Customize `buildSummarizationPrompt()` in [`context_summarization.go:179`](agent/context_summarization.go#L179) |
 | Not summarizing when expected | Configuration not enabled or threshold too high | Ensure both `WithContextSummarization(true)` and `WithSummarizeOnTokenThreshold(true, threshold)` are set. Lower threshold (e.g., 0.5 for 50%) if summarization should trigger earlier |
 | Too many/few messages kept | `keepLastMessages` value incorrect | Adjust `WithSummaryKeepLastMessages()` value. Default is 8 (roughly 3-4 turns) |
 | Summarization triggers too early/late | Threshold percentage incorrect | Adjust `WithSummarizeOnTokenThreshold()` threshold value. Lower values (0.3-0.5) trigger earlier, higher values (0.7-0.9) trigger later |
