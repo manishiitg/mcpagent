@@ -22,12 +22,14 @@ jobs:
         go-version: '1.24'
         cache-dependency-path: go.sum
     
-    - name: Remove local replace directive for CI
+    - name: Setup multi-llm-provider-go dependency
       run: |
         # Remove the replace directive that points to local path
-        # This allows CI to fetch the module from GitHub instead of using local path
         sed -i '/^replace github.com\/manishiitg\/multi-llm-provider-go => \.\.\/multi-llm-provider-go$/d' go.mod
-        echo "Removed local replace directive. Updated go.mod:"
+        # Fetch the latest version from main branch
+        go get github.com/manishiitg/multi-llm-provider-go@main
+        go mod tidy
+        echo "Updated go.mod:"
         cat go.mod | grep -A 2 -B 2 "multi-llm-provider-go" || echo "No multi-llm-provider-go references found"
     
     - name: Run golangci-lint
@@ -87,12 +89,14 @@ jobs:
         go-version: '1.24'
         cache-dependency-path: go.sum
     
-    - name: Remove local replace directive for CI
+    - name: Setup multi-llm-provider-go dependency
       run: |
         # Remove the replace directive that points to local path
-        # This allows CI to fetch the module from GitHub instead of using local path
         sed -i '/^replace github.com\/manishiitg\/multi-llm-provider-go => \.\.\/multi-llm-provider-go$/d' go.mod
-        echo "Removed local replace directive. Updated go.mod:"
+        # Fetch the latest version from main branch
+        go get github.com/manishiitg/multi-llm-provider-go@main
+        go mod tidy
+        echo "Updated go.mod:"
         cat go.mod | grep -A 2 -B 2 "multi-llm-provider-go" || echo "No multi-llm-provider-go references found"
     
     - name: Run tests
@@ -119,12 +123,14 @@ jobs:
         ls -la cmd/ || echo "cmd directory not found"
         ls -la cmd/testing/ || echo "cmd/testing directory not found"
     
-    - name: Remove local replace directive for CI
+    - name: Setup multi-llm-provider-go dependency
       run: |
         # Remove the replace directive that points to local path
-        # This allows CI to fetch the module from GitHub instead of using local path
         sed -i '/^replace github.com\/manishiitg\/multi-llm-provider-go => \.\.\/multi-llm-provider-go$/d' go.mod
-        echo "Removed local replace directive. Updated go.mod:"
+        # Fetch the latest version from main branch
+        go get github.com/manishiitg/multi-llm-provider-go@main
+        go mod tidy
+        echo "Updated go.mod:"
         cat go.mod | grep -A 2 -B 2 "multi-llm-provider-go" || echo "No multi-llm-provider-go references found"
     
     - name: Build binary
