@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 
 	mcpagent "mcpagent/agent"
 	testutils "mcpagent/cmd/testing/testutils"
@@ -75,7 +76,7 @@ func testSmartRouting(log loggerv2.Logger) error {
 	// Initialize LLM
 	modelID := viper.GetString("model")
 	if modelID == "" {
-		modelID = "gpt-4.1-mini" // Default to gpt-4.1-mini
+		modelID = openai.ModelGPT41Mini // Default to gpt-4.1-mini
 	}
 	model, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider: "",

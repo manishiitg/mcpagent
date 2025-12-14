@@ -12,6 +12,8 @@ import (
 	mcpagent "mcpagent/agent"
 	"mcpagent/llm"
 	loggerv2 "mcpagent/logger/v2"
+
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 
 func main() {
@@ -68,7 +70,7 @@ func main() {
 	// Step 3: Initialize OpenAI LLM with file logger
 	llmModel, err := llm.InitializeLLM(llm.Config{
 		Provider:    llm.ProviderOpenAI,
-		ModelID:     "gpt-5.2",
+		ModelID:     openai.ModelGPT52,
 		Temperature: 0.7,
 		Logger:      llmLogger, // Use file logger for LLM operations
 		APIKeys: &llm.ProviderAPIKeys{
@@ -114,7 +116,8 @@ func main() {
 	defer cancel()
 
 	// Step 8: Create the agent with context summarization enabled
-	// Context summarization will summarize old conversation history when max turns is reached
+	// Context summarization will summarize old conversation history when token usage
+	// exceeds the threshold percentage of the model's context window
 	agent, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
@@ -122,12 +125,12 @@ func main() {
 		mcpagent.WithLogger(agentLogger), // Use file logger for agent operations
 		// Enable context summarization
 		mcpagent.WithContextSummarization(true),
-		mcpagent.WithSummarizeOnMaxTurns(true),
+		// Enable token-based summarization trigger (when token usage exceeds threshold)
+		mcpagent.WithSummarizeOnTokenThreshold(true, 0.5), // Trigger at 50% of context window
 		// Keep last 8 messages when summarizing (default)
 		mcpagent.WithSummaryKeepLastMessages(8),
-		// Set max turns to 5 for testing (will trigger summarization quickly)
-		// In production, you'd use a higher value (default is 25)
-		mcpagent.WithMaxTurns(5),
+		// Set max turns to 25 for testing (default)
+		mcpagent.WithMaxTurns(25),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create agent: %v\n", err)
@@ -136,8 +139,8 @@ func main() {
 
 	fmt.Println("=== Context Summarization Example ===")
 	fmt.Println("Configuration:")
-	fmt.Println("  - Max turns: 5 (low for testing)")
 	fmt.Println("  - Context summarization: Enabled")
+	fmt.Println("  - Token threshold: 50% of context window")
 	fmt.Println("  - Keep last messages: 8")
 	fmt.Println("  - MCP Servers: filesystem, fetch, memory, sequential-thinking, context7")
 	fmt.Println()
@@ -148,11 +151,11 @@ func main() {
 	fmt.Println("  - memory: Store insights and findings")
 	fmt.Println("  - filesystem: Create documents and project structure")
 	fmt.Println()
-	fmt.Println("When max turns is reached, the agent will:")
+	fmt.Println("When token usage exceeds 50% of the model's context window, the agent will:")
 	fmt.Println("  1. Summarize old conversation history using LLM")
 	fmt.Println("  2. Keep the last 8 messages intact (ensuring tool call/response pairs stay together)")
 	fmt.Println("  3. Replace old messages with a summary")
-	fmt.Println("  4. Continue with the final answer")
+	fmt.Println("  4. Continue with reduced token usage")
 	fmt.Println()
 
 	// Step 9: Create a complex multi-turn conversation that will hit max turns
@@ -188,7 +191,7 @@ This is a complex multi-step task that will require many tool calls and turns. W
 	// Log question to agent log file
 	agentLogger.Info("Context summarization example started",
 		loggerv2.Field{Key: "question", Value: question},
-		loggerv2.Field{Key: "max_turns", Value: 5},
+		loggerv2.Field{Key: "token_threshold_percent", Value: 0.5},
 		loggerv2.Field{Key: "keep_last_messages", Value: 8})
 
 	answer, err := agent.Ask(ctx, question)
@@ -211,8 +214,8 @@ This is a complex multi-step task that will require many tool calls and turns. W
 	fmt.Println("📝 Check logs/context-summarization.log for detailed logs")
 	fmt.Println("📝 Check logs/llm.log for LLM API calls and summarization requests")
 	fmt.Println()
-	fmt.Println("Note: If max turns (5) was reached, you should see:")
+	fmt.Println("Note: If token usage exceeded 50% of context window, you should see:")
 	fmt.Println("  - ContextSummarizationStarted event")
 	fmt.Println("  - ContextSummarizationCompleted event (with summary)")
-	fmt.Println("  - Final answer generated after summarization")
+	fmt.Println("  - Conversation continued with reduced token usage")
 }

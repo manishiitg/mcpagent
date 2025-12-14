@@ -29,7 +29,8 @@ const (
 )
 
 // summarizeConversationHistory summarizes old conversation messages using LLM
-func summarizeConversationHistory(a *Agent, ctx context.Context, oldMessages []llmtypes.MessageContent) (string, error) {
+// Returns: (summary, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, response, error)
+func summarizeConversationHistory(a *Agent, ctx context.Context, oldMessages []llmtypes.MessageContent) (string, int, int, int, int, int, *llmtypes.ContentResponse, error) {
 	v2Logger := a.Logger
 
 	// Build a text representation of old messages for summarization
@@ -59,24 +60,62 @@ func summarizeConversationHistory(a *Agent, ctx context.Context, oldMessages []l
 		llmtypes.WithTemperature(0), // Temperature 0 for deterministic summaries
 	}
 
-	v2Logger.Info("Generating conversation summary",
+	v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Generating conversation summary via LLM",
 		loggerv2.Int("old_messages_count", len(oldMessages)),
-		loggerv2.Int("conversation_text_length", len(conversationText)))
+		loggerv2.Int("conversation_text_length", len(conversationText)),
+		loggerv2.String("model_id", a.ModelID))
 
 	resp, _, err := GenerateContentWithRetry(a, ctx, summaryMessages, summaryOpts, 0, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate conversation summary: %w", err)
+		return "", 0, 0, 0, 0, 0, nil, fmt.Errorf("failed to generate conversation summary: %w", err)
 	}
 
 	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Content == "" {
-		return "", fmt.Errorf("empty summary generated")
+		return "", 0, 0, 0, 0, 0, nil, fmt.Errorf("empty summary generated")
 	}
 
 	summary := resp.Choices[0].Content
-	v2Logger.Info("Conversation summary generated",
-		loggerv2.Int("summary_length", len(summary)))
 
-	return summary, nil
+	// Extract token usage from response
+	var promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int
+	if resp.Usage != nil {
+		promptTokens = resp.Usage.InputTokens
+		completionTokens = resp.Usage.OutputTokens
+		totalTokens = resp.Usage.TotalTokens
+		// If total is 0, calculate it
+		if totalTokens == 0 {
+			totalTokens = promptTokens + completionTokens
+		}
+		// Extract cache tokens
+		if resp.Usage.CacheTokens != nil {
+			cacheTokens = *resp.Usage.CacheTokens
+		}
+		// Extract reasoning tokens
+		if resp.Usage.ReasoningTokens != nil {
+			reasoningTokens = *resp.Usage.ReasoningTokens
+		}
+	}
+
+	// Fallback to GenerationInfo for cache/reasoning tokens if not in Usage
+	if (cacheTokens == 0 || reasoningTokens == 0) && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		genInfo := resp.Choices[0].GenerationInfo
+		if cacheTokens == 0 && genInfo.CachedContentTokens != nil {
+			cacheTokens = *genInfo.CachedContentTokens
+		}
+		if reasoningTokens == 0 && genInfo.ReasoningTokens != nil {
+			reasoningTokens = *genInfo.ReasoningTokens
+		}
+	}
+
+	v2Logger.Info("✅ [CONTEXT_SUMMARIZATION] Conversation summary generated successfully",
+		loggerv2.Int("summary_length_chars", len(summary)),
+		loggerv2.Int("prompt_tokens", promptTokens),
+		loggerv2.Int("completion_tokens", completionTokens),
+		loggerv2.Int("total_tokens", totalTokens),
+		loggerv2.Int("cache_tokens", cacheTokens),
+		loggerv2.Int("reasoning_tokens", reasoningTokens))
+
+	return summary, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, resp, nil
 }
 
 // buildConversationTextForSummarization converts messages to a text format for summarization
@@ -140,18 +179,38 @@ func extractMessageContent(msg llmtypes.MessageContent) string {
 
 // buildSummarizationPrompt creates the prompt for the summarization LLM call
 func buildSummarizationPrompt(conversationText string) string {
-	return `You are a conversation summarizer. Your task is to create a concise summary of the conversation history that preserves:
+	return `You are an expert conversation summarizer specializing in preserving critical context for AI agents. Your task is to create a concise, comprehensive summary of the conversation history below.
 
-1. **Key decisions and conclusions** made during the conversation
-2. **Important constraints or requirements** mentioned
-3. **File paths, tool names, and references** that were used or mentioned
-4. **Errors or issues** encountered and how they were resolved
-5. **Open tasks or TODOs** that still need to be addressed
-6. **Context about offloaded tool outputs** (if any files were mentioned, note their paths)
+## CRITICAL PRESERVATION REQUIREMENTS
 
-The summary should be structured and easy to read, allowing the agent to continue the conversation with full context of what happened before.
+Preserve ALL of the following information:
 
-Format the summary as a clear, structured text that can be inserted into the conversation as context.`
+1. **Key Decisions & Conclusions**: All important decisions made, conclusions reached, and outcomes achieved
+2. **Important Constraints & Requirements**: Any constraints, requirements, preferences, or specifications mentioned
+3. **File Paths & References**: Complete file paths, tool names, function names, API endpoints, URLs, and any other references
+4. **Tool Calls & Results**: Tool/function calls made, their parameters, and key results (preserve tool call/response relationships)
+5. **Errors & Resolutions**: Any errors encountered, their causes, and how they were resolved
+6. **Open Tasks & TODOs**: Any pending tasks, TODOs, or incomplete work items
+7. **Factual Details**: Preserve specific numbers, dates, times, measurements, IDs, and other concrete values
+8. **User Preferences**: User preferences, settings, or choices that affect future behavior
+9. **Context About Offloaded Outputs**: If files were created/modified, note their paths and purposes
+
+## OUTPUT FORMAT REQUIREMENTS
+
+- Format as clear, structured text suitable for insertion into a conversation
+- Use bullet points or numbered lists for clarity
+- Maintain chronological flow when relevant
+- Be concise but comprehensive (aim for 20-30% of original length while preserving all critical information)
+- Use clear section headers if the summary is long
+- Preserve exact terminology, especially for technical terms, file paths, and tool names
+
+## CONVERSATION HISTORY TO SUMMARIZE
+
+` + conversationText + `
+
+## INSTRUCTIONS
+
+Create a summary that allows an AI agent to continue the conversation with full awareness of all previous interactions, decisions, and context. The summary should be self-contained and not require reference to the original conversation.`
 }
 
 // findSafeSplitPoint finds a safe split point that doesn't break tool call/response pairs
@@ -342,22 +401,22 @@ func rebuildMessagesWithSummary(
 
 	// If there's nothing to summarize, return original messages
 	if splitIndex == 0 {
-		v2Logger.Debug("No messages to summarize, keeping all messages")
+		v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] No messages to summarize, keeping all messages",
+			loggerv2.Int("total_messages", len(messages)))
 		return messages, nil
 	}
 
 	oldMessages := messages[:splitIndex]
 	recentMessages := messages[splitIndex:]
 
-	v2Logger.Info("Splitting messages for summarization",
-		loggerv2.Int("desired_split", desiredSplitIndex),
-		loggerv2.Int("safe_split", splitIndex),
-		loggerv2.Int("old_messages", len(oldMessages)),
-		loggerv2.Int("recent_messages", len(recentMessages)))
-
-	v2Logger.Info("Splitting messages for summarization",
-		loggerv2.Int("old_messages", len(oldMessages)),
-		loggerv2.Int("recent_messages", len(recentMessages)))
+	v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Splitting messages for summarization",
+		loggerv2.Int("total_messages", len(messages)),
+		loggerv2.Int("desired_split_index", desiredSplitIndex),
+		loggerv2.Int("safe_split_index", splitIndex),
+		loggerv2.Int("old_messages_count", len(oldMessages)),
+		loggerv2.Int("recent_messages_count", len(recentMessages)),
+		loggerv2.Int("keep_last_messages", keepLastMessages),
+		loggerv2.Any("split_adjusted", splitIndex != desiredSplitIndex))
 
 	// Check if first message is system prompt
 	var systemMessage *llmtypes.MessageContent
@@ -372,18 +431,38 @@ func rebuildMessagesWithSummary(
 
 	// If no old messages left after removing system, nothing to summarize
 	if len(oldMessages) == 0 {
-		v2Logger.Debug("No messages to summarize after removing system prompt")
+		v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] No messages to summarize after removing system prompt")
 		return messages, nil
 	}
 
+	v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Starting summarization",
+		loggerv2.Int("old_messages_to_summarize", len(oldMessages)),
+		loggerv2.Any("has_system_message", systemMessage != nil))
+
 	// Generate summary
-	summary, err := summarizeConversationHistory(a, ctx, oldMessages)
+	summary, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, summaryResp, err := summarizeConversationHistory(a, ctx, oldMessages)
 	if err != nil {
 		// Emit error event
 		errorEvent := events.NewContextSummarizationErrorEvent(err.Error(), len(messages), keepLastMessages)
 		a.EmitTypedEvent(ctx, errorEvent)
 		return nil, fmt.Errorf("failed to summarize conversation history: %w", err)
 	}
+
+	// Accumulate summarization token usage into agent's cumulative tracking
+	// This ensures summarization LLM calls are included in total token usage
+	v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Accumulating summarization tokens",
+		loggerv2.Int("prompt_tokens", promptTokens),
+		loggerv2.Int("completion_tokens", completionTokens),
+		loggerv2.Int("total_tokens", totalTokens),
+		loggerv2.Int("cache_tokens", cacheTokens),
+		loggerv2.Int("reasoning_tokens", reasoningTokens))
+	a.accumulateTokenUsage(ctx, events.UsageMetrics{
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
+		CacheTokens:      cacheTokens,
+		ReasoningTokens:  reasoningTokens,
+	}, summaryResp, 0) // Use turn 0 for summarization calls
 
 	// Build new messages array
 	newMessages := []llmtypes.MessageContent{}
@@ -408,10 +487,13 @@ func rebuildMessagesWithSummary(
 	// 3. Add recent messages (unchanged)
 	newMessages = append(newMessages, recentMessages...)
 
-	v2Logger.Info("Messages rebuilt with summary",
-		loggerv2.Int("original_count", len(messages)),
-		loggerv2.Int("new_count", len(newMessages)),
-		loggerv2.Int("reduced_by", len(messages)-len(newMessages)))
+	v2Logger.Info("✅ [CONTEXT_SUMMARIZATION] Messages rebuilt with summary",
+		loggerv2.Int("original_message_count", len(messages)),
+		loggerv2.Int("new_message_count", len(newMessages)),
+		loggerv2.Int("messages_reduced_by", len(messages)-len(newMessages)),
+		loggerv2.Int("summary_length_chars", len(summary)),
+		loggerv2.Int("old_messages_summarized", len(oldMessages)),
+		loggerv2.Int("recent_messages_kept", len(recentMessages)))
 
 	// Emit summarization completed event
 	completedEvent := events.NewContextSummarizationCompletedEvent(
@@ -423,15 +505,47 @@ func rebuildMessagesWithSummary(
 		splitIndex,
 		desiredSplitIndex,
 		summary, // Include summary in event for observability
+		promptTokens,
+		completionTokens,
+		totalTokens,
+		cacheTokens,
+		reasoningTokens,
 	)
 	a.EmitTypedEvent(ctx, completedEvent)
 
 	return newMessages, nil
 }
 
-// ShouldSummarizeOnMaxTurns checks if summarization should be performed when max turns is reached
-func ShouldSummarizeOnMaxTurns(a *Agent) bool {
-	return a.EnableContextSummarization && a.SummarizeOnMaxTurns
+// ShouldSummarizeOnTokenThreshold checks if summarization should be performed based on token usage
+// Returns true if token usage exceeds the threshold percentage of the model's context window
+func ShouldSummarizeOnTokenThreshold(a *Agent, currentTokenUsage int) (bool, error) {
+	if !a.EnableContextSummarization || !a.SummarizeOnTokenThreshold {
+		return false, nil
+	}
+
+	// Get model metadata to determine context window
+	if a.LLM == nil {
+		return false, fmt.Errorf("LLM is nil, cannot determine context window")
+	}
+
+	modelID := a.ModelID
+	if modelID == "" {
+		modelID = a.LLM.GetModelID()
+	}
+
+	metadata, err := a.LLM.GetModelMetadata(modelID)
+	if err != nil || metadata == nil {
+		// If metadata is not available, fall back to max turns check
+		return false, fmt.Errorf("model metadata not available: %w", err)
+	}
+
+	// Calculate threshold in tokens
+	thresholdTokens := int(float64(metadata.ContextWindow) * a.TokenThresholdPercent)
+
+	// Check if current usage exceeds threshold
+	shouldSummarize := currentTokenUsage >= thresholdTokens
+
+	return shouldSummarize, nil
 }
 
 // GetSummaryKeepLastMessages returns the number of recent messages to keep when summarizing

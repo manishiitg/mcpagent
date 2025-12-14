@@ -290,7 +290,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// ✅ Emit system prompt event AFTER smart routing has completed
 	// This ensures the frontend sees the final system prompt with filtered servers
-	systemPromptEvent := events.NewSystemPromptEvent(a.SystemPrompt, 0)
+	// Calculate token count for the system prompt if tool output handler is available
+	var tokenCount int
+	if a.toolOutputHandler != nil && a.ModelID != "" {
+		tokenCount = a.toolOutputHandler.CountTokensForModel(a.SystemPrompt, a.ModelID)
+	}
+	systemPromptEvent := events.NewSystemPromptEventWithTokens(a.SystemPrompt, 0, tokenCount)
 	a.EmitTypedEvent(ctx, systemPromptEvent)
 
 	var lastResponse string
@@ -339,6 +344,87 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Use the current messages that include tool results from previous turns
 		llmMessages := messages
+
+		// Check if token-based summarization should be triggered
+		if a.EnableContextSummarization && a.SummarizeOnTokenThreshold {
+			// Calculate current input token usage (input tokens from messages + accumulated input tokens)
+			// Context window is based on INPUT tokens only, not output tokens
+			// Estimate input tokens from messages
+			estimatedInputTokens := estimateInputTokens(llmMessages)
+
+			// Get accumulated input token usage (cumulative prompt tokens from all previous LLM calls)
+			a.tokenTrackingMutex.Lock()
+			currentInputTokens := estimatedInputTokens + a.cumulativePromptTokens
+			a.tokenTrackingMutex.Unlock()
+
+			// Get model metadata for detailed logging
+			var modelContextWindow int
+			var thresholdTokens int
+			modelID := a.ModelID
+			if modelID == "" && a.LLM != nil {
+				modelID = a.LLM.GetModelID()
+			}
+			if a.LLM != nil {
+				if metadata, err := a.LLM.GetModelMetadata(modelID); err == nil && metadata != nil {
+					modelContextWindow = metadata.ContextWindow
+					thresholdTokens = int(float64(metadata.ContextWindow) * a.TokenThresholdPercent)
+				}
+			}
+
+			usagePercent := 0.0
+			if modelContextWindow > 0 {
+				usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
+			}
+			v2Logger.Info("🔍 [CONTEXT_SUMMARIZATION] Checking token threshold",
+				loggerv2.Int("estimated_input_tokens", estimatedInputTokens),
+				loggerv2.Int("cumulative_input_tokens", a.cumulativePromptTokens),
+				loggerv2.Int("current_input_tokens", currentInputTokens),
+				loggerv2.Int("model_context_window", modelContextWindow),
+				loggerv2.Any("threshold_percent", a.TokenThresholdPercent),
+				loggerv2.Int("threshold_tokens", thresholdTokens),
+				loggerv2.Any("usage_percent", usagePercent))
+
+			shouldSummarize, err := ShouldSummarizeOnTokenThreshold(a, currentInputTokens)
+			if err != nil {
+				v2Logger.Warn("Failed to check token threshold for summarization, skipping",
+					loggerv2.Error(err),
+					loggerv2.Int("current_input_tokens", currentInputTokens))
+			} else if shouldSummarize {
+				usagePercent := 0.0
+				if modelContextWindow > 0 {
+					usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
+				}
+				v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Token threshold reached, triggering context summarization",
+					loggerv2.Int("current_input_tokens", currentInputTokens),
+					loggerv2.Int("model_context_window", modelContextWindow),
+					loggerv2.Any("threshold_percent", a.TokenThresholdPercent),
+					loggerv2.Int("threshold_tokens", thresholdTokens),
+					loggerv2.Any("usage_percent", usagePercent))
+
+				keepLastMessages := GetSummaryKeepLastMessages(a)
+				summarizedMessages, err := rebuildMessagesWithSummary(a, ctx, llmMessages, keepLastMessages)
+				if err != nil {
+					v2Logger.Warn("Failed to summarize conversation history, continuing with original messages",
+						loggerv2.Error(err))
+				} else {
+					llmMessages = summarizedMessages
+					v2Logger.Info("Conversation history summarized successfully",
+						loggerv2.Int("original_count", len(messages)),
+						loggerv2.Int("new_count", len(llmMessages)))
+
+					// Reset accumulated tokens after summarization (keep only recent message tokens)
+					// The summary itself will be counted in the next LLM call
+					a.tokenTrackingMutex.Lock()
+					// Estimate tokens for the summarized messages (system + summary + recent)
+					estimatedAfterSummary := estimateInputTokens(llmMessages)
+					// Reset to just the estimated tokens for the summarized messages
+					a.cumulativeTotalTokens = estimatedAfterSummary
+					a.cumulativePromptTokens = estimatedAfterSummary
+					a.cumulativeCompletionTokens = 0
+					a.tokenTrackingMutex.Unlock()
+				}
+			}
+		}
 
 		// Track start time for duration calculation
 		llmStartTime := time.Now()
@@ -1298,23 +1384,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.MaxTurns, a.MaxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far. If your task is not complete, please provide a summary of what you have accomplished so far and what is missing.", string(a.AgentMode), time.Since(conversationStartTime))
 	a.EmitTypedEvent(ctx, maxTurnsEvent)
 
-	// Context summarization: summarize old history before final call
-	if ShouldSummarizeOnMaxTurns(a) {
-		keepLastMessages := GetSummaryKeepLastMessages(a)
-		v2Logger.Info("Summarizing conversation history before final call",
-			loggerv2.Int("keep_last_messages", keepLastMessages),
-			loggerv2.Int("total_messages", len(messages)))
-
-		summarizedMessages, err := rebuildMessagesWithSummary(a, ctx, messages, keepLastMessages)
-		if err != nil {
-			v2Logger.Warn("Failed to summarize conversation history, using original messages",
-				loggerv2.Error(err))
-		} else {
-			messages = summarizedMessages
-			v2Logger.Info("Conversation history summarized successfully",
-				loggerv2.Int("new_message_count", len(messages)))
-		}
-	}
+	// Note: Context summarization is now only triggered based on token usage percentage,
+	// not when max turns is reached. Token-based summarization is checked before each LLM call.
 
 	// Add a user message asking for final answer
 	finalUserMessage := llmtypes.MessageContent{

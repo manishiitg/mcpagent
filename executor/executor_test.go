@@ -16,6 +16,8 @@ import (
 	"mcpagent/executor"
 	"mcpagent/llm"
 	loggerv2 "mcpagent/logger/v2"
+
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 
 // TestExecutorHTTPHandlers is a comprehensive integration test for the executor package
@@ -72,7 +74,7 @@ func initializeAgentRegistry(ctx context.Context, logger loggerv2.Logger, t *tes
 	// Create LLM with OpenAI
 	llmInstance, err := llm.InitializeLLM(llm.Config{
 		Provider:    llm.ProviderOpenAI,
-		ModelID:     "gpt-4o-mini",
+		ModelID:     openai.ModelGPT4oMini,
 		Temperature: 0.0,
 		Logger:      logger,
 	})

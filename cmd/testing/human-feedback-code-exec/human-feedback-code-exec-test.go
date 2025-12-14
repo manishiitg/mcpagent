@@ -10,6 +10,8 @@ import (
 	mcpagent "mcpagent/agent"
 	testutils "mcpagent/cmd/testing/testutils"
 	loggerv2 "mcpagent/logger/v2"
+
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 
 var humanFeedbackCodeExecTestCmd = &cobra.Command{
@@ -78,7 +80,7 @@ func testHumanFeedbackInCodeExecMode(log loggerv2.Logger) error {
 	// Initialize LLM
 	modelID := viper.GetString("model")
 	if modelID == "" {
-		modelID = "gpt-4.1" // Default
+		modelID = openai.ModelGPT41 // Default
 	}
 	model, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider: "",      // Empty to use viper/flags

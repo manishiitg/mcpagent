@@ -14,6 +14,8 @@ import (
 	testutils "mcpagent/cmd/testing/testutils"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
+
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 
 var toolFilterTestCmd = &cobra.Command{
@@ -604,7 +606,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, log loggerv2.Logger)
 	// Create LLM instance
 	llmModel, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider:    "openai",
-		ModelID:     "gpt-4o-mini",
+		ModelID:     openai.ModelGPT4oMini,
 		Temperature: 0.2,
 		Logger:      log,
 	})
@@ -678,7 +680,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, log loggerv2.
 	// Create LLM instance
 	llmModel, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider:    "openai",
-		ModelID:     "gpt-4o-mini",
+		ModelID:     openai.ModelGPT4oMini,
 		Temperature: 0.2,
 		Logger:      log,
 	})
@@ -785,7 +787,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 	// Create LLM instance
 	llmModel, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider:    "openai",
-		ModelID:     "gpt-4o-mini",
+		ModelID:     openai.ModelGPT4oMini,
 		Temperature: 0.2,
 		Logger:      log,
 	})
