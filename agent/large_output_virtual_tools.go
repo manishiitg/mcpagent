@@ -69,12 +69,12 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 
 	var virtualTools []llmtypes.Tool
 
-	// Add read_large_output tool (for context offloading)
-	readLargeOutputTool := llmtypes.Tool{
+	// Unified search_large_output tool that supports read, search, and query operations
+	searchLargeOutputTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
-			Name:        "read_large_output",
-			Description: "Read specific characters from an offloaded tool output file (context offloading)",
+			Name:        "search_large_output",
+			Description: "Access offloaded tool output files through read, search, or query operations (context offloading). Use 'read' to read character ranges, 'search' for regex pattern matching, or 'query' for jq JSON queries.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -82,88 +82,56 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 						"type":        "string",
 						"description": "Name of the tool output file (e.g., tool_20250721_091511_tavily-search.json)",
 					},
+					"operation": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"read", "search", "query"},
+						"description": "Operation type: 'read' for character range reading, 'search' for regex pattern matching, 'query' for jq JSON queries",
+					},
+					// Parameters for operation="read"
 					"start": map[string]interface{}{
 						"type":        "integer",
-						"description": "Starting character position (1-based)",
+						"description": "Starting character position (1-based). Required when operation='read'",
 					},
 					"end": map[string]interface{}{
 						"type":        "integer",
-						"description": "Ending character position (inclusive)",
+						"description": "Ending character position (inclusive). Required when operation='read'",
 					},
-				},
-				"required": []string{"filename", "start", "end"},
-			}),
-		},
-	}
-	virtualTools = append(virtualTools, readLargeOutputTool)
-
-	// Add search_large_output tool (for context offloading)
-	searchLargeOutputTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "search_large_output",
-			Description: "Search for regex patterns in offloaded tool output files (context offloading)",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filename": map[string]interface{}{
-						"type":        "string",
-						"description": "Name of the tool output file to search",
-					},
+					// Parameters for operation="search"
 					"pattern": map[string]interface{}{
 						"type":        "string",
-						"description": "Search pattern (regex supported)",
+						"description": "Search pattern (regex supported). Required when operation='search'",
 					},
 					"case_sensitive": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Case sensitive search",
+						"description": "Case sensitive search. Used when operation='search'",
 						"default":     false,
 					},
 					"max_results": map[string]interface{}{
 						"type":        "integer",
-						"description": "Maximum number of results to return",
+						"description": "Maximum number of results to return. Used when operation='search'",
 						"default":     50,
 					},
-				},
-				"required": []string{"filename", "pattern"},
-			}),
-		},
-	}
-	virtualTools = append(virtualTools, searchLargeOutputTool)
-
-	// Add query_large_output tool (for context offloading)
-	queryLargeOutputTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "query_large_output",
-			Description: "Execute jq queries on offloaded JSON tool output files (context offloading)",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filename": map[string]interface{}{
-						"type":        "string",
-						"description": "Name of the JSON tool output file",
-					},
+					// Parameters for operation="query"
 					"query": map[string]interface{}{
 						"type":        "string",
-						"description": "jq query to execute (e.g., '.name', '.items[]')",
+						"description": "jq query to execute (e.g., '.name', '.items[]'). Required when operation='query'",
 					},
 					"compact": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Output compact JSON format",
+						"description": "Output compact JSON format. Used when operation='query'",
 						"default":     false,
 					},
 					"raw": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Output raw string values",
+						"description": "Output raw string values. Used when operation='query'",
 						"default":     false,
 					},
 				},
-				"required": []string{"filename", "query"},
+				"required": []string{"filename", "operation"},
 			}),
 		},
 	}
-	virtualTools = append(virtualTools, queryLargeOutputTool)
+	virtualTools = append(virtualTools, searchLargeOutputTool)
 
 	return virtualTools
 }
@@ -177,10 +145,26 @@ func (a *Agent) HandleLargeOutputVirtualTool(ctx context.Context, toolName strin
 	}
 
 	switch toolName {
+	case "search_large_output":
+		// Extract operation type and route to appropriate handler
+		operation, ok := args["operation"].(string)
+		if !ok {
+			return "", fmt.Errorf("operation parameter is required")
+		}
+
+		switch operation {
+		case "read":
+			return a.handleReadLargeOutput(ctx, args)
+		case "search":
+			return a.handleSearchLargeOutput(ctx, args)
+		case "query":
+			return a.handleQueryLargeOutput(ctx, args)
+		default:
+			return "", fmt.Errorf("invalid operation: %s. Must be 'read', 'search', or 'query'", operation)
+		}
+	// Backward compatibility: support old tool names
 	case "read_large_output":
 		return a.handleReadLargeOutput(ctx, args)
-	case "search_large_output":
-		return a.handleSearchLargeOutput(ctx, args)
 	case "query_large_output":
 		return a.handleQueryLargeOutput(ctx, args)
 	default:
