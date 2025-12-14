@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -160,6 +161,98 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 	result.Servers = []ServerInfo{}
 	result.CustomTools = []CustomToolsInfo{}
 
+	// ============================================================================
+	// PHASE 1: Discover MCP servers from agent's internal state (Clients & toolToServer)
+	// ============================================================================
+	// This phase ensures servers are included even if generated code directories
+	// don't exist yet. Code generation happens asynchronously when tools are cached,
+	// but the system prompt needs to be built immediately during agent initialization.
+	//
+	// Why this is needed:
+	// - Generated Go code directories (e.g., generated/google_sheets_tools/) may not
+	//   exist when discoverAllServersAndTools() is called
+	// - Code generation is triggered by the cache manager when tools are discovered
+	//   and cached, which happens asynchronously
+	// - The system prompt must include available tools at agent initialization time
+	// - We can discover servers immediately from the agent's active connections
+	//
+	// This approach provides immediate server discovery, while Phase 2 (directory scan)
+	// will supplement or replace this information with more accurate data from actual
+	// generated Go files (which contain the exact function names).
+	// ============================================================================
+	if a.Clients != nil && a.toolToServer != nil {
+		// Group tools by server name
+		// toolToServer maps: toolName (snake_case) -> serverName (e.g., "google-sheets")
+		serverToolsMap := make(map[string]map[string]bool)
+		for toolName, serverName := range a.toolToServer {
+			// Initialize server entry if it doesn't exist
+			if serverToolsMap[serverName] == nil {
+				serverToolsMap[serverName] = make(map[string]bool)
+			}
+			// Convert tool name from snake_case to PascalCase for Go function name
+			// Example: "get_document" -> "GetDocument"
+			// Tool names from MCP are typically in snake_case, but Go functions are PascalCase
+			funcName := a.snakeToPascalCase(toolName)
+			serverToolsMap[serverName][funcName] = true
+		}
+
+		// Add discovered servers to result
+		for serverName, toolsSet := range serverToolsMap {
+			// Apply server-level filtering using ToolFilter
+			// This ensures only selected/allowed servers are included
+			shouldIncludeServer := a.toolFilter.ShouldIncludeServer(serverName)
+
+			// Also check with underscore format (google-sheets -> google_sheets)
+			// Server names in config may use hyphens, but package names use underscores
+			// We need to check both formats to match correctly
+			serverNameWithUnderscore := strings.ReplaceAll(serverName, "-", "_")
+			if !shouldIncludeServer && serverNameWithUnderscore != serverName {
+				shouldIncludeServer = a.toolFilter.ShouldIncludeServer(serverNameWithUnderscore)
+			}
+
+			// Skip this server if it's not included by the filter
+			if !shouldIncludeServer {
+				continue
+			}
+
+			// Convert tools set to sorted slice for consistent output
+			tools := make([]string, 0, len(toolsSet))
+			for toolName := range toolsSet {
+				tools = append(tools, toolName)
+			}
+			// Sort for deterministic output (helps with debugging and testing)
+			sort.Strings(tools)
+
+			// Normalize server name for package naming (use underscore format)
+			// Package names in Go must use underscores, not hyphens
+			// Example: "google-sheets" -> "google_sheets_tools"
+			packageName := strings.ReplaceAll(serverName, "-", "_") + "_tools"
+
+			// Add server to discovery result
+			// Note: This may be replaced or augmented by Phase 2 (directory scan) if
+			// the generated code directory exists, which will have more accurate function names
+			result.Servers = append(result.Servers, ServerInfo{
+				Name:    strings.ReplaceAll(serverName, "-", "_"), // Use underscore format for consistency
+				Package: packageName,
+				Tools:   tools,
+			})
+		}
+	}
+
+	// ============================================================================
+	// PHASE 2: Scan generated code directories (supplement/override Phase 1 data)
+	// ============================================================================
+	// This phase scans the filesystem for generated *_tools directories.
+	// It serves two purposes:
+	// 1. Discover custom tools (workspace_tools, human_tools, etc.) that aren't MCP servers
+	// 2. Supplement or replace Phase 1 MCP server data with more accurate information
+	//    from actual generated Go files (which contain exact function names)
+	//
+	// Why we prefer directory-scanned data when available:
+	// - Generated Go files contain the actual function names that will be used
+	// - Phase 1 uses snake_case->PascalCase conversion which may not match exactly
+	// - Directory scan provides the ground truth from what's actually generated
+	// ============================================================================
 	// Scan for all *_tools directories
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -286,11 +379,38 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 			if !shouldIncludeServer {
 				continue
 			}
-			result.Servers = append(result.Servers, ServerInfo{
-				Name:    serverName,
-				Package: dirName,
-				Tools:   tools,
-			})
+
+			// Check if we already added this server from Phase 1 (Clients/toolToServer discovery)
+			// If so, prefer the directory version because it has actual function names from Go files
+			// This ensures we use the most accurate data (ground truth from generated code)
+			//
+			// Normalize server names for comparison (handle hyphen vs underscore differences)
+			normalizedServerName := strings.ReplaceAll(serverName, "_", "-")
+			found := false
+			for i, existingServer := range result.Servers {
+				existingNormalized := strings.ReplaceAll(existingServer.Name, "_", "-")
+				// Match if normalized names are the same (handles google-sheets vs google_sheets)
+				if existingNormalized == normalizedServerName || existingNormalized == serverName {
+					// Replace with directory version (more accurate - has actual function names)
+					result.Servers[i] = ServerInfo{
+						Name:    serverName,
+						Package: dirName,
+						Tools:   tools,
+					}
+					found = true
+					break
+				}
+			}
+
+			// If not found in Phase 1, this is a new server (directory exists but wasn't in Clients map)
+			// This can happen if code was generated manually or from a previous session
+			if !found {
+				result.Servers = append(result.Servers, ServerInfo{
+					Name:    serverName,
+					Package: dirName,
+					Tools:   tools,
+				})
+			}
 		}
 	}
 
@@ -488,7 +608,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 
 	// Return the execution output (this will be shown in UI and passed to LLM)
 	// Truncate output if it's too large to avoid context window issues
-	// Use the same threshold as large output handling for consistency
+	// Use the same threshold as context offloading for consistency
 	maxOutputLength := 20000 // Default fallback if handler is nil
 	if a.toolOutputHandler != nil {
 		maxOutputLength = a.toolOutputHandler.Threshold

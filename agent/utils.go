@@ -12,15 +12,25 @@
 package mcpagent
 
 import (
+	"os"
+	"strconv"
+
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // GetDefaultMaxTurns returns the default max turns for a given agent mode.
+// Checks MAX_TURNS environment variable, falls back to 100 if not set or invalid.
 func GetDefaultMaxTurns(mode AgentMode) int {
-	// All agents use the same default max turns
-	return 50
+	// Check MAX_TURNS environment variable
+	if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
+		if maxTurns, err := strconv.Atoi(envVal); err == nil && maxTurns > 0 {
+			return maxTurns
+		}
+	}
+	// Default to 100 if env var not set or invalid
+	return 100
 }
 
 // ConvertToolChoice converts a tool choice string to *llmtypes.ToolChoice.

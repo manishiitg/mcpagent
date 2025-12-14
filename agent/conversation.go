@@ -124,7 +124,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		a.Tracers = []observability.Tracer{observability.NoopTracer{}}
 	}
 	if a.MaxTurns <= 0 {
-		a.MaxTurns = 25
+		// Get default from environment variable, fallback to 100
+		if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
+			if maxTurns, err := strconv.Atoi(envVal); err == nil && maxTurns > 0 {
+				a.MaxTurns = maxTurns
+			} else {
+				// Fallback to 100 if env var is invalid
+				a.MaxTurns = 100
+			}
+		} else {
+			// Fallback to 100 if env var not set
+			a.MaxTurns = 100
+		}
 	}
 
 	// Use the passed context for cancellation checks (not the agent's internal context)
@@ -290,7 +301,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// ✅ Emit system prompt event AFTER smart routing has completed
 	// This ensures the frontend sees the final system prompt with filtered servers
-	systemPromptEvent := events.NewSystemPromptEvent(a.SystemPrompt, 0)
+	// Calculate token count for the system prompt if tool output handler is available
+	var tokenCount int
+	if a.toolOutputHandler != nil && a.ModelID != "" {
+		tokenCount = a.toolOutputHandler.CountTokensForModel(a.SystemPrompt, a.ModelID)
+	}
+	systemPromptEvent := events.NewSystemPromptEventWithTokens(a.SystemPrompt, 0, tokenCount)
 	a.EmitTypedEvent(ctx, systemPromptEvent)
 
 	var lastResponse string
@@ -339,6 +355,89 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Use the current messages that include tool results from previous turns
 		llmMessages := messages
+
+		// Check if token-based summarization should be triggered
+		if a.EnableContextSummarization && a.SummarizeOnTokenThreshold {
+			// Calculate current input token usage (input tokens from messages)
+			// Context window is based on INPUT tokens only, not output tokens
+			// Estimate input tokens from messages
+			estimatedInputTokens := estimateInputTokens(llmMessages)
+
+			// Use estimated tokens for threshold check
+			// Note: currentContextWindowUsage will be updated with actual tokens after LLM call
+			currentInputTokens := estimatedInputTokens
+
+			// Get model metadata for detailed logging
+			var modelContextWindow int
+			var thresholdTokens int
+			modelID := a.ModelID
+			if modelID == "" && a.LLM != nil {
+				modelID = a.LLM.GetModelID()
+			}
+			if a.LLM != nil {
+				if metadata, err := a.LLM.GetModelMetadata(modelID); err == nil && metadata != nil {
+					modelContextWindow = metadata.ContextWindow
+					thresholdTokens = int(float64(metadata.ContextWindow) * a.TokenThresholdPercent)
+				}
+			}
+
+			usagePercent := 0.0
+			if modelContextWindow > 0 {
+				usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
+			}
+			v2Logger.Info("🔍 [CONTEXT_SUMMARIZATION] Checking token threshold",
+				loggerv2.Int("estimated_input_tokens", estimatedInputTokens),
+				loggerv2.Int("cumulative_input_tokens", a.cumulativePromptTokens),
+				loggerv2.Int("current_input_tokens", currentInputTokens),
+				loggerv2.Int("model_context_window", modelContextWindow),
+				loggerv2.Any("threshold_percent", a.TokenThresholdPercent),
+				loggerv2.Int("threshold_tokens", thresholdTokens),
+				loggerv2.Any("usage_percent", usagePercent))
+
+			shouldSummarize, err := ShouldSummarizeOnTokenThreshold(a, currentInputTokens)
+			if err != nil {
+				v2Logger.Warn("Failed to check token threshold for summarization, skipping",
+					loggerv2.Error(err),
+					loggerv2.Int("current_input_tokens", currentInputTokens))
+			} else if shouldSummarize {
+				usagePercent := 0.0
+				if modelContextWindow > 0 {
+					usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
+				}
+				v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Token threshold reached, triggering context summarization",
+					loggerv2.Int("current_input_tokens", currentInputTokens),
+					loggerv2.Int("model_context_window", modelContextWindow),
+					loggerv2.Any("threshold_percent", a.TokenThresholdPercent),
+					loggerv2.Int("threshold_tokens", thresholdTokens),
+					loggerv2.Any("usage_percent", usagePercent))
+
+				keepLastMessages := GetSummaryKeepLastMessages(a)
+				summarizedMessages, err := rebuildMessagesWithSummary(a, ctx, llmMessages, keepLastMessages)
+				if err != nil {
+					v2Logger.Warn("Failed to summarize conversation history, continuing with original messages",
+						loggerv2.Error(err))
+				} else {
+					llmMessages = summarizedMessages
+					v2Logger.Info("Conversation history summarized successfully",
+						loggerv2.Int("original_count", len(messages)),
+						loggerv2.Int("new_count", len(llmMessages)))
+
+					// Update current context window usage to reflect only the tokens in the
+					// summarized messages (system + summary + recent). This is used for
+					// percentage calculation and should reflect the actual current context size.
+					// Note: cumulativePromptTokens and other cumulative variables are NOT reset
+					// here - they remain truly cumulative across all conversation phases for
+					// accurate pricing and overall usage reporting.
+					a.tokenTrackingMutex.Lock()
+					// Estimate tokens for the summarized messages (system + summary + recent)
+					estimatedAfterSummary := estimateInputTokens(llmMessages)
+					// Reset currentContextWindowUsage to reflect only current in-context tokens
+					// The summary itself will be counted in the next LLM call
+					a.currentContextWindowUsage = estimatedAfterSummary
+					a.tokenTrackingMutex.Unlock()
+				}
+			}
+		}
 
 		// Track start time for duration calculation
 		llmStartTime := time.Now()
@@ -670,7 +769,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					base64Data, _ := imageResult["data"].(string)
 
 					if query == "" || mimeType == "" || base64Data == "" {
-						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] Missing required fields in read_image result - query: %q, mimeType: %q, base64Data: %q", query != "", mimeType != "", base64Data != ""))
+						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] Missing required fields in read_image result - query: %t, mimeType: %t, base64Data: %t", query != "", mimeType != "", base64Data != ""))
 						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
 						messages = append(messages, llmtypes.MessageContent{
 							Role: llmtypes.ChatMessageTypeTool,
@@ -1166,17 +1265,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						}
 					}
 
-					// Check if this is a large tool output that should be written to file
+					// Context offloading: Check if tool output should be offloaded to filesystem
 					if a.toolOutputHandler != nil {
-						// Check if this is a large tool output that should be written to file
+						// Check if output exceeds threshold for context offloading
 						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
 
-							// Emit large tool output detection event
+							// Emit context offloading detection event
 							detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
 							detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
 							a.EmitTypedEvent(ctx, detectedEvent)
 
-							// Write large output to file
+							// Offload large output to filesystem (context offloading)
 							filePath, writeErr := a.toolOutputHandler.WriteToolOutputToFile(resultText, tc.FunctionCall.Name)
 							if writeErr == nil {
 								// Extract first 100 characters for Langfuse observability
@@ -1297,6 +1396,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Emit max turns reached event
 	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.MaxTurns, a.MaxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far. If your task is not complete, please provide a summary of what you have accomplished so far and what is missing.", string(a.AgentMode), time.Since(conversationStartTime))
 	a.EmitTypedEvent(ctx, maxTurnsEvent)
+
+	// Note: Context summarization is now only triggered based on token usage percentage,
+	// not when max turns is reached. Token-based summarization is checked before each LLM call.
 
 	// Add a user message asking for final answer
 	finalUserMessage := llmtypes.MessageContent{

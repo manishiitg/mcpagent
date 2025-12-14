@@ -112,8 +112,8 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		virtualTools = append(virtualTools, getResourceTool)
 	}
 
-	// Add large output virtual tools if enabled
-	// In code execution mode, we don't support large output tools (they don't work in subprocess)
+	// Add context offloading virtual tools if enabled
+	// In code execution mode, we don't support context offloading tools (they don't work in subprocess)
 	// We handle large outputs via truncation in write_code instead
 	if !a.UseCodeExecutionMode {
 		largeOutputTools := a.CreateLargeOutputVirtualTools()
@@ -185,7 +185,7 @@ func (a *Agent) HandleVirtualTool(ctx context.Context, toolName string, args map
 	case "write_code":
 		return a.handleWriteCode(ctx, args)
 	default:
-		// Check if it's a large output virtual tool
+		// Check if it's a context offloading virtual tool
 		if a.EnableLargeOutputVirtualTools {
 			return a.HandleLargeOutputVirtualTool(ctx, toolName, args)
 		}

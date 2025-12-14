@@ -110,10 +110,53 @@ func WithToolChoice(toolChoice string) AgentOption {
 	}
 }
 
-// WithLargeOutputVirtualTools enables/disables large output virtual tools
+// WithLargeOutputVirtualTools enables/disables context offloading virtual tools
+// When enabled, large tool outputs are automatically offloaded to filesystem (offload context pattern)
 func WithLargeOutputVirtualTools(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.EnableLargeOutputVirtualTools = enabled
+	}
+}
+
+// WithLargeOutputThreshold sets the token threshold for context offloading
+// When tool outputs exceed this threshold (in tokens), they are offloaded to filesystem (offload context pattern)
+// Default is 10000 tokens if not set
+// Note: The threshold is compared against token count using tiktoken encoding, not character count
+func WithLargeOutputThreshold(threshold int) AgentOption {
+	return func(a *Agent) {
+		a.LargeOutputThreshold = threshold
+	}
+}
+
+// WithContextSummarization enables/disables context summarization
+// When enabled, conversation history is summarized when token usage exceeds the threshold percentage
+// of the model's context window (configured via WithSummarizeOnTokenThreshold)
+func WithContextSummarization(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.EnableContextSummarization = enabled
+	}
+}
+
+// WithSummarizeOnTokenThreshold enables token-based summarization triggering
+// When enabled, summarization triggers when token usage exceeds the threshold percentage
+// of the model's context window (e.g., 0.8 = 80% of context window)
+// Requires EnableContextSummarization to be true
+func WithSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) AgentOption {
+	return func(a *Agent) {
+		a.SummarizeOnTokenThreshold = enabled
+		if thresholdPercent > 0 && thresholdPercent <= 1.0 {
+			a.TokenThresholdPercent = thresholdPercent
+		} else {
+			a.TokenThresholdPercent = 0.8 // Default to 80%
+		}
+	}
+}
+
+// WithSummaryKeepLastMessages sets the number of recent messages to keep when summarizing
+// Default is 8 messages (roughly 3-4 turns)
+func WithSummaryKeepLastMessages(count int) AgentOption {
+	return func(a *Agent) {
+		a.SummaryKeepLastMessages = count
 	}
 }
 
@@ -274,11 +317,20 @@ type Agent struct {
 	// Provider information
 	provider llm.Provider
 
-	// Large tool output handling
+	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 
-	// Large output virtual tools configuration
+	// Context offloading configuration: enables virtual tools for accessing offloaded outputs
 	EnableLargeOutputVirtualTools bool
+
+	// Context offloading threshold: custom threshold for when to offload tool outputs (0 = use default)
+	LargeOutputThreshold int
+
+	// Context summarization configuration (see context_summarization.go)
+	EnableContextSummarization bool    // Enable context summarization feature
+	SummaryKeepLastMessages    int     // Number of recent messages to keep when summarizing (0 = use default)
+	SummarizeOnTokenThreshold  bool    // Enable token-based summarization trigger
+	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
@@ -363,6 +415,23 @@ type Agent struct {
 	llmCallCount               int          // Number of LLM calls made
 	cacheEnabledCallCount      int          // Number of calls with cache tokens > 0
 	tokenTrackingMutex         sync.RWMutex // Mutex for thread-safe token accumulation
+
+	// Cumulative pricing tracking for entire conversation
+	cumulativeInputCost     float64 // Cumulative cost for input tokens (in USD)
+	cumulativeOutputCost    float64 // Cumulative cost for output tokens (in USD)
+	cumulativeReasoningCost float64 // Cumulative cost for reasoning tokens (in USD)
+	cumulativeCacheCost     float64 // Cumulative cost for cached input tokens (in USD)
+	cumulativeTotalCost     float64 // Total cumulative cost (in USD)
+
+	// Context window usage tracking
+	// currentContextWindowUsage represents the actual tokens currently in the context window.
+	// This is reset after summarization to reflect only the tokens in the current context
+	// (system + summary + recent messages), and is used for percentage calculation.
+	// Note: This is separate from cumulativePromptTokens which is truly cumulative across
+	// all conversation phases (never reset) for accurate pricing and overall usage reporting.
+	// Context window is based on input tokens only, not output tokens.
+	currentContextWindowUsage int
+	modelContextWindow        int // Cached model context window size (0 = not cached yet)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -476,6 +545,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		TraceID:                       "",                          // Default: empty trace ID
 		provider:                      "",                          // Will be set by caller
 		EnableLargeOutputVirtualTools: true,                        // Default to enabled
+		LargeOutputThreshold:          0,                           // Default: 0 means use default threshold (10000)
+		EnableContextSummarization:    false,                       // Default to disabled
+		SummarizeOnTokenThreshold:     false,                       // Default to disabled
+		TokenThresholdPercent:         0.8,                         // Default to 80% if enabled
+		SummaryKeepLastMessages:       0,                           // Default: 0 means use default (8 messages)
 		Logger:                        loggerv2.NewDefault(),       // Default logger
 		customTools:                   make(map[string]CustomTool), // Initialize custom tools map
 
@@ -579,6 +653,12 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Initialize tool output handler
 	toolOutputHandler := NewToolOutputHandler()
+
+	// Apply custom threshold if set via WithLargeOutputThreshold option
+	if ag.LargeOutputThreshold > 0 {
+		toolOutputHandler.SetThreshold(ag.LargeOutputThreshold)
+		logger.Info("Context offloading threshold set", loggerv2.Int("threshold", ag.LargeOutputThreshold))
+	}
 
 	// Large output handling is now done via virtual tools, not MCP server
 	// Virtual tools are enabled by default and handle file operations directly
@@ -950,6 +1030,16 @@ func extractCacheTokens(generationInfo *llmtypes.GenerationInfo) int {
 	return totalCacheTokens
 }
 
+// calculateCostFromTokens calculates the cost for tokens based on model metadata
+// Returns cost in USD
+func calculateCostFromTokens(tokenCount int, costPer1MTokens float64) float64 {
+	if tokenCount <= 0 || costPer1MTokens <= 0 {
+		return 0.0
+	}
+	// Convert from cost per 1M tokens to cost for this token count
+	return (float64(tokenCount) / 1_000_000.0) * costPer1MTokens
+}
+
 // accumulateTokenUsage accumulates token usage from an LLM call.
 // It accepts ContentResponse to use the unified Usage field, with fallback to GenerationInfo.
 func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.UsageMetrics, resp *llmtypes.ContentResponse, turn int) {
@@ -1007,6 +1097,75 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 		a.cacheEnabledCallCount++
 	}
 
+	// Calculate and accumulate pricing
+	// Get model metadata to calculate costs (fetch once and cache context window)
+	modelID := a.ModelID
+	if modelID == "" {
+		modelID = a.LLM.GetModelID()
+	}
+
+	// Calculate costs for this turn
+	var inputCost, outputCost, reasoningCost, cacheCost float64
+	if a.LLM != nil {
+		metadata, err := a.LLM.GetModelMetadata(modelID)
+		if err == nil && metadata != nil {
+			// Cache context window if not already cached
+			if a.modelContextWindow == 0 {
+				a.modelContextWindow = metadata.ContextWindow
+			}
+
+			// Calculate input cost (excluding cached tokens which are charged separately)
+			// Input tokens = total prompt tokens - cached tokens (cached tokens are charged separately at a different rate)
+			inputTokens := usageMetrics.PromptTokens - cacheTokens
+			if inputTokens < 0 {
+				// Safety check: cache tokens should not exceed prompt tokens
+				// This could indicate a data inconsistency, but we'll clamp to 0 to prevent negative costs
+				inputTokens = 0
+			}
+			if inputTokens > 0 {
+				inputCost = calculateCostFromTokens(inputTokens, metadata.InputCostPer1MTokens)
+			}
+
+			// Calculate output cost
+			if usageMetrics.CompletionTokens > 0 {
+				outputCost = calculateCostFromTokens(usageMetrics.CompletionTokens, metadata.OutputCostPer1MTokens)
+			}
+
+			// Calculate reasoning cost
+			// If model has specific reasoning cost, use it; otherwise fallback to input token rate
+			if reasoningTokens > 0 {
+				if metadata.ReasoningCostPer1MTokens > 0 {
+					reasoningCost = calculateCostFromTokens(reasoningTokens, metadata.ReasoningCostPer1MTokens)
+				} else {
+					// Fallback to input token rate when reasoning cost is not specified
+					// Reasoning tokens are part of input processing, so charge at input rate
+					reasoningCost = calculateCostFromTokens(reasoningTokens, metadata.InputCostPer1MTokens)
+				}
+			}
+
+			// Calculate cache cost (cached tokens are charged at a different rate)
+			if cacheTokens > 0 && metadata.CachedInputCostPer1MTokens > 0 {
+				cacheCost = calculateCostFromTokens(cacheTokens, metadata.CachedInputCostPer1MTokens)
+			}
+		}
+	}
+
+	// Accumulate costs
+	a.cumulativeInputCost += inputCost
+	a.cumulativeOutputCost += outputCost
+	a.cumulativeReasoningCost += reasoningCost
+	a.cumulativeCacheCost += cacheCost
+	a.cumulativeTotalCost += inputCost + outputCost + reasoningCost + cacheCost
+
+	// Update context window usage (current input tokens in conversation)
+	// Set currentContextWindowUsage to the actual prompt tokens from this LLM call.
+	// This represents the actual tokens currently in the context window (the messages sent to LLM).
+	// Note: currentContextWindowUsage represents the actual tokens currently in the
+	// context window (reset after summarization), while cumulativePromptTokens is
+	// truly cumulative across all conversation phases (never reset) for pricing/reporting.
+	// Context window is based on input tokens only, not output tokens
+	a.currentContextWindowUsage = usageMetrics.PromptTokens
+
 	// Token usage is tracked via events - log at debug level for per-turn, but also log cumulative
 	logger := getLogger(a)
 	logger.Debug("Turn tokens",
@@ -1053,8 +1212,23 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 	usageMetrics.CacheTokens = cacheTokens
 	usageMetrics.ReasoningTokens = reasoningTokens
 
+	// Calculate context window usage percentage
+	var contextUsagePercent float64
+	a.tokenTrackingMutex.RLock()
+	if a.modelContextWindow > 0 {
+		contextUsagePercent = (float64(a.currentContextWindowUsage) / float64(a.modelContextWindow)) * 100.0
+	}
+	a.tokenTrackingMutex.RUnlock()
+
 	// Emit LLM generation end event with complete token information
 	llmEndEvent := events.NewLLMGenerationEndEvent(turn, result, toolCalls, duration, usageMetrics)
+
+	// Add context usage percentage to metadata
+	if llmEndEvent.Metadata == nil {
+		llmEndEvent.Metadata = make(map[string]interface{})
+	}
+	llmEndEvent.Metadata["context_usage_percent"] = contextUsagePercent
+
 	a.EmitTypedEvent(ctx, llmEndEvent)
 }
 
@@ -1068,7 +1242,13 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	a.tokenTrackingMutex.RLock()
 	defer a.tokenTrackingMutex.RUnlock()
 
-	// Create generation info map with cumulative cache information
+	// Calculate context window usage percentage
+	var contextUsagePercent float64
+	if a.modelContextWindow > 0 {
+		contextUsagePercent = (float64(a.currentContextWindowUsage) / float64(a.modelContextWindow)) * 100.0
+	}
+
+	// Create generation info map with cumulative cache information and pricing
 	generationInfo := make(map[string]interface{})
 	generationInfo["cumulative_prompt_tokens"] = a.cumulativePromptTokens
 	generationInfo["cumulative_completion_tokens"] = a.cumulativeCompletionTokens
@@ -1077,6 +1257,18 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	generationInfo["cumulative_reasoning_tokens"] = a.cumulativeReasoningTokens
 	generationInfo["llm_call_count"] = a.llmCallCount
 	generationInfo["cache_enabled_call_count"] = a.cacheEnabledCallCount
+
+	// Add pricing information
+	generationInfo["cumulative_input_cost"] = a.cumulativeInputCost
+	generationInfo["cumulative_output_cost"] = a.cumulativeOutputCost
+	generationInfo["cumulative_reasoning_cost"] = a.cumulativeReasoningCost
+	generationInfo["cumulative_cache_cost"] = a.cumulativeCacheCost
+	generationInfo["cumulative_total_cost"] = a.cumulativeTotalCost
+
+	// Add context window usage information
+	generationInfo["current_context_window_usage"] = a.currentContextWindowUsage
+	generationInfo["model_context_window"] = a.modelContextWindow
+	generationInfo["context_usage_percent"] = contextUsagePercent
 
 	// Emit total token usage event
 	totalTokenEvent := events.NewTokenUsageEventWithCache(
@@ -1094,6 +1286,16 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 		generationInfo,
 	)
 
+	// Set pricing and context window fields directly on the event
+	totalTokenEvent.InputCost = a.cumulativeInputCost
+	totalTokenEvent.OutputCost = a.cumulativeOutputCost
+	totalTokenEvent.ReasoningCost = a.cumulativeReasoningCost
+	totalTokenEvent.CacheCost = a.cumulativeCacheCost
+	totalTokenEvent.TotalCost = a.cumulativeTotalCost
+	totalTokenEvent.ContextWindowUsage = a.currentContextWindowUsage
+	totalTokenEvent.ModelContextWindow = a.modelContextWindow
+	totalTokenEvent.ContextUsagePercent = contextUsagePercent
+
 	a.EmitTypedEvent(ctx, totalTokenEvent)
 
 	// Log total token usage summary at Info level for visibility
@@ -1107,10 +1309,30 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 		loggerv2.Int("llm_calls", a.llmCallCount),
 		loggerv2.Int("cache_enabled_calls", a.cacheEnabledCallCount),
 		loggerv2.Any("duration", conversationDuration))
+
+	// Log pricing information
+	if a.cumulativeTotalCost > 0 {
+		logger.Info("💰 [PRICING] Conversation total cost",
+			loggerv2.Any("total_cost_usd", a.cumulativeTotalCost),
+			loggerv2.Any("input_cost_usd", a.cumulativeInputCost),
+			loggerv2.Any("output_cost_usd", a.cumulativeOutputCost),
+			loggerv2.Any("reasoning_cost_usd", a.cumulativeReasoningCost),
+			loggerv2.Any("cache_cost_usd", a.cumulativeCacheCost))
+	}
+
+	// Log context window usage
+	if a.modelContextWindow > 0 {
+		logger.Info("📊 [CONTEXT_WINDOW] Context usage",
+			loggerv2.Int("current_usage_tokens", a.currentContextWindowUsage),
+			loggerv2.Int("context_window_tokens", a.modelContextWindow),
+			loggerv2.Any("usage_percent", contextUsagePercent))
+	}
+
 	logger.Info("============================================================")
 }
 
 // GetTokenUsage returns the current cumulative token usage metrics
+// Returns: promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount
 func (a *Agent) GetTokenUsage() (promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) {
 	a.tokenTrackingMutex.RLock()
 	defer a.tokenTrackingMutex.RUnlock()
@@ -1122,6 +1344,40 @@ func (a *Agent) GetTokenUsage() (promptTokens, completionTokens, totalTokens, ca
 	reasoningTokens = a.cumulativeReasoningTokens
 	llmCallCount = a.llmCallCount
 	cacheEnabledCallCount = a.cacheEnabledCallCount
+	return
+}
+
+// GetTokenUsageWithPricing returns the current cumulative token usage metrics with pricing and context usage
+// Returns: promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount,
+//
+//	inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextUsagePercent
+func (a *Agent) GetTokenUsageWithPricing() (
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int,
+	inputCost, outputCost, reasoningCost, cacheCost, totalCost float64,
+	contextUsagePercent float64,
+) {
+	a.tokenTrackingMutex.RLock()
+	defer a.tokenTrackingMutex.RUnlock()
+
+	promptTokens = a.cumulativePromptTokens
+	completionTokens = a.cumulativeCompletionTokens
+	totalTokens = a.cumulativeTotalTokens
+	cacheTokens = a.cumulativeCacheTokens
+	reasoningTokens = a.cumulativeReasoningTokens
+	llmCallCount = a.llmCallCount
+	cacheEnabledCallCount = a.cacheEnabledCallCount
+
+	inputCost = a.cumulativeInputCost
+	outputCost = a.cumulativeOutputCost
+	reasoningCost = a.cumulativeReasoningCost
+	cacheCost = a.cumulativeCacheCost
+	totalCost = a.cumulativeTotalCost
+
+	// Calculate context window usage percentage
+	if a.modelContextWindow > 0 {
+		contextUsagePercent = (float64(a.currentContextWindowUsage) / float64(a.modelContextWindow)) * 100.0
+	}
+
 	return
 }
 
@@ -1346,19 +1602,25 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		}
 	}
 
-	// Initialize tool output handler
+	// Initialize tool output handler for context offloading
 	toolOutputHandler := NewToolOutputHandler()
 
-	// Large output handling is now done via virtual tools, not MCP server
+	// Apply custom threshold if set via WithLargeOutputThreshold option
+	if ag.LargeOutputThreshold > 0 {
+		toolOutputHandler.SetThreshold(ag.LargeOutputThreshold)
+		logger.Info("Context offloading threshold set", loggerv2.Int("threshold", ag.LargeOutputThreshold))
+	}
+
+	// Context offloading is done via virtual tools, not MCP server
 	// Virtual tools are enabled by default and handle file operations directly
 	toolOutputHandler.SetServerAvailable(true) // Always available with virtual tools
 
 	// Set session ID for organizing files by conversation
 	toolOutputHandler.SetSessionID(string(ag.TraceID))
 
-	// Debug logging for virtual tools availability (observability version)
+	// Debug logging for context offloading (observability version)
 	// Use the logger we created earlier
-	logger.Info("🔍 Large output handling via virtual tools (observability)",
+	logger.Info("🔍 Context offloading via virtual tools (observability)",
 		loggerv2.Any("virtual_tools_enabled", true),
 		loggerv2.Int("total_clients", len(clients)),
 		loggerv2.Any("client_names", getClientNames(clients)))

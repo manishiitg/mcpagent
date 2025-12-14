@@ -14,7 +14,7 @@ MCP Agent is a Go library that provides a complete framework for building AI age
 - **Tool Execution**: Automatic tool discovery, execution, and result handling
 - **Code Execution Mode**: Execute Go code instead of JSON tool calls for complex workflows
 - **Smart Routing**: Dynamically filter tools based on conversation context
-- **Large Output Handling**: Automatically handle tool outputs that exceed context limits
+- **Context Offloading**: Automatically offload large tool outputs to filesystem to prevent context window overflow
 - **Structured Output**: Get structured data from LLM responses using fixed conversion or tool-based methods
 - **Custom Tools**: Register your own tools with the agent for extended functionality
 - **Observability**: Built-in tracing with Langfuse support
@@ -43,13 +43,14 @@ import (
     
     mcpagent "mcpagent/agent"
     "mcpagent/llm"
+    "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 
 func main() {
     // Initialize LLM
     llmModel, err := llm.InitializeLLM(llm.Config{
         Provider: llm.ProviderOpenAI,
-        ModelID:  "gpt-4.1",
+        ModelID:  openai.ModelGPT41,
         APIKeys: &llm.ProviderAPIKeys{
             OpenAI: &openAIKey,
         },
@@ -64,7 +65,7 @@ func main() {
         llmModel,
         "",              // server name (empty = all servers)
         "mcp_servers.json", // MCP config path
-        "gpt-4.1",       // model ID
+        openai.ModelGPT41,       // model ID
         nil,             // tracer (optional)
         "",              // trace ID
         nil,             // logger (optional)
@@ -148,20 +149,138 @@ agent, err := mcpagent.NewAgent(
 )
 ```
 
-### 4. **Large Output Handling**
+### 4. **Context Offloading**
 
-Automatically handle tool outputs that exceed context limits:
+Context offloading is a context engineering strategy that automatically saves large tool outputs to the filesystem instead of keeping them in the LLM's context window. This implements the **"offload context"** pattern, one of three primary context engineering approaches used in production agents like [Manus](https://rlancemartin.github.io/2025/10/15/manus/).
+
+**Why Context Offloading?**
+
+As agents execute tasks, tool call results accumulate in the context window. Research from [Chroma](https://www.trychroma.com/blog/context-rot) and [Anthropic](https://docs.anthropic.com/claude/docs/context-editing) shows that as context windows fill, LLM performance degrades due to attention budget depletion. Context offloading prevents this by:
+
+- **Saving tokens**: Only file path + preview (~200 chars) instead of full content (potentially 50k+ chars)
+- **Preventing context overflow**: Large outputs don't consume context window space
+- **Maintaining performance**: LLM attention budget isn't depleted by large payloads
+- **Enabling efficient exploration**: Agent can access data incrementally as needed
+
+**How It Works:**
 
 ```go
 agent, err := mcpagent.NewAgent(
     ctx, llmModel, "", "config.json", "model-id",
     nil, "", nil,
     mcpagent.WithLargeOutputVirtualTools(true),
-    mcpagent.WithLargeOutputThreshold(20000), // characters
+    mcpagent.WithLargeOutputThreshold(10000), // tokens (default)
 )
 ```
 
-### 5. **MCP Server Caching**
+When tool outputs exceed the threshold:
+
+1. **External Storage**: Full content is saved to `tool_output_folder/{session-id}/` with unique filenames
+2. **Compact Reference**: LLM receives file path + preview (first 50% of threshold) instead of full content
+3. **On-Demand Access**: Agent uses virtual tools to access data incrementally:
+   - `read_large_output` - Read specific character ranges
+   - `search_large_output` - Search for patterns using ripgrep
+   - `query_large_output` - Execute jq queries on JSON files
+
+**Example Token Savings:**
+
+```
+Without Context Offloading:
+- Tool Output: 50,000 characters (~12,500 tokens)
+- Sent to LLM: 50,000 chars (~12,500 tokens)
+- Result: Context window overflow, attention budget depletion
+
+With Context Offloading:
+- Tool Output: 50,000 characters (~12,500 tokens)
+- Saved to filesystem: 50,000 chars
+- Sent to LLM: ~200 chars (file path + preview) (~50 tokens)
+- Result: 99.6% token reduction, no context overflow
+
+Note: The threshold is measured in tokens (using tiktoken encoding), not characters.
+A threshold of 10000 tokens roughly equals ~40,000 characters (assuming ~4 chars per token).
+```
+
+**Related Patterns:**
+
+This implementation follows the context engineering strategies outlined in [Manus's approach](https://rlancemartin.github.io/2025/10/15/manus/):
+
+- **Offload Context**: Store tool results externally, access on-demand ✅ **Implemented**
+- **Reduce Context**: Compact stale results, summarize when needed ⏳ **Pending**
+- **Isolate Context**: Use sub-agents for discrete tasks (multi-agent support)
+
+Similar patterns are used in Claude Code, LangChain, and other production agent systems.
+
+**Pending: Dynamic Context Reduction**
+
+Currently, context offloading only applies to large tool outputs when they're first generated. A future enhancement will implement **dynamic context reduction** to compact stale tool results as the context window fills, even if they weren't initially large.
+
+**What's Pending:**
+
+1. **Compact Stale Results**
+   - **Concept**: Replace older tool results with compact references (e.g., file paths) as context fills
+   - **Behavior**: Keep recent tool results in full to guide the agent's next decision, while older results are replaced with references
+   - **Implementation**: Automatically detect when tool results become "stale" (based on age, relevance, or context usage) and replace them with compact references
+   - **Scope**: This would apply to ALL tool results (not just large ones), dynamically compacting them when they become "stale"
+   - **Reference**: Similar to [Anthropic's context editing feature](https://docs.anthropic.com/claude/docs/context-editing)
+   - **Example**: A 2000-token tool result from 10 turns ago becomes: `"Tool: search_docs returned results (saved to: tool_output_folder/session-123/search_20250101_120000.json)"`
+
+2. **Summarize When Needed**
+   - **Concept**: Once compaction reaches diminishing returns, apply schema-based summarization to the full trajectory
+   - **Behavior**: Generate consistent summary objects using full tool results, further reducing context while preserving essential information
+   - **Implementation**: When compaction alone isn't enough to manage context size, apply structured summarization with predefined schemas for different tool result types
+   - **Scope**: Summarize the entire conversation trajectory when individual compaction is insufficient
+   - **Example**: Instead of keeping 20 tool calls with full results, create a structured summary:
+     ```json
+     {
+       "tool_calls_summary": [
+         {"tool": "search", "count": 5, "key_findings": ["..."], "files": ["..."]},
+         {"tool": "read_file", "count": 3, "files_read": ["..."]}
+       ]
+     }
+     ```
+
+**Current Behavior vs. Future Enhancement:**
+
+```
+Current (Context Offloading):
+- Large output (>10k tokens) → Offloaded immediately
+- Small output (<10k tokens) → Stays in context forever
+- Result: Context can still fill up with many small tool results
+
+Future (Context Reduction):
+- Large output (>10k tokens) → Offloaded immediately ✅
+- Small output (<10k tokens) → Stays in context initially
+- As context fills → Small outputs become "stale" → Compacted to references
+- When compaction insufficient → Summarize trajectory
+- Result: Context window stays manageable throughout long conversations
+```
+
+This enhancement would complete the "Reduce Context" strategy from [Manus's context engineering approach](https://rlancemartin.github.io/2025/10/15/manus/), working alongside context offloading to maintain optimal context window usage.
+
+See the [Context Offloading example](examples/offload_context/) for a complete demonstration.
+
+See the [Context Offloading example](examples/offload_context/) for a complete demonstration.
+
+### 5. **Context Summarization**
+
+Automatically summarize conversation history when token usage exceeds a threshold to maintain long-running conversations:
+
+```go
+agent, err := mcpagent.NewAgent(
+    ctx, llmModel, "", "config.json", "model-id",
+    nil, "", nil,
+    // Enable context summarization
+    mcpagent.WithContextSummarization(true),
+    // Trigger when token usage reaches 70% of context window
+    mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
+    // Keep last 8 messages intact
+    mcpagent.WithSummaryKeepLastMessages(8),
+)
+```
+
+The agent monitors token usage and automatically replaces older messages with a concise LLM-generated summary when the threshold is reached, while preserving recent messages and tool call integrity. This enables "infinite" conversation depth within fixed context windows.
+
+### 6. **MCP Server Caching**
 
 Intelligent caching reduces connection times by 60-85%:
 
@@ -172,7 +291,7 @@ Intelligent caching reduces connection times by 60-85%:
 // MCP_CACHE_TTL_MINUTES=10080 (7 days)
 ```
 
-### 6. **Structured Output**
+### 7. **Structured Output**
 
 Get structured data from LLM responses in two ways:
 
@@ -209,7 +328,7 @@ if result.HasStructuredOutput {
 
 See [examples/structured_output/](examples/structured_output/) for complete examples.
 
-### 7. **Custom Tools**
+### 8. **Custom Tools**
 
 Register your own tools that work alongside MCP server tools. Custom tools work in both standard mode and code execution mode:
 
@@ -283,7 +402,7 @@ err := agent.RegisterCustomTool(
 
 See [examples/custom_tools/](examples/custom_tools/) for standard mode examples and [examples/code_execution/custom_tools/](examples/code_execution/custom_tools/) for code execution mode examples.
 
-### 8. **Observability**
+### 9. **Observability**
 
 Built-in tracing with Langfuse support:
 
@@ -301,8 +420,12 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 
 - **[Code Execution Agent](docs/code_execution_agent.md)** - Execute Go code with MCP tools
 - **[Tool-Use Agent](docs/tool_use_agent.md)** - Standard tool calling mode
+- **[Context Summarization](docs/context_summarization.md)** - Automatic history summarization
 - **[Smart Routing](docs/smart_routing.md)** - Dynamic tool filtering
-- **[Large Output Handling](docs/large_output_handling.md)** - Handle large tool outputs
+- **[Context Offloading](docs/large_output_handling.md)** - Offload large tool outputs to filesystem (offload context pattern)
+  - Implements the "offload context" strategy from [Manus's context engineering approach](https://rlancemartin.github.io/2025/10/15/manus/)
+  - Prevents context window overflow and reduces token costs
+  - Enables efficient on-demand data access via virtual tools
 - **[MCP Cache System](docs/mcp_cache_system.md)** - Server metadata caching
 - **[Folder Guard](docs/folder_guard.md)** - Fine-grained file access control
 - **[LLM Resilience](docs/llm_resilience.md)** - Error handling and fallbacks
@@ -316,6 +439,7 @@ Complete working examples are available in the [examples/](examples/) directory:
 ### Basic Examples
 - **[basic/](examples/basic/)** - Simple agent setup with a single MCP server
 - **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with conversation history
+- **[context_summarization/](examples/context_summarization/)** - Automatic context summarization
 
 ### Advanced Examples
 - **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers simultaneously
@@ -337,6 +461,12 @@ Complete working examples are available in the [examples/](examples/) directory:
   - Register multiple custom tools with different categories
   - Tools work alongside MCP server tools
   - Examples: calculator, text formatter, weather simulator, text counter
+
+- **[offload_context/](examples/offload_context/)** - Context offloading example
+  - Demonstrates automatic offloading of large tool outputs to filesystem
+  - Shows how tool results are stored externally and accessed on-demand
+  - Uses virtual tools (`read_large_output`, `search_large_output`, `query_large_output`) for efficient data exploration
+  - Example: Search operations that produce large results, automatically offloaded and accessed incrementally
 
 ### Code Execution Examples
 - **[code_execution/simple/](examples/code_execution/simple/)** - Basic code execution mode
@@ -415,9 +545,13 @@ agent, err := mcpagent.NewAgent(
     mcpagent.WithSmartRouting(true),
     mcpagent.WithSmartRoutingThresholds(20, 3),
     
-    // Large output handling
+    // Context offloading (offload large tool outputs to filesystem)
     mcpagent.WithLargeOutputVirtualTools(true),
-    mcpagent.WithLargeOutputThreshold(20000),
+    mcpagent.WithLargeOutputThreshold(10000),
+
+    // Context summarization
+    mcpagent.WithContextSummarization(true),
+    mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
     
     // Custom tools
     mcpagent.WithCustomTools(customTools),
@@ -507,6 +641,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **MCP Protocol**: Built on the [Model Context Protocol](https://modelcontextprotocol.io/)
 - **multi-llm-provider-go**: LLM provider abstraction layer
 - **mcp-go**: MCP protocol implementation
+- **Context Engineering**: Context offloading implementation inspired by [Manus's context engineering strategies](https://rlancemartin.github.io/2025/10/15/manus/)
 
 ---
 
