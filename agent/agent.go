@@ -139,7 +139,7 @@ func WithContextSummarization(enabled bool) AgentOption {
 
 // WithSummarizeOnTokenThreshold enables token-based summarization triggering
 // When enabled, summarization triggers when token usage exceeds the threshold percentage
-// of the model's context window (e.g., 0.7 = 70% of context window)
+// of the model's context window (e.g., 0.8 = 80% of context window)
 // Requires EnableContextSummarization to be true
 func WithSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) AgentOption {
 	return func(a *Agent) {
@@ -147,7 +147,7 @@ func WithSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) Agent
 		if thresholdPercent > 0 && thresholdPercent <= 1.0 {
 			a.TokenThresholdPercent = thresholdPercent
 		} else {
-			a.TokenThresholdPercent = 0.7 // Default to 70%
+			a.TokenThresholdPercent = 0.8 // Default to 80%
 		}
 	}
 }
@@ -330,7 +330,7 @@ type Agent struct {
 	EnableContextSummarization bool    // Enable context summarization feature
 	SummaryKeepLastMessages    int     // Number of recent messages to keep when summarizing (0 = use default)
 	SummarizeOnTokenThreshold  bool    // Enable token-based summarization trigger
-	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.7 = 70%)
+	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
@@ -543,7 +543,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		LargeOutputThreshold:          0,                           // Default: 0 means use default threshold (10000)
 		EnableContextSummarization:    false,                       // Default to disabled
 		SummarizeOnTokenThreshold:     false,                       // Default to disabled
-		TokenThresholdPercent:         0.7,                         // Default to 70% if enabled
+		TokenThresholdPercent:         0.8,                         // Default to 80% if enabled
 		SummaryKeepLastMessages:       0,                           // Default: 0 means use default (8 messages)
 		Logger:                        loggerv2.NewDefault(),       // Default logger
 		customTools:                   make(map[string]CustomTool), // Initialize custom tools map
@@ -1110,7 +1110,13 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 			}
 
 			// Calculate input cost (excluding cached tokens which are charged separately)
+			// Input tokens = total prompt tokens - cached tokens (cached tokens are charged separately at a different rate)
 			inputTokens := usageMetrics.PromptTokens - cacheTokens
+			if inputTokens < 0 {
+				// Safety check: cache tokens should not exceed prompt tokens
+				// This could indicate a data inconsistency, but we'll clamp to 0 to prevent negative costs
+				inputTokens = 0
+			}
 			if inputTokens > 0 {
 				inputCost = calculateCostFromTokens(inputTokens, metadata.InputCostPer1MTokens)
 			}

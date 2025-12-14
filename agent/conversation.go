@@ -124,7 +124,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		a.Tracers = []observability.Tracer{observability.NoopTracer{}}
 	}
 	if a.MaxTurns <= 0 {
-		a.MaxTurns = 25
+		// Get default from environment variable, fallback to 100
+		if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
+			if maxTurns, err := strconv.Atoi(envVal); err == nil && maxTurns > 0 {
+				a.MaxTurns = maxTurns
+			} else {
+				// Fallback to 100 if env var is invalid
+				a.MaxTurns = 100
+			}
+		} else {
+			// Fallback to 100 if env var not set
+			a.MaxTurns = 100
+		}
 	}
 
 	// Use the passed context for cancellation checks (not the agent's internal context)
