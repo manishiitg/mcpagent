@@ -121,10 +121,28 @@ func WithLargeOutputVirtualTools(enabled bool) AgentOption {
 // WithLargeOutputThreshold sets the token threshold for context offloading
 // When tool outputs exceed this threshold (in tokens), they are offloaded to filesystem (offload context pattern)
 // Default is 10000 tokens if not set
-// Note: The threshold is compared against token count using tiktoken encoding, not character count
+// Note: The threshold is compared against token count using provider/model-specific encoding, not character count
 func WithLargeOutputThreshold(threshold int) AgentOption {
 	return func(a *Agent) {
 		a.LargeOutputThreshold = threshold
+	}
+}
+
+// WithToolOutputRetentionPeriod sets how long to keep tool output files before automatic cleanup
+// Files older than this duration will be deleted during cleanup operations
+// Default is 0 (no automatic cleanup). Recommended: 7 * 24 * time.Hour (7 days)
+func WithToolOutputRetentionPeriod(retentionPeriod time.Duration) AgentOption {
+	return func(a *Agent) {
+		a.ToolOutputRetentionPeriod = retentionPeriod
+	}
+}
+
+// WithCleanupToolOutputOnSessionEnd enables/disables cleanup of tool output files when a session ends
+// When enabled, the current session's tool output folder will be deleted when EndAgentSession is called
+// Default is false (files persist after session ends)
+func WithCleanupToolOutputOnSessionEnd(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.CleanupToolOutputOnSessionEnd = enabled
 	}
 }
 
@@ -157,6 +175,34 @@ func WithSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) Agent
 func WithSummaryKeepLastMessages(count int) AgentOption {
 	return func(a *Agent) {
 		a.SummaryKeepLastMessages = count
+	}
+}
+
+// WithContextEditing enables/disables context editing (dynamic context reduction)
+// When enabled, large tool responses (> threshold tokens) that are older than N turns
+// are automatically compacted by replacing them with file path references
+func WithContextEditing(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.EnableContextEditing = enabled
+	}
+}
+
+// WithContextEditingThreshold sets the token threshold for context editing
+// Tool responses exceeding this threshold (in tokens) are candidates for compaction
+// Default is 1000 tokens if not set
+// Note: The threshold is compared against token count using provider/model-specific encoding, not character count
+func WithContextEditingThreshold(threshold int) AgentOption {
+	return func(a *Agent) {
+		a.ContextEditingThreshold = threshold
+	}
+}
+
+// WithContextEditingTurnThreshold sets the turn age threshold for context editing
+// Tool responses older than this many turns will be compacted
+// Default is 10 turns if not set
+func WithContextEditingTurnThreshold(turns int) AgentOption {
+	return func(a *Agent) {
+		a.ContextEditingTurnThreshold = turns
 	}
 }
 
@@ -326,11 +372,20 @@ type Agent struct {
 	// Context offloading threshold: custom threshold for when to offload tool outputs (0 = use default)
 	LargeOutputThreshold int
 
+	// Tool output cleanup configuration
+	ToolOutputRetentionPeriod     time.Duration // How long to keep tool output files (0 = no automatic cleanup)
+	CleanupToolOutputOnSessionEnd bool          // Whether to clean up current session folder on session end
+
 	// Context summarization configuration (see context_summarization.go)
 	EnableContextSummarization bool    // Enable context summarization feature
 	SummaryKeepLastMessages    int     // Number of recent messages to keep when summarizing (0 = use default)
 	SummarizeOnTokenThreshold  bool    // Enable token-based summarization trigger
 	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+
+	// Context editing configuration (see context_editing.go)
+	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
+	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 1000)
+	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 10)
 
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
@@ -546,10 +601,15 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		provider:                      "",                          // Will be set by caller
 		EnableLargeOutputVirtualTools: true,                        // Default to enabled
 		LargeOutputThreshold:          0,                           // Default: 0 means use default threshold (10000)
+		ToolOutputRetentionPeriod:     0,                           // Default: 0 means no automatic cleanup
+		CleanupToolOutputOnSessionEnd: false,                       // Default: false means files persist after session
 		EnableContextSummarization:    false,                       // Default to disabled
 		SummarizeOnTokenThreshold:     false,                       // Default to disabled
 		TokenThresholdPercent:         0.8,                         // Default to 80% if enabled
 		SummaryKeepLastMessages:       0,                           // Default: 0 means use default (8 messages)
+		EnableContextEditing:          false,                       // Default to disabled
+		ContextEditingThreshold:       0,                           // Default: 0 means use default threshold (1000)
+		ContextEditingTurnThreshold:   0,                           // Default: 0 means use default (10 turns)
 		Logger:                        loggerv2.NewDefault(),       // Default logger
 		customTools:                   make(map[string]CustomTool), // Initialize custom tools map
 
@@ -666,6 +726,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Set session ID for organizing files by conversation
 	toolOutputHandler.SetSessionID(string(ag.TraceID))
+
+	// Set LLM for provider-aware token counting
+	toolOutputHandler.SetLLM(llm)
 
 	// Update the existing agent with connection data
 	ag.Client = firstClient
@@ -1408,6 +1471,31 @@ func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.D
 	if a.UseCodeExecutionMode {
 		a.cleanupAgentGeneratedDir()
 	}
+
+	// Cleanup tool output files
+	if a.toolOutputHandler != nil {
+		// Clean up old files if retention period is configured
+		if a.ToolOutputRetentionPeriod > 0 {
+			if err := a.toolOutputHandler.CleanupOldFiles(a.ToolOutputRetentionPeriod); err != nil {
+				if a.Logger != nil {
+					a.Logger.Warn("Failed to cleanup old tool output files", loggerv2.Error(err))
+				}
+			} else if a.Logger != nil {
+				a.Logger.Info("Cleaned up old tool output files", loggerv2.Any("retention_period", a.ToolOutputRetentionPeriod))
+			}
+		}
+
+		// Clean up current session folder if enabled
+		if a.CleanupToolOutputOnSessionEnd {
+			if err := a.toolOutputHandler.CleanupCurrentSessionFolder(); err != nil {
+				if a.Logger != nil {
+					a.Logger.Warn("Failed to cleanup current session tool output folder", loggerv2.Error(err))
+				}
+			} else if a.Logger != nil {
+				a.Logger.Info("Cleaned up current session tool output folder")
+			}
+		}
+	}
 }
 
 // cleanupAgentGeneratedDir removes the agent-specific generated directory
@@ -1544,6 +1632,8 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		AgentMode:                     SimpleAgent,
 		TraceID:                       "", // Will be generated if not set via options
 		EnableLargeOutputVirtualTools: true,
+		ToolOutputRetentionPeriod:     0,                     // Default: 0 means no automatic cleanup
+		CleanupToolOutputOnSessionEnd: false,                 // Default: false means files persist after session
 		Logger:                        loggerv2.NewDefault(), // Default logger
 		customTools:                   make(map[string]CustomTool),
 		EnableSmartRouting:            false,
@@ -1617,6 +1707,9 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Set session ID for organizing files by conversation
 	toolOutputHandler.SetSessionID(string(ag.TraceID))
+
+	// Set LLM for provider-aware token counting
+	toolOutputHandler.SetLLM(llm)
 
 	// Debug logging for context offloading (observability version)
 	// Use the logger we created earlier
