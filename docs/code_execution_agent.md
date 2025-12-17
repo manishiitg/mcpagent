@@ -16,12 +16,12 @@ The **Code Execution Agent** allows LLMs to write and execute Go code instead of
 
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
-| **Agent Core** | [`mcpagent/agent/agent.go`](file:///Users/mipl/ai-work/mcpagent/agent/agent.go) | `NewAgent()`, `WithCodeExecutionMode()`, `SetFolderGuardPaths()` |
-| **Code Execution Tools** | [`mcpagent/agent/code_execution_tools.go`](file:///Users/mipl/ai-work/mcpagent/agent/code_execution_tools.go) | `handleDiscoverCodeFiles()`, `handleWriteCode()`, `validateCodeForForbiddenFileIO()` |
-| **Code Validation** | [`mcpagent/agent/code_execution_tools.go`](file:///Users/mipl/ai-work/mcpagent/agent/code_execution_tools.go) | `validateCodeForForbiddenFileIO()`, `validateWorkspaceToolPaths()` |
-| **Code Generator** | [`mcpagent/mcpcache/codegen/generator.go`](file:///Users/mipl/ai-work/mcpagent/mcpcache/codegen/generator.go) | `GenerateServerToolsCode()`, `GenerateFunctionWithParams()` |
-| **Code Templates** | [`mcpagent/mcpcache/codegen/templates.go`](file:///Users/mipl/ai-work/mcpagent/mcpcache/codegen/templates.go) | `GenerateStruct()`, `GenerateAPIClient()`, `GeneratePackageHeader()` |
-| **Prompt Builder** | [`mcpagent/agent/prompt/builder.go`](file:///Users/mipl/ai-work/mcpagent/agent/prompt/builder.go) | `GetCodeExecutionInstructions()`, `BuildSystemPromptWithoutTools()` |
+| **Agent Core** | [`mcpagent/agent/agent.go`](../agent/agent.go) | `NewAgent()`, `WithCodeExecutionMode()`, `SetFolderGuardPaths()` |
+| **Code Execution Tools** | [`mcpagent/agent/code_execution_tools.go`](../agent/code_execution_tools.go) | `handleDiscoverCodeFiles()`, `handleWriteCode()`, `validateCodeForForbiddenFileIO()` |
+| **Code Validation** | [`mcpagent/agent/code_execution_tools.go`](../agent/code_execution_tools.go) | `validateCodeForForbiddenFileIO()`, `validateWorkspaceToolPaths()` |
+| **Code Generator** | [`mcpagent/mcpcache/codegen/generator.go`](../mcpcache/codegen/generator.go) | `GenerateServerToolsCode()`, `GenerateFunctionWithParams()` |
+| **Code Templates** | [`mcpagent/mcpcache/codegen/templates.go`](../mcpcache/codegen/templates.go) | `GenerateStruct()`, `GenerateAPIClient()`, `GeneratePackageHeader()` |
+| **Prompt Builder** | [`mcpagent/agent/prompt/builder.go`](../agent/prompt/builder.go) | `GetCodeExecutionInstructions()`, `BuildSystemPromptWithoutTools()` |
 
 **Generated Code Locations:**
 - `generated/<server>_tools/` - Auto-generated Go packages for each MCP server
@@ -153,7 +153,7 @@ func main() {
 
 ### AST-Based Validation
 
-**File:** [`mcpagent/agent/code_execution_tools.go`](file:///Users/mipl/ai-work/mcpagent/agent/code_execution_tools.go)
+**File:** [`mcpagent/agent/code_execution_tools.go`](../agent/code_execution_tools.go)
 
 | Check | Forbidden | Allowed |
 |-------|-----------|---------|
@@ -427,6 +427,6 @@ The `callAPI()` function:
 
 ## 📖 Related Documentation
 
-- [`docs/mcp_cache_system.md`](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/mcp_cache_system.md) - MCP server caching
-- [`docs/llm_resilience.md`](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/llm_resilience.md) - Error handling
-- [`mcpagent/agent/prompt/builder.go`](file:///Users/mipl/ai-work/mcpagent/agent/prompt/builder.go) - Code execution prompt instructions
+- [`docs/mcp_cache_system.md`](./mcp_cache_system.md) - MCP server caching
+- [`docs/llm_resilience.md`](./llm_resilience.md) - Error handling
+- [`mcpagent/agent/prompt/builder.go`](../agent/prompt/builder.go) - Code execution prompt instructions

@@ -152,6 +152,20 @@ func WithSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) Agent
 	}
 }
 
+// WithSummarizeOnFixedTokenThreshold enables fixed token-based summarization triggering
+// When enabled, summarization triggers when token usage exceeds the fixed threshold
+// (e.g., 200000 = 200k tokens, regardless of context window size)
+// Requires EnableContextSummarization to be true
+// Can be used together with WithSummarizeOnTokenThreshold (OR logic: either threshold can trigger)
+func WithSummarizeOnFixedTokenThreshold(enabled bool, thresholdTokens int) AgentOption {
+	return func(a *Agent) {
+		a.SummarizeOnFixedTokenThreshold = enabled
+		if thresholdTokens > 0 {
+			a.FixedTokenThreshold = thresholdTokens
+		}
+	}
+}
+
 // WithSummaryKeepLastMessages sets the number of recent messages to keep when summarizing
 // Default is 8 messages (roughly 3-4 turns)
 func WithSummaryKeepLastMessages(count int) AgentOption {
@@ -327,10 +341,12 @@ type Agent struct {
 	LargeOutputThreshold int
 
 	// Context summarization configuration (see context_summarization.go)
-	EnableContextSummarization bool    // Enable context summarization feature
-	SummaryKeepLastMessages    int     // Number of recent messages to keep when summarizing (0 = use default)
-	SummarizeOnTokenThreshold  bool    // Enable token-based summarization trigger
-	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+	EnableContextSummarization     bool    // Enable context summarization feature
+	SummaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default)
+	SummarizeOnTokenThreshold      bool    // Enable token-based summarization trigger (percentage-based)
+	TokenThresholdPercent          float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+	SummarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
+	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
 
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
@@ -1214,9 +1230,15 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 
 	// Calculate context window usage percentage
 	var contextUsagePercent float64
+	var fixedThresholdPercent float64
 	a.tokenTrackingMutex.RLock()
+	currentUsage := a.currentContextWindowUsage
 	if a.modelContextWindow > 0 {
-		contextUsagePercent = (float64(a.currentContextWindowUsage) / float64(a.modelContextWindow)) * 100.0
+		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
+	}
+	// Calculate fixed threshold percentage if enabled
+	if a.SummarizeOnFixedTokenThreshold && a.FixedTokenThreshold > 0 {
+		fixedThresholdPercent = (float64(currentUsage) / float64(a.FixedTokenThreshold)) * 100.0
 	}
 	a.tokenTrackingMutex.RUnlock()
 
@@ -1228,6 +1250,13 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 		llmEndEvent.Metadata = make(map[string]interface{})
 	}
 	llmEndEvent.Metadata["context_usage_percent"] = contextUsagePercent
+	if a.modelContextWindow > 0 {
+		llmEndEvent.Metadata["model_context_window"] = a.modelContextWindow
+	}
+	if fixedThresholdPercent > 0 {
+		llmEndEvent.Metadata["fixed_threshold_percent"] = fixedThresholdPercent
+		llmEndEvent.Metadata["fixed_threshold_tokens"] = a.FixedTokenThreshold
+	}
 
 	a.EmitTypedEvent(ctx, llmEndEvent)
 }
@@ -1244,8 +1273,14 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 
 	// Calculate context window usage percentage
 	var contextUsagePercent float64
+	var fixedThresholdPercent float64
+	currentUsage := a.currentContextWindowUsage
 	if a.modelContextWindow > 0 {
-		contextUsagePercent = (float64(a.currentContextWindowUsage) / float64(a.modelContextWindow)) * 100.0
+		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
+	}
+	// Calculate fixed threshold percentage if enabled
+	if a.SummarizeOnFixedTokenThreshold && a.FixedTokenThreshold > 0 {
+		fixedThresholdPercent = (float64(currentUsage) / float64(a.FixedTokenThreshold)) * 100.0
 	}
 
 	// Create generation info map with cumulative cache information and pricing
@@ -1266,9 +1301,13 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	generationInfo["cumulative_total_cost"] = a.cumulativeTotalCost
 
 	// Add context window usage information
-	generationInfo["current_context_window_usage"] = a.currentContextWindowUsage
+	generationInfo["current_context_window_usage"] = currentUsage
 	generationInfo["model_context_window"] = a.modelContextWindow
 	generationInfo["context_usage_percent"] = contextUsagePercent
+	if fixedThresholdPercent > 0 {
+		generationInfo["fixed_threshold_percent"] = fixedThresholdPercent
+		generationInfo["fixed_threshold_tokens"] = a.FixedTokenThreshold
+	}
 
 	// Emit total token usage event
 	totalTokenEvent := events.NewTokenUsageEventWithCache(
