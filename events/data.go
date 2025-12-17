@@ -411,11 +411,12 @@ func (e *ToolCallEndEvent) GetEventType() EventType {
 // WorkspaceFileOperationEvent represents a workspace file operation
 type WorkspaceFileOperationEvent struct {
 	BaseEventData
-	Operation  string `json:"operation"`        // "read", "update", "delete", "list", "patch", "move"
-	Filepath   string `json:"filepath"`         // File path (empty for list operations)
-	Folder     string `json:"folder,omitempty"` // Folder path (for list operations)
-	Turn       int    `json:"turn"`
-	ServerName string `json:"server_name"`
+	Operation       string `json:"operation"`        // "read", "update", "delete", "list", "patch", "move"
+	Filepath        string `json:"filepath"`         // File path (empty for list operations)
+	Folder          string `json:"folder,omitempty"` // Folder path (for list operations)
+	Turn            int    `json:"turn"`
+	ServerName      string `json:"server_name"`
+	ShouldHighlight bool   `json:"should_highlight,omitempty"` // Whether to highlight this file in the UI (default: true)
 }
 
 func (e *WorkspaceFileOperationEvent) GetEventType() EventType {
@@ -423,18 +424,25 @@ func (e *WorkspaceFileOperationEvent) GetEventType() EventType {
 }
 
 // NewWorkspaceFileOperationEvent creates a new WorkspaceFileOperationEvent
-func NewWorkspaceFileOperationEvent(operation, filepath, folder string, turn int, serverName string) *WorkspaceFileOperationEvent {
+// shouldHighlight defaults to true if not specified (for backward compatibility)
+func NewWorkspaceFileOperationEvent(operation, filepath, folder string, turn int, serverName string, shouldHighlight ...bool) *WorkspaceFileOperationEvent {
+	highlight := true // Default to true for backward compatibility
+	if len(shouldHighlight) > 0 {
+		highlight = shouldHighlight[0]
+	}
+
 	return &WorkspaceFileOperationEvent{
 		BaseEventData: BaseEventData{
 			Timestamp:      time.Now(),
 			HierarchyLevel: 1,
 			Component:      "tool",
 		},
-		Operation:  operation,
-		Filepath:   filepath,
-		Folder:     folder,
-		Turn:       turn,
-		ServerName: serverName,
+		Operation:       operation,
+		Filepath:        filepath,
+		Folder:          folder,
+		Turn:            turn,
+		ServerName:      serverName,
+		ShouldHighlight: highlight,
 	}
 }
 
@@ -560,14 +568,14 @@ type TokenUsageEvent struct {
 	CacheDiscount   float64 `json:"cache_discount,omitempty"`
 	ReasoningTokens int     `json:"reasoning_tokens,omitempty"`
 	// Pricing fields (in USD)
-	InputCost    float64 `json:"input_cost_usd,omitempty"`
-	OutputCost   float64 `json:"output_cost_usd,omitempty"`
+	InputCost     float64 `json:"input_cost_usd,omitempty"`
+	OutputCost    float64 `json:"output_cost_usd,omitempty"`
 	ReasoningCost float64 `json:"reasoning_cost_usd,omitempty"`
-	CacheCost    float64 `json:"cache_cost_usd,omitempty"`
-	TotalCost    float64 `json:"total_cost_usd,omitempty"`
+	CacheCost     float64 `json:"cache_cost_usd,omitempty"`
+	TotalCost     float64 `json:"total_cost_usd,omitempty"`
 	// Context window tracking
-	ContextWindowUsage int     `json:"context_window_usage,omitempty"`
-	ModelContextWindow int     `json:"model_context_window,omitempty"`
+	ContextWindowUsage  int     `json:"context_window_usage,omitempty"`
+	ModelContextWindow  int     `json:"model_context_window,omitempty"`
 	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"`
 	// Raw GenerationInfo for debugging
 	GenerationInfo map[string]interface{} `json:"generation_info,omitempty"`
@@ -2068,11 +2076,11 @@ type StepTokenUsageEvent struct {
 	LLMCallCount          int    `json:"llm_call_count"`
 	CacheEnabledCallCount int    `json:"cache_enabled_call_count"`
 	// Pricing fields (in USD)
-	InputCost    float64 `json:"input_cost_usd,omitempty"`
-	OutputCost   float64 `json:"output_cost_usd,omitempty"`
+	InputCost     float64 `json:"input_cost_usd,omitempty"`
+	OutputCost    float64 `json:"output_cost_usd,omitempty"`
 	ReasoningCost float64 `json:"reasoning_cost_usd,omitempty"`
-	CacheCost    float64 `json:"cache_cost_usd,omitempty"`
-	TotalCost    float64 `json:"total_cost_usd,omitempty"`
+	CacheCost     float64 `json:"cache_cost_usd,omitempty"`
+	TotalCost     float64 `json:"total_cost_usd,omitempty"`
 	// Context window tracking
 	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"`
 }

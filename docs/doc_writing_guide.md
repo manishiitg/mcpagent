@@ -85,7 +85,7 @@ LLMs need:
 
 **Use Explicit File Paths**
 ```markdown
-**File:** [`mcpagent/agent/agent.go`](file:///Users/mipl/ai-work/mcpagent/agent/agent.go)
+**File:** [`mcpagent/agent/agent.go`](../agent/agent.go)
 ```
 
 **Show Real Code**

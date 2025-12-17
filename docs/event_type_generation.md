@@ -15,12 +15,12 @@ The Event Type Generation System ensures type safety across the full stack by ge
 
 | Component | File Path | Purpose |
 |-----------|-----------|---------|
-| **Source of Truth** | [`mcpagent/events/data.go`](file:///Users/mipl/ai-work/mcpagent/events/data.go) | Defines event structs (`ToolCallStartEvent`, etc.) |
-| **Event Enums** | [`mcpagent/events/types.go`](file:///Users/mipl/ai-work/mcpagent/events/types.go) | Defines `EventType` constants |
-| **Schema Generator** | [`agent_go/cmd/schema-gen/main.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go) | Go tool to generate JSON Schemas |
-| **Frontend Config** | [`frontend/package.json`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/package.json) | NPM scripts for TS generation |
-| **Generated Schema** | [`agent_go/schemas/unified-events-complete.schema.json`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/schemas/unified-events-complete.schema.json) | Intermediate JSON Schema |
-| **Generated TS** | [`frontend/src/generated/events.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/generated/events.ts) | Final TypeScript definitions |
+| **Source of Truth** | [`mcpagent/events/data.go`](../events/data.go) | Defines event structs (`ToolCallStartEvent`, etc.) |
+| **Event Enums** | [`mcpagent/events/types.go`](../events/types.go) | Defines `EventType` constants |
+| **Schema Generator** | [`agent_go/cmd/schema-gen/main.go`](../agent_go/cmd/schema-gen/main.go) | Go tool to generate JSON Schemas |
+| **Frontend Config** | [`frontend/package.json`](../frontend/package.json) | NPM scripts for TS generation |
+| **Generated Schema** | [`agent_go/schemas/unified-events-complete.schema.json`](../agent_go/schemas/unified-events-complete.schema.json) | Intermediate JSON Schema |
+| **Generated TS** | [`frontend/src/generated/events.ts`](../frontend/src/generated/events.ts) | Final TypeScript definitions |
 
 ---
 
@@ -114,8 +114,8 @@ export interface ToolCallStartEvent {
 
 **Adding a New Event Type:**
 
-1.  **Define Go Struct**: Add struct to [`mcpagent/events/data.go`](file:///Users/mipl/ai-work/mcpagent/events/data.go).
-2.  **Add to Union**: Add to `UnifiedEvent` in [`agent_go/cmd/schema-gen/main.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go).
+1.  **Define Go Struct**: Add struct to [`mcpagent/events/data.go`](../events/data.go).
+2.  **Add to Union**: Add to `UnifiedEvent` in [`agent_go/cmd/schema-gen/main.go`](../agent_go/cmd/schema-gen/main.go).
 3.  **Generate Schema**: Run `go run agent_go/cmd/schema-gen/main.go`.
 4.  **Generate TS**: Run `cd frontend && npm run types:generate`.
 
@@ -127,5 +127,5 @@ export interface ToolCallStartEvent {
 
 ## 📖 Related Documentation
 
-- [Frontend Documentation](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/README.md) - Frontend architecture
-- [Backend Documentation](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/README.md) - Backend architecture
+- [Frontend Documentation](../frontend/README.md) - Frontend architecture
+- [Backend Documentation](../agent_go/README.md) - Backend architecture

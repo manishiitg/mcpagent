@@ -18,9 +18,9 @@ This pattern follows the "Offload Context" strategy described in [Manus's contex
 
 | Component | File | Key Functions |
 |-----------|------|---------------|
-| **Handler** | [`tool_output_handler.go`](file:///Users/mipl/ai-work/mcpagent/agent/tool_output_handler.go) | `NewToolOutputHandler()`, `IsLargeToolOutputWithModel()`, `WriteToolOutputToFile()`, `CreateToolOutputMessageWithPreview()` |
-| **Virtual Tools** | [`large_output_virtual_tools.go`](file:///Users/mipl/ai-work/mcpagent/agent/large_output_virtual_tools.go) | `CreateLargeOutputVirtualTools()`, `HandleLargeOutputVirtualTool()`, `handleReadLargeOutput()`, `handleSearchLargeOutput()`, `handleQueryLargeOutput()` |
-| **Agent Integration** | [`agent.go`](file:///Users/mipl/ai-work/mcpagent/agent/agent.go) | `WithLargeOutputVirtualTools()`, `WithLargeOutputThreshold()`, `WithToolOutputFolder()` |
+| **Handler** | [`tool_output_handler.go`](../agent/tool_output_handler.go) | `NewToolOutputHandler()`, `IsLargeToolOutputWithModel()`, `WriteToolOutputToFile()`, `CreateToolOutputMessageWithPreview()` |
+| **Virtual Tools** | [`large_output_virtual_tools.go`](../agent/large_output_virtual_tools.go) | `CreateLargeOutputVirtualTools()`, `HandleLargeOutputVirtualTool()`, `handleReadLargeOutput()`, `handleSearchLargeOutput()`, `handleQueryLargeOutput()` |
+| **Agent Integration** | [`agent.go`](../agent/agent.go) | `WithLargeOutputVirtualTools()`, `WithLargeOutputThreshold()`, `WithToolOutputFolder()` |
 
 ---
 
@@ -183,7 +183,7 @@ func main() {
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | `file not found` error | LLM provided wrong filename | Check the summary message for the exact filename. Use the full path if needed: `tool_output_folder/session-id/filename.ext` |
-| `path traversal detected` error | LLM tried to access files outside output folder | Only use filenames from the summary message. Path traversal (`../`) is blocked for security. See [`large_output_virtual_tools.go:16`](file:///Users/mipl/ai-work/mcpagent/agent/large_output_virtual_tools.go#L16) |
+| `path traversal detected` error | LLM tried to access files outside output folder | Only use filenames from the summary message. Path traversal (`../`) is blocked for security. See [`large_output_virtual_tools.go:16`](../agent/large_output_virtual_tools.go#L16) |
 | `ripgrep not found` | `rg` command not installed on system | Install ripgrep: `brew install ripgrep` (Mac) or `apt-get install ripgrep` (Linux) |
 | `jq not found` | `jq` command not installed on system | Install jq: `brew install jq` (Mac) or `apt-get install jq` (Linux) |
 | Large output not intercepted | Threshold too high or handler disabled | Check `WithLargeOutputThreshold()` and `WithLargeOutputVirtualTools(true)` settings |
@@ -259,7 +259,7 @@ Files are named: `tool_YYYYMMDD_HHMMSS_toolname.ext`
 
 ### Path Validation
 
-All file operations are restricted to the configured output folder. Path traversal (`../`) is blocked by `validateFilePath()` in [`large_output_virtual_tools.go`](file:///Users/mipl/ai-work/mcpagent/agent/large_output_virtual_tools.go).
+All file operations are restricted to the configured output folder. Path traversal (`../`) is blocked by `validateFilePath()` in [`large_output_virtual_tools.go`](../agent/large_output_virtual_tools.go).
 
 **Implementation:**
 ```go
@@ -300,6 +300,6 @@ cmd := exec.Command("jq", query, filePath)
 
 ## 📖 Related Documentation
 
-- [doc_writing_guide.md](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/doc_writing_guide.md) - Standards for writing technical documentation
-- [smart_routing.md](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/smart_routing.md) - Tool filtering and routing system
-- [mcp_cache_system.md](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/mcp_cache_system.md) - MCP server caching system
+- [doc_writing_guide.md](./doc_writing_guide.md) - Standards for writing technical documentation
+- [smart_routing.md](./smart_routing.md) - Tool filtering and routing system
+- [mcp_cache_system.md](./mcp_cache_system.md) - MCP server caching system

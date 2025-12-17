@@ -518,9 +518,24 @@ func rebuildMessagesWithSummary(
 }
 
 // ShouldSummarizeOnTokenThreshold checks if summarization should be performed based on token usage
-// Returns true if token usage exceeds the threshold percentage of the model's context window
+// Returns true if token usage exceeds either:
+// 1. The threshold percentage of the model's context window (if SummarizeOnTokenThreshold is enabled)
+// 2. The fixed token threshold (if SummarizeOnFixedTokenThreshold is enabled)
+// Uses OR logic: either threshold can trigger summarization
 func ShouldSummarizeOnTokenThreshold(a *Agent, currentTokenUsage int) (bool, error) {
-	if !a.EnableContextSummarization || !a.SummarizeOnTokenThreshold {
+	if !a.EnableContextSummarization {
+		return false, nil
+	}
+
+	// Check fixed token threshold first (doesn't require model metadata)
+	if a.SummarizeOnFixedTokenThreshold && a.FixedTokenThreshold > 0 {
+		if currentTokenUsage >= a.FixedTokenThreshold {
+			return true, nil
+		}
+	}
+
+	// Check percentage-based threshold (requires model metadata)
+	if !a.SummarizeOnTokenThreshold {
 		return false, nil
 	}
 

@@ -17,10 +17,10 @@ The folder guard system is a **fine-grained access control mechanism** that rest
 
 | Component | File | Key Functions |
 |-----------|------|---------------|
-| **Base Orchestrator** | [`base_orchestrator.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator.go) | `SetWorkspacePathForFolderGuard()`, `GetFolderGuardPaths()`, `WrapWorkspaceToolsWithFolderGuard()`, `EnhanceToolDescriptionWithFolderGuard()`, `ShouldFilterWriteTool()` |
-| **MCP Agent (Simple Mode)** | [`agent.go`](file:///Users/mipl/ai-work/mcpagent/agent/agent.go) | `SetFolderGuardPaths()`, `GetFolderGuardPaths()` |
-| **Code Execution Mode** | [`code_execution_tools.go`](file:///Users/mipl/ai-work/mcpagent/agent/code_execution_tools.go) | `generatePathValidationHelper()`, `generateWorkspaceToolsWithFolderGuards()`, `validatePath()`, `isPathAllowed()` |
-| **Validation Helpers** | [`base_orchestrator.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator.go) | `validatePathInWorkspace()`, `validatePathInAllowedPaths()`, `normalizePathForAllowedPaths()`, `normalizePathForWorkspace()` |
+| **Base Orchestrator** | [`base_orchestrator.go`](../agent_go/pkg/orchestrator/base_orchestrator.go) | `SetWorkspacePathForFolderGuard()`, `GetFolderGuardPaths()`, `WrapWorkspaceToolsWithFolderGuard()`, `EnhanceToolDescriptionWithFolderGuard()`, `ShouldFilterWriteTool()` |
+| **MCP Agent (Simple Mode)** | [`agent.go`](../agent/agent.go) | `SetFolderGuardPaths()`, `GetFolderGuardPaths()` |
+| **Code Execution Mode** | [`code_execution_tools.go`](../agent/code_execution_tools.go) | `generatePathValidationHelper()`, `generateWorkspaceToolsWithFolderGuards()`, `validatePath()`, `isPathAllowed()` |
+| **Validation Helpers** | [`base_orchestrator.go`](../agent_go/pkg/orchestrator/base_orchestrator.go) | `validatePathInWorkspace()`, `validatePathInAllowedPaths()`, `normalizePathForAllowedPaths()`, `normalizePathForWorkspace()` |
 
 ---
 
@@ -94,7 +94,7 @@ graph TD
 
 ### Simple Mode Setup
 
-**File:** [`controller.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go)
+**File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go)
 
 ```go
 // Set folder guard paths for execution agent
@@ -116,7 +116,7 @@ hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 ### Code Execution Mode Setup
 
-**File:** [`controller.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go)
+**File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go)
 
 ```go
 // CRITICAL: Set folder guard paths BEFORE updating code execution registry
@@ -187,7 +187,7 @@ func UpdateWorkspaceFile(params UpdateWorkspaceFileParams) (string, error) {
 
 ### Runtime Validation Flow
 
-**File:** [`base_orchestrator.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator.go)
+**File:** [`base_orchestrator.go`](../agent_go/pkg/orchestrator/base_orchestrator.go)
 
 ```go
 // Wrapper function created by WrapWorkspaceToolsWithFolderGuard
@@ -373,9 +373,9 @@ func UpdateWorkspaceFile(params UpdateWorkspaceFileParams) (string, error) {
 
 ## 📖 Related Documentation
 
-- [Code Execution Agent](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/code_execution_agent.md) - Describes AST-level validation
-- [Workspace Tools](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/workspace_tools.md) - Virtual tools for file operations
-- [Orchestrator Architecture](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/orchestrator_architecture.md) - Workflow orchestration context
+- [Code Execution Agent](./code_execution_agent.md) - Describes AST-level validation
+- [Workspace Tools](./workspace_tools.md) - Virtual tools for file operations
+- [Orchestrator Architecture](./orchestrator_architecture.md) - Workflow orchestration context
 
 ---
 

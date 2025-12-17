@@ -31,9 +31,11 @@ When enabled, the agent monitors token usage and uses an LLM to generate a conci
 ### Automatic Summarization Flow
 
 1. **Monitor**: Agent monitors token usage for each LLM call
-2. **Check Threshold**: Before each LLM call, agent retrieves model metadata and calculates current token usage percentage
-3. **Trigger**: When token usage exceeds threshold percentage (e.g., 70% of context window), summarization is triggered
-4. **Validate**: Agent checks if `EnableContextSummarization` and `SummarizeOnTokenThreshold` are both enabled
+2. **Check Threshold**: Before each LLM call, agent checks if token usage exceeds either:
+   - The percentage threshold (e.g., 70% of context window) if `SummarizeOnTokenThreshold` is enabled
+   - The fixed token threshold (e.g., 200k tokens) if `SummarizeOnFixedTokenThreshold` is enabled
+3. **Trigger**: When token usage exceeds either threshold, summarization is triggered (OR logic: either threshold can trigger)
+4. **Validate**: Agent checks if `EnableContextSummarization` is enabled and at least one threshold option is enabled
 5. **Split**: Messages are split into:
    - **Old messages**: To be summarized (everything except the last N messages)
    - **Recent messages**: To keep intact (last N messages, default: 8)
@@ -99,6 +101,7 @@ graph TD
 |-------|------|---------|---------|
 | `WithContextSummarization(enabled)` | `bool` | `false` | Enable/disable context summarization feature |
 | `WithSummarizeOnTokenThreshold(enabled, thresholdPercent)` | `bool, float64` | `false, 0.7` | Enable token-based summarization with threshold percentage (0.0-1.0, e.g., 0.7 = 70%) |
+| `WithSummarizeOnFixedTokenThreshold(enabled, thresholdTokens)` | `bool, int` | `false, 0` | Enable fixed token-based summarization with absolute threshold (e.g., 200000 = 200k tokens, regardless of context window size) |
 | `WithSummaryKeepLastMessages(count)` | `int` | `8` | Number of recent messages to keep when summarizing |
 
 ### Constants
@@ -109,6 +112,7 @@ graph TD
 
 ### Example Configuration
 
+**Percentage-based threshold:**
 ```go
 agent, err := mcpagent.NewAgent(
     ctx, llmModel, "", "config.json", "model-id",
@@ -117,6 +121,35 @@ agent, err := mcpagent.NewAgent(
     mcpagent.WithContextSummarization(true),
     // Automatically summarize when token usage reaches 70% of context window
     mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
+    // Keep last 10 messages intact (instead of default 8)
+    mcpagent.WithSummaryKeepLastMessages(10),
+)
+```
+
+**Fixed token threshold:**
+```go
+agent, err := mcpagent.NewAgent(
+    ctx, llmModel, "", "config.json", "model-id",
+    nil, "", nil,
+    // Enable context summarization
+    mcpagent.WithContextSummarization(true),
+    // Automatically summarize when token usage reaches 200k tokens (regardless of context window size)
+    mcpagent.WithSummarizeOnFixedTokenThreshold(true, 200000),
+    // Keep last 10 messages intact (instead of default 8)
+    mcpagent.WithSummaryKeepLastMessages(10),
+)
+```
+
+**Both thresholds (OR logic - either can trigger):**
+```go
+agent, err := mcpagent.NewAgent(
+    ctx, llmModel, "", "config.json", "model-id",
+    nil, "", nil,
+    // Enable context summarization
+    mcpagent.WithContextSummarization(true),
+    // Summarize at 70% of context window OR 200k tokens (whichever comes first)
+    mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
+    mcpagent.WithSummarizeOnFixedTokenThreshold(true, 200000),
     // Keep last 10 messages intact (instead of default 8)
     mcpagent.WithSummaryKeepLastMessages(10),
 )
@@ -234,9 +267,10 @@ The summary is inserted into the conversation as a user message with this format
 | `model metadata not available` | Model metadata lookup failed | Verify model ID is correct, check that provider supports `GetModelMetadata()`, ensure model is in metadata registry |
 | Tool calls/responses split incorrectly | Split point calculation error | The `findSafeSplitPoint()` and `ensureToolCallResponseIntegrity()` functions should prevent this. If it occurs, check message structure |
 | Summary too verbose | Default prompt generates long summaries | Customize `buildSummarizationPrompt()` in [`context_summarization.go:179`](agent/context_summarization.go#L179) |
-| Not summarizing when expected | Configuration not enabled or threshold too high | Ensure both `WithContextSummarization(true)` and `WithSummarizeOnTokenThreshold(true, threshold)` are set. Lower threshold (e.g., 0.5 for 50%) if summarization should trigger earlier |
+| Not summarizing when expected | Configuration not enabled or threshold too high | Ensure `WithContextSummarization(true)` is set and at least one threshold option is enabled (`WithSummarizeOnTokenThreshold` or `WithSummarizeOnFixedTokenThreshold`). Lower threshold values if summarization should trigger earlier |
 | Too many/few messages kept | `keepLastMessages` value incorrect | Adjust `WithSummaryKeepLastMessages()` value. Default is 8 (roughly 3-4 turns) |
-| Summarization triggers too early/late | Threshold percentage incorrect | Adjust `WithSummarizeOnTokenThreshold()` threshold value. Lower values (0.3-0.5) trigger earlier, higher values (0.7-0.9) trigger later |
+| Summarization triggers too early/late | Threshold value incorrect | For percentage-based: Adjust `WithSummarizeOnTokenThreshold()` threshold value. Lower values (0.3-0.5) trigger earlier, higher values (0.7-0.9) trigger later. For fixed threshold: Adjust `WithSummarizeOnFixedTokenThreshold()` token count (e.g., 100000 for 100k tokens) |
+| Need absolute token limit regardless of model | Percentage threshold varies by model context window | Use `WithSummarizeOnFixedTokenThreshold(true, thresholdTokens)` to set an absolute token limit that works across all models |
 
 ---
 
@@ -319,11 +353,14 @@ All token metrics are included in `ContextSummarizationCompletedEvent` for obser
 Context Summarization maintains long-running conversations without exceeding context window limits. It automatically summarizes old conversation history when token usage exceeds a threshold percentage of the model's context window, while preserving recent messages and ensuring tool call/response integrity. The system emits comprehensive events for observability and supports both automatic and manual summarization.
 
 **Key Points:**
-- Enabled via `WithContextSummarization(true)` and `WithSummarizeOnTokenThreshold(true, thresholdPercent)`
-- Default threshold is 70% of context window (configurable via `WithSummarizeOnTokenThreshold()`)
+- Enabled via `WithContextSummarization(true)` and at least one threshold option:
+  - `WithSummarizeOnTokenThreshold(true, thresholdPercent)` - Percentage-based (e.g., 70% of context window)
+  - `WithSummarizeOnFixedTokenThreshold(true, thresholdTokens)` - Fixed token threshold (e.g., 200k tokens)
+- Both thresholds can be enabled simultaneously (OR logic: either can trigger summarization)
+- Default percentage threshold is 70% of context window (configurable via `WithSummarizeOnTokenThreshold()`)
 - Default keeps last 8 messages (configurable via `WithSummaryKeepLastMessages()`)
 - Automatically preserves tool call/response pairs
 - Emits events for monitoring and debugging
 - Tracks comprehensive token usage metrics
-- Uses model metadata to determine context window size dynamically
+- Uses model metadata to determine context window size dynamically (for percentage-based threshold)
 
