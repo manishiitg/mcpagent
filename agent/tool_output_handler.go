@@ -429,7 +429,7 @@ func (h *ToolOutputHandler) cleanupEmptyDirectories() {
 	}
 
 	// Walk through directories bottom-up and remove empty ones
-	filepath.Walk(h.OutputFolder, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(h.OutputFolder, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -448,6 +448,8 @@ func (h *ToolOutputHandler) cleanupEmptyDirectories() {
 		_ = os.Remove(path)
 		return nil
 	})
+	// Ignore errors from cleanup - this is best-effort and shouldn't fail the main operation
+	_ = err
 }
 
 // isJSONContent checks if the given string is valid JSON
