@@ -339,11 +339,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			lastMessage = lastUserMessage
 		}
 
-		// Emit conversation turn event using typed event data
-		tools := events.ConvertToolsToToolInfo(a.filteredTools, a.toolToServer)
-		conversationTurnEvent := events.NewConversationTurnEvent(turn+1, lastMessage, len(messages), false, 0, tools, messages)
-		a.EmitTypedEvent(ctx, conversationTurnEvent)
-
 		// Check for context cancellation at the start of each turn
 		if agentCtx.Err() != nil {
 			v2Logger.Debug("Context cancelled at start of turn",
@@ -355,6 +350,72 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Use the current messages that include tool results from previous turns
 		llmMessages := messages
+
+		// Check if context editing should be applied (compact stale tool responses)
+		if a.EnableContextEditing {
+			// Log messages BEFORE compaction for verification
+			beforeTokenCount := estimateInputTokens(llmMessages)
+			beforeMessageCount := len(llmMessages)
+			toolResponseCountBefore := 0
+			for _, msg := range llmMessages {
+				if msg.Role == llmtypes.ChatMessageTypeTool {
+					toolResponseCountBefore++
+				}
+			}
+
+			var err error
+			llmMessages, err = compactStaleToolResponses(a, ctx, llmMessages, turn+1)
+			if err != nil {
+				v2Logger.Warn("Failed to compact stale tool responses, continuing with original messages",
+					loggerv2.Error(err))
+				// Continue with original messages if compaction fails
+			} else {
+				// Messages may have been modified (content replaced with file paths)
+				// Update the messages slice to use the compacted version
+				messages = llmMessages
+
+				// Log messages AFTER compaction for verification
+				afterTokenCount := estimateInputTokens(llmMessages)
+				afterMessageCount := len(llmMessages)
+				toolResponseCountAfter := 0
+				compactedSampleCount := 0
+				for _, msg := range llmMessages {
+					if msg.Role == llmtypes.ChatMessageTypeTool {
+						toolResponseCountAfter++
+						// Check if this message was compacted (contains file path reference)
+						for _, part := range msg.Parts {
+							if tr, ok := part.(llmtypes.ToolCallResponse); ok {
+								if strings.Contains(tr.Content, "has been saved to:") || strings.Contains(tr.Content, "tool_output_folder") {
+									compactedSampleCount++
+									// Log a sample of compacted content (first 200 chars)
+									if compactedSampleCount == 1 {
+										sampleContent := tr.Content
+										if len(sampleContent) > 200 {
+											sampleContent = sampleContent[:200] + "..."
+										}
+										v2Logger.Info("✅ [CONTEXT_EDITING] Sample compacted message content",
+											loggerv2.String("tool_name", tr.Name),
+											loggerv2.String("sample_content", sampleContent))
+									}
+								}
+							}
+						}
+					}
+				}
+
+				tokensSaved := beforeTokenCount - afterTokenCount
+				v2Logger.Info("📊 [CONTEXT_EDITING] Messages before LLM call - VERIFICATION",
+					loggerv2.Int("turn", turn+1),
+					loggerv2.Int("before_message_count", beforeMessageCount),
+					loggerv2.Int("after_message_count", afterMessageCount),
+					loggerv2.Int("before_tool_responses", toolResponseCountBefore),
+					loggerv2.Int("after_tool_responses", toolResponseCountAfter),
+					loggerv2.Int("compacted_samples_found", compactedSampleCount),
+					loggerv2.Int("before_estimated_tokens", beforeTokenCount),
+					loggerv2.Int("after_estimated_tokens", afterTokenCount),
+					loggerv2.Int("estimated_tokens_saved", tokensSaved))
+			}
+		}
 
 		// Check if token-based summarization should be triggered
 		if a.EnableContextSummarization && a.SummarizeOnTokenThreshold {
@@ -472,7 +533,39 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			toolNames[i] = tool.Function.Name
 		}
 
-		// Emit LLM Messages event to track what's being sent to the LLM
+		// Emit conversation turn event RIGHT BEFORE LLM call to show exactly what's being sent to the LLM
+		// This happens after all context editing and summarization, so it reflects the actual messages sent
+
+		// Debug: Verify compacted messages are in llmMessages
+		compactedInLLMMessages := 0
+		for _, msg := range llmMessages {
+			if msg.Role == llmtypes.ChatMessageTypeTool {
+				for _, part := range msg.Parts {
+					if tr, ok := part.(llmtypes.ToolCallResponse); ok {
+						if strings.Contains(tr.Content, "has been saved to:") || strings.Contains(tr.Content, "tool_output_folder") {
+							compactedInLLMMessages++
+							// Log first compacted message as sample
+							if compactedInLLMMessages == 1 {
+								contentPreview := tr.Content
+								if len(contentPreview) > 200 {
+									contentPreview = contentPreview[:200] + "..."
+								}
+								v2Logger.Info("🔍 [CONVERSATION_TURN] Sample compacted message in llmMessages",
+									loggerv2.String("tool_name", tr.Name),
+									loggerv2.String("content_preview", contentPreview))
+							}
+						}
+					}
+				}
+			}
+		}
+		v2Logger.Info("🔍 [CONVERSATION_TURN] Messages being sent to LLM and event",
+			loggerv2.Int("total_messages", len(llmMessages)),
+			loggerv2.Int("compacted_messages_found", compactedInLLMMessages))
+
+		tools := events.ConvertToolsToToolInfo(a.filteredTools, a.toolToServer)
+		conversationTurnEvent := events.NewConversationTurnEvent(turn+1, lastMessage, len(llmMessages), false, 0, tools, llmMessages)
+		a.EmitTypedEvent(ctx, conversationTurnEvent)
 
 		// NEW: Start LLM generation for hierarchy tracking
 		a.StartLLMGeneration(ctx)
@@ -505,6 +598,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					reasoningTokens = *genInfo.ReasoningTokens
 				}
 			}
+			// Calculate estimated tokens from the messages we actually sent
+			estimatedTokensSent := estimateInputTokens(llmMessages)
+
+			// Calculate the difference between what we sent and what the LLM reports
+			// This helps understand if the LLM is counting cached content
+			tokenDifference := usage.InputTokens - estimatedTokensSent
+
 			v2Logger.Info("🔧 [TOKEN_USAGE] LLM call token usage",
 				loggerv2.Int("turn", turn+1),
 				loggerv2.String("model", a.ModelID),
@@ -514,7 +614,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				loggerv2.Int("cache_tokens", cacheTokens),
 				loggerv2.Int("reasoning_tokens", reasoningTokens),
 				loggerv2.Int("tool_calls", len(resp.Choices[0].ToolCalls)),
-				loggerv2.String("duration", time.Since(llmStartTime).String()))
+				loggerv2.String("duration", time.Since(llmStartTime).String()),
+				loggerv2.Int("estimated_tokens_sent", estimatedTokensSent),
+				loggerv2.Int("token_difference", tokenDifference),
+				loggerv2.String("note", "token_difference shows if LLM is counting cached content beyond what we sent"))
 
 			a.EndLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
 				PromptTokens:     usage.InputTokens,
@@ -1285,8 +1388,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 								fileWrittenEvent := events.NewLargeToolOutputFileWrittenEvent(tc.FunctionCall.Name, filePath, len(resultText), preview)
 								a.EmitTypedEvent(ctx, fileWrittenEvent)
 
-								// Create message with file path, first 100 characters, and instructions
-								fileMessage := a.toolOutputHandler.CreateToolOutputMessageWithPreview(tc.ID, filePath, resultText)
+								// Create message with file path, first 50% of threshold, and instructions
+								fileMessage := a.toolOutputHandler.CreateToolOutputMessageWithPreview(tc.ID, filePath, resultText, 50, false)
 
 								// Replace the result text with the file message
 								resultText = fileMessage
