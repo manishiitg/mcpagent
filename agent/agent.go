@@ -2776,6 +2776,33 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		a.Logger.Debug(fmt.Sprintf("🔧 [TOOL_REGISTRATION] Added custom tool '%s' to toolToServer mapping (category: %s)", name, toolCategory))
 	}
 
+	// 🔁 Ensure tool registration is idempotent by name
+	// Some higher-level agents (e.g., structured-output orchestration/decision agents)
+	// may call RegisterCustomTool with the same name multiple times over the lifetime
+	// of a shared Agent. The LLM provider requires unique function names per request,
+	// so we must avoid accumulating duplicate entries for the same tool name.
+	//
+	// Before appending, strip any existing tool with this name from Tools and filteredTools.
+	if len(a.Tools) > 0 {
+		cleanTools := make([]llmtypes.Tool, 0, len(a.Tools))
+		for _, t := range a.Tools {
+			if t.Function == nil || t.Function.Name != name {
+				cleanTools = append(cleanTools, t)
+			}
+		}
+		a.Tools = cleanTools
+	}
+
+	if len(a.filteredTools) > 0 {
+		cleanFiltered := make([]llmtypes.Tool, 0, len(a.filteredTools))
+		for _, t := range a.filteredTools {
+			if t.Function == nil || t.Function.Name != name {
+				cleanFiltered = append(cleanFiltered, t)
+			}
+		}
+		a.filteredTools = cleanFiltered
+	}
+
 	// In code execution mode, do NOT add custom tools to LLM tools list
 	// They should only be accessible via generated Go code
 	// EXCEPTION: Structured output tools (category "structured_output") must always be available
