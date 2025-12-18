@@ -580,11 +580,6 @@ type Agent struct {
 	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 1000)
 	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 10)
 
-	// Context editing configuration (see context_editing.go)
-	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
-	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 1000)
-	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 10)
-
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
 	resources map[string][]mcp.Resource
