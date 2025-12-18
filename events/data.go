@@ -1338,6 +1338,84 @@ func NewContextSummarizationErrorEvent(err string, originalCount, keepLast int) 
 	}
 }
 
+// Context editing events
+
+// ToolResponseEvaluation represents evaluation details for a single tool response
+type ToolResponseEvaluation struct {
+	ToolName            string `json:"tool_name"`
+	TokenCount          int    `json:"token_count"`
+	TurnAge             int    `json:"turn_age"`
+	MeetsTokenThreshold bool   `json:"meets_token_threshold"`
+	MeetsTurnThreshold  bool   `json:"meets_turn_threshold"`
+	WasCompacted        bool   `json:"was_compacted"`
+	SkipReason          string `json:"skip_reason,omitempty"`  // Why it wasn't compacted (if applicable)
+	TokensSaved         int    `json:"tokens_saved,omitempty"` // Tokens saved if compacted
+}
+
+// ContextEditingCompletedEvent represents completion of context editing (even if nothing was compacted)
+type ContextEditingCompletedEvent struct {
+	BaseEventData
+	TotalMessages         int                      `json:"total_messages"`
+	ToolResponseCount     int                      `json:"tool_response_count"` // Total tool responses found
+	CompactedCount        int                      `json:"compacted_count"`     // Number actually compacted
+	TotalTokensSaved      int                      `json:"total_tokens_saved"`  // Total tokens saved
+	TokenThreshold        int                      `json:"token_threshold"`
+	TurnThreshold         int                      `json:"turn_threshold"`
+	CurrentTurn           int                      `json:"current_turn"`
+	Evaluations           []ToolResponseEvaluation `json:"evaluations,omitempty"`   // Detailed evaluation of each tool response
+	AlreadyCompactedCount int                      `json:"already_compacted_count"` // Count of responses already compacted
+}
+
+func (e *ContextEditingCompletedEvent) GetEventType() EventType {
+	return ContextEditingCompleted
+}
+
+// ContextEditingErrorEvent represents an error during context editing
+type ContextEditingErrorEvent struct {
+	BaseEventData
+	Error          string `json:"error"`
+	TotalMessages  int    `json:"total_messages"`
+	TokenThreshold int    `json:"token_threshold"`
+	TurnThreshold  int    `json:"turn_threshold"`
+}
+
+func (e *ContextEditingErrorEvent) GetEventType() EventType {
+	return ContextEditingError
+}
+
+// Constructor functions for context editing events
+func NewContextEditingCompletedEvent(
+	totalMessages, toolResponseCount, compactedCount, totalTokensSaved, tokenThreshold, turnThreshold, currentTurn, alreadyCompactedCount int,
+	evaluations []ToolResponseEvaluation,
+) *ContextEditingCompletedEvent {
+	return &ContextEditingCompletedEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		TotalMessages:         totalMessages,
+		ToolResponseCount:     toolResponseCount,
+		CompactedCount:        compactedCount,
+		TotalTokensSaved:      totalTokensSaved,
+		TokenThreshold:        tokenThreshold,
+		TurnThreshold:         turnThreshold,
+		CurrentTurn:           currentTurn,
+		Evaluations:           evaluations,
+		AlreadyCompactedCount: alreadyCompactedCount,
+	}
+}
+
+func NewContextEditingErrorEvent(err string, totalMessages, tokenThreshold, turnThreshold int) *ContextEditingErrorEvent {
+	return &ContextEditingErrorEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Error:          err,
+		TotalMessages:  totalMessages,
+		TokenThreshold: tokenThreshold,
+		TurnThreshold:  turnThreshold,
+	}
+}
+
 func NewLargeToolOutputServerUnavailableEvent(toolName string, outputSize int, serverName, reason string) *LargeToolOutputServerUnavailableEvent {
 	return &LargeToolOutputServerUnavailableEvent{
 		BaseEventData: BaseEventData{

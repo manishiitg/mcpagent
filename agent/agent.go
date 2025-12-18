@@ -45,25 +45,44 @@ const (
 	SimpleAgent AgentMode = "simple"
 )
 
-// AgentOption defines a functional option for configuring an Agent
+// AgentOption defines a functional option for configuring an Agent.
+// These options modify the Agent's state during initialization (NewAgent).
 type AgentOption func(*Agent)
 
-// WithMode sets the agent mode
+// WithMode sets the agent's operational mode.
+//
+// Supported modes:
+//   - SimpleAgent: Standard tool-using agent (default).
+//   - ReActAgent (if available): Reasoning + Acting loop.
+//
+// Default: SimpleAgent
 func WithMode(mode AgentMode) AgentOption {
 	return func(a *Agent) {
 		a.AgentMode = mode
 	}
 }
 
-// WithLogger sets a custom logger
+// WithLogger sets a custom logger implementation.
+//
+// Allows injecting a specialized logger for structured logging or integrating
+// with existing application loggers.
+//
+// Default: loggerv2.NewDefault() (Standard output logger)
 func WithLogger(logger loggerv2.Logger) AgentOption {
 	return func(a *Agent) {
 		a.Logger = logger
 	}
 }
 
-// WithTracer sets a tracer for observability
-// The tracer will be wrapped in a StreamingTracer and added to the Tracers slice
+// WithTracer adds an observability tracer to the agent.
+//
+// The provided tracer will be wrapped in a StreamingTracer to support real-time
+// event streaming. Multiple tracers can be added by calling this option multiple times.
+//
+// Parameters:
+//   - tracer: The observability tracer implementation (e.g., Langfuse, Console, etc.).
+//
+// Default: No tracers (unless NewAgentWithObservability is used)
 func WithTracer(tracer observability.Tracer) AgentOption {
 	return func(a *Agent) {
 		if tracer != nil {
@@ -75,72 +94,141 @@ func WithTracer(tracer observability.Tracer) AgentOption {
 	}
 }
 
-// WithTraceID sets the trace ID for observability
+// WithTraceID sets a specific Trace ID for the agent session.
+//
+// Useful for correlating agent activities with external systems or requests
+// (e.g., setting the TraceID to match an incoming HTTP request ID).
+//
+// Default: Generated automatically (if using NewAgentWithObservability) or empty.
 func WithTraceID(traceID observability.TraceID) AgentOption {
 	return func(a *Agent) {
 		a.TraceID = traceID
 	}
 }
 
-// WithProvider sets the LLM provider
+// WithProvider explicitly sets the LLM provider name.
+//
+// This is primarily used for logging and tracking purposes, as the actual
+// provider logic is encapsulated in the llmtypes.Model interface.
 func WithProvider(provider llm.Provider) AgentOption {
 	return func(a *Agent) {
 		a.provider = provider
 	}
 }
 
-// WithMaxTurns sets the maximum conversation turns
+// WithMaxTurns sets the maximum number of conversation turns allowed.
+//
+// A turn consists of one user message and one agent response (which may include multiple tool calls).
+// This prevents infinite loops or excessive token usage.
+//
+// Parameters:
+//   - maxTurns: The specific limit to set.
+//
+// Default: Value returned by GetDefaultMaxTurns(SimpleAgent)
 func WithMaxTurns(maxTurns int) AgentOption {
 	return func(a *Agent) {
 		a.MaxTurns = maxTurns
 	}
 }
 
-// WithTemperature sets the LLM temperature
+// WithTemperature sets the sampling temperature for the LLM.
+//
+// Higher values (e.g., 0.8) make output more random/creative.
+// Lower values (e.g., 0.2) make output more focused/deterministic.
+//
+// Default: 0.0 (Deterministic)
 func WithTemperature(temperature float64) AgentOption {
 	return func(a *Agent) {
 		a.Temperature = temperature
 	}
 }
 
-// WithToolChoice sets the tool choice strategy
+// WithToolChoice forces a specific tool choice strategy.
+//
+// Parameters:
+//   - toolChoice: "auto", "none", or a specific tool name (depending on provider support).
+//
+// Default: "auto"
 func WithToolChoice(toolChoice string) AgentOption {
 	return func(a *Agent) {
 		a.ToolChoice = toolChoice
 	}
 }
 
-// WithLargeOutputVirtualTools enables/disables context offloading virtual tools
-// When enabled, large tool outputs are automatically offloaded to filesystem (offload context pattern)
+// WithLargeOutputVirtualTools enables the "Context Offloading" pattern.
+//
+// When enabled, if a tool returns a massive output (exceeding LargeOutputThreshold),
+// the agent will automatically save it to a file and provide the LLM with a "virtual tool"
+// to read that file on demand, rather than flooding the context window.
+//
+// Default: true (Enabled)
 func WithLargeOutputVirtualTools(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.EnableLargeOutputVirtualTools = enabled
 	}
 }
 
-// WithLargeOutputThreshold sets the token threshold for context offloading
-// When tool outputs exceed this threshold (in tokens), they are offloaded to filesystem (offload context pattern)
-// Default is 10000 tokens if not set
-// Note: The threshold is compared against token count using tiktoken encoding, not character count
+// WithLargeOutputThreshold sets the token count threshold for context offloading.
+//
+// Tool outputs larger than this value will be offloaded to the filesystem.
+// The count is based on token estimate, not character count.
+//
+// Parameters:
+//   - threshold: Token count limit.
+//
+// Default: 10,000 tokens
 func WithLargeOutputThreshold(threshold int) AgentOption {
 	return func(a *Agent) {
 		a.LargeOutputThreshold = threshold
 	}
 }
 
-// WithContextSummarization enables/disables context summarization
-// When enabled, conversation history is summarized when token usage exceeds the threshold percentage
-// of the model's context window (configured via WithSummarizeOnTokenThreshold)
+// WithToolOutputRetentionPeriod sets the retention policy for offloaded tool output files.
+//
+// Files created by context offloading will be deleted if they are older than this duration.
+//
+// Parameters:
+//   - retentionPeriod: Duration to keep files.
+//
+// Default: 0 (No automatic cleanup based on time). Recommended: 7 days.
+func WithToolOutputRetentionPeriod(retentionPeriod time.Duration) AgentOption {
+	return func(a *Agent) {
+		a.ToolOutputRetentionPeriod = retentionPeriod
+	}
+}
+
+// WithCleanupToolOutputOnSessionEnd configures immediate cleanup behavior.
+//
+// If enabled, all tool output files created during this session will be deleted
+// when EndAgentSession is called.
+//
+// Default: false (Files persist for debugging or future reference)
+func WithCleanupToolOutputOnSessionEnd(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.CleanupToolOutputOnSessionEnd = enabled
+	}
+}
+
+// WithContextSummarization enables automatic conversation summarization.
+//
+// When the context window fills up (based on TokenThresholdPercent), the agent will
+// summarize older messages to free up space while retaining context.
+//
+// Default: false (Disabled)
 func WithContextSummarization(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.EnableContextSummarization = enabled
 	}
 }
 
-// WithSummarizeOnTokenThreshold enables token-based summarization triggering
-// When enabled, summarization triggers when token usage exceeds the threshold percentage
-// of the model's context window (e.g., 0.8 = 80% of context window)
-// Requires EnableContextSummarization to be true
+// WithSummarizeOnTokenThreshold configures the trigger for summarization.
+//
+// Parameters:
+//   - enabled: Whether to use token-based triggering.
+//   - thresholdPercent: The percentage of the model's context window (0.0 - 1.0)
+//     that triggers summarization.
+//
+// Default: 0.8 (80%) if enabled.
 func WithSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) AgentOption {
 	return func(a *Agent) {
 		a.SummarizeOnTokenThreshold = enabled
@@ -174,28 +262,85 @@ func WithSummaryKeepLastMessages(count int) AgentOption {
 	}
 }
 
-// WithToolTimeout sets the tool execution timeout
+// WithContextEditing enables dynamic context reduction.
+//
+// Unlike summarization (which compresses history), context editing targets specific
+// large tool outputs in the history and replaces them with references if they become
+// too old or too large, optimizing the context window.
+//
+// Default: false (Disabled)
+func WithContextEditing(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.EnableContextEditing = enabled
+	}
+}
+
+// WithContextEditingThreshold sets the size threshold for context editing.
+//
+// Tool outputs larger than this token count are candidates for compaction when they
+// become "stale" (old).
+//
+// Default: 1000 tokens
+func WithContextEditingThreshold(threshold int) AgentOption {
+	return func(a *Agent) {
+		a.ContextEditingThreshold = threshold
+	}
+}
+
+// WithContextEditingTurnThreshold sets the age threshold for context editing.
+//
+// Tool outputs must be at least this many turns old before they are compacted.
+// This ensures recent tool outputs stay in context for immediate reference.
+//
+// Default: 10 turns
+func WithContextEditingTurnThreshold(turns int) AgentOption {
+	return func(a *Agent) {
+		a.ContextEditingTurnThreshold = turns
+	}
+}
+
+// WithToolTimeout sets a global timeout for tool execution.
+//
+// If a tool takes longer than this duration, it will be cancelled.
+//
+// Default: 5 minutes
 func WithToolTimeout(timeout time.Duration) AgentOption {
 	return func(a *Agent) {
 		a.ToolTimeout = timeout
 	}
 }
 
-// WithCustomTools adds custom tools to the agent during creation
+// WithCustomTools injects custom tools into the agent.
+//
+// These tools are added to the list of available tools for the LLM.
+// Note: For dynamic tool registration after initialization, use RegisterCustomTool.
 func WithCustomTools(tools []llmtypes.Tool) AgentOption {
 	return func(a *Agent) {
 		a.Tools = append(a.Tools, tools...)
 	}
 }
 
-// WithSmartRouting enables/disables smart routing for tool filtering
+// WithSmartRouting enables intelligent tool filtering (experimental).
+//
+// When enabled, the agent attempts to filter the available tools based on the user's
+// query to reduce context usage and improve LLM focus.
+//
+// Default: false (Disabled)
 func WithSmartRouting(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.EnableSmartRouting = enabled
 	}
 }
 
-// WithSmartRoutingThresholds sets custom thresholds for smart routing
+// WithSmartRoutingThresholds configures the triggers for smart routing.
+//
+// Smart routing will only activate if the number of tools or servers exceeds these limits.
+//
+// Parameters:
+//   - maxTools: Max tools allowed before routing logic kicks in.
+//   - maxServers: Max servers allowed before routing logic kicks in.
+//
+// Default: 30 tools, 4 servers
 func WithSmartRoutingThresholds(maxTools, maxServers int) AgentOption {
 	return func(a *Agent) {
 		a.SmartRoutingThreshold.MaxTools = maxTools
@@ -203,7 +348,14 @@ func WithSmartRoutingThresholds(maxTools, maxServers int) AgentOption {
 	}
 }
 
-// WithSmartRoutingConfig sets additional smart routing configuration
+// WithSmartRoutingConfig configures the internal mechanics of the smart router.
+//
+// Parameters:
+//   - temperature: LLM temperature for the routing decision.
+//   - maxTokens: Max tokens for the routing request.
+//   - maxMessages: History limit for routing context.
+//   - userMsgLimit: Character limit for user messages in routing context.
+//   - assistantMsgLimit: Character limit for assistant messages in routing context.
 func WithSmartRoutingConfig(temperature float64, maxTokens, maxMessages, userMsgLimit, assistantMsgLimit int) AgentOption {
 	return func(a *Agent) {
 		a.SmartRoutingConfig.Temperature = temperature
@@ -214,7 +366,12 @@ func WithSmartRoutingConfig(temperature float64, maxTokens, maxMessages, userMsg
 	}
 }
 
-// WithSystemPrompt sets a custom system prompt
+// WithSystemPrompt sets a custom system prompt.
+//
+// This overrides the default system prompt generation logic. The agent will use
+// this exact string as the system instruction.
+//
+// Note: To append to the system prompt instead of replacing it, use AppendSystemPrompt() method.
 func WithSystemPrompt(systemPrompt string) AgentOption {
 	return func(a *Agent) {
 		a.SystemPrompt = systemPrompt
@@ -222,35 +379,58 @@ func WithSystemPrompt(systemPrompt string) AgentOption {
 	}
 }
 
-// WithDiscoverResource enables/disables resource discovery in system prompt
+// WithDiscoverResource enables/disables automatic resource discovery.
+//
+// If enabled, the agent will query all connected MCP servers for their available resources
+// and include them in the system prompt.
+//
+// Default: true
 func WithDiscoverResource(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.DiscoverResource = enabled
 	}
 }
 
-// WithDiscoverPrompt enables/disables prompt discovery in system prompt
+// WithDiscoverPrompt enables/disables automatic prompt discovery.
+//
+// If enabled, the agent will query all connected MCP servers for their available prompts
+// and include them in the system prompt.
+//
+// Default: true
 func WithDiscoverPrompt(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.DiscoverPrompt = enabled
 	}
 }
 
-// WithCrossProviderFallback sets the cross-provider fallback configuration
+// WithCrossProviderFallback configures automatic model fallback.
+//
+// If the primary LLM provider fails, the agent can switch to the configured fallback
+// provider and model(s).
 func WithCrossProviderFallback(crossProviderFallback *CrossProviderFallback) AgentOption {
 	return func(a *Agent) {
 		a.CrossProviderFallback = crossProviderFallback
 	}
 }
 
-// WithSelectedTools sets specific tools to use (format: "server:tool")
+// WithSelectedTools restricts the agent to a specific subset of tools.
+//
+// Parameters:
+//   - tools: A list of tool identifiers in "server:tool" format (e.g., "github:create_issue").
+//
+// Only the specified tools will be available to the agent.
 func WithSelectedTools(tools []string) AgentOption {
 	return func(a *Agent) {
 		a.selectedTools = tools
 	}
 }
 
-// WithSelectedServers sets the selected servers list
+// WithSelectedServers restricts the agent to tools from specific servers.
+//
+// Parameters:
+//   - servers: A list of server names (e.g., "github", "filesystem").
+//
+// All tools from these servers will be available. Tools from other servers will be hidden.
 func WithSelectedServers(servers []string) AgentOption {
 	return func(a *Agent) {
 		// Store selected servers for tool filtering logic
@@ -259,28 +439,66 @@ func WithSelectedServers(servers []string) AgentOption {
 	}
 }
 
-// WithCodeExecutionMode enables/disables code execution mode
-// When enabled: Only virtual tools (discover_code_files, write_code) are exposed to the LLM
-// MCP tools and custom tools are NOT added directly - LLM must use generated Go code via write_code
-// When disabled (default): All MCP tools are added directly as LLM tools
+// WithCodeExecutionMode enables the Code Execution (Code Act) mode.
+//
+// In this mode, instead of calling tools directly via JSON-RPC, the LLM is instructed
+// to write Go code that imports and calls the tool functions.
+//
+//   - Enabled: Only "discover_code_files" and "write_code" tools are exposed.
+//   - Disabled: All MCP tools are exposed directly (Standard mode).
+//
+// Default: false (Standard mode)
 func WithCodeExecutionMode(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.UseCodeExecutionMode = enabled
 	}
 }
 
-// WithDisableCache disables MCP server connection caching
-// When enabled: Skips cache lookup and always performs fresh connections
-// When disabled (default): Uses cache to speed up connection establishment
+// WithDisableCache controls the MCP client connection cache.
+//
+//   - disable=true: Always establish fresh connections (slower, but safer for ephemeral tasks).
+//   - disable=false: Reuse connections from the pool (faster, default).
+//
+// Default: false (Caching enabled)
 func WithDisableCache(disable bool) AgentOption {
 	return func(a *Agent) {
 		a.DisableCache = disable
 	}
 }
 
-// WithServerName sets the server name(s) to connect to
-// Default: AllServers (connects to all configured servers)
-// Can be a single server name, comma-separated list, or mcpclient.AllServers
+// WithStreaming enables streaming for LLM text responses.
+//
+// When enabled, text content is streamed incrementally with StreamingChunkEvent events.
+// Tool calls are processed normally (no streaming events).
+//
+// Default: false (Streaming disabled)
+func WithStreaming(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.EnableStreaming = enabled
+	}
+}
+
+// WithStreamingCallback sets an optional callback function for streaming chunks.
+//
+// The callback is invoked for each streaming chunk (content fragments only).
+// Tool calls are not passed to this callback - they are processed normally.
+//
+// Parameters:
+//   - callback: Function that receives StreamChunk objects (content fragments only).
+//
+// Default: nil (No callback)
+func WithStreamingCallback(callback func(chunk llmtypes.StreamChunk)) AgentOption {
+	return func(a *Agent) {
+		a.StreamingCallback = callback
+	}
+}
+
+// WithServerName filters the agent to connect to a specific server(s).
+//
+// Parameters:
+//   - serverName: A specific server name, a comma-separated list, or "all".
+//
+// Default: "all" (Connect to all configured servers)
 func WithServerName(serverName string) AgentOption {
 	return func(a *Agent) {
 		a.serverName = serverName
@@ -288,7 +506,12 @@ func WithServerName(serverName string) AgentOption {
 }
 
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
-// It is generic enough to be reused by CLI commands, services, or tests.
+// It is the central component that orchestrates interactions between the Large Language Model (LLM),
+// Model Context Protocol (MCP) servers, and various tools.
+//
+// The Agent is designed to be generic and reusable across different contexts such as CLI commands,
+// backend services, or test suites. It manages conversation history, tool execution, context window
+// optimization, and observability.
 type Agent struct {
 	// Context for cancellation and lifecycle management
 	ctx context.Context
@@ -340,6 +563,10 @@ type Agent struct {
 	// Context offloading threshold: custom threshold for when to offload tool outputs (0 = use default)
 	LargeOutputThreshold int
 
+	// Tool output cleanup configuration
+	ToolOutputRetentionPeriod     time.Duration // How long to keep tool output files (0 = no automatic cleanup)
+	CleanupToolOutputOnSessionEnd bool          // Whether to clean up current session folder on session end
+
 	// Context summarization configuration (see context_summarization.go)
 	EnableContextSummarization     bool    // Enable context summarization feature
 	SummaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default)
@@ -347,6 +574,11 @@ type Agent struct {
 	TokenThresholdPercent          float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 	SummarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
 	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
+
+	// Context editing configuration (see context_editing.go)
+	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
+	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 1000)
+	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 10)
 
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
@@ -409,6 +641,12 @@ type Agent struct {
 	// When enabled: Skips cache lookup and always performs fresh connections
 	// When disabled (default): Uses cache to speed up connection establishment (60-85% faster)
 	DisableCache bool
+
+	// Streaming configuration
+	// When enabled: LLM text responses are streamed incrementally with events
+	// Tool calls are processed normally (no streaming events)
+	EnableStreaming   bool                             // Enable streaming for LLM text responses (default: false)
+	StreamingCallback func(chunk llmtypes.StreamChunk) // Optional callback for streaming chunks
 
 	// Folder guard paths for code execution mode
 	// These paths are validated at AST level before code execution
@@ -536,9 +774,22 @@ func extractModelIDFromLLM(llm llmtypes.Model) string {
 	return modelID
 }
 
-// NewAgent creates a new Agent with the given options
-// The modelID is automatically extracted from the LLM instance
-// By default, connects to all servers (AllServers). Use WithServerName() to filter.
+// NewAgent creates a new Agent instance with the provided configuration.
+//
+// It initializes the agent with the given context, LLM model, and MCP configuration path.
+// Additional behavior can be configured using AgentOption functions.
+//
+// Parameters:
+//   - ctx: The base context for the agent's lifecycle.
+//   - llm: The LLM provider implementation (must implement llmtypes.Model).
+//   - configPath: Path to the MCP configuration file (e.g., mcp_config.json).
+//   - options: Variadic list of AgentOption functions to configure the agent.
+//
+// Returns:
+//   - *Agent: A pointer to the initialized Agent.
+//   - error: An error if initialization fails (e.g., LLM is nil, config load fails).
+//
+// By default, the agent connects to all servers defined in the config. Use WithServerName() option to filter.
 func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
 	if llm == nil {
 		return nil, fmt.Errorf("LLM cannot be nil")
@@ -562,10 +813,15 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		provider:                      "",                          // Will be set by caller
 		EnableLargeOutputVirtualTools: true,                        // Default to enabled
 		LargeOutputThreshold:          0,                           // Default: 0 means use default threshold (10000)
+		ToolOutputRetentionPeriod:     0,                           // Default: 0 means no automatic cleanup
+		CleanupToolOutputOnSessionEnd: false,                       // Default: false means files persist after session
 		EnableContextSummarization:    false,                       // Default to disabled
 		SummarizeOnTokenThreshold:     false,                       // Default to disabled
 		TokenThresholdPercent:         0.8,                         // Default to 80% if enabled
 		SummaryKeepLastMessages:       0,                           // Default: 0 means use default (8 messages)
+		EnableContextEditing:          false,                       // Default to disabled
+		ContextEditingThreshold:       0,                           // Default: 0 means use default threshold (1000)
+		ContextEditingTurnThreshold:   0,                           // Default: 0 means use default (10 turns)
 		Logger:                        loggerv2.NewDefault(),       // Default logger
 		customTools:                   make(map[string]CustomTool), // Initialize custom tools map
 
@@ -605,6 +861,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 		// Initialize cache (default: false - caching enabled by default)
 		DisableCache: false,
+
+		// Initialize streaming (default: false - streaming disabled)
+		EnableStreaming:   false,
+		StreamingCallback: nil,
 
 		// Initialize server name (default: AllServers - connect to all servers)
 		serverName: mcpclient.AllServers,
@@ -682,6 +942,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Set session ID for organizing files by conversation
 	toolOutputHandler.SetSessionID(string(ag.TraceID))
+
+	// Set LLM for provider-aware token counting
+	toolOutputHandler.SetLLM(llm)
 
 	// Update the existing agent with connection data
 	ag.Client = firstClient
@@ -972,7 +1235,10 @@ func (a *Agent) SetCurrentQuery(query string) {
 	// This method is no longer needed as hierarchy is removed
 }
 
-// StartAgentSession creates a new agent-level event tree
+// StartAgentSession initializes a new session for the agent.
+//
+// It emits an AgentStartEvent, which marks the beginning of a logical session in the
+// observability/tracing system. This creates the root or high-level node in the event tree.
 func (a *Agent) StartAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
 	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode)
@@ -985,7 +1251,10 @@ func (a *Agent) StartTurn(ctx context.Context, turn int) {
 	// This method is kept for consistency but the actual turn event is emitted in AskWithHistory
 }
 
-// StartLLMGeneration creates a new LLM-level event tree
+// StartLLMGeneration marks the start of an LLM generation call.
+//
+// It emits an LLMGenerationStartEvent to the observability system. This should be called
+// immediately before sending a request to the LLM provider.
 func (a *Agent) StartLLMGeneration(ctx context.Context) {
 	// Emit LLM generation start event to create hierarchy
 	llmStartEvent := events.NewLLMGenerationStartEvent(0, a.ModelID, a.Temperature, len(a.filteredTools), 0)
@@ -1194,7 +1463,19 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 		loggerv2.Int("cumulative_total", a.cumulativeTotalTokens))
 }
 
-// EndLLMGeneration ends the current LLM generation
+// EndLLMGeneration marks the completion of an LLM generation call.
+//
+// It captures the result, token usage metrics, and duration, emitting an LLMGenerationEndEvent.
+// This matches the corresponding StartLLMGeneration call in the event tree.
+//
+// Parameters:
+//   - ctx: Context for the operation.
+//   - result: The text content generated by the LLM.
+//   - turn: The conversation turn index.
+//   - toolCalls: Number of tool calls generated.
+//   - duration: Time taken for the generation.
+//   - usageMetrics: Token usage statistics.
+//   - resp: The full content response object (optional, for detailed metrics).
 func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, toolCalls int, duration time.Duration, usageMetrics events.UsageMetrics, resp *llmtypes.ContentResponse) {
 	// Accumulate token usage (including cache tokens) - uses unified Usage field
 	a.accumulateTokenUsage(ctx, usageMetrics, resp, turn)
@@ -1420,7 +1701,14 @@ func (a *Agent) GetTokenUsageWithPricing() (
 	return
 }
 
-// EndAgentSession ends the current agent session
+// EndAgentSession finalizes the current agent session.
+//
+// It performs usage reporting, resource cleanup (e.g., temporary tool output files),
+// and emits an AgentEndEvent. It should be called when the agent's work is complete.
+//
+// Parameters:
+//   - ctx: Context for the operation.
+//   - conversationDuration: The total duration of the session/conversation.
 func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.Duration) {
 	// Emit total token usage event before agent end event
 	a.emitTotalTokenUsageEvent(ctx, conversationDuration)
@@ -1446,6 +1734,31 @@ func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.D
 	// Cleanup agent-specific generated directory (only in code execution mode)
 	if a.UseCodeExecutionMode {
 		a.cleanupAgentGeneratedDir()
+	}
+
+	// Cleanup tool output files
+	if a.toolOutputHandler != nil {
+		// Clean up old files if retention period is configured
+		if a.ToolOutputRetentionPeriod > 0 {
+			if err := a.toolOutputHandler.CleanupOldFiles(a.ToolOutputRetentionPeriod); err != nil {
+				if a.Logger != nil {
+					a.Logger.Warn("Failed to cleanup old tool output files", loggerv2.Error(err))
+				}
+			} else if a.Logger != nil {
+				a.Logger.Info("Cleaned up old tool output files", loggerv2.Any("retention_period", a.ToolOutputRetentionPeriod))
+			}
+		}
+
+		// Clean up current session folder if enabled
+		if a.CleanupToolOutputOnSessionEnd {
+			if err := a.toolOutputHandler.CleanupCurrentSessionFolder(); err != nil {
+				if a.Logger != nil {
+					a.Logger.Warn("Failed to cleanup current session tool output folder", loggerv2.Error(err))
+				}
+			} else if a.Logger != nil {
+				a.Logger.Info("Cleaned up current session tool output folder")
+			}
+		}
 	}
 }
 
@@ -1559,10 +1872,21 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 	return nil
 }
 
-// NewAgentWithObservability creates a new Agent with observability configuration
-// The modelID is automatically extracted from the LLM instance
-// This function automatically sets up a noop tracer and generates a trace ID if not provided via options
-// By default, connects to all servers (AllServers). Use WithServerName() to filter.
+// NewAgentWithObservability creates a new Agent with simplified observability defaults.
+//
+// Unlike NewAgent, this constructor automatically ensures a tracer is configured (using a noop tracer if none provided)
+// and generates a TraceID if one is not specified. This is useful for applications that need immediate
+// observability compliance without manual setup.
+//
+// Parameters:
+//   - ctx: Context for the agent.
+//   - llm: The LLM model.
+//   - configPath: Path to MCP config.
+//   - options: Configuration options.
+//
+// Returns:
+//   - *Agent: The initialized agent.
+//   - error: An error if initialization fails.
 func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
 	if llm == nil {
 		return nil, fmt.Errorf("LLM cannot be nil")
@@ -1583,12 +1907,16 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		AgentMode:                     SimpleAgent,
 		TraceID:                       "", // Will be generated if not set via options
 		EnableLargeOutputVirtualTools: true,
+		ToolOutputRetentionPeriod:     0,                     // Default: 0 means no automatic cleanup
+		CleanupToolOutputOnSessionEnd: false,                 // Default: false means files persist after session
 		Logger:                        loggerv2.NewDefault(), // Default logger
 		customTools:                   make(map[string]CustomTool),
 		EnableSmartRouting:            false,
 		DiscoverResource:              true,
 		DiscoverPrompt:                true,
 		DisableCache:                  false,                // Default: cache enabled
+		EnableStreaming:               false,                // Default: streaming disabled
+		StreamingCallback:             nil,                  // Default: no callback
 		serverName:                    mcpclient.AllServers, // Default: all servers
 	}
 
@@ -1657,6 +1985,9 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	// Set session ID for organizing files by conversation
 	toolOutputHandler.SetSessionID(string(ag.TraceID))
 
+	// Set LLM for provider-aware token counting
+	toolOutputHandler.SetLLM(llm)
+
 	// Debug logging for context offloading (observability version)
 	// Use the logger we created earlier
 	logger.Info("🔍 Context offloading via virtual tools (observability)",
@@ -1684,8 +2015,20 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	return ag, nil
 }
 
-// Convenience constructors for common use cases
-// By default, connects to all servers (AllServers). Use WithServerName() to filter.
+// NewSimpleAgent creates a pre-configured Agent in "Simple" mode.
+//
+// This is a convenience constructor that applies the WithMode(SimpleAgent) option automatically.
+// Simple agents are optimized for direct tool usage without complex reasoning loops.
+//
+// Parameters:
+//   - ctx: Context for the agent.
+//   - llm: The LLM model.
+//   - configPath: Path to MCP config.
+//   - options: Additional configuration options.
+//
+// Returns:
+//   - *Agent: The initialized simple agent.
+//   - error: An error if initialization fails.
 func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
 	return NewAgent(ctx, llm, configPath, append(options, WithMode(SimpleAgent))...)
 }
@@ -1903,7 +2246,10 @@ func getClientNames(clients map[string]mcpclient.ClientInterface) []string {
 	return names
 }
 
-// Close closes all underlying MCP client connections.
+// Close gracefully terminates the agent and closes all underlying resources.
+//
+// It iterates through all active MCP client connections and closes them.
+// This method should be called when the agent is no longer needed to prevent resource leaks.
 func (a *Agent) Close() {
 	// Close all clients in the map
 	for serverName, client := range a.Clients {
@@ -1971,8 +2317,19 @@ func (a *Agent) GetConnectionStats() map[string]interface{} {
 	return stats
 }
 
-// Ask runs a single-question interaction with possible tool calls and returns the final answer.
-// Delegates to AskWithHistory with a single message
+// Ask processes a single question from the user and returns the agent's response.
+//
+// This is a convenience wrapper around AskWithHistory that creates a single-message
+// conversation history. It handles the full ReAct loop (Reasoning + Acting), allowing
+// the agent to call tools as needed to answer the question.
+//
+// Parameters:
+//   - ctx: Context for the request (can be used for cancellation).
+//   - question: The user's input question.
+//
+// Returns:
+//   - string: The final text response from the agent.
+//   - error: An error if the interaction fails.
 func (a *Agent) Ask(ctx context.Context, question string) (string, error) {
 	// Create a single user message for the question
 	userMessage := llmtypes.MessageContent{
@@ -1985,13 +2342,39 @@ func (a *Agent) Ask(ctx context.Context, question string) (string, error) {
 	return answer, err
 }
 
-// AskWithHistory runs an interaction using the provided message history (multi-turn conversation).
-// Delegates to conversation.go
+// AskWithHistory runs a multi-turn conversation interaction using the provided message history.
+//
+// It continues an existing conversation, processing the latest user message (last in the slice)
+// and generating a response. It handles tool execution, context management, and recursive
+// calls for multi-step reasoning.
+//
+// Parameters:
+//   - ctx: Context for the request.
+//   - messages: The conversation history, including the new user message.
+//
+// Returns:
+//   - string: The final text response from the agent.
+//   - []llmtypes.MessageContent: The updated conversation history (including the new response).
+//   - error: An error if the interaction fails.
 func (a *Agent) AskWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return AskWithHistory(a, ctx, messages)
 }
 
-// AskStructured runs a single-question interaction and converts the result to structured output
+// AskStructured processes a single question and strictly forces the output to match a structured schema.
+//
+// It performs a standard agent interaction and then uses a reliable conversion process
+// to map the agent's textual response into the specified Go struct type T.
+//
+// Parameters:
+//   - a: The Agent instance.
+//   - ctx: Context for the request.
+//   - question: The user's input question.
+//   - schema: An instance of generic type T (used for type inference).
+//   - schemaString: A JSON schema string describing T, used to guide the LLM.
+//
+// Returns:
+//   - T: The result parsed into type T.
+//   - error: An error if processing or conversion fails.
 func AskStructured[T any](a *Agent, ctx context.Context, question string, schema T, schemaString string) (T, error) {
 	// Create a single user message for the question
 	userMessage := llmtypes.MessageContent{
@@ -2004,7 +2387,21 @@ func AskStructured[T any](a *Agent, ctx context.Context, question string, schema
 	return answer, err
 }
 
-// AskWithHistoryStructured runs an interaction using message history and converts the result to structured output
+// AskWithHistoryStructured runs a multi-turn interaction and converts the final result to structured output.
+//
+// It extends AskWithHistory by applying a structured output conversion step to the final response.
+//
+// Parameters:
+//   - a: The Agent instance.
+//   - ctx: Context for the request.
+//   - messages: The conversation history.
+//   - schema: An instance of generic type T.
+//   - schemaString: A JSON schema string describing T.
+//
+// Returns:
+//   - T: The result parsed into type T.
+//   - []llmtypes.MessageContent: The updated conversation history.
+//   - error: An error if processing or conversion fails.
 func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error) {
 	// First, get the text response using the existing method
 	textResponse, updatedMessages, err := a.AskWithHistory(ctx, messages)
@@ -2023,9 +2420,23 @@ func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []l
 	return structuredResult, updatedMessages, nil
 }
 
-// AskWithHistoryStructuredViaTool runs an interaction using message history and extracts structured output
-// from a dynamically registered tool call. The LLM can call the tool during conversation, and we extract
-// the structured data from the tool call arguments after conversation completes.
+// AskWithHistoryStructuredViaTool runs an interaction where the structured output is delivered via a specific tool call.
+//
+// Instead of parsing the final text response, this method registers a temporary tool with the given schema.
+// It instructs the LLM to call this tool to provide the answer. This often yields higher reliability
+// for complex structured data than text parsing.
+//
+// Parameters:
+//   - a: The Agent instance.
+//   - ctx: Context for the request.
+//   - messages: Conversation history.
+//   - toolName: Name for the temporary tool (e.g., "submit_report").
+//   - toolDescription: Description for the tool (e.g., "Submit the final report").
+//   - schema: JSON schema string defining the expected data structure.
+//
+// Returns:
+//   - StructuredOutputResult[T]: Result containing the structured data or fallback text.
+//   - error: An error if the process fails.
 func AskWithHistoryStructuredViaTool[T any](
 	a *Agent,
 	ctx context.Context,
@@ -2302,9 +2713,20 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 	a.hasCustomSystemPrompt = true
 }
 
-// RegisterCustomTool registers a single custom tool with both schema and execution function
-// category is a REQUIRED parameter that specifies the tool's category (e.g., "workspace", "human", "virtual")
-// Returns error if category is missing or empty
+// RegisterCustomTool registers a dynamic custom tool with the agent.
+//
+// This allows adding tools at runtime that are not provided by an MCP server.
+// The tool will be available for the LLM to use during interactions.
+//
+// Parameters:
+//   - name: The unique name of the tool.
+//   - description: A description of what the tool does (used by LLM).
+//   - parameters: JSON schema defining the tool's expected arguments.
+//   - executionFunc: The Go function to execute when the tool is called.
+//   - category: REQUIRED. The tool's category (e.g., "workspace", "human", "virtual").
+//
+// Returns:
+//   - error: An error if registration fails (e.g., missing category).
 func (a *Agent) RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category ...string) error {
 	if a.customTools == nil {
 		a.customTools = make(map[string]CustomTool)
