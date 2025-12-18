@@ -4,14 +4,12 @@ go 1.24.4
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/manishiitg/multi-llm-provider-go v0.0.0-00010101000000-000000000000
+	github.com/manishiitg/multi-llm-provider-go v0.2.0
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
 )
-
-replace github.com/manishiitg/multi-llm-provider-go => ../multi-llm-provider-go
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
