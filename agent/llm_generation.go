@@ -220,10 +220,111 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - About to call a.LLM.GenerateContent", attempt+1))
 
+		// Handle streaming if enabled
+		var streamChan chan llmtypes.StreamChunk
+		var streamingDone chan bool
+		var contentChunkIndex int
+		var totalChunks int
+		streamStartTime := time.Now()
+
+		if a.EnableStreaming && attempt == 0 {
+			// Only enable streaming on first attempt (disable during fallback)
+			streamChan = make(chan llmtypes.StreamChunk, 100)
+			streamingDone = make(chan bool, 1)
+
+			// Add streaming channel to options
+			opts = append(opts, llmtypes.WithStreamingChan(streamChan))
+
+			// Emit streaming start event
+			streamingStartEvent := &events.StreamingStartEvent{
+				BaseEventData: events.BaseEventData{
+					Timestamp: time.Now(),
+				},
+				Model:    a.ModelID,
+				Provider: string(a.provider),
+			}
+			a.EmitTypedEvent(ctx, streamingStartEvent)
+
+			// Start goroutine to process streaming chunks
+			go func() {
+				defer func() {
+					// Ensure channel is closed
+					if streamChan != nil {
+						// Channel will be closed by LLM provider, but we add this as safety
+						select {
+						case <-streamChan:
+							// Channel already closed
+						default:
+							// Channel still open (shouldn't happen, but safe)
+						}
+					}
+					streamingDone <- true
+				}()
+
+				for chunk := range streamChan {
+					switch chunk.Type {
+					case llmtypes.StreamChunkTypeContent:
+						// Stream text content fragments
+						if chunk.Content != "" {
+							contentChunkIndex++
+							totalChunks++
+
+							// Emit streaming chunk event for text content
+							streamingChunkEvent := &events.StreamingChunkEvent{
+								BaseEventData: events.BaseEventData{
+									Timestamp: time.Now(),
+								},
+								Content:    chunk.Content,
+								ChunkIndex: contentChunkIndex,
+								IsToolCall: false,
+							}
+							a.EmitTypedEvent(ctx, streamingChunkEvent)
+
+							// Call optional callback if provided
+							if a.StreamingCallback != nil {
+								a.StreamingCallback(chunk)
+							}
+						}
+
+					case llmtypes.StreamChunkTypeToolCall:
+						// Tool calls are processed normally (no streaming events)
+						// Just accumulate silently - they'll be in the final response
+						if chunk.ToolCall != nil {
+							// No event emission for tool calls - process normally after streaming
+						}
+					}
+				}
+			}()
+		}
+
 		llmCallStart := time.Now()
 		resp, err := a.LLM.GenerateContent(ctx, messages, opts...)
 		llmCallDuration := time.Since(llmCallStart)
 		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - Duration: %v, Error: %v", attempt+1, llmCallDuration, err != nil))
+
+		// Wait for streaming to complete if enabled
+		if a.EnableStreaming && attempt == 0 && streamChan != nil {
+			// Wait for streaming goroutine to finish
+			<-streamingDone
+
+			// Emit streaming end event
+			streamingEndEvent := &events.StreamingEndEvent{
+				BaseEventData: events.BaseEventData{
+					Timestamp: time.Now(),
+				},
+				TotalChunks: totalChunks,
+				Duration:    time.Since(streamStartTime).String(),
+			}
+			if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+				if resp.Choices[0].GenerationInfo.TotalTokens != nil {
+					streamingEndEvent.TotalTokens = *resp.Choices[0].GenerationInfo.TotalTokens
+				}
+				if resp.Choices[0].StopReason != "" {
+					streamingEndEvent.FinishReason = resp.Choices[0].StopReason
+				}
+			}
+			a.EmitTypedEvent(ctx, streamingEndEvent)
+		}
 
 		if err == nil {
 			logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - SUCCESS", attempt+1))
