@@ -120,13 +120,13 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		virtualTools = append(virtualTools, largeOutputTools...)
 	}
 
-	// Add discover_code_files tool (requires both server_name and tool_name - returns actual Go code)
+	// Add discover_code_files tool (requires server_name and either tool_name or tool_names - returns actual Go code)
 	// Note: discover_code_structure has been removed - tool structure is now automatically included in system prompt
 	discoverCodeFilesTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "discover_code_files",
-			Description: "Get Go source code for a specific tool from a specific server. Both server_name and tool_name are required.",
+			Description: "Get Go source code for one or more tools from a specific server. Requires server_name and either tool_name (single) or tool_names (array) for multiple files.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -136,10 +136,15 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 					},
 					"tool_name": map[string]interface{}{
 						"type":        "string",
-						"description": "Tool name (e.g., 'GetDocument', 'resolve-library-id'). The tool name will be converted to snake_case filename.",
+						"description": "Single tool name (e.g., 'GetDocument', 'resolve-library-id'). The tool name will be converted to snake_case filename. Use this for a single file, or use tool_names for multiple files.",
+					},
+					"tool_names": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Array of tool names to discover together (e.g., ['GetDocument', 'ListDocuments']). Use this to discover multiple files in a single call.",
 					},
 				},
-				"required": []string{"server_name", "tool_name"},
+				"required": []string{"server_name"},
 			}),
 		},
 	}

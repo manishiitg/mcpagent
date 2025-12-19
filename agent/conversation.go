@@ -1229,14 +1229,35 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					} else {
 						v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_EXECUTION] Tool '%s' not found in customTools map (map has %d tools) - attempting MCP client call", tc.FunctionCall.Name, len(a.customTools)))
 						// Handle regular MCP tool execution
+						v2Logger.Debug("🔧 [TOOL_CALL] About to call MCP tool via client (from customTools fallback)",
+							loggerv2.String("tool_name", tc.FunctionCall.Name),
+							loggerv2.String("server_name", serverName),
+							loggerv2.String("timeout", toolTimeout.String()))
+						callStart := time.Now()
 						result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
+						callDuration := time.Since(callStart)
+						v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed (from customTools fallback)",
+							loggerv2.String("tool_name", tc.FunctionCall.Name),
+							loggerv2.String("server_name", serverName),
+							loggerv2.String("duration", callDuration.String()),
+							loggerv2.Any("ctx_done", toolCtx.Err() != nil),
+							loggerv2.Any("has_error", toolErr != nil))
 					}
 				} else {
 					// Handle regular MCP tool execution
-					v2Logger.Debug("🔧 [TOOL_CALL] Executing MCP tool",
+					v2Logger.Debug("🔧 [TOOL_CALL] About to execute MCP tool",
 						loggerv2.String("tool_name", tc.FunctionCall.Name),
-						loggerv2.String("server_name", serverName))
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("timeout", toolTimeout.String()))
+					callStart := time.Now()
 					result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
+					callDuration := time.Since(callStart)
+					v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("duration", callDuration.String()),
+						loggerv2.Any("ctx_done", toolCtx.Err() != nil),
+						loggerv2.Any("has_error", toolErr != nil))
 				}
 
 				duration := time.Since(startTime)

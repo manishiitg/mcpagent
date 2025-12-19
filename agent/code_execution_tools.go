@@ -35,15 +35,37 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 		a.Logger.Debug("discover_code_files called", loggerv2.Any("args", args))
 	}
 
-	// Extract parameters (both required)
+	// Extract server_name (required)
 	serverName, ok := args["server_name"].(string)
 	if !ok || serverName == "" {
 		return "", fmt.Errorf("server_name parameter is required")
 	}
 
-	toolName, ok := args["tool_name"].(string)
-	if !ok || toolName == "" {
-		return "", fmt.Errorf("tool_name parameter is required")
+	// Extract tool names - support both single tool_name and multiple tool_names
+	var toolNames []string
+	if toolNamesParam, exists := args["tool_names"]; exists && toolNamesParam != nil {
+		// Handle array of tool names
+		if toolNamesArray, ok := toolNamesParam.([]interface{}); ok {
+			for _, tn := range toolNamesArray {
+				if toolNameStr, ok := tn.(string); ok && toolNameStr != "" {
+					toolNames = append(toolNames, toolNameStr)
+				}
+			}
+		} else if toolNamesArray, ok := toolNamesParam.([]string); ok {
+			toolNames = toolNamesArray
+		}
+	}
+
+	// Fall back to single tool_name for backward compatibility
+	if len(toolNames) == 0 {
+		if toolName, ok := args["tool_name"].(string); ok && toolName != "" {
+			toolNames = []string{toolName}
+		}
+	}
+
+	// Validate that we have at least one tool name
+	if len(toolNames) == 0 {
+		return "", fmt.Errorf("either tool_name (string) or tool_names (array) parameter is required")
 	}
 
 	// Determine package name first to check if it's a category directory
@@ -101,28 +123,59 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 		return "", fmt.Errorf("go code package directory not found for server: %s (expected at %s)", serverName, packageDir)
 	}
 
-	// Convert tool name to snake_case to match filename
-	fileName := codegen.ToolNameToSnakeCase(toolName) + ".go"
-	filePath := filepath.Join(packageDir, fileName)
-
-	// Check if the specific tool file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return "", fmt.Errorf("tool file not found: %s (expected at %s). Tool name '%s' converted to filename '%s'", toolName, filePath, toolName, fileName)
-	}
-
-	// Read and return the single tool file
-	//nolint:gosec // G304: filePath is constructed from validated inputs (serverName, toolName) using filepath.Join, preventing path traversal
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read tool file %s: %w", filePath, err)
-	}
-
+	// Process all requested tool files
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("// Package: %s\n", packageName))
-	result.WriteString(fmt.Sprintf("// Server: %s\n", serverName))
-	result.WriteString(fmt.Sprintf("// Tool: %s\n", toolName))
-	result.WriteString(fmt.Sprintf("// File: %s\n\n", fileName))
-	result.WriteString(string(content))
+	var errors []string
+
+	for i, toolName := range toolNames {
+		// Convert tool name to snake_case to match filename
+		fileName := codegen.ToolNameToSnakeCase(toolName) + ".go"
+		filePath := filepath.Join(packageDir, fileName)
+
+		// Check if the specific tool file exists
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			errors = append(errors, fmt.Sprintf("tool file not found: %s (expected at %s). Tool name '%s' converted to filename '%s'", toolName, filePath, toolName, fileName))
+			continue
+		}
+
+		// Read the tool file
+		//nolint:gosec // G304: filePath is constructed from validated inputs (serverName, toolName) using filepath.Join, preventing path traversal
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("failed to read tool file %s: %v", filePath, err))
+			continue
+		}
+
+		// Add separator between files (except for the first one)
+		if i > 0 {
+			result.WriteString("\n\n")
+			result.WriteString(strings.Repeat("=", 80))
+			result.WriteString("\n\n")
+		}
+
+		// Add file header
+		result.WriteString(fmt.Sprintf("// Package: %s\n", packageName))
+		result.WriteString(fmt.Sprintf("// Server: %s\n", serverName))
+		result.WriteString(fmt.Sprintf("// Tool: %s\n", toolName))
+		result.WriteString(fmt.Sprintf("// File: %s\n\n", fileName))
+		result.WriteString(string(content))
+	}
+
+	// If there were errors and no successful files, return error
+	if len(errors) > 0 && result.Len() == 0 {
+		return "", fmt.Errorf("failed to discover any files:\n%s", strings.Join(errors, "\n"))
+	}
+
+	// If there were some errors but some files succeeded, append errors as warnings
+	if len(errors) > 0 {
+		result.WriteString("\n\n")
+		result.WriteString(strings.Repeat("=", 80))
+		result.WriteString("\n")
+		result.WriteString("// ⚠️ WARNINGS:\n")
+		for _, errMsg := range errors {
+			result.WriteString(fmt.Sprintf("// %s\n", errMsg))
+		}
+	}
 
 	return result.String(), nil
 }
@@ -713,10 +766,6 @@ func formatCodeExecutionError(err error, code string) string {
 		builder.WriteString("- Ensure your code compiles correctly with `go run`\n")
 		builder.WriteString("- Check that all HTTP API calls use the correct endpoints\n\n")
 	}
-
-	builder.WriteString("**Your Code:**\n```go\n")
-	builder.WriteString(code)
-	builder.WriteString("\n```\n")
 
 	return builder.String()
 }
