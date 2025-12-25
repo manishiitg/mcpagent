@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -553,7 +554,7 @@ func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, confi
 		loggerv2.String("generated_dir", generatedDir))
 	indexStart := time.Now()
 	if err := codegen.GenerateIndexFileWithContext(ctx, generatedDir, cm.logger); err != nil {
-		if err == context.Canceled || err == context.DeadlineExceeded {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			cm.logger.Warn("🔧 [INVALIDATE] Index regeneration cancelled or timed out",
 				loggerv2.Error(err),
 				loggerv2.String("server", serverName),
