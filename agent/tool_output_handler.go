@@ -128,8 +128,9 @@ func (h *ToolOutputHandler) CountTokensForModel(content string, modelID string) 
 		return tokenCount
 	}
 
-	// Final fallback: character-based approximation
-	return len(content) / 4
+	// If tiktoken fails completely, return 0 (character-based estimation removed)
+	// This means large output detection may not work if tiktoken fails
+	return 0
 }
 
 // inferProviderFromModelID attempts to infer the provider from the model ID

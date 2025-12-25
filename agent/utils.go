@@ -61,7 +61,8 @@ func TruncateString(s string, maxLen int) string {
 }
 
 // extractUsageMetrics extracts token usage metrics from an LLM response.
-// It prioritizes the unified Usage field, falling back to GenerationInfo if needed.
+// It uses the unified llmtypes.ExtractUsageFromGenerationInfo for comprehensive extraction.
+// This ensures all token types (input, output, cache, thoughts, reasoning) are properly extracted.
 func extractUsageMetrics(resp *llmtypes.ContentResponse) observability.UsageMetrics {
 	if resp == nil || len(resp.Choices) == 0 {
 		return observability.UsageMetrics{}
@@ -69,7 +70,7 @@ func extractUsageMetrics(resp *llmtypes.ContentResponse) observability.UsageMetr
 
 	m := observability.UsageMetrics{Unit: "TOKENS"}
 
-	// Priority 1: Use unified Usage field (if available)
+	// Priority 1: Use unified Usage field (if available) - already extracted by adapters
 	if resp.Usage != nil {
 		m.InputTokens = resp.Usage.InputTokens
 		m.OutputTokens = resp.Usage.OutputTokens
@@ -85,98 +86,89 @@ func extractUsageMetrics(resp *llmtypes.ContentResponse) observability.UsageMetr
 		}
 	}
 
-	// Priority 2: Fall back to GenerationInfo (for backward compatibility)
-	info := resp.Choices[0].GenerationInfo
-	if info != nil {
-		// Extract input tokens (check multiple naming conventions)
-		if info.InputTokens != nil {
-			m.InputTokens = *info.InputTokens
-		} else if info.InputTokensCap != nil {
-			m.InputTokens = *info.InputTokensCap
-		} else if info.PromptTokens != nil {
-			m.InputTokens = *info.PromptTokens
-		} else if info.PromptTokensCap != nil {
-			m.InputTokens = *info.PromptTokensCap
-		}
+	// Priority 2: Fall back to GenerationInfo using unified extraction
+	if resp.Choices[0].GenerationInfo != nil {
+		// Use unified extraction function from multi-llm-provider-go
+		usage := llmtypes.ExtractUsageFromGenerationInfo(resp.Choices[0].GenerationInfo)
+		if usage != nil {
+			m.InputTokens = usage.InputTokens
+			m.OutputTokens = usage.OutputTokens
+			m.TotalTokens = usage.TotalTokens
 
-		// Extract output tokens (check multiple naming conventions)
-		if info.OutputTokens != nil {
-			m.OutputTokens = *info.OutputTokens
-		} else if info.OutputTokensCap != nil {
-			m.OutputTokens = *info.OutputTokensCap
-		} else if info.CompletionTokens != nil {
-			m.OutputTokens = *info.CompletionTokens
-		} else if info.CompletionTokensCap != nil {
-			m.OutputTokens = *info.CompletionTokensCap
-		}
-
-		// Extract total tokens (check multiple naming conventions)
-		if info.TotalTokens != nil {
-			m.TotalTokens = *info.TotalTokens
-		} else if info.TotalTokensCap != nil {
-			m.TotalTokens = *info.TotalTokensCap
+			// Ensure total is calculated if not provided
+			if m.TotalTokens == 0 && m.InputTokens > 0 && m.OutputTokens > 0 {
+				m.TotalTokens = m.InputTokens + m.OutputTokens
+			}
+			return m
 		}
 	}
 
-	// If we got actual token usage, return it
-	if m.InputTokens > 0 || m.OutputTokens > 0 || m.TotalTokens > 0 {
-		// Ensure total is calculated if not provided
-		if m.TotalTokens == 0 {
-			m.TotalTokens = m.InputTokens + m.OutputTokens
-		}
-		return m
-	}
-
-	// Fallback: Estimate tokens based on content length
-	// This is a rough approximation when actual usage is not available
-	content := resp.Choices[0].Content
-	if content != "" {
-		// Rough estimation: 1 token ≈ 4 characters for English text
-		estimatedTokens := len(content) / 4
-		m.OutputTokens = estimatedTokens
-		m.TotalTokens = estimatedTokens
-
-		// For input tokens, we'd need the prompt length, but we don't have it here
-		// This is a limitation of the current LangChain integration
-	}
-
+	// No actual token usage available - return zeros
+	// Character-based estimation has been removed - we only use actual values from LLM responses
 	return m
 }
 
-// extractUsageMetricsWithMessages extracts token usage with improved input token estimation
+// extractUsageMetricsWithMessages extracts token usage from LLM response.
+// Returns actual token values only - does not estimate.
+// If no actual values are available, returns 0 (caller should handle this appropriately).
 func extractUsageMetricsWithMessages(resp *llmtypes.ContentResponse, messages []llmtypes.MessageContent) observability.UsageMetrics {
-	// Get base usage metrics
+	// Get base usage metrics (extracts actual values from resp)
 	usage := extractUsageMetrics(resp)
 
-	// If we don't have input tokens, estimate them from conversation history
-	if usage.InputTokens == 0 {
-		usage.InputTokens = estimateInputTokens(messages)
-		// Recalculate total if we now have both input and output
-		if usage.OutputTokens > 0 {
-			usage.TotalTokens = usage.InputTokens + usage.OutputTokens
-		}
+	// Only return actual values - do not estimate
+	// If InputTokens is 0, it means LLM didn't return actual values
+	// Caller should handle this case (e.g., don't accumulate estimated values)
+	// Recalculate total if we have both input and output
+	if usage.TotalTokens == 0 && usage.InputTokens > 0 && usage.OutputTokens > 0 {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	}
 
 	return usage
 }
 
-// estimateInputTokens estimates input tokens from conversation messages
-func estimateInputTokens(messages []llmtypes.MessageContent) int {
-	if len(messages) == 0 {
-		return 0
+// extractAllTokenTypes extracts all token types (cache, thoughts, reasoning) from ContentResponse.
+// Uses unified llmtypes.ExtractUsageFromGenerationInfo for comprehensive extraction.
+// Returns: (cacheTokens, thoughtsTokens, reasoningTokens)
+func extractAllTokenTypes(resp *llmtypes.ContentResponse) (cacheTokens, thoughtsTokens, reasoningTokens int) {
+	if resp == nil {
+		return 0, 0, 0
 	}
 
-	totalChars := 0
-	for _, msg := range messages {
-		for _, part := range msg.Parts {
-			if textPart, ok := part.(llmtypes.TextContent); ok {
-				totalChars += len(textPart.Text)
+	// Priority 1: Use unified Usage field (if available)
+	if resp.Usage != nil {
+		if resp.Usage.CacheTokens != nil {
+			cacheTokens = *resp.Usage.CacheTokens
+		}
+		if resp.Usage.ThoughtsTokens != nil {
+			thoughtsTokens = *resp.Usage.ThoughtsTokens
+		}
+		if resp.Usage.ReasoningTokens != nil {
+			reasoningTokens = *resp.Usage.ReasoningTokens
+		}
+		// If we got values from Usage, return them
+		if cacheTokens > 0 || thoughtsTokens > 0 || reasoningTokens > 0 {
+			return cacheTokens, thoughtsTokens, reasoningTokens
+		}
+	}
+
+	// Priority 2: Fall back to GenerationInfo using unified extraction
+	if len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		usage := llmtypes.ExtractUsageFromGenerationInfo(resp.Choices[0].GenerationInfo)
+		if usage != nil {
+			if usage.CacheTokens != nil {
+				cacheTokens = *usage.CacheTokens
+			}
+			if usage.ThoughtsTokens != nil {
+				thoughtsTokens = *usage.ThoughtsTokens
+			}
+			if usage.ReasoningTokens != nil {
+				reasoningTokens = *usage.ReasoningTokens
 			}
 		}
 	}
 
-	// Rough estimation: 1 token ≈ 4 characters for English text
-	// Add some overhead for system prompts and formatting
-	estimatedTokens := (totalChars / 4) + 50 // Add 50 tokens for system overhead
-	return estimatedTokens
+	return cacheTokens, thoughtsTokens, reasoningTokens
 }
+
+// estimateInputTokens has been removed - we now use only actual token values from LLM responses.
+// For token counting needs, use CountTokensForModel() (tiktoken-based) which is available in tool_output_handler.go

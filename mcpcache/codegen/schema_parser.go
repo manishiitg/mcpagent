@@ -186,7 +186,7 @@ func sanitizeFunctionName(toolName string) string {
 
 // GetPackageName converts server name to package name
 func GetPackageName(serverName string) string {
-	// Sanitize and add _tools suffix
+	// Sanitize server name and add _tools suffix
 	return sanitizeIdentifier(serverName) + "_tools"
 }
 

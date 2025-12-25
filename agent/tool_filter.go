@@ -166,27 +166,51 @@ func (tf *ToolFilter) IsNoFilteringActive() bool {
 
 // IsCategoryDirectory checks if a directory name represents a custom tool category
 // Uses explicit category list instead of "not in Clients" check
+// 🔧 FIX: Handles both base names (e.g., "workspace") and _tools-suffixed names (e.g., "workspace_tools")
 func (tf *ToolFilter) IsCategoryDirectory(dirName string) bool {
 	// Check against known custom categories
 	normalized := tf.NormalizeServerName(dirName)
 
-	// Direct category match (e.g., "workspace_tools")
+	// 🔧 FIX: Check system categories first (workspace, human) - these are always available
+	// Previously, system categories like "workspace" were only in systemCategories map,
+	// but IsCategoryDirectory() only checked customToolCategories. This caused "workspace"
+	// to be incorrectly filtered as an MCP server, leading to "server workspace is filtered out" errors.
+	// Now we check systemCategories first to ensure workspace/human tools are always recognized as categories.
+	if tf.systemCategories[normalized] {
+		return true
+	}
+
+	// Direct category match (e.g., "workspace", "human")
 	if tf.customToolCategories[normalized] {
 		return true
 	}
 
-	// Check without _tools suffix (e.g., "workspace")
-	withoutSuffix := strings.TrimSuffix(normalized, "_tools")
-	if withoutSuffix != normalized && tf.customToolCategories[withoutSuffix] {
-		return true
+	// 🔧 FIX: If dirName has _tools suffix, strip it and check base name
+	// This handles cases where package names like "workspace_tools" are passed
+	// but we need to check if "workspace" is a category
+	if strings.HasSuffix(dirName, "_tools") {
+		baseName := strings.TrimSuffix(dirName, "_tools")
+		baseNormalized := tf.NormalizeServerName(baseName)
+		if tf.systemCategories[baseNormalized] || tf.customToolCategories[baseNormalized] {
+			return true
+		}
 	}
 
-	// If it's NOT a known MCP server and ends with _tools, treat as category
+	// If it's NOT a known MCP server, treat as category
 	// This handles dynamically registered custom tool categories
-	if strings.HasSuffix(normalized, "_tools") {
-		serverName := strings.TrimSuffix(normalized, "_tools")
-		if !tf.mcpServerNames[serverName] && !tf.mcpServerNames[normalized] {
-			return true
+	if !tf.mcpServerNames[normalized] {
+		// 🔧 FIX: Check if it's a known system category (added for fallback matching)
+		// This ensures system categories are found even if not in the normalized lookup
+		for category := range tf.systemCategories {
+			if tf.NormalizeServerName(category) == normalized {
+				return true
+			}
+		}
+		// Check if it's a known custom category (case-insensitive)
+		for category := range tf.customToolCategories {
+			if tf.NormalizeServerName(category) == normalized {
+				return true
+			}
 		}
 	}
 

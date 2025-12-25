@@ -126,25 +126,21 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "discover_code_files",
-			Description: "Get Go source code for one or more tools from a specific server. Requires server_name and either tool_name (single) or tool_names (array) for multiple files.",
+			Description: "Get Go source code for one or more tools from a specific server. Requires server_name and tool_names (array). For a single tool, pass an array with one element.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"server_name": map[string]interface{}{
 						"type":        "string",
-						"description": "MCP server name (e.g., 'aws', 'gdrive', 'google_sheets', 'virtual_tools', 'custom_tools').",
-					},
-					"tool_name": map[string]interface{}{
-						"type":        "string",
-						"description": "Single tool name (e.g., 'GetDocument', 'resolve-library-id'). The tool name will be converted to snake_case filename. Use this for a single file, or use tool_names for multiple files.",
+						"description": "Package name from the JSON structure (e.g., 'google_sheets', 'workspace', 'virtual_tools'). Use the exact package name as shown in the JSON structure, not the MCP server name.",
 					},
 					"tool_names": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]interface{}{"type": "string"},
-						"description": "Array of tool names to discover together (e.g., ['GetDocument', 'ListDocuments']). Use this to discover multiple files in a single call.",
+						"description": "Array of tool names to discover (e.g., ['GetDocument'] for single tool, or ['GetDocument', 'ListDocuments'] for multiple tools). The tool names will be converted to snake_case filenames.",
 					},
 				},
-				"required": []string{"server_name"},
+				"required": []string{"server_name", "tool_names"},
 			}),
 		},
 	}
