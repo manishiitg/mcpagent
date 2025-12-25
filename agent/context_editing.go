@@ -120,7 +120,7 @@ func compactStaleToolResponses(a *Agent, ctx context.Context, messages []llmtype
 	for _, msg := range modifiedMessages {
 		messageRoles = append(messageRoles, string(msg.Role))
 	}
-	v2Logger.Info("🔍 [CONTEXT_EDITING] Message structure",
+	v2Logger.Debug("🔍 [CONTEXT_EDITING] Message structure",
 		loggerv2.Int("total_messages", len(modifiedMessages)),
 		loggerv2.String("message_roles_sample", func() string {
 			// Show first 20 and last 10 roles
@@ -204,7 +204,7 @@ func compactStaleToolResponses(a *Agent, ctx context.Context, messages []llmtype
 				}
 			}
 
-			v2Logger.Info("🔍 [CONTEXT_EDITING] Evaluating tool response",
+			v2Logger.Debug("🔍 [CONTEXT_EDITING] Evaluating tool response",
 				loggerv2.String("tool_name", toolName),
 				loggerv2.Int("token_count", tokenCount),
 				loggerv2.Int("token_threshold", threshold),
@@ -374,7 +374,7 @@ func compactStaleToolResponses(a *Agent, ctx context.Context, messages []llmtype
 		// Note: compactedInReturn includes both newly compacted messages AND already compacted messages
 		// So we verify that at least the newly compacted ones are present
 		expectedTotalCompacted := alreadyCompactedCount + compactedCount
-		v2Logger.Info("🔍 [CONTEXT_EDITING] Verification of returned messages",
+		v2Logger.Debug("🔍 [CONTEXT_EDITING] Verification of returned messages",
 			loggerv2.Int("compacted_count", compactedCount),
 			loggerv2.Int("already_compacted_count", alreadyCompactedCount),
 			loggerv2.Int("compacted_found_in_return", compactedInReturn),

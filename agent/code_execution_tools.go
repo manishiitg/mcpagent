@@ -453,8 +453,22 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 			// Category directories are created by GenerateCustomToolsCode based on tool categories
 			// Use the directory version because it has actual function names from Go files
 			// This ensures we use the most accurate data (ground truth from generated code)
-			// The package name (dirName) is used as the key in the map
-			result[dirName] = PackageInfo{
+
+			// 🔧 FIX: Normalize directory name to match Phase 1's naming convention
+			// Phase 1 uses GetPackageName(category) which adds _tools suffix
+			// We need to ensure Phase 2 uses the same key to avoid duplicates
+			var packageName string
+			if strings.HasSuffix(dirName, "_tools") {
+				// Directory already has _tools suffix, use as-is
+				packageName = dirName
+			} else {
+				// Directory doesn't have _tools suffix, normalize it to match Phase 1
+				// GetPackageName always adds _tools, so we can use it directly on the base name
+				packageName = codegen.GetPackageName(dirName)
+			}
+
+			// Use normalized package name as key to match Phase 1
+			result[packageName] = PackageInfo{
 				Tools: tools,
 			}
 		} else {
