@@ -18,219 +18,81 @@ func GetCodeExecutionInstructions() string {
 {{TOOL_STRUCTURE}}
 
 **📋 Workflow:**
-1. **Review** available code packages in the structure above
-2. **Discover code FIRST**: Use discover_code_files to get exact function signatures before writing any code
-3. **Write** Go code using write_code that calls the generated tool functions
-4. **Execute** and get results
+1. Use discover_code_files to get exact function signatures before writing code
+2. Write Go code using write_code that calls generated tool functions
+3. Execute and get results
+4. Recognize completion: If output shows completion, move to next step or provide final answer
 
-**⚠️ CRITICAL - Code Requirements:**
+**⚠️ CRITICAL Requirements:**
 - ✅ **MUST have package main declaration**
-- ✅ **Use fmt.Println() to output results**
-- ✅ **You CAN import generated packages** (e.g., import "workspace_tools") - go.work is automatically set up with workspace modules
+- ✅ **Use fmt.Println()/fmt.Printf() to output results**
+- ✅ **Import generated packages** (e.g., import "workspace_tools", import "aws") - go.work is set up automatically
 - ✅ **ALWAYS use discover_code_files FIRST** to see exact function signatures and parameter names
-- ❌ **NEVER use Go standard file I/O** (os.WriteFile, ioutil.WriteFile, os.Create, etc.) - files will go to wrong directory
-- ✅ **ALWAYS use workspace_tools for file operations** - files must go to workspace, not execution directory
-- ✅ **CLI parameters**: Use optional 'args' parameter in write_code to pass command-line arguments (accessible via os.Args[1], os.Args[2], etc.)
+- ❌ **NEVER use Go standard file I/O** (os.WriteFile, os.ReadFile, etc.) - files go to wrong directory
+- ✅ **ALWAYS use workspace_tools package** for file operations (ReadWorkspaceFile, UpdateWorkspaceFile)
+- ✅ **CLI parameters**: Use optional 'args' parameter in write_code (accessible via os.Args[1], os.Args[2], etc.)
 
-**🐛 DEBUGGING BEST PRACTICES:**
-- ✅ **Use fmt.Printf() liberally** to trace execution flow and debug issues quickly
-- ✅ **Print variable values** before and after operations: fmt.Printf("Before call: params=%%+v\n", params)
-- ✅ **Print intermediate results** to understand data flow: fmt.Printf("Step 1 complete: result=%%s\n", result)
-- ✅ **Print error details** when handling errors: fmt.Printf("Error occurred: %%v\n", err)
-- ✅ **Add progress markers** for long operations: fmt.Println("Processing item 1 of 10...")
-- 💡 **More debug output = faster problem identification** when code execution fails
-
-**💡 You Can Write Logic:**
-- Use **if/else** to make decisions based on results
-- Call **multiple functions** in sequence
-- **Combine different servers** in one code block
-- Use **loops** to process data
-
-**🔧 Complex Problem Solving Strategy:**
-When using multiple tools or writing complex code, **ALWAYS break down the problem into smaller steps**:
-1. **Break down first**: Identify individual steps needed to solve the problem
-2. **Test each tool individually**: Write separate code blocks to test each tool call and understand its response pattern
-3. **Discover patterns**: Print outputs and examine how each tool responds (success format, error format, data structure)
-4. **Build incrementally**: Once you understand each tool's behavior, combine them step by step
-5. **Verify at each step**: Test intermediate results before moving to the next step
-
-**Why this matters:**
-- ✅ **Discover tool response patterns** - Understand success vs error formats for each tool
-- ✅ **Debug more effectively** - When something fails, you know which step caused it
-- ✅ **Build confidence** - Test each tool individually before combining them
-- ✅ **Handle errors better** - Learn error patterns for each tool before they're nested in complex logic
-
-**Example approach for complex problems:**
-- Step 1: Test tool A alone → Print output → Understand response format
-- Step 2: Test tool B alone → Print output → Understand response format  
-- Step 3: Combine A + B → Test together → Verify combined behavior
-- Step 4: Add tool C → Test all three → Final solution
-
-**⚠️ CRITICAL - Error Handling Pattern:**
+**⚠️ Error Handling Pattern:**
 Functions return only string (no error). Follow this pattern for EVERY tool call:
-1. Call tool function: output := toolName(params)
-2. Print output: fmt.Printf("Tool output: %%s\n", output)
-3. Check output for errors - examine the output string to detect error indicators
-4. Use result if successful
+1. Call: output := toolName(params)
+2. Print: fmt.Printf("Tool output: %%s\n", output)
+3. Check: Examine output string for error indicators (e.g., strings.HasPrefix(output, "Error:"))
+4. Use: Process result if successful
 
-- **API Errors** (network, HTTP): Functions **panic** - exceptional cases
-- **Tool Execution Errors**: Returned in result string - examine output to detect errors
-- **✅ ALWAYS print output BEFORE checking errors** - helps discover error patterns and formats
+- **API Errors** (network, HTTP): Functions panic - exceptional cases
+- **Tool Errors**: Returned in result string - examine output to detect errors
+- **✅ ALWAYS print output BEFORE checking errors** - helps discover error patterns
 
-**Basic Example (MCP Tool) - TYPED STRUCTS:**
+**🔧 Best Practices:**
+- **Debugging**: Use fmt.Printf() liberally to trace execution and print variable values
+- **Complex problems**: Break down into steps, test each tool individually, build incrementally
+- **Multiple tools**: Test tools separately first, then combine once you understand their response patterns
+- **Error recovery**: Use discover_code_files to verify parameter names, check imports/types for build errors
+
+**Example - Tool Call with Error Handling:**
   package main
-
-  import (
-      "fmt"
-      "strings"
-      "aws_tools"  // Import the MCP server package
-  )
-
+  import ("fmt"; "strings"; "workspace_tools")
+  
   func main() {
-      fmt.Println("Starting document retrieval...")
-      
-      // Use typed struct for parameters - IDE provides autocomplete!
-      params := aws_tools.GetDocumentParams{
-          DocumentId: "doc123",
-      }
-      fmt.Printf("Calling GetDocument with params: DocumentId=%%s\n", params.DocumentId)
-      
-      // Follow error handling pattern: call → print → check → use
-      output := aws_tools.GetDocument(params)
-      fmt.Printf("Tool output: %%s\n", output)
-      // Check output for errors - examine the output to detect error indicators
-      if strings.HasPrefix(output, "Error:") {
-          fmt.Printf("❌ Error detected: %%s\n", output)
-          return
-      }
-      fmt.Printf("✅ Success! Result length: %%d bytes\n", len(output))
-  }
-
-**Example (Custom Tool - Workspace) - TYPED STRUCTS:**
-  package main
-
-  import (
-      "fmt"
-      "strings"
-      "workspace_tools"  // Import generated package - go.work is set up automatically!
-  )
-
-  func main() {
-      // IMPORTANT: Use discover_code_files to see exact struct definition!
-      // Functions now accept typed structs with autocomplete and type safety
+      // Use discover_code_files to see exact struct definition first!
       params := workspace_tools.ReadWorkspaceFileParams{
-          Filepath: "Workflow/All Bank Parsing/todo_creation/todo.md",
+          Filepath: "data/file.txt",
       }
-      // Follow error handling pattern: call → print → check → use
       output := workspace_tools.ReadWorkspaceFile(params)
       fmt.Printf("Tool output: %%s\n", output)
-      // Check output for errors - examine the output to detect error indicators
       if strings.HasPrefix(output, "Error:") {
-          fmt.Printf("❌ Error detected: %%s\n", output)
+          fmt.Printf("❌ Error: %%s\n", output)
           return
       }
-      fmt.Printf("✅ Success! File content retrieved\n")
+      fmt.Printf("✅ Success!\n")
   }
 
-**Example (Writing Files to Workspace) - CRITICAL:**
+**Example - File Operations (CRITICAL):**
   package main
-
-  import (
-      "fmt"
-      "strings"
-      "workspace_tools"  // MUST use workspace_tools for file operations!
-  )
-
+  import ("fmt"; "strings"; "workspace_tools")
+  
   func main() {
-      // ✅ CORRECT: Use workspace_tools to write files to workspace
-      writeParams := workspace_tools.UpdateWorkspaceFileParams{
+      // ✅ CORRECT: Use workspace_tools for file operations
+      result := workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{
           Filepath: "data/results.json",
-          Content:  "{\"status\": \"success\", \"data\": \"...\"}",
-      }
-      // Follow error handling pattern: call → print → check → use
-      result := workspace_tools.UpdateWorkspaceFile(writeParams)
+          Content:  "{\"status\": \"success\"}",
+      })
       fmt.Printf("Tool output: %%s\n", result)
-      // Check output for errors - examine the output to detect error indicators
       if strings.HasPrefix(result, "Error:") {
-          fmt.Printf("❌ Error detected: %%s\n", result)
+          fmt.Printf("❌ Error: %%s\n", result)
           return
       }
-      fmt.Printf("✅ Success! File written to workspace\n")
-
-      // ❌ WRONG: NEVER use standard Go file I/O - files go to wrong directory!
-      // os.WriteFile("data.json", data, 0644)  // DON'T DO THIS!
-      // ioutil.WriteFile("data.json", data, 0644)  // DON'T DO THIS!
-      // os.Create("data.json")  // DON'T DO THIS!
-      // Files written with standard I/O go to tool_output_folder/, NOT workspace!
+      
+      // ❌ WRONG: NEVER use os.WriteFile, os.ReadFile, etc. - files go to wrong directory!
   }
 
-**Example with Multiple Servers - TYPED STRUCTS:**
-  package main
-
-  import (
-      "fmt"
-      "strings"
-      "aws_tools"
-      "slack_tools"
-  )
-
-  func main() {
-      // Call AWS tool - follow error handling pattern: call → print → check → use
-      data := aws_tools.GetCosts(aws_tools.GetCostsParams{})
-      fmt.Printf("AWS GetCosts output: %%s\n", data)
-      // Check output for errors - examine the output to detect error indicators
-      if strings.HasPrefix(data, "Error:") {
-          fmt.Printf("❌ Error detected: %%s\n", data)
-          return
-      }
-      fmt.Printf("✅ Costs retrieved successfully\n")
-
-      // Call Slack tool if costs are high
-      if strings.Contains(data, "high") {
-          params := slack_tools.SendMessageParams{
-              Channel: "alerts",
-              Text:    "High costs detected",
-          }
-          alert := slack_tools.SendMessage(params)
-          fmt.Printf("Slack SendMessage output: %%s\n", alert)
-          // Check output for errors
-          if strings.HasPrefix(alert, "Error:") {
-              fmt.Printf("❌ Error detected: %%s\n", alert)
-              return
-          }
-          fmt.Printf("✅ Alert sent successfully\n")
-      }
-  }
-
-**🚨 COMMON MISTAKES TO AVOID:**
-1. **❌ WRONG**: Checking err != nil after tool calls
-   **Why wrong**: Functions return only string, no error - API errors panic, tool errors are in result
-   **✅ CORRECT**: Examine the output string to detect errors (e.g., check if output starts with "Error:")
-
-2. **❌ WRONG**: Not printing tool output before checking for errors
-   **Why wrong**: You can't discover error patterns or debug issues without seeing the actual output
-   **✅ CORRECT**: ALWAYS print output first, then examine it to detect error indicators
-
-3. **❌ WRONG**: Using wrong parameter names (e.g., "path" instead of "filepath")
-   **✅ CORRECT**: Always use discover_code_files to see exact parameter names before writing code
-   
-4. **❌ WRONG**: Assuming function signatures without checking
-   **✅ CORRECT**: Use discover_code_files to get exact function signatures with parameter types
-
-5. **❌ WRONG**: Using Go standard file I/O (os.WriteFile, ioutil.WriteFile, os.Create, etc.)
-   **Why wrong**: Files written with standard I/O go to tool_output_folder/ directory, NOT workspace!
-   **✅ CORRECT**: ALWAYS use workspace_tools.UpdateWorkspaceFile() for writing files
-
-6. **❌ WRONG**: Using os.ReadFile or ioutil.ReadFile to read workspace files
-   **Why wrong**: Standard I/O reads from execution directory, not workspace!
-   **✅ CORRECT**: ALWAYS use workspace_tools.ReadWorkspaceFile() for reading files
-
-**🔧 Error Recovery:**
-- **Tool execution errors**: Examine output string to detect errors - check for "Error:" prefix or other error indicators
-- Build errors? Fix and retry with write_code - check imports, types, syntax
-- Parameter errors? Use discover_code_files to verify exact parameter names
-- Import errors? Remember: generated functions are called directly, NOT imported
-- File location errors? Check if you used standard I/O instead of workspace_tools - files must go to workspace!`
+**🚨 Common Mistakes:**
+- ❌ Checking err != nil (functions return string, no error)
+- ❌ Not printing output before checking errors
+- ❌ Using wrong parameter names - always use discover_code_files first
+- ❌ Using standard Go file I/O - must use workspace_tools package
+- ❌ Writing placeholder code - always implement actual logic
+- ❌ Looping on completion messages - recognize completion and move on`
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
@@ -296,9 +158,10 @@ When answering questions:
 				toolStructureJSON + "\n" +
 				"```\n\n" +
 				"**How to use:**\n" +
-				"- Each server has a package name (e.g., \"aws_tools\", \"google_sheets_tools\")\n" +
-				"- Each function has a name (e.g., \"GetDocument\", \"ListSpreadsheets\")\n" +
-				"- Import the package and call the function in your Go code\n" +
+				"- The JSON structure shows package names as keys (e.g., \"google_sheets_tools\", \"workspace_tools\")\n" +
+				"- Each package contains a \"tools\" array with available function names (e.g., \"GetDocument\", \"ListSpreadsheets\")\n" +
+				"- Use the package name as \"server_name\" in discover_code_files (e.g., discover_code_files(server_name=\"google_sheets_tools\", tool_names=[\"GetDocument\"]))\n" +
+				"- Import the package and call the function in your Go code (e.g., import \"google_sheets_tools\")\n" +
 				"- Use 'discover_code_files' tool to get exact function signatures before writing code\n" +
 				"</available_code>\n"
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
@@ -313,7 +176,7 @@ When answering questions:
 				"**How to discover tools:**\n" +
 				"1. Use discover_code_files to find available servers and tools\n" +
 				"2. Get the exact function signature for the tool you want to use\n" +
-				"3. Import the package (e.g., import \"aws_tools\") and call the function in your Go code\n" +
+				"3. Import the package (e.g., import \"aws\") and call the function in your Go code\n" +
 				"</available_code>\n"
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
 		}

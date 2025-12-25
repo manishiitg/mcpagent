@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strconv"
 	"strings"
 
 	loggerv2 "mcpagent/logger/v2"
@@ -56,7 +54,7 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 		{
 			Role: llmtypes.ChatMessageTypeSystem,
 			Parts: []llmtypes.ContentPart{
-				llmtypes.TextContent{Text: "You are a helpful assistant that generates structured JSON output according to the specified schema. Always respond with valid JSON only, no additional text or explanations."},
+				llmtypes.TextContent{Text: "You are a JSON extraction and formatting assistant. Your task is to extract or convert the provided input into valid JSON that matches the specified schema. If the input is already valid JSON matching the schema, extract and return it as-is. If the input is not valid JSON or doesn't match the schema, convert it to match. Always respond with valid JSON only, no additional text or explanations."},
 			},
 		},
 		{
@@ -67,21 +65,12 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 		},
 	}
 
-	// Configure max_tokens for structured output (higher default due to complex prompts)
-	maxTokens := 20000 // Higher default for structured output
-	if maxTokensEnv := os.Getenv("ORCHESTRATOR_MAIN_LLM_MAX_TOKENS"); maxTokensEnv != "" {
-		if parsed, err := strconv.Atoi(maxTokensEnv); err == nil && parsed > 0 {
-			maxTokens = parsed
-		}
-	}
-
-	// Generate response with JSON mode and max_tokens
+	// Generate response with JSON mode
 	opts := []llmtypes.CallOption{
 		llmtypes.WithJSONMode(),
-		llmtypes.WithMaxTokens(maxTokens),
 	}
 
-	sog.logger.Debug("Generating structured output", loggerv2.Int("max_tokens", maxTokens))
+	sog.logger.Debug("Generating structured output")
 	response, err := sog.llm.GenerateContent(ctx, messages, opts...)
 	if err != nil {
 		sog.logger.Error("LLM call failed", err)
@@ -216,11 +205,12 @@ func (sog *LangchaingoStructuredOutputGenerator) buildStructuredPromptWithSchema
 
 	// Add the provided schema
 	if schema != "" {
-		parts = append(parts, "\n\nIMPORTANT: You must respond with valid JSON that exactly matches this schema:")
-		parts = append(parts, "\nSchema:")
+		parts = append(parts, "\n\nTASK: Extract or convert the input above into valid JSON that exactly matches this schema.")
+		parts = append(parts, "\n\nIMPORTANT: If the input is already valid JSON matching this schema, extract and return it as-is. If the input is not valid JSON or doesn't match, convert it to match the schema.")
+		parts = append(parts, "\n\nSchema:")
 		parts = append(parts, schema)
 	} else {
-		parts = append(parts, "\n\nIMPORTANT: You must respond with valid JSON that matches the expected structure.")
+		parts = append(parts, "\n\nTASK: Extract or convert the input above into valid JSON that matches the expected structure.")
 	}
 
 	// Add final instruction
@@ -264,8 +254,24 @@ func (sog *LangchaingoStructuredOutputGenerator) retryGeneration(ctx context.Con
 
 // ConvertToStructuredOutput converts text output to structured format using the LLM
 func ConvertToStructuredOutput[T any](a *Agent, ctx context.Context, textOutput string, schema T, schemaString string) (T, error) {
-	// Use the LLM to convert the text output to structured JSON
+	logger := a.Logger
+
+	// First, try to parse the textOutput directly as JSON (it might already be valid JSON)
+	// Clean the content first to remove markdown code blocks if present
 	generator := getOrCreateStructuredOutputGenerator(a)
+	cleanedOutput := generator.cleanContentForJSON(textOutput)
+
+	// Try to parse directly as JSON first
+	var result T
+	err := json.Unmarshal([]byte(cleanedOutput), &result)
+	if err == nil {
+		// Successfully parsed as JSON - no need for LLM call
+		logger.Debug("Successfully parsed JSON directly without LLM call", loggerv2.Int("json_length", len(cleanedOutput)))
+		return result, nil
+	}
+
+	// JSON parsing failed - use LLM to convert to structured JSON
+	logger.Debug("Direct JSON parsing failed, using LLM to convert", loggerv2.String("error", err.Error()))
 
 	jsonOutput, err := generator.GenerateStructuredOutput(ctx, textOutput, schemaString)
 	if err != nil {
@@ -274,7 +280,6 @@ func ConvertToStructuredOutput[T any](a *Agent, ctx context.Context, textOutput 
 	}
 
 	// Validate JSON before parsing (using interface{} to support both objects and arrays)
-	logger := a.Logger
 	logger.Debug("Starting JSON unmarshaling", loggerv2.Int("json_length", len(jsonOutput)))
 
 	var jsonValidator interface{}
@@ -286,7 +291,6 @@ func ConvertToStructuredOutput[T any](a *Agent, ctx context.Context, textOutput 
 	logger.Debug("JSON validation passed")
 
 	// Parse JSON back to the target type
-	var result T
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
 		logger.Error("JSON unmarshaling failed", err, loggerv2.String("json_output", jsonOutput))
 		var zero T
