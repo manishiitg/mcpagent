@@ -255,10 +255,19 @@ func WithSummarizeOnFixedTokenThreshold(enabled bool, thresholdTokens int) Agent
 }
 
 // WithSummaryKeepLastMessages sets the number of recent messages to keep when summarizing
-// Default is 8 messages (roughly 3-4 turns)
+// Default is 4 messages (roughly 2 turns)
 func WithSummaryKeepLastMessages(count int) AgentOption {
 	return func(a *Agent) {
 		a.SummaryKeepLastMessages = count
+	}
+}
+
+// WithSummarizationCooldown sets the number of turns to wait after summarization before allowing another
+// This prevents repeated summarization loops when the summarized context is still large
+// Default is 3 turns
+func WithSummarizationCooldown(turns int) AgentOption {
+	return func(a *Agent) {
+		a.SummarizationCooldownTurns = turns
 	}
 }
 
@@ -574,6 +583,8 @@ type Agent struct {
 	TokenThresholdPercent          float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 	SummarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
 	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
+	SummarizationCooldownTurns     int     // Number of turns to wait after summarization before allowing another (0 = use default: 3)
+	lastSummarizationTurn          int     // Track when last summarization occurred (turn number)
 
 	// Context editing configuration (see context_editing.go)
 	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
@@ -744,8 +755,8 @@ func (a *Agent) SetToolOutputHandler(handler *ToolOutputHandler) {
 }
 
 // SetFolderGuardPaths sets the folder guard paths for code execution validation
-// readPaths: paths allowed for read operations (workspace_tools read functions)
-// writePaths: paths allowed for write operations (workspace_tools write functions)
+// readPaths: paths allowed for read operations (workspace package read functions)
+// writePaths: paths allowed for write operations (workspace package write functions)
 func (a *Agent) SetFolderGuardPaths(readPaths, writePaths []string) {
 	a.FolderGuardReadPaths = readPaths
 	a.FolderGuardWritePaths = writePaths
@@ -818,7 +829,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		EnableContextSummarization:    false,                       // Default to disabled
 		SummarizeOnTokenThreshold:     false,                       // Default to disabled
 		TokenThresholdPercent:         0.8,                         // Default to 80% if enabled
-		SummaryKeepLastMessages:       0,                           // Default: 0 means use default (8 messages)
+		SummaryKeepLastMessages:       0,                           // Default: 0 means use default (4 messages)
+		SummarizationCooldownTurns:    0,                           // Default: 0 means use default (3 turns)
+		lastSummarizationTurn:         -1,                          // Default: -1 means never summarized
 		EnableContextEditing:          false,                       // Default to disabled
 		ContextEditingThreshold:       0,                           // Default: 0 means use default threshold (1000)
 		ContextEditingTurnThreshold:   0,                           // Default: 0 means use default (10 turns)
@@ -1036,7 +1049,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			customToolNames[toolName] = true
 			// Also store category for this tool
 			if customTool.Category != "" {
-				customToolNames[customTool.Category+"_tools:"+toolName] = true
+				customToolNames[customTool.Category+":"+toolName] = true
 			}
 		}
 
@@ -1059,9 +1072,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			} else if isCustomTool {
 				// Find the category for this custom tool
 				if customTool, ok := ag.customTools[toolName]; ok && customTool.Category != "" {
-					packageName = customTool.Category + "_tools"
+					packageName = customTool.Category
 				} else {
-					packageName = "custom_tools"
+					packageName = "custom"
 				}
 			} else {
 				// Virtual tool - always include
@@ -1261,60 +1274,6 @@ func (a *Agent) StartLLMGeneration(ctx context.Context) {
 	a.EmitTypedEvent(ctx, llmStartEvent)
 }
 
-// extractCacheTokens extracts all cache-related tokens from GenerationInfo
-// Supports multiple providers: OpenAI (CachedContentTokens), Anthropic (CacheReadInputTokens, CacheCreationInputTokens)
-func extractCacheTokens(generationInfo *llmtypes.GenerationInfo) int {
-	if generationInfo == nil {
-		return 0
-	}
-
-	totalCacheTokens := 0
-
-	// Check CachedContentTokens (OpenAI, Gemini)
-	if generationInfo.CachedContentTokens != nil {
-		totalCacheTokens += *generationInfo.CachedContentTokens
-	}
-
-	// Check Additional map for Anthropic cache tokens
-	if generationInfo.Additional != nil {
-		// CacheReadInputTokens (tokens read from cache)
-		if cacheRead, ok := generationInfo.Additional["CacheReadInputTokens"]; ok {
-			if cacheReadInt, ok := cacheRead.(int); ok {
-				totalCacheTokens += cacheReadInt
-			} else if cacheReadFloat, ok := cacheRead.(float64); ok {
-				totalCacheTokens += int(cacheReadFloat)
-			}
-		}
-		// Also check lowercase variant
-		if cacheRead, ok := generationInfo.Additional["cache_read_input_tokens"]; ok {
-			if cacheReadInt, ok := cacheRead.(int); ok {
-				totalCacheTokens += cacheReadInt
-			} else if cacheReadFloat, ok := cacheRead.(float64); ok {
-				totalCacheTokens += int(cacheReadFloat)
-			}
-		}
-
-		// CacheCreationInputTokens (tokens used to create cache)
-		if cacheCreate, ok := generationInfo.Additional["CacheCreationInputTokens"]; ok {
-			if cacheCreateInt, ok := cacheCreate.(int); ok {
-				totalCacheTokens += cacheCreateInt
-			} else if cacheCreateFloat, ok := cacheCreate.(float64); ok {
-				totalCacheTokens += int(cacheCreateFloat)
-			}
-		}
-		// Also check lowercase variant
-		if cacheCreate, ok := generationInfo.Additional["cache_creation_input_tokens"]; ok {
-			if cacheCreateInt, ok := cacheCreate.(int); ok {
-				totalCacheTokens += cacheCreateInt
-			} else if cacheCreateFloat, ok := cacheCreate.(float64); ok {
-				totalCacheTokens += int(cacheCreateFloat)
-			}
-		}
-	}
-
-	return totalCacheTokens
-}
-
 // calculateCostFromTokens calculates the cost for tokens based on model metadata
 // Returns cost in USD
 func calculateCostFromTokens(tokenCount int, costPer1MTokens float64) float64 {
@@ -1327,49 +1286,44 @@ func calculateCostFromTokens(tokenCount int, costPer1MTokens float64) float64 {
 
 // accumulateTokenUsage accumulates token usage from an LLM call.
 // It accepts ContentResponse to use the unified Usage field, with fallback to GenerationInfo.
+// Only accumulates if we have actual token values from LLM response (not estimates).
 func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.UsageMetrics, resp *llmtypes.ContentResponse, turn int) {
+	// Check if we have actual token values from LLM response
+	// Only accumulate if resp has actual usage data (not estimated)
+	hasActualUsage := resp != nil && ((resp.Usage != nil && (resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0)) ||
+		(len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil &&
+			(resp.Choices[0].GenerationInfo.InputTokens != nil || resp.Choices[0].GenerationInfo.OutputTokens != nil)))
+
+	// Also check if usageMetrics has actual values (from extractUsageMetrics)
+	// If usageMetrics has values but resp is nil, it might be from estimation - skip it
+	if !hasActualUsage && (usageMetrics.PromptTokens > 0 || usageMetrics.CompletionTokens > 0) {
+		// This means usageMetrics was populated but resp is nil or has no actual values
+		// This could be from estimation - don't accumulate
+		logger := getLogger(a)
+		logger.Debug("Skipping token accumulation - no actual usage data from LLM response",
+			loggerv2.Int("turn", turn),
+			loggerv2.Int("usage_metrics_prompt", usageMetrics.PromptTokens),
+			loggerv2.Int("usage_metrics_completion", usageMetrics.CompletionTokens))
+		return
+	}
+
+	// If we have actual values, proceed with accumulation
 	a.tokenTrackingMutex.Lock()
 	defer a.tokenTrackingMutex.Unlock()
 
-	var cacheTokens int
-	var reasoningTokens int
-	var cacheDiscount float64
-	var generationInfo *llmtypes.GenerationInfo
-
-	// Priority 1: Extract from unified Usage field (if available)
-	if resp != nil && resp.Usage != nil {
-		// Extract cache tokens from unified Usage
-		if resp.Usage.CacheTokens != nil {
-			cacheTokens = *resp.Usage.CacheTokens
-		}
-
-		// Extract reasoning tokens from unified Usage
-		if resp.Usage.ReasoningTokens != nil {
-			reasoningTokens = *resp.Usage.ReasoningTokens
-		}
-	}
-
-	// Priority 2: Fall back to GenerationInfo (for cache discount and detailed breakdown)
-	if resp != nil && len(resp.Choices) > 0 {
-		generationInfo = resp.Choices[0].GenerationInfo
-	}
-
-	// Extract cache tokens from GenerationInfo if not found in Usage
-	if cacheTokens == 0 && generationInfo != nil {
-		cacheTokens = extractCacheTokens(generationInfo)
-	}
-
-	// Extract reasoning tokens from GenerationInfo if not found in Usage
-	if reasoningTokens == 0 && generationInfo != nil && generationInfo.ReasoningTokens != nil {
-		reasoningTokens = *generationInfo.ReasoningTokens
-	}
+	// Use unified extraction from multi-llm-provider-go
+	cacheTokens, _, reasoningTokens := extractAllTokenTypes(resp)
 
 	// Extract cache discount (only available in GenerationInfo)
-	if generationInfo != nil && generationInfo.CacheDiscount != nil {
-		cacheDiscount = *generationInfo.CacheDiscount
+	var cacheDiscount float64
+	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		generationInfo := resp.Choices[0].GenerationInfo
+		if generationInfo.CacheDiscount != nil {
+			cacheDiscount = *generationInfo.CacheDiscount
+		}
 	}
 
-	// Accumulate tokens
+	// Accumulate tokens (only actual values from LLM response)
 	a.cumulativePromptTokens += usageMetrics.PromptTokens
 	a.cumulativeCompletionTokens += usageMetrics.CompletionTokens
 	a.cumulativeTotalTokens += usageMetrics.TotalTokens
@@ -1481,29 +1435,8 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 	a.accumulateTokenUsage(ctx, usageMetrics, resp, turn)
 
 	// Extract cache and reasoning tokens to include in UsageMetrics
-	// Priority: Use unified Usage field, fall back to GenerationInfo
-	var cacheTokens int
-	var reasoningTokens int
-
-	if resp != nil && resp.Usage != nil {
-		if resp.Usage.CacheTokens != nil {
-			cacheTokens = *resp.Usage.CacheTokens
-		}
-		if resp.Usage.ReasoningTokens != nil {
-			reasoningTokens = *resp.Usage.ReasoningTokens
-		}
-	}
-
-	// Fall back to GenerationInfo if not found in Usage
-	if (cacheTokens == 0 || reasoningTokens == 0) && resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
-		generationInfo := resp.Choices[0].GenerationInfo
-		if cacheTokens == 0 {
-			cacheTokens = extractCacheTokens(generationInfo)
-		}
-		if reasoningTokens == 0 && generationInfo.ReasoningTokens != nil {
-			reasoningTokens = *generationInfo.ReasoningTokens
-		}
-	}
+	// Use unified extraction from multi-llm-provider-go
+	cacheTokens, _, reasoningTokens := extractAllTokenTypes(resp)
 
 	// Add cache and reasoning tokens to usage metrics
 	usageMetrics.CacheTokens = cacheTokens
@@ -1909,6 +1842,12 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		EnableLargeOutputVirtualTools: true,
 		ToolOutputRetentionPeriod:     0,                     // Default: 0 means no automatic cleanup
 		CleanupToolOutputOnSessionEnd: false,                 // Default: false means files persist after session
+		EnableContextSummarization:    false,                 // Default to disabled
+		SummarizeOnTokenThreshold:     false,                 // Default to disabled
+		TokenThresholdPercent:         0.8,                   // Default to 80% if enabled
+		SummaryKeepLastMessages:       0,                     // Default: 0 means use default (4 messages)
+		SummarizationCooldownTurns:    0,                     // Default: 0 means use default (3 turns)
+		lastSummarizationTurn:         -1,                    // Default: -1 means never summarized
 		Logger:                        loggerv2.NewDefault(), // Default logger
 		customTools:                   make(map[string]CustomTool),
 		EnableSmartRouting:            false,
@@ -2662,9 +2601,10 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 				toolStructure + "\n" +
 				"```\n\n" +
 				"**How to use:**\n" +
-				"- Each server has a package name (e.g., \"aws_tools\", \"google_sheets_tools\")\n" +
-				"- Each function has a name (e.g., \"GetDocument\", \"ListSpreadsheets\")\n" +
-				"- Import the package and call the function in your Go code\n" +
+				"- The JSON structure shows package names as keys (e.g., \"google_sheets\", \"workspace\")\n" +
+				"- Each package contains a \"tools\" array with available function names (e.g., \"GetDocument\", \"ListSpreadsheets\")\n" +
+				"- Use the package name as \"server_name\" in discover_code_files (e.g., discover_code_files(server_name=\"google_sheets\", tool_names=[\"GetDocument\"]))\n" +
+				"- Import the package and call the function in your Go code (e.g., import \"google_sheets\")\n" +
 				"</available_code>\n"
 			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
 			if a.Logger != nil {

@@ -2850,6 +2850,8 @@ type PrerequisiteNavigationEvent struct {
 	BaseEventData
 	FromStepIndex int    `json:"from_step_index"` // 0-based index of step that failed
 	ToStepIndex   int    `json:"to_step_index"`   // 0-based index of step to navigate to
+	FromStepID    string `json:"from_step_id"`    // Step ID of step that failed
+	ToStepID      string `json:"to_step_id"`      // Step ID of step to navigate to
 	Reason        string `json:"reason"`          // Reason for navigation
 	FailureType   string `json:"failure_type"`    // "prerequisite" or "execution"
 }

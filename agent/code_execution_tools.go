@@ -41,46 +41,50 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 		return "", fmt.Errorf("server_name parameter is required")
 	}
 
-	// Extract tool names - support both single tool_name and multiple tool_names
-	var toolNames []string
-	if toolNamesParam, exists := args["tool_names"]; exists && toolNamesParam != nil {
-		// Handle array of tool names
-		if toolNamesArray, ok := toolNamesParam.([]interface{}); ok {
-			for _, tn := range toolNamesArray {
-				if toolNameStr, ok := tn.(string); ok && toolNameStr != "" {
-					toolNames = append(toolNames, toolNameStr)
-				}
-			}
-		} else if toolNamesArray, ok := toolNamesParam.([]string); ok {
-			toolNames = toolNamesArray
-		}
+	// Normalize server_name: convert hyphens to underscores for consistency
+	// This handles cases where LLM uses "virtual-tools" instead of "virtual_tools"
+	serverName = strings.ReplaceAll(serverName, "-", "_")
+
+	// Extract tool_names (required)
+	toolNamesParam, ok := args["tool_names"]
+	if !ok || toolNamesParam == nil {
+		return "", fmt.Errorf("tool_names parameter is required (array of tool names)")
 	}
 
-	// Fall back to single tool_name for backward compatibility
-	if len(toolNames) == 0 {
-		if toolName, ok := args["tool_name"].(string); ok && toolName != "" {
-			toolNames = []string{toolName}
+	var toolNames []string
+	// Handle array of tool names
+	if toolNamesArray, ok := toolNamesParam.([]interface{}); ok {
+		for _, tn := range toolNamesArray {
+			if toolNameStr, ok := tn.(string); ok && toolNameStr != "" {
+				toolNames = append(toolNames, toolNameStr)
+			}
 		}
+	} else if toolNamesArray, ok := toolNamesParam.([]string); ok {
+		toolNames = toolNamesArray
+	} else {
+		return "", fmt.Errorf("tool_names must be an array of strings")
 	}
 
 	// Validate that we have at least one tool name
 	if len(toolNames) == 0 {
-		return "", fmt.Errorf("either tool_name (string) or tool_names (array) parameter is required")
+		return "", fmt.Errorf("tool_names array must contain at least one tool name")
 	}
 
-	// Determine package name first to check if it's a category directory
+	// Determine package name - handle both base names and _tools-suffixed names
+	// 🔧 FIX: If serverName already has _tools suffix, strip it first to get base name
+	// This handles cases where LLM passes "workspace_tools" instead of "workspace"
+	baseServerName := serverName
+	if strings.HasSuffix(serverName, "_tools") {
+		baseServerName = strings.TrimSuffix(serverName, "_tools")
+	}
+
 	var packageName string
-	// Handle special cases for virtual_tools, custom_tools, and category directories (workspace_tools, human_tools, etc.)
-	if serverName == "virtual_tools" {
+	// Handle special case for virtual_tools
+	if baseServerName == "virtual" || serverName == "virtual_tools" {
 		packageName = "virtual_tools"
-	} else if serverName == "custom_tools" {
-		packageName = "custom_tools"
-	} else if strings.HasSuffix(serverName, "_tools") {
-		// Category directory (workspace_tools, human_tools, etc.) - use as-is, don't add _tools suffix
-		packageName = serverName
 	} else {
-		// MCP server - add _tools suffix
-		packageName = codegen.GetPackageName(serverName)
+		// Use GetPackageName to add _tools suffix (handles both "workspace" -> "workspace_tools" and "workspace_tools" -> "workspace_tools")
+		packageName = codegen.GetPackageName(baseServerName)
 	}
 
 	// Check agent directory first, then fall back to shared directory
@@ -106,13 +110,27 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 
 	// Apply filtering using unified ToolFilter
 	// Check if server/package should be included based on filtering configuration
+	// 🔧 FIX: Check category using base name (without _tools) to match IsCategoryDirectory logic
 	isVirtualTool := a.toolFilter.IsVirtualToolsDirectory(packageName)
-	isCategoryDir := a.toolFilter.IsCategoryDirectory(packageName)
+	isCategoryDir := a.toolFilter.IsCategoryDirectory(baseServerName) || a.toolFilter.IsCategoryDirectory(packageName)
 
 	if !isVirtualTool && !isCategoryDir {
-		// MCP server - check if it should be included
-		if !a.toolFilter.ShouldIncludeServer(serverName) {
-			return "", fmt.Errorf("server %s is filtered out and not available", serverName)
+		// MCP server - check filtering using server name directly
+		// Package name is the same as server name now (no _tools suffix)
+		baseServerName := serverName
+
+		// Check with both underscore and hyphen formats
+		shouldInclude := a.toolFilter.ShouldIncludeServer(baseServerName)
+		if !shouldInclude {
+			// Also try hyphen format (google_sheets -> google-sheets)
+			baseServerNameWithHyphen := strings.ReplaceAll(baseServerName, "_", "-")
+			if baseServerNameWithHyphen != baseServerName {
+				shouldInclude = a.toolFilter.ShouldIncludeServer(baseServerNameWithHyphen)
+			}
+		}
+
+		if !shouldInclude {
+			return "", fmt.Errorf("server %s is filtered out and not available", baseServerName)
 		}
 	} else if a.Logger != nil {
 		a.Logger.Debug("🔍 [DISCOVERY] Allowing access", loggerv2.String("package", packageName), loggerv2.Any("is_virtual_tool", isVirtualTool), loggerv2.Any("is_category_dir", isCategoryDir))
@@ -187,32 +205,15 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 		return "", fmt.Errorf("failed to read generated directory: %w", err)
 	}
 
-	type ServerInfo struct {
-		Name    string   `json:"name"`
-		Package string   `json:"package"`
-		Tools   []string `json:"tools"`
+	type PackageInfo struct {
+		Tools []string `json:"tools"`
 	}
 
-	type CustomToolsInfo struct {
-		Category string   `json:"category"`
-		Package  string   `json:"package"`
-		Tools    []string `json:"tools"`
-	}
+	// DiscoveryResult is a flat map where keys are package names (e.g., "google_sheets_tools", "workspace_tools")
+	// and values contain the tools available in that package
+	type DiscoveryResult map[string]PackageInfo
 
-	type VirtualToolsInfo struct {
-		Package string   `json:"package"`
-		Tools   []string `json:"tools"`
-	}
-
-	type DiscoveryResult struct {
-		Servers      []ServerInfo      `json:"servers"`
-		CustomTools  []CustomToolsInfo `json:"custom_tools,omitempty"`
-		VirtualTools *VirtualToolsInfo `json:"virtual_tools,omitempty"`
-	}
-
-	var result DiscoveryResult
-	result.Servers = []ServerInfo{}
-	result.CustomTools = []CustomToolsInfo{}
+	var result DiscoveryResult = make(map[string]PackageInfo)
 
 	// ============================================================================
 	// PHASE 1: Discover MCP servers from agent's internal state (Clients & toolToServer)
@@ -222,7 +223,7 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 	// but the system prompt needs to be built immediately during agent initialization.
 	//
 	// Why this is needed:
-	// - Generated Go code directories (e.g., generated/google_sheets_tools/) may not
+	// - Generated Go code directories (e.g., generated/google_sheets/) may not
 	//   exist when discoverAllServersAndTools() is called
 	// - Code generation is triggered by the cache manager when tools are discovered
 	//   and cached, which happens asynchronously
@@ -235,21 +236,45 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 	// ============================================================================
 	if a.Clients != nil && a.toolToServer != nil {
 		// Group tools by server name
-		// toolToServer maps: toolName (snake_case) -> serverName (e.g., "google-sheets")
+		// toolToServer maps: toolName (snake_case) -> serverName (e.g., "google-sheets" or "custom")
 		serverToolsMap := make(map[string]map[string]bool)
+		customToolsByCategory := make(map[string]map[string]bool) // category -> toolName -> funcName
+
 		for toolName, serverName := range a.toolToServer {
-			// Initialize server entry if it doesn't exist
-			if serverToolsMap[serverName] == nil {
-				serverToolsMap[serverName] = make(map[string]bool)
+			// Separate custom tools from MCP servers
+			if serverName == "custom" {
+				// This is a custom tool - group by category instead of server
+				customTool, exists := a.customTools[toolName]
+				if !exists || customTool.Category == "" {
+					// Skip custom tools without category (shouldn't happen, but be safe)
+					if a.Logger != nil {
+						a.Logger.Warn("Custom tool found without category, skipping from discovery", loggerv2.String("tool", toolName))
+					}
+					continue
+				}
+
+				// Initialize category entry if it doesn't exist
+				if customToolsByCategory[customTool.Category] == nil {
+					customToolsByCategory[customTool.Category] = make(map[string]bool)
+				}
+				// Convert tool name from snake_case to PascalCase for Go function name
+				// Example: "get_document" -> "GetDocument"
+				funcName := a.snakeToPascalCase(toolName)
+				customToolsByCategory[customTool.Category][funcName] = true
+			} else {
+				// This is an MCP server tool
+				// Initialize server entry if it doesn't exist
+				if serverToolsMap[serverName] == nil {
+					serverToolsMap[serverName] = make(map[string]bool)
+				}
+				// Convert tool name from snake_case to PascalCase for Go function name
+				// Example: "get_document" -> "GetDocument"
+				funcName := a.snakeToPascalCase(toolName)
+				serverToolsMap[serverName][funcName] = true
 			}
-			// Convert tool name from snake_case to PascalCase for Go function name
-			// Example: "get_document" -> "GetDocument"
-			// Tool names from MCP are typically in snake_case, but Go functions are PascalCase
-			funcName := a.snakeToPascalCase(toolName)
-			serverToolsMap[serverName][funcName] = true
 		}
 
-		// Add discovered servers to result
+		// Add discovered MCP servers to result
 		for serverName, toolsSet := range serverToolsMap {
 			// Apply server-level filtering using ToolFilter
 			// This ensures only selected/allowed servers are included
@@ -278,26 +303,47 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 
 			// Normalize server name for package naming (use underscore format)
 			// Package names in Go must use underscores, not hyphens
-			// Example: "google-sheets" -> "google_sheets_tools"
-			packageName := strings.ReplaceAll(serverName, "-", "_") + "_tools"
+			// Example: "google-sheets" -> "google_sheets"
+			packageName := strings.ReplaceAll(serverName, "-", "_")
 
 			// Add server to discovery result
 			// Note: This may be replaced or augmented by Phase 2 (directory scan) if
 			// the generated code directory exists, which will have more accurate function names
-			result.Servers = append(result.Servers, ServerInfo{
-				Name:    strings.ReplaceAll(serverName, "-", "_"), // Use underscore format for consistency
-				Package: packageName,
-				Tools:   tools,
-			})
+			result[packageName] = PackageInfo{
+				Tools: tools,
+			}
+		}
+
+		// Add discovered custom tools grouped by category to result
+		// This matches Phase 2's structure and ensures consistency
+		for category, toolsSet := range customToolsByCategory {
+			// Convert tools set to sorted slice for consistent output
+			tools := make([]string, 0, len(toolsSet))
+			for toolName := range toolsSet {
+				tools = append(tools, toolName)
+			}
+			// Sort for deterministic output
+			sort.Strings(tools)
+
+			// Package name uses GetPackageName to add _tools suffix (e.g., "workspace" -> "workspace_tools")
+			// This matches how packages are generated in the generated/ directory
+			packageName := codegen.GetPackageName(category)
+
+			// Add custom tools to discovery result
+			// Note: This may be replaced or augmented by Phase 2 (directory scan) if
+			// the generated code directory exists, which will have more accurate function names
+			result[packageName] = PackageInfo{
+				Tools: tools,
+			}
 		}
 	}
 
 	// ============================================================================
 	// PHASE 2: Scan generated code directories (supplement/override Phase 1 data)
 	// ============================================================================
-	// This phase scans the filesystem for generated *_tools directories.
+	// This phase scans the filesystem for generated package directories.
 	// It serves two purposes:
-	// 1. Discover custom tools (workspace_tools, human_tools, etc.) that aren't MCP servers
+	// 1. Discover custom tools (workspace, human, etc.) that aren't MCP servers
 	// 2. Supplement or replace Phase 1 MCP server data with more accurate information
 	//    from actual generated Go files (which contain exact function names)
 	//
@@ -306,32 +352,39 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 	// - Phase 1 uses snake_case->PascalCase conversion which may not match exactly
 	// - Directory scan provides the ground truth from what's actually generated
 	// ============================================================================
-	// Scan for all *_tools directories
+	// Scan for all package directories (contain Go files)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 
 		dirName := entry.Name()
-		// Include directories ending with _tools or virtual_tools
-		if !strings.HasSuffix(dirName, "_tools") && dirName != "virtual_tools" {
+		// Skip virtual_tools (handled separately) and hidden directories
+		if dirName == "virtual_tools" || strings.HasPrefix(dirName, ".") {
 			continue
 		}
 
-		// Extract server/category name from package name
-		// For category-specific directories (workspace_tools, human_tools), this will be the category
-		// For MCP server directories (aws_tools, gdrive_tools), this will be the server name
-		serverName := strings.TrimSuffix(dirName, "_tools")
-
-		// Find all Go files in this directory
+		// Check if this directory contains Go files (is a valid package)
 		packageDir := filepath.Join(generatedDir, dirName)
 		packageEntries, err := os.ReadDir(packageDir)
 		if err != nil {
-			if a.Logger != nil {
-				a.Logger.Warn("Failed to read package directory", loggerv2.String("package_dir", packageDir), loggerv2.Error(err))
-			}
 			continue
 		}
+
+		hasGoFiles := false
+		for _, packageEntry := range packageEntries {
+			if !packageEntry.IsDir() && strings.HasSuffix(packageEntry.Name(), ".go") {
+				hasGoFiles = true
+				break
+			}
+		}
+
+		if !hasGoFiles {
+			continue
+		}
+
+		// Package name is the directory name directly (no suffix stripping needed)
+		serverName := dirName
 
 		var tools []string
 		// Parse all Go files in the package directory to extract function names
@@ -362,25 +415,11 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 						isCategoryDir := a.toolFilter.IsCategoryDirectory(dirName)
 
 						// Use unified filter to check if tool should be included
-						// The package/server name format depends on the type:
-						// - MCP servers: use serverName (without _tools suffix) e.g., "google_sheets"
-						//   because selectedTools uses "google-sheets:ToolName" format
-						// - Category dirs: use dirName (WITH _tools suffix) e.g., "workspace_tools"
-						//   because selectedTools uses "workspace_tools:ToolName" format
-						// - Virtual tools: use dirName e.g., "virtual_tools"
-						//
-						// isCustomTool = true for category directories, false for MCP servers
-						// isVirtualTool = true for virtual_tools directory
-						var packageOrServer string
-						if isCategoryDir || isVirtualTool {
-							// Category directories and virtual tools use the full directory name
-							// e.g., "workspace_tools", "human_tools", "virtual_tools"
-							packageOrServer = dirName
-						} else {
-							// MCP servers use the server name without _tools suffix
-							// e.g., "google_sheets" (which normalizes to match "google-sheets" from config)
-							packageOrServer = serverName
-						}
+						// Package/server name is the directory name (with _tools suffix)
+						// - MCP servers: e.g., "google_sheets_tools"
+						// - Category dirs: e.g., "workspace_tools", "human_tools"
+						// - Virtual tools: "virtual_tools"
+						packageOrServer := dirName
 						shouldInclude := a.toolFilter.ShouldIncludeTool(packageOrServer, fn.Name.Name, isCategoryDir, isVirtualTool)
 
 						if shouldInclude {
@@ -410,14 +449,14 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 			// Skip adding them to the discovery result
 			continue
 		} else if isCategoryDirectory {
-			// This is a category-specific directory (workspace_tools, human_tools, data_tools, etc.)
+			// This is a category-specific directory (workspace, human, data, etc.)
 			// Category directories are created by GenerateCustomToolsCode based on tool categories
-			// All categories are added to CustomTools array for consistency
-			result.CustomTools = append(result.CustomTools, CustomToolsInfo{
-				Category: serverName, // Category name (e.g., "workspace", "human", "data", "utility")
-				Package:  dirName,    // Package name (e.g., "workspace_tools", "human_tools", "data_tools")
-				Tools:    tools,
-			})
+			// Use the directory version because it has actual function names from Go files
+			// This ensures we use the most accurate data (ground truth from generated code)
+			// The package name (dirName) is used as the key in the map
+			result[dirName] = PackageInfo{
+				Tools: tools,
+			}
 		} else {
 			// MCP server tools - check if server should be included
 			// Try both the serverName (from directory) and check if it matches any configured server names
@@ -433,36 +472,11 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 				continue
 			}
 
-			// Check if we already added this server from Phase 1 (Clients/toolToServer discovery)
-			// If so, prefer the directory version because it has actual function names from Go files
+			// Replace or add server with directory version (more accurate - has actual function names from Go files)
 			// This ensures we use the most accurate data (ground truth from generated code)
-			//
-			// Normalize server names for comparison (handle hyphen vs underscore differences)
-			normalizedServerName := strings.ReplaceAll(serverName, "_", "-")
-			found := false
-			for i, existingServer := range result.Servers {
-				existingNormalized := strings.ReplaceAll(existingServer.Name, "_", "-")
-				// Match if normalized names are the same (handles google-sheets vs google_sheets)
-				if existingNormalized == normalizedServerName || existingNormalized == serverName {
-					// Replace with directory version (more accurate - has actual function names)
-					result.Servers[i] = ServerInfo{
-						Name:    serverName,
-						Package: dirName,
-						Tools:   tools,
-					}
-					found = true
-					break
-				}
-			}
-
-			// If not found in Phase 1, this is a new server (directory exists but wasn't in Clients map)
-			// This can happen if code was generated manually or from a previous session
-			if !found {
-				result.Servers = append(result.Servers, ServerInfo{
-					Name:    serverName,
-					Package: dirName,
-					Tools:   tools,
-				})
+			// The package name (dirName) is used as the key in the map
+			result[dirName] = PackageInfo{
+				Tools: tools,
 			}
 		}
 	}
@@ -475,18 +489,13 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 
 	// Log summary only if logger is available
 	if a.Logger != nil {
-		totalServers := len(result.Servers)
-		totalCustomCategories := len(result.CustomTools)
+		totalPackages := len(result)
 		totalTools := 0
-		for _, s := range result.Servers {
-			totalTools += len(s.Tools)
-		}
-		for _, c := range result.CustomTools {
-			totalTools += len(c.Tools)
+		for _, pkg := range result {
+			totalTools += len(pkg.Tools)
 		}
 		a.Logger.Info("🔍 [DISCOVERY] Discovery complete",
-			loggerv2.Int("mcp_servers", totalServers),
-			loggerv2.Int("custom_categories", totalCustomCategories),
+			loggerv2.Int("total_packages", totalPackages),
 			loggerv2.Int("total_tools", totalTools),
 			loggerv2.Int("json_size_bytes", len(jsonData)))
 	}
@@ -570,14 +579,14 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 		return formatFileIOValidationError(err, code), nil
 	}
 
-	// Generate workspace_tools for this agent if not already generated
+	// Generate workspace package for this agent if not already generated
 	// This includes folder guard validation built into the generated code
 	agentGeneratedDir := a.getAgentGeneratedDir()
 	if err := a.ensureAgentWorkspaceToolsGenerated(agentGeneratedDir); err != nil {
 		if a.Logger != nil {
-			a.Logger.Warn("⚠️ Failed to generate workspace_tools", loggerv2.Error(err))
+			a.Logger.Warn("⚠️ Failed to generate workspace package", loggerv2.Error(err))
 		}
-		// Continue anyway - workspace_tools might already exist
+		// Continue anyway - workspace package might already exist
 	}
 
 	// Parse code to find imported packages and set up Go workspace
@@ -592,13 +601,14 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 		importedPackages = a.extractImportsWithRegex(code)
 		if len(importedPackages) == 0 {
 			// Check if code mentions common packages even if imports aren't properly formatted
+			// 🔧 FIX: Check for _tools suffix since all generated packages now use it
 			if strings.Contains(code, "workspace_tools") {
 				importedPackages = append(importedPackages, "workspace_tools")
 			}
 			if strings.Contains(code, "google_sheets_tools") {
 				importedPackages = append(importedPackages, "google_sheets_tools")
 			}
-			// Add other common package patterns
+			// Add other common package patterns (with _tools suffix)
 			commonPackages := []string{"aws_tools", "github_tools", "filesystem_tools"}
 			for _, pkg := range commonPackages {
 				if strings.Contains(code, pkg) && !contains(importedPackages, pkg) {
@@ -613,8 +623,14 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 
 	// Set up Go workspace to import generated packages from their original location
 	// This is CRITICAL - if workspace setup fails, code execution will fail with "package not found" errors
+	// Track whether we set up workspace (needed for generated packages)
+	hasGeneratedPackages := len(importedPackages) > 0
+
 	// Always attempt workspace setup if we found any packages, even if parsing had issues
-	if len(importedPackages) > 0 {
+	if hasGeneratedPackages {
+		if a.Logger != nil {
+			a.Logger.Info(fmt.Sprintf("🔧 Setting up Go workspace for %d packages: %v", len(importedPackages), importedPackages))
+		}
 		if err := a.setupGoWorkspace(workspaceDir, importedPackages); err != nil {
 			if a.Logger != nil {
 				a.Logger.Error("❌ Failed to set up Go workspace", err, loggerv2.Any("error", err))
@@ -625,14 +641,15 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 			return errorMsg, nil
 		}
 		if a.Logger != nil {
-			a.Logger.Info(fmt.Sprintf("✅ Go workspace set up successfully with %d packages", len(importedPackages)))
+			a.Logger.Info(fmt.Sprintf("✅ Go workspace set up successfully with %d packages: %v", len(importedPackages), importedPackages))
 		}
 	} else if a.Logger != nil {
-		a.Logger.Debug("ℹ️ No generated packages detected in code, skipping workspace setup")
+		a.Logger.Debug("ℹ️ No generated packages detected in code - skipping workspace setup (code only uses standard library)")
 	}
 
 	// Execute the Go code in-process and capture output
-	output, err := a.executeGoCode(ctx, workspaceDir, filePath, code, cliArgs)
+	// Pass hasGeneratedPackages flag so executeGoCode knows if go.work is expected
+	output, err := a.executeGoCode(ctx, workspaceDir, filePath, code, cliArgs, hasGeneratedPackages)
 	if err != nil {
 		// Log the full error details for debugging
 		if a.Logger != nil {
@@ -679,7 +696,8 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 // This runs the code as a separate process with full Go language support
 // Code can make HTTP calls to MCP API for tool execution
 // cliArgs are optional command-line arguments passed to the program (accessible via os.Args)
-func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code string, cliArgs []string) (string, error) {
+// hasGeneratedPackages indicates whether generated packages are used (go.work is only needed in this case)
+func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code string, cliArgs []string, hasGeneratedPackages bool) (string, error) {
 	if a.Logger != nil {
 		if len(cliArgs) > 0 {
 			a.Logger.Info(fmt.Sprintf("🔧 Executing Go code using 'go run' command: %s with args: %v", filePath, cliArgs))
@@ -701,16 +719,52 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
 	cmd.Dir = workspaceDir
 
+	// 🔧 FIX: Only check for go.work if we have generated packages
+	// go.work is only needed when importing generated packages, not for standard library
+	if hasGeneratedPackages {
+		// Ensure go.work is used by explicitly setting GOWORK environment variable
+		// Go will automatically find go.work in the current directory or parent directories,
+		// but explicitly setting it ensures it's used even if there are other go.work files
+		goWorkPath := filepath.Join(workspaceDir, "go.work")
+		if _, err := os.Stat(goWorkPath); err == nil {
+			// go.work exists, set GOWORK to use it explicitly
+			absGoWorkPath, err := filepath.Abs(goWorkPath)
+			if err == nil {
+				cmd.Env = append(os.Environ(), fmt.Sprintf("GOWORK=%s", absGoWorkPath))
+				if a.Logger != nil {
+					a.Logger.Info("🔧 Set GOWORK environment variable", loggerv2.String("path", absGoWorkPath))
+				}
+			}
+		} else {
+			// go.work doesn't exist but we need it - this is a problem!
+			if a.Logger != nil {
+				a.Logger.Error("❌ go.work file not found in workspace directory (required for generated packages)", err,
+					loggerv2.String("workspace_dir", workspaceDir),
+					loggerv2.String("go_work_path", goWorkPath))
+			}
+		}
+	} else {
+		// No generated packages - go.work not needed, just use standard Go execution
+		if a.Logger != nil {
+			a.Logger.Debug("ℹ️ No generated packages - executing with standard Go (go.work not needed)")
+		}
+	}
+
 	// Set environment variables for code to use
 	// Check if MCP_API_URL is already set in environment, otherwise use default
 	mcpAPIURL := os.Getenv("MCP_API_URL")
 	if mcpAPIURL == "" {
 		mcpAPIURL = "http://localhost:8000"
 	}
+
+	// Set environment variables
+	// Note: We don't set GOWORK explicitly - since cmd.Dir is set to workspaceDir,
+	// Go will automatically find go.work in that directory if it exists
 	cmd.Env = append(os.Environ(),
 		"MCP_API_URL="+mcpAPIURL,
 		// Note: MCP_SERVER_NAME is NOT needed - server name is hardcoded in generated functions
 	)
+	// Note: MCP_SERVER_NAME is NOT needed - server name is hardcoded in generated functions
 
 	// Capture combined output (stdout + stderr)
 	output, err := cmd.CombinedOutput()
@@ -744,28 +798,7 @@ func formatCodeExecutionError(err error, code string) string {
 	builder.WriteString("**❌ EXECUTION ERROR**\n\n")
 	builder.WriteString("**Error Details:**\n```\n")
 	builder.WriteString(errorStr + "\n")
-	builder.WriteString("```\n\n")
-
-	// Check for common Go errors and provide helpful tips
-	if strings.Contains(errorStr, "undefined:") {
-		builder.WriteString("**💡 Tip:** The code references an undefined variable or function.\n")
-		builder.WriteString("- Check for typos in variable/function names\n")
-		builder.WriteString("- Ensure all required packages are imported\n")
-		builder.WriteString("- Verify that tool functions are called correctly\n\n")
-	} else if strings.Contains(errorStr, "cannot use") {
-		builder.WriteString("**💡 Tip:** Type mismatch error.\n")
-		builder.WriteString("- Check that function parameters match expected types\n")
-		builder.WriteString("- Verify struct field types match the tool's expected parameters\n\n")
-	} else if strings.Contains(errorStr, "syntax error") || strings.Contains(errorStr, "expected") {
-		builder.WriteString("**💡 Tip:** Syntax error detected.\n")
-		builder.WriteString("- Check for missing brackets, parentheses, or semicolons\n")
-		builder.WriteString("- Verify that all strings are properly quoted\n")
-		builder.WriteString("- Ensure function signatures are correct\n\n")
-	} else {
-		builder.WriteString("**💡 Tip:** Review the error message above for specific details about what went wrong.\n")
-		builder.WriteString("- Ensure your code compiles correctly with `go run`\n")
-		builder.WriteString("- Check that all HTTP API calls use the correct endpoints\n\n")
-	}
+	builder.WriteString("```\n")
 
 	return builder.String()
 }
@@ -1000,7 +1033,7 @@ func (a *Agent) validateCodeForForbiddenFileIO(code string) error {
 func formatFileIOValidationError(err error, code string) string {
 	var validationErr *FileIOValidationError
 	if !errors.As(err, &validationErr) {
-		return fmt.Sprintf("Code validation failed: %v\n\nPlease review your code and use workspace_tools for file operations.", err)
+		return fmt.Sprintf("Code validation failed: %v\n\nPlease review your code and use workspace package for file operations.", err)
 	}
 
 	var errorMsg strings.Builder
@@ -1027,7 +1060,7 @@ func formatFileIOValidationError(err error, code string) string {
 	errorMsg.WriteString("This causes files to be lost or written to the wrong location.\n\n")
 
 	errorMsg.WriteString("**✅ CORRECT approach:**\n")
-	errorMsg.WriteString("ALWAYS use workspace_tools for file operations:\n\n")
+	errorMsg.WriteString("ALWAYS use workspace_tools package for file operations:\n\n")
 	errorMsg.WriteString("```go\n")
 	errorMsg.WriteString("import \"workspace_tools\"\n\n")
 	errorMsg.WriteString("// For writing files:\n")
@@ -1035,12 +1068,12 @@ func formatFileIOValidationError(err error, code string) string {
 	errorMsg.WriteString("    Filepath: \"data/results.json\",\n")
 	errorMsg.WriteString("    Content:  data,\n")
 	errorMsg.WriteString("}\n")
-	errorMsg.WriteString("result, err := workspace_tools.UpdateWorkspaceFile(params)\n\n")
+	errorMsg.WriteString("result := workspace_tools.UpdateWorkspaceFile(params)\n\n")
 	errorMsg.WriteString("// For reading files:\n")
 	errorMsg.WriteString("params := workspace_tools.ReadWorkspaceFileParams{\n")
 	errorMsg.WriteString("    Filepath: \"data/results.json\",\n")
 	errorMsg.WriteString("}\n")
-	errorMsg.WriteString("content, err := workspace_tools.ReadWorkspaceFile(params)\n")
+	errorMsg.WriteString("content := workspace_tools.ReadWorkspaceFile(params)\n")
 	errorMsg.WriteString("```\n\n")
 
 	errorMsg.WriteString("**Allowed os functions:**\n")
@@ -1048,7 +1081,7 @@ func formatFileIOValidationError(err error, code string) string {
 	errorMsg.WriteString("- os.Setenv() - for environment variables\n")
 	errorMsg.WriteString("- os.Exit() - for program termination\n\n")
 
-	errorMsg.WriteString("Please rewrite your code using workspace_tools instead of standard file I/O operations.")
+	errorMsg.WriteString("Please rewrite your code using workspace_tools package instead of standard file I/O operations.")
 
 	return errorMsg.String()
 }
@@ -1081,13 +1114,13 @@ func (a *Agent) ensureAgentWorkspaceToolsGenerated(agentDir string) error {
 
 	// Always regenerate to ensure it matches current templates
 	if a.Logger != nil {
-		a.Logger.Info(fmt.Sprintf("🔧 Generating/updating workspace_tools for agent %s with folder guards", string(a.TraceID)))
+		a.Logger.Info(fmt.Sprintf("🔧 Generating/updating workspace_tools package for agent %s with folder guards", string(a.TraceID)))
 	}
 
 	return a.generateWorkspaceToolsWithFolderGuards(workspaceToolsDir)
 }
 
-// generateWorkspaceToolsWithFolderGuards generates workspace_tools package with runtime path validation
+// generateWorkspaceToolsWithFolderGuards generates workspace package with runtime path validation
 func (a *Agent) generateWorkspaceToolsWithFolderGuards(workspaceToolsDir string) error {
 	// Ensure directory exists
 	if err := os.MkdirAll(workspaceToolsDir, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for user-accessible directories
@@ -1438,9 +1471,11 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 	}
 
 	// Create a minimal go.mod in workspace if it doesn't exist
+	// 🔧 FIX: Use unique module name "code_execution" to avoid conflict with generated "workspace_tools" package
+	// The generated workspace_tools package uses "module workspace_tools", so the execution workspace must use a different name
 	goModPath := filepath.Join(workspaceDir, "go.mod")
 	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
-		goModContent := "module workspace\n\ngo 1.21\n"
+		goModContent := "module code_execution\n\ngo 1.21\n"
 		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 			return fmt.Errorf("failed to create go.mod: %w", err)
 		}
@@ -1488,7 +1523,10 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 	var builder strings.Builder
 	builder.WriteString("go 1.21\n\n")
 	builder.WriteString("use (\n")
-	builder.WriteString(fmt.Sprintf("    %s\n", absWorkspaceDir))
+	// 🔧 FIX: List generated packages FIRST, then execution workspace
+	// This ensures Go resolves imports to generated packages before checking execution workspace
+	// Generated packages are dependencies that need to be imported
+	// Execution workspace is listed last as it's the main program context
 
 	// Track which module names we've already added to avoid duplicates
 	addedModules := make(map[string]string) // module name -> directory path
@@ -1573,15 +1611,26 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 		}
 	}
 
+	// Include execution workspace LAST - this is where the main program runs
+	// It has module code_execution (not workspace_tools) so it won't conflict with generated workspace_tools package
+	// Listing it last ensures generated packages are resolved first for imports
+	builder.WriteString(fmt.Sprintf("    %s\n", absWorkspaceDir))
 	builder.WriteString(")\n")
 
 	// Write go.work file
 	goWorkPath := filepath.Join(workspaceDir, "go.work")
-	if err := os.WriteFile(goWorkPath, []byte(builder.String()), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
+	goWorkContent := builder.String()
+	if err := os.WriteFile(goWorkPath, []byte(goWorkContent), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for user-accessible files
 		return fmt.Errorf("failed to create go.work: %w", err)
 	}
 
-	// Note: go.work creation is internal - no need to log unless there's an error
+	// Log go.work content for debugging import issues
+	if a.Logger != nil {
+		a.Logger.Info("📝 Created go.work file",
+			loggerv2.String("path", goWorkPath),
+			loggerv2.String("content", goWorkContent),
+			loggerv2.Int("modules_count", len(addedModules)+1)) // +1 for execution workspace
+	}
 
 	// Run 'go work sync' to initialize the workspace and resolve modules
 	// This ensures Go recognizes the workspace modules correctly
@@ -1593,6 +1642,19 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 			}
 		}
 		return fmt.Errorf("failed to sync Go workspace: %w", err)
+	}
+
+	// 🔧 FIX: Run 'go mod tidy' in execution workspace to ensure it's aware of workspace modules
+	// This helps Go resolve imports correctly when using go.work
+	execModTidyCmd := exec.Command("go", "mod", "tidy")
+	execModTidyCmd.Dir = workspaceDir
+	if output, err := execModTidyCmd.CombinedOutput(); err != nil {
+		if a.Logger != nil {
+			a.Logger.Warn("⚠️ 'go mod tidy' in execution workspace failed (non-fatal)",
+				loggerv2.Error(err),
+				loggerv2.String("output", string(output)))
+		}
+		// Non-fatal - continue even if tidy fails
 	}
 
 	return nil

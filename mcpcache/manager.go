@@ -1,6 +1,7 @@
 package mcpcache
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -278,97 +279,302 @@ func (cm *CacheManager) Put(entry *CacheEntry, config mcpclient.MCPServerConfig)
 }
 
 // Invalidate removes a cache entry
+// FIXED: Releases mutex before blocking I/O operations to prevent deadlocks
 func (cm *CacheManager) Invalidate(cacheKey string) error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	cm.logger.Debug("🔧 [INVALIDATE] Starting invalidation for cache key", loggerv2.String("key", cacheKey))
 
-	// Get server name from cache entry before deleting
+	// Step 1: Get server name and prepare paths while holding the lock (minimal lock duration)
+	cm.logger.Debug("🔧 [INVALIDATE] Acquiring lock to collect entry data", loggerv2.String("key", cacheKey))
+	cm.mu.Lock()
+
 	var serverName string
-	if entry, exists := cm.cache[cacheKey]; exists {
+	var exists bool
+	if entry, found := cm.cache[cacheKey]; found {
 		serverName = entry.ServerName
+		exists = true
 	}
 
-	delete(cm.cache, cacheKey)
+	// Remove from in-memory cache map
+	if exists {
+		delete(cm.cache, cacheKey)
+	}
+
+	// Pre-compute paths while we have the lock
+	cacheFile := cm.getCacheFilePath(cacheKey)
+	var generatedDir string
+	var packageDir string
+	if serverName != "" {
+		generatedDir = cm.getGeneratedDir()
+		packageName := codegen.GetPackageName(serverName)
+		packageDir = filepath.Join(generatedDir, packageName)
+	}
+
+	cm.logger.Debug("🔧 [INVALIDATE] Releasing lock before blocking I/O operations",
+		loggerv2.String("key", cacheKey),
+		loggerv2.Any("entry_exists", exists))
+	cm.mu.Unlock() // Release lock before blocking I/O operations
+
+	// Step 2: Perform all blocking I/O operations OUTSIDE the lock
+	if !exists {
+		cm.logger.Debug("🔧 [INVALIDATE] Cache entry not found, nothing to invalidate", loggerv2.String("key", cacheKey))
+		return nil
+	}
 
 	// Remove from filesystem
-	cacheFile := cm.getCacheFilePath(cacheKey)
+	cm.logger.Debug("🔧 [INVALIDATE] Removing cache file (outside lock)",
+		loggerv2.String("key", cacheKey),
+		loggerv2.String("file", cacheFile))
 	if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
+		cm.logger.Warn("🔧 [INVALIDATE] Failed to remove cache file",
+			loggerv2.Error(err),
+			loggerv2.String("file", cacheFile),
+			loggerv2.String("key", cacheKey))
 		return fmt.Errorf("failed to remove cache file %s: %w", cacheFile, err)
+	} else {
+		cm.logger.Debug("🔧 [INVALIDATE] Successfully removed cache file",
+			loggerv2.String("file", cacheFile),
+			loggerv2.String("key", cacheKey))
 	}
 
 	// Remove generated Go files for this server
 	if serverName != "" {
-		generatedDir := cm.getGeneratedDir()
-		packageName := codegen.GetPackageName(serverName)
-		packageDir := filepath.Join(generatedDir, packageName)
+		cm.logger.Info("🔧 [INVALIDATE] Removing generated Go files (outside lock)",
+			loggerv2.String("key", cacheKey),
+			loggerv2.String("server", serverName),
+			loggerv2.String("package_dir", packageDir))
+		removeStart := time.Now()
 		if err := os.RemoveAll(packageDir); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warn("Failed to remove generated Go files for server",
+			cm.logger.Warn("🔧 [INVALIDATE] Failed to remove generated Go files for server",
 				loggerv2.Error(err),
-				loggerv2.String("server", serverName))
+				loggerv2.String("server", serverName),
+				loggerv2.String("package_dir", packageDir))
 		} else {
-			cm.logger.Debug("Removed generated Go files for server", loggerv2.String("server", serverName))
+			removeDuration := time.Since(removeStart)
+			cm.logger.Debug("🔧 [INVALIDATE] Successfully removed generated Go files for server",
+				loggerv2.String("server", serverName),
+				loggerv2.String("package_dir", packageDir),
+				loggerv2.String("duration", removeDuration.String()))
 		}
 
 		// Regenerate index file
+		cm.logger.Info("🔧 [INVALIDATE] Regenerating index file (outside lock)",
+			loggerv2.String("key", cacheKey),
+			loggerv2.String("server", serverName),
+			loggerv2.String("generated_dir", generatedDir))
+		indexStart := time.Now()
 		if err := codegen.GenerateIndexFile(generatedDir, cm.logger); err != nil {
-			cm.logger.Warn("Failed to regenerate index file", loggerv2.Error(err))
+			cm.logger.Warn("🔧 [INVALIDATE] Failed to regenerate index file",
+				loggerv2.Error(err),
+				loggerv2.String("server", serverName),
+				loggerv2.String("generated_dir", generatedDir))
+		} else {
+			indexDuration := time.Since(indexStart)
+			cm.logger.Debug("🔧 [INVALIDATE] Successfully regenerated index file",
+				loggerv2.String("server", serverName),
+				loggerv2.String("generated_dir", generatedDir),
+				loggerv2.String("duration", indexDuration.String()))
 		}
 	}
 
-	cm.logger.Debug("Invalidated cache entry", loggerv2.String("key", cacheKey))
+	cm.logger.Info("✅ [INVALIDATE] Successfully invalidated cache entry",
+		loggerv2.String("key", cacheKey),
+		loggerv2.String("server", serverName))
 	return nil
 }
 
 // InvalidateByServer invalidates all cache entries for a specific server
+// FIXED: Releases mutex before blocking I/O operations to prevent deadlocks
+// This is a backward-compatible wrapper that uses context.Background()
 func (cm *CacheManager) InvalidateByServer(configPath, serverName string) error {
+	return cm.InvalidateByServerWithContext(context.Background(), configPath, serverName)
+}
+
+// InvalidateByServerWithContext invalidates all cache entries for a specific server with context support
+// FIXED: Releases mutex before blocking I/O operations to prevent deadlocks
+// Checks context cancellation before and during I/O operations to allow timeout/cancellation
+func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, configPath, serverName string) error {
+	cm.logger.Info("🔧 [INVALIDATE] Starting invalidation for server",
+		loggerv2.String("server", serverName))
+
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		cm.logger.Warn("🔧 [INVALIDATE] Context cancelled before starting invalidation",
+			loggerv2.String("server", serverName),
+			loggerv2.Error(ctx.Err()))
+		return ctx.Err()
+	default:
+	}
+
+	// Step 1: Collect keys and cache file paths while holding the lock (minimal lock duration)
+	cm.logger.Debug("🔧 [INVALIDATE] Acquiring lock to collect keys", loggerv2.String("server", serverName))
 	cm.mu.Lock()
-	defer cm.mu.Unlock()
 
 	var keysToRemove []string
+	var cacheFilesToRemove []string
 
 	// Find all keys for this server
 	for key, entry := range cm.cache {
 		if entry.ServerName == serverName {
 			keysToRemove = append(keysToRemove, key)
+			// Pre-compute cache file paths while we have the lock
+			cacheFile := cm.getCacheFilePath(key)
+			cacheFilesToRemove = append(cacheFilesToRemove, cacheFile)
 		}
 	}
 
-	// Remove entries
+	// Remove entries from in-memory cache map
 	for _, key := range keysToRemove {
 		delete(cm.cache, key)
+	}
 
-		// Remove from filesystem
-		cacheFile := cm.getCacheFilePath(key)
-		if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warn("Failed to remove cache file",
-				loggerv2.Error(err),
-				loggerv2.String("file", cacheFile))
+	// Pre-compute directory paths while we have the lock
+	var generatedDir string
+	var packageDir string
+	if len(keysToRemove) > 0 {
+		generatedDir = cm.getGeneratedDir()
+		packageName := codegen.GetPackageName(serverName)
+		packageDir = filepath.Join(generatedDir, packageName)
+	}
+
+	cm.logger.Debug("🔧 [INVALIDATE] Releasing lock before blocking I/O operations",
+		loggerv2.String("server", serverName),
+		loggerv2.Int("keys_count", len(keysToRemove)))
+	cm.mu.Unlock() // Release lock before blocking I/O operations
+
+	// Check context after releasing lock
+	select {
+	case <-ctx.Done():
+		cm.logger.Warn("🔧 [INVALIDATE] Context cancelled after lock release",
+			loggerv2.String("server", serverName),
+			loggerv2.Error(ctx.Err()))
+		return ctx.Err()
+	default:
+	}
+
+	// Step 2: Perform all blocking I/O operations OUTSIDE the lock
+	if len(keysToRemove) == 0 {
+		cm.logger.Info("🔧 [INVALIDATE] No cache entries found for server",
+			loggerv2.String("server", serverName))
+		return nil
+	}
+
+	cm.logger.Info("🔧 [INVALIDATE] Removing cache files (outside lock)",
+		loggerv2.String("server", serverName),
+		loggerv2.Int("file_count", len(cacheFilesToRemove)))
+
+	// Remove cache files from filesystem
+	for i, key := range keysToRemove {
+		// Check context before each file operation
+		select {
+		case <-ctx.Done():
+			cm.logger.Warn("🔧 [INVALIDATE] Context cancelled during cache file removal",
+				loggerv2.String("server", serverName),
+				loggerv2.Error(ctx.Err()))
+			return ctx.Err()
+		default:
 		}
+
+		cacheFile := cacheFilesToRemove[i]
+		cm.logger.Debug("🔧 [INVALIDATE] Removing cache file",
+			loggerv2.String("server", serverName),
+			loggerv2.String("key", key),
+			loggerv2.String("file", cacheFile))
+		if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
+			cm.logger.Warn("🔧 [INVALIDATE] Failed to remove cache file",
+				loggerv2.Error(err),
+				loggerv2.String("file", cacheFile),
+				loggerv2.String("server", serverName))
+		} else {
+			cm.logger.Debug("🔧 [INVALIDATE] Successfully removed cache file",
+				loggerv2.String("file", cacheFile),
+				loggerv2.String("server", serverName))
+		}
+	}
+
+	// Check context before removing generated files
+	select {
+	case <-ctx.Done():
+		cm.logger.Warn("🔧 [INVALIDATE] Context cancelled before removing generated files",
+			loggerv2.String("server", serverName),
+			loggerv2.Error(ctx.Err()))
+		return ctx.Err()
+	default:
 	}
 
 	// Remove generated Go files for this server
-	if len(keysToRemove) > 0 {
-		generatedDir := cm.getGeneratedDir()
-		packageName := codegen.GetPackageName(serverName)
-		packageDir := filepath.Join(generatedDir, packageName)
-		if err := os.RemoveAll(packageDir); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warn("Failed to remove generated Go files for server",
+	cm.logger.Info("🔧 [INVALIDATE] Removing generated Go files (outside lock)",
+		loggerv2.String("server", serverName),
+		loggerv2.String("package_dir", packageDir))
+	removeStart := time.Now()
+
+	// Use a goroutine with context to make RemoveAll cancellable
+	removeDone := make(chan error, 1)
+	go func() {
+		removeDone <- os.RemoveAll(packageDir)
+	}()
+
+	select {
+	case <-ctx.Done():
+		cm.logger.Warn("🔧 [INVALIDATE] Context cancelled during generated files removal",
+			loggerv2.String("server", serverName),
+			loggerv2.Error(ctx.Err()))
+		// Note: os.RemoveAll cannot be cancelled, but we return early
+		// The goroutine will continue in background (acceptable for cleanup)
+		return ctx.Err()
+	case err := <-removeDone:
+		removeDuration := time.Since(removeStart)
+		if err != nil && !os.IsNotExist(err) {
+			cm.logger.Warn("🔧 [INVALIDATE] Failed to remove generated Go files for server",
 				loggerv2.Error(err),
-				loggerv2.String("server", serverName))
+				loggerv2.String("server", serverName),
+				loggerv2.String("package_dir", packageDir))
 		} else {
-			cm.logger.Debug("Removed generated Go files for server", loggerv2.String("server", serverName))
+			cm.logger.Info("🔧 [INVALIDATE] Successfully removed generated Go files for server",
+				loggerv2.String("server", serverName),
+				loggerv2.String("package_dir", packageDir),
+				loggerv2.String("duration", removeDuration.String()))
 		}
-
-		// Regenerate index file
-		if err := codegen.GenerateIndexFile(generatedDir, cm.logger); err != nil {
-			cm.logger.Warn("Failed to regenerate index file", loggerv2.Error(err))
-		}
-
-		cm.logger.Info("Invalidated cache entries for server",
-			loggerv2.Int("count", len(keysToRemove)),
-			loggerv2.String("server", serverName))
 	}
 
+	// Check context before regenerating index
+	select {
+	case <-ctx.Done():
+		cm.logger.Warn("🔧 [INVALIDATE] Context cancelled before regenerating index",
+			loggerv2.String("server", serverName),
+			loggerv2.Error(ctx.Err()))
+		return ctx.Err()
+	default:
+	}
+
+	// Regenerate index file
+	cm.logger.Info("🔧 [INVALIDATE] Regenerating index file (outside lock)",
+		loggerv2.String("server", serverName),
+		loggerv2.String("generated_dir", generatedDir))
+	indexStart := time.Now()
+	if err := codegen.GenerateIndexFileWithContext(ctx, generatedDir, cm.logger); err != nil {
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			cm.logger.Warn("🔧 [INVALIDATE] Index regeneration cancelled or timed out",
+				loggerv2.Error(err),
+				loggerv2.String("server", serverName),
+				loggerv2.String("generated_dir", generatedDir))
+			return err
+		}
+		cm.logger.Warn("🔧 [INVALIDATE] Failed to regenerate index file",
+			loggerv2.Error(err),
+			loggerv2.String("server", serverName),
+			loggerv2.String("generated_dir", generatedDir))
+	} else {
+		indexDuration := time.Since(indexStart)
+		cm.logger.Info("🔧 [INVALIDATE] Successfully regenerated index file",
+			loggerv2.String("server", serverName),
+			loggerv2.String("generated_dir", generatedDir),
+			loggerv2.String("duration", indexDuration.String()))
+	}
+
+	cm.logger.Info("✅ [INVALIDATE] Successfully invalidated cache entries for server",
+		loggerv2.Int("count", len(keysToRemove)),
+		loggerv2.String("server", serverName))
 	return nil
 }
 

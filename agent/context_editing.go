@@ -28,11 +28,13 @@ import (
 const (
 	// DefaultContextEditingThreshold is the default token threshold for context editing
 	// Tool responses exceeding this threshold (in tokens) are candidates for compaction
-	DefaultContextEditingThreshold = 100
+	// Set to 10k tokens to preserve cached tokens for cost efficiency
+	DefaultContextEditingThreshold = 10000
 
 	// DefaultContextEditingTurnThreshold is the default turn age threshold
 	// Tool responses older than this many turns will be compacted
-	DefaultContextEditingTurnThreshold = 5
+	// Set to 10 turns to preserve cached tokens for cost efficiency
+	DefaultContextEditingTurnThreshold = 10
 )
 
 // CompactStaleToolResponses scans messages and compacts stale tool responses

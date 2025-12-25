@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -199,8 +200,9 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 	// Generate code for each category
 	for category, categoryTools := range toolsByCategory {
 		// Determine package name based on category
-		// All categories get their own directory (workspace_tools, human_tools, etc.)
-		packageName := category + "_tools"
+		// All categories get their own directory with _tools suffix (workspace_tools, human_tools, etc.)
+		// 🔧 FIX: Use GetPackageName to add _tools suffix consistently
+		packageName := GetPackageName(category)
 
 		// Create package directory
 		packageDir := filepath.Join(generatedDir, packageName)
@@ -323,7 +325,8 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 				// If a tool has been moved to a category-specific directory, remove it from custom_tools
 				shouldRemove := false
 				for category := range toolsByCategory {
-					packageName := category + "_tools"
+					// 🔧 FIX: Use GetPackageName for consistency
+					packageName := GetPackageName(category)
 					categoryDir := filepath.Join(generatedDir, packageName)
 					newFilePath := filepath.Join(categoryDir, fileName)
 					if _, err := os.Stat(newFilePath); err == nil {
@@ -436,11 +439,53 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 }
 
 // GenerateIndexFile generates an index.go file that re-exports all tools
+// This is a backward-compatible wrapper that uses context.Background()
 func GenerateIndexFile(generatedDir string, logger loggerv2.Logger) error {
+	return GenerateIndexFileWithContext(context.Background(), generatedDir, logger)
+}
+
+// GenerateIndexFileWithContext generates an index.go file that re-exports all tools with context support
+func GenerateIndexFileWithContext(ctx context.Context, generatedDir string, logger loggerv2.Logger) error {
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// Scan for all *_tools directories
-	entries, err := os.ReadDir(generatedDir)
+	// Use a goroutine to make ReadDir cancellable
+	readDone := make(chan struct {
+		entries []os.DirEntry
+		err     error
+	}, 1)
+	go func() {
+		entries, err := os.ReadDir(generatedDir)
+		readDone <- struct {
+			entries []os.DirEntry
+			err     error
+		}{entries, err}
+	}()
+
+	var entries []os.DirEntry
+	var err error
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case result := <-readDone:
+		entries = result.entries
+		err = result.err
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to read generated directory: %w", err)
+	}
+
+	// Check context before processing
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
 
 	var packages []string
@@ -459,8 +504,19 @@ func GenerateIndexFile(generatedDir string, logger loggerv2.Logger) error {
 // Available tool packages:
 // No packages have been generated yet.
 `
-		if err := os.WriteFile(indexFile, []byte(emptyIndex), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
-			return fmt.Errorf("failed to write empty index file: %w", err)
+		// Use goroutine to make WriteFile cancellable
+		writeDone := make(chan error, 1)
+		go func() {
+			writeDone <- os.WriteFile(indexFile, []byte(emptyIndex), 0644) //nolint:gosec // 0644 permissions are intentional for generated code files
+		}()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-writeDone:
+			if err != nil {
+				return fmt.Errorf("failed to write empty index file: %w", err)
+			}
 		}
 		return nil
 	}
@@ -482,9 +538,26 @@ func GenerateIndexFile(generatedDir string, logger loggerv2.Logger) error {
 		codeBuilder.WriteString(fmt.Sprintf("// Package %s: Import as \"mcp-agent-builder-go/agent_go/generated/%s\"\n", pkg, pkg))
 	}
 
-	// Write file
-	if err := os.WriteFile(indexFile, []byte(codeBuilder.String()), 0644); err != nil { //nolint:gosec // 0644 permissions are intentional for generated code files
-		return fmt.Errorf("failed to write index file: %w", err)
+	// Check context before writing
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// Write file using goroutine to make it cancellable
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- os.WriteFile(indexFile, []byte(codeBuilder.String()), 0644) //nolint:gosec // 0644 permissions are intentional for generated code files
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-writeDone:
+		if err != nil {
+			return fmt.Errorf("failed to write index file: %w", err)
+		}
 	}
 
 	logger.Debug("Generated index file", loggerv2.String("file", indexFile))

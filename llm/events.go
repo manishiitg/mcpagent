@@ -531,27 +531,11 @@ func ExtractTokenUsageWithCacheInfo(resp *llmtypes.ContentResponse) (observabili
 		}
 
 		// Extract cache tokens from GenerationInfo (if not already set from Usage)
+		// Use unified extraction from multi-llm-provider-go
 		if cacheTokens == 0 {
-			// Use the same logic as extractCacheTokens
-			if generationInfo.CachedContentTokens != nil {
-				cacheTokens = *generationInfo.CachedContentTokens
-			}
-			// Also check Additional map for Anthropic cache tokens
-			if generationInfo.Additional != nil {
-				if cacheRead, ok := generationInfo.Additional["CacheReadInputTokens"]; ok {
-					if cacheReadInt, ok := cacheRead.(int); ok {
-						cacheTokens += cacheReadInt
-					} else if cacheReadFloat, ok := cacheRead.(float64); ok {
-						cacheTokens += int(cacheReadFloat)
-					}
-				}
-				if cacheCreate, ok := generationInfo.Additional["CacheCreationInputTokens"]; ok {
-					if cacheCreateInt, ok := cacheCreate.(int); ok {
-						cacheTokens += cacheCreateInt
-					} else if cacheCreateFloat, ok := cacheCreate.(float64); ok {
-						cacheTokens += int(cacheCreateFloat)
-					}
-				}
+			usage := llmtypes.ExtractUsageFromGenerationInfo(generationInfo)
+			if usage != nil && usage.CacheTokens != nil {
+				cacheTokens = *usage.CacheTokens
 			}
 		}
 
