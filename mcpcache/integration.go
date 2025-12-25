@@ -839,11 +839,17 @@ func performOriginalConnectionLogic(
 
 		srvCfg, err := cfg.GetServer(srvName)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("get server %s: %w", srvName, err)
+			logger.Warn("Server not found in config, skipping",
+				loggerv2.String("server", srvName),
+				loggerv2.Error(err))
+			continue // Skip this server instead of failing everything
 		}
 
 		if r.Error != nil {
-			return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("connect to %s: %w", srvName, r.Error)
+			logger.Warn("Failed to connect to server, skipping",
+				loggerv2.String("server", srvName),
+				loggerv2.Error(r.Error))
+			continue // Skip this server instead of failing everything
 		}
 
 		// Use the client from parallel tool discovery instead of creating a new one
@@ -855,14 +861,20 @@ func performOriginalConnectionLogic(
 		if srvCfg.Protocol != mcpclient.ProtocolSSE {
 			// Only reconnect for non-SSE protocols
 			if err := c.ConnectWithRetry(ctx); err != nil {
-				return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("connect to %s: %w", srvName, err)
+				logger.Warn("Failed to reconnect to server, skipping",
+					loggerv2.String("server", srvName),
+					loggerv2.Error(err))
+				continue // Skip this server instead of failing everything
 			}
 		}
 
 		srvTools := r.Tools
 		llmTools, err := mcpclient.ToolsAsLLM(srvTools)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("convert tools: %w", err)
+			logger.Warn("Failed to convert tools for server, skipping",
+				loggerv2.String("server", srvName),
+				loggerv2.Error(err))
+			continue // Skip this server instead of failing everything
 		}
 
 		// Tools are already normalized by ToolsAsLLM() during conversion
@@ -894,9 +906,15 @@ func performOriginalConnectionLogic(
 		clients[srvName] = c
 	}
 
+	// Check if we have at least one successful connection
+	if len(clients) == 0 {
+		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("no servers could be connected - all servers failed or were skipped")
+	}
+
 	logger.Info("Aggregated tools",
 		loggerv2.Int("total_tools", len(allLLMTools)),
 		loggerv2.Int("server_count", len(clients)),
+		loggerv2.Int("total_servers_attempted", len(parallelResults)),
 		loggerv2.String("connection_type", "direct"))
 
 	// Discover prompts and resources from all connected servers
@@ -1214,22 +1232,49 @@ func extractServerTools(allTools []llmtypes.Tool, toolToServer map[string]string
 }
 
 // InvalidateServerCache invalidates cache entries for a specific server
+// This is a backward-compatible wrapper that uses context.Background()
 func InvalidateServerCache(configPath, serverName string, logger loggerv2.Logger) error {
+	return InvalidateServerCacheWithContext(context.Background(), configPath, serverName, logger)
+}
+
+// InvalidateServerCacheWithContext invalidates cache entries for a specific server with context support
+func InvalidateServerCacheWithContext(ctx context.Context, configPath, serverName string, logger loggerv2.Logger) error {
 	cacheManager := GetCacheManager(logger)
-	return cacheManager.InvalidateByServer(configPath, serverName)
+	return cacheManager.InvalidateByServerWithContext(ctx, configPath, serverName)
 }
 
 // GetFreshConnection creates a fresh MCP connection for a server, bypassing any cache
 // This is used for broken pipe recovery when existing connections are dead
 // It invalidates the cache first, then creates a new connection
+// Uses a timeout wrapper to prevent invalidation from blocking connection recovery
 func GetFreshConnection(ctx context.Context, serverName, configPath string, logger loggerv2.Logger) (mcpclient.ClientInterface, error) {
 	logger.Info("🔧 [FRESH CONNECTION] Creating fresh MCP client for server", loggerv2.String("server", serverName))
 
 	// Invalidate cache first to force fresh connection
-	if invalidateErr := InvalidateServerCache(configPath, serverName, logger); invalidateErr != nil {
-		logger.Warn("🔧 [FRESH CONNECTION] Failed to invalidate cache for server (continuing anyway)", loggerv2.String("server", serverName), loggerv2.Error(invalidateErr))
-	} else {
-		logger.Info("🔧 [FRESH CONNECTION] Invalidated cache for server", loggerv2.String("server", serverName))
+	// Use a timeout to prevent invalidation from hanging and blocking connection recovery
+	// 30 seconds should be enough for file I/O operations, but won't block indefinitely
+	invalidateCtx, invalidateCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer invalidateCancel()
+
+	invalidateDone := make(chan error, 1)
+	go func() {
+		invalidateDone <- InvalidateServerCacheWithContext(invalidateCtx, configPath, serverName, logger)
+	}()
+
+	select {
+	case <-invalidateCtx.Done():
+		// Timeout or cancellation - log warning but continue with connection creation
+		logger.Warn("🔧 [FRESH CONNECTION] Invalidation timed out or was cancelled (continuing with connection creation)",
+			loggerv2.String("server", serverName),
+			loggerv2.Error(invalidateCtx.Err()))
+	case invalidateErr := <-invalidateDone:
+		if invalidateErr != nil {
+			logger.Warn("🔧 [FRESH CONNECTION] Failed to invalidate cache for server (continuing anyway)",
+				loggerv2.String("server", serverName),
+				loggerv2.Error(invalidateErr))
+		} else {
+			logger.Info("🔧 [FRESH CONNECTION] Invalidated cache for server", loggerv2.String("server", serverName))
+		}
 	}
 
 	// Get fresh connection using existing infrastructure

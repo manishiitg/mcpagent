@@ -24,8 +24,12 @@ import (
 
 const (
 	// DefaultSummaryKeepLastMessages is the default number of recent messages to keep
-	// when summarizing. This is roughly 3-4 turns (each turn = user + assistant + tool results)
-	DefaultSummaryKeepLastMessages = 8
+	// when summarizing. This is roughly 2 turns (each turn = user + assistant + tool results)
+	DefaultSummaryKeepLastMessages = 4
+
+	// DefaultSummarizationCooldownTurns is the number of turns to wait before allowing
+	// another summarization. This prevents repeated summarization loops.
+	DefaultSummarizationCooldownTurns = 3
 )
 
 // summarizeConversationHistory summarizes old conversation messages using LLM
@@ -576,8 +580,17 @@ func GetSummaryKeepLastMessages(a *Agent) int {
 	return DefaultSummaryKeepLastMessages
 }
 
+// GetSummarizationCooldownTurns returns the number of turns to wait after summarization
+func GetSummarizationCooldownTurns(a *Agent) int {
+	if a.SummarizationCooldownTurns > 0 {
+		return a.SummarizationCooldownTurns
+	}
+	return DefaultSummarizationCooldownTurns
+}
+
 // SummarizeConversationHistory is a public wrapper for rebuildMessagesWithSummary
 // It allows external callers (like the server) to manually trigger conversation summarization
+// Note: Manual triggers do not update lastSummarizationTurn (cooldown tracking)
 func SummarizeConversationHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, keepLastMessages int) ([]llmtypes.MessageContent, error) {
 	return rebuildMessagesWithSummary(a, ctx, messages, keepLastMessages)
 }

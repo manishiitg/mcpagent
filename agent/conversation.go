@@ -203,8 +203,25 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	}
 
 	// Emit user message event for the current conversation
-	// Extract the last user message from the conversation history
+	// Extract the first user message (for new conversations) and last user message (for continuing conversations)
+	var firstUserMessage string
 	var lastUserMessage string
+
+	// Find first user message (for new conversations)
+	for i := 0; i < len(messages); i++ {
+		if messages[i].Role == llmtypes.ChatMessageTypeHuman {
+			// Get the text content from the message
+			for _, part := range messages[i].Parts {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
+					firstUserMessage = textPart.Text
+					break
+				}
+			}
+			break
+		}
+	}
+
+	// Find last user message (for continuing conversations)
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == llmtypes.ChatMessageTypeHuman {
 			// Get the text content from the message
@@ -218,10 +235,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		}
 	}
 
-	// If no user message found, use a default
-	if lastUserMessage == "" {
-		lastUserMessage = "conversation_with_history"
+	// Use first user message if available, otherwise use last, otherwise use default
+	var userMessageForEvent string
+	if firstUserMessage != "" {
+		userMessageForEvent = firstUserMessage
+	} else if lastUserMessage != "" {
+		userMessageForEvent = lastUserMessage
+	} else {
+		userMessageForEvent = "conversation_with_history"
 	}
+
+	// Use lastUserMessage for backward compatibility with existing code
+	lastUserMessage = userMessageForEvent
 
 	// NEW: Set the current query for hierarchy tracking
 	a.SetCurrentQuery(lastUserMessage)
@@ -229,8 +254,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// NEW: Start agent session for hierarchy tracking
 	a.StartAgentSession(ctx)
 
-	userMessageEvent := events.NewUserMessageEvent(0, lastUserMessage, "user")
+	// Emit user message event - this will appear in basic events (user_message is not in ADVANCED_MODE_EVENTS)
+	userMessageEvent := events.NewUserMessageEvent(0, userMessageForEvent, "user")
 	a.EmitTypedEvent(ctx, userMessageEvent)
+	v2Logger.Info("🔄 Emitted user_message event for first user message",
+		loggerv2.String("content", userMessageForEvent),
+		loggerv2.Int("content_length", len(userMessageForEvent)))
 
 	serverList := strings.Join(a.servers, ",")
 
@@ -309,6 +338,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	systemPromptEvent := events.NewSystemPromptEventWithTokens(a.SystemPrompt, 0, tokenCount)
 	a.EmitTypedEvent(ctx, systemPromptEvent)
 
+	// Loop detection: track recent tool calls and responses to detect infinite loops
+	loopDetector := NewToolLoopDetector(DefaultLoopDetectionThreshold)
+
 	var lastResponse string
 	for turn := 0; turn < a.MaxTurns; turn++ {
 		// NEW: Start turn for hierarchy tracking
@@ -354,7 +386,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		// Check if context editing should be applied (compact stale tool responses)
 		if a.EnableContextEditing {
 			// Log messages BEFORE compaction for verification
-			beforeTokenCount := estimateInputTokens(llmMessages)
 			beforeMessageCount := len(llmMessages)
 			toolResponseCountBefore := 0
 			for _, msg := range llmMessages {
@@ -375,7 +406,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				messages = llmMessages
 
 				// Log messages AFTER compaction for verification
-				afterTokenCount := estimateInputTokens(llmMessages)
 				afterMessageCount := len(llmMessages)
 				toolResponseCountAfter := 0
 				compactedSampleCount := 0
@@ -403,30 +433,25 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					}
 				}
 
-				tokensSaved := beforeTokenCount - afterTokenCount
 				v2Logger.Info("📊 [CONTEXT_EDITING] Messages before LLM call - VERIFICATION",
 					loggerv2.Int("turn", turn+1),
 					loggerv2.Int("before_message_count", beforeMessageCount),
 					loggerv2.Int("after_message_count", afterMessageCount),
 					loggerv2.Int("before_tool_responses", toolResponseCountBefore),
 					loggerv2.Int("after_tool_responses", toolResponseCountAfter),
-					loggerv2.Int("compacted_samples_found", compactedSampleCount),
-					loggerv2.Int("before_estimated_tokens", beforeTokenCount),
-					loggerv2.Int("after_estimated_tokens", afterTokenCount),
-					loggerv2.Int("estimated_tokens_saved", tokensSaved))
+					loggerv2.Int("compacted_samples_found", compactedSampleCount))
 			}
 		}
 
 		// Check if token-based summarization should be triggered
-		if a.EnableContextSummarization && a.SummarizeOnTokenThreshold {
-			// Calculate current input token usage (input tokens from messages)
+		// Support both percentage-based and fixed token thresholds (OR logic)
+		if a.EnableContextSummarization && (a.SummarizeOnTokenThreshold || a.SummarizeOnFixedTokenThreshold) {
+			// Use actual context window usage from previous LLM calls (actual tokens from LLM responses)
+			// This represents the actual tokens currently in the context window from previous calls
 			// Context window is based on INPUT tokens only, not output tokens
-			// Estimate input tokens from messages
-			estimatedInputTokens := estimateInputTokens(llmMessages)
-
-			// Use estimated tokens for threshold check
-			// Note: currentContextWindowUsage will be updated with actual tokens after LLM call
-			currentInputTokens := estimatedInputTokens
+			a.tokenTrackingMutex.RLock()
+			currentInputTokens := a.currentContextWindowUsage // Actual from previous LLM call
+			a.tokenTrackingMutex.RUnlock()
 
 			// Get model metadata for detailed logging
 			var modelContextWindow int
@@ -438,7 +463,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			if a.LLM != nil {
 				if metadata, err := a.LLM.GetModelMetadata(modelID); err == nil && metadata != nil {
 					modelContextWindow = metadata.ContextWindow
-					thresholdTokens = int(float64(metadata.ContextWindow) * a.TokenThresholdPercent)
+					if a.SummarizeOnTokenThreshold {
+						thresholdTokens = int(float64(metadata.ContextWindow) * a.TokenThresholdPercent)
+					}
 				}
 			}
 
@@ -447,12 +474,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
 			}
 			v2Logger.Info("🔍 [CONTEXT_SUMMARIZATION] Checking token threshold",
-				loggerv2.Int("estimated_input_tokens", estimatedInputTokens),
+				loggerv2.Int("current_context_window_usage", currentInputTokens),
 				loggerv2.Int("cumulative_input_tokens", a.cumulativePromptTokens),
 				loggerv2.Int("current_input_tokens", currentInputTokens),
 				loggerv2.Int("model_context_window", modelContextWindow),
-				loggerv2.Any("threshold_percent", a.TokenThresholdPercent),
-				loggerv2.Int("threshold_tokens", thresholdTokens),
+				loggerv2.Any("summarize_on_token_threshold", a.SummarizeOnTokenThreshold),
+				loggerv2.Any("token_threshold_percent", a.TokenThresholdPercent),
+				loggerv2.Int("percentage_threshold_tokens", thresholdTokens),
+				loggerv2.Any("summarize_on_fixed_token_threshold", a.SummarizeOnFixedTokenThreshold),
+				loggerv2.Int("fixed_token_threshold", a.FixedTokenThreshold),
 				loggerv2.Any("usage_percent", usagePercent))
 
 			shouldSummarize, err := ShouldSummarizeOnTokenThreshold(a, currentInputTokens)
@@ -461,41 +491,72 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					loggerv2.Error(err),
 					loggerv2.Int("current_input_tokens", currentInputTokens))
 			} else if shouldSummarize {
-				usagePercent := 0.0
-				if modelContextWindow > 0 {
-					usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
-				}
-				v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Token threshold reached, triggering context summarization",
-					loggerv2.Int("current_input_tokens", currentInputTokens),
-					loggerv2.Int("model_context_window", modelContextWindow),
-					loggerv2.Any("threshold_percent", a.TokenThresholdPercent),
-					loggerv2.Int("threshold_tokens", thresholdTokens),
-					loggerv2.Any("usage_percent", usagePercent))
+				// Check cooldown period to prevent repeated summarization
+				cooldownTurns := GetSummarizationCooldownTurns(a)
+				turnsSinceLastSummarization := turn - a.lastSummarizationTurn
+				inCooldown := a.lastSummarizationTurn >= 0 && turnsSinceLastSummarization < cooldownTurns
 
-				keepLastMessages := GetSummaryKeepLastMessages(a)
-				summarizedMessages, err := rebuildMessagesWithSummary(a, ctx, llmMessages, keepLastMessages)
-				if err != nil {
-					v2Logger.Warn("Failed to summarize conversation history, continuing with original messages",
-						loggerv2.Error(err))
+				if inCooldown {
+					v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Skipping summarization due to cooldown period",
+						loggerv2.Int("current_turn", turn),
+						loggerv2.Int("last_summarization_turn", a.lastSummarizationTurn),
+						loggerv2.Int("turns_since_last", turnsSinceLastSummarization),
+						loggerv2.Int("cooldown_turns", cooldownTurns),
+						loggerv2.Int("turns_remaining", cooldownTurns-turnsSinceLastSummarization))
+					// Skip to LLM call without summarization
 				} else {
-					llmMessages = summarizedMessages
-					v2Logger.Info("Conversation history summarized successfully",
-						loggerv2.Int("original_count", len(messages)),
-						loggerv2.Int("new_count", len(llmMessages)))
+					usagePercent := 0.0
+					if modelContextWindow > 0 {
+						usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
+					}
+					v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Token threshold reached, triggering context summarization",
+						loggerv2.Int("current_turn", turn),
+						loggerv2.Int("current_input_tokens", currentInputTokens),
+						loggerv2.Int("model_context_window", modelContextWindow),
+						loggerv2.Any("summarize_on_token_threshold", a.SummarizeOnTokenThreshold),
+						loggerv2.Any("token_threshold_percent", a.TokenThresholdPercent),
+						loggerv2.Int("percentage_threshold_tokens", thresholdTokens),
+						loggerv2.Any("summarize_on_fixed_token_threshold", a.SummarizeOnFixedTokenThreshold),
+						loggerv2.Int("fixed_token_threshold", a.FixedTokenThreshold),
+						loggerv2.Any("usage_percent", usagePercent))
 
-					// Update current context window usage to reflect only the tokens in the
-					// summarized messages (system + summary + recent). This is used for
-					// percentage calculation and should reflect the actual current context size.
-					// Note: cumulativePromptTokens and other cumulative variables are NOT reset
-					// here - they remain truly cumulative across all conversation phases for
-					// accurate pricing and overall usage reporting.
-					a.tokenTrackingMutex.Lock()
-					// Estimate tokens for the summarized messages (system + summary + recent)
-					estimatedAfterSummary := estimateInputTokens(llmMessages)
-					// Reset currentContextWindowUsage to reflect only current in-context tokens
-					// The summary itself will be counted in the next LLM call
-					a.currentContextWindowUsage = estimatedAfterSummary
-					a.tokenTrackingMutex.Unlock()
+					keepLastMessages := GetSummaryKeepLastMessages(a)
+					originalMessageCount := len(messages) // Capture before overwriting
+					summarizedMessages, err := rebuildMessagesWithSummary(a, ctx, llmMessages, keepLastMessages)
+					if err != nil {
+						v2Logger.Warn("Failed to summarize conversation history, continuing with original messages",
+							loggerv2.Error(err))
+					} else {
+						// Update llmMessages for the current turn's LLM call
+						llmMessages = summarizedMessages
+
+						// CRITICAL BUG FIX: Also update the messages array so future turns use the summarized version.
+						// Without this, the next turn would copy from the unsummarized messages array, causing
+						// context to balloon back to original size (e.g., 179 messages → 6 after summarization,
+						// but next turn starts with 179 again instead of 6). This was causing repeated
+						// summarization every 3 turns because context kept growing back to 200k+ tokens.
+						messages = summarizedMessages
+
+						v2Logger.Info("Conversation history summarized successfully",
+							loggerv2.Int("original_count", originalMessageCount),
+							loggerv2.Int("new_count", len(llmMessages)))
+
+						// Track that we just performed summarization
+						a.lastSummarizationTurn = turn
+
+						// Reset current context window usage after summarization
+						// The actual token count for the new messages (system + summary + recent)
+						// will be updated after the next LLM call with actual PromptTokens from the response.
+						// We reset to 0 here because we don't have actual values yet - the next LLM call
+						// will update it with actual tokens from the response.
+						// Note: cumulativePromptTokens and other cumulative variables are NOT reset
+						// here - they remain truly cumulative across all conversation phases for
+						// accurate pricing and overall usage reporting.
+						a.tokenTrackingMutex.Lock()
+						// Reset to 0 - will be updated with actual tokens after next LLM call
+						a.currentContextWindowUsage = 0
+						a.tokenTrackingMutex.Unlock()
+					}
 				}
 			}
 		}
@@ -507,16 +568,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		if !llm.IsO3O4Model(a.ModelID) {
 			opts = append(opts, llmtypes.WithTemperature(a.Temperature))
 		}
-
-		// Set a reasonable default max_tokens to prevent immediate completion
-		// Use environment variable if available, otherwise default to 4000 tokens
-		maxTokens := 40000 // Default value
-		if maxTokensEnv := os.Getenv("ORCHESTRATOR_MAIN_LLM_MAX_TOKENS"); maxTokensEnv != "" {
-			if parsed, err := strconv.Atoi(maxTokensEnv); err == nil && parsed > 0 {
-				maxTokens = parsed
-			}
-		}
-		opts = append(opts, llmtypes.WithMaxTokens(maxTokens))
 
 		// Use proper LLM function calling via llmtypes.WithTools()
 		// Use the pre-filtered tools that were determined at conversation start
@@ -578,32 +629,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
 			// 🔧 DEBUG: Log token usage for this LLM call
-			var cacheTokens int
-			var reasoningTokens int
-			if resp.Usage != nil {
-				if resp.Usage.CacheTokens != nil {
-					cacheTokens = *resp.Usage.CacheTokens
-				}
-				if resp.Usage.ReasoningTokens != nil {
-					reasoningTokens = *resp.Usage.ReasoningTokens
-				}
-			}
-			// Fall back to GenerationInfo if not in Usage
-			if (cacheTokens == 0 || reasoningTokens == 0) && resp.Choices[0].GenerationInfo != nil {
-				genInfo := resp.Choices[0].GenerationInfo
-				if cacheTokens == 0 {
-					cacheTokens = extractCacheTokens(genInfo)
-				}
-				if reasoningTokens == 0 && genInfo.ReasoningTokens != nil {
-					reasoningTokens = *genInfo.ReasoningTokens
-				}
-			}
-			// Calculate estimated tokens from the messages we actually sent
-			estimatedTokensSent := estimateInputTokens(llmMessages)
-
-			// Calculate the difference between what we sent and what the LLM reports
-			// This helps understand if the LLM is counting cached content
-			tokenDifference := usage.InputTokens - estimatedTokensSent
+			// Use unified extraction from multi-llm-provider-go
+			cacheTokens, thoughtsTokens, reasoningTokens := extractAllTokenTypes(resp)
+			// Note: We no longer estimate tokens - we only use actual values from LLM responses
+			// The actual token count is in usage.InputTokens (from LLM response)
 
 			v2Logger.Info("🔧 [TOKEN_USAGE] LLM call token usage",
 				loggerv2.Int("turn", turn+1),
@@ -612,12 +641,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				loggerv2.Int("output_tokens", usage.OutputTokens),
 				loggerv2.Int("total_tokens", usage.TotalTokens),
 				loggerv2.Int("cache_tokens", cacheTokens),
+				loggerv2.Int("thoughts_tokens", thoughtsTokens),
 				loggerv2.Int("reasoning_tokens", reasoningTokens),
 				loggerv2.Int("tool_calls", len(resp.Choices[0].ToolCalls)),
-				loggerv2.String("duration", time.Since(llmStartTime).String()),
-				loggerv2.Int("estimated_tokens_sent", estimatedTokensSent),
-				loggerv2.Int("token_difference", tokenDifference),
-				loggerv2.String("note", "token_difference shows if LLM is counting cached content beyond what we sent"))
+				loggerv2.String("duration", time.Since(llmStartTime).String()))
 
 			a.EndLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
 				PromptTokens:     usage.InputTokens,
@@ -951,7 +978,27 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Determine server name for tool call events
 				serverName := a.toolToServer[tc.FunctionCall.Name]
 				if isVirtualTool(tc.FunctionCall.Name) {
-					serverName = "virtual-tools"
+					// 🔧 FIX: For discover_code_files, extract the actual server_name from arguments
+					// Previously, all virtual tools (including discover_code_files) always used "virtual-tools"
+					// as the server name in error events. This caused confusing error messages like:
+					// "Server: virtual-tools" when the actual server being discovered was "workspace".
+					// Now we parse the tool arguments to extract the real server_name (e.g., "workspace", "google_sheets")
+					// so error events show the correct server being discovered, making debugging much easier.
+					if tc.FunctionCall.Name == "discover_code_files" && tc.FunctionCall.Arguments != "" {
+						var args map[string]interface{}
+						if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
+							if srvName, ok := args["server_name"].(string); ok && srvName != "" {
+								serverName = srvName // Use the actual server being discovered
+							} else {
+								serverName = "virtual-tools" // Fallback if server_name not found
+							}
+						} else {
+							serverName = "virtual-tools" // Fallback if JSON parsing fails
+						}
+					} else {
+						// Other virtual tools (get_prompt, get_resource, write_code, etc.) still use "virtual-tools"
+						serverName = "virtual-tools"
+					}
 				}
 
 				// Emit tool call start event using typed event data with correlation
@@ -1229,14 +1276,35 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					} else {
 						v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_EXECUTION] Tool '%s' not found in customTools map (map has %d tools) - attempting MCP client call", tc.FunctionCall.Name, len(a.customTools)))
 						// Handle regular MCP tool execution
+						v2Logger.Debug("🔧 [TOOL_CALL] About to call MCP tool via client (from customTools fallback)",
+							loggerv2.String("tool_name", tc.FunctionCall.Name),
+							loggerv2.String("server_name", serverName),
+							loggerv2.String("timeout", toolTimeout.String()))
+						callStart := time.Now()
 						result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
+						callDuration := time.Since(callStart)
+						v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed (from customTools fallback)",
+							loggerv2.String("tool_name", tc.FunctionCall.Name),
+							loggerv2.String("server_name", serverName),
+							loggerv2.String("duration", callDuration.String()),
+							loggerv2.Any("ctx_done", toolCtx.Err() != nil),
+							loggerv2.Any("has_error", toolErr != nil))
 					}
 				} else {
 					// Handle regular MCP tool execution
-					v2Logger.Debug("🔧 [TOOL_CALL] Executing MCP tool",
+					v2Logger.Debug("🔧 [TOOL_CALL] About to execute MCP tool",
 						loggerv2.String("tool_name", tc.FunctionCall.Name),
-						loggerv2.String("server_name", serverName))
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("timeout", toolTimeout.String()))
+					callStart := time.Now()
 					result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
+					callDuration := time.Since(callStart)
+					v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("duration", callDuration.String()),
+						loggerv2.Any("ctx_done", toolCtx.Err() != nil),
+						loggerv2.Any("has_error", toolErr != nil))
 				}
 
 				duration := time.Since(startTime)
@@ -1454,6 +1522,14 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Note: Removed redundant tool_output and tool_response events
 				// tool_call_end now contains all necessary tool information
 
+				// 🔄 LOOP DETECTION: Check if this tool call + args + response matches recent calls
+				if tc.FunctionCall != nil {
+					loopResult := loopDetector.CheckAndHandleLoop(tc.FunctionCall.Name, tc.FunctionCall.Arguments, resultText)
+					if loopResult.Detected {
+						HandleLoopDetection(a, ctx, loopResult, lastUserMessage, turn+1, conversationStartTime, &messages, v2Logger)
+						// Continue to next turn so LLM can respond to the correction message
+					}
+				}
 			}
 
 			// After processing all tool calls, continue to next turn
@@ -1524,17 +1600,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	var finalResp *llmtypes.ContentResponse
 	var err error
 
-	// Create options for final call with reasonable max_tokens
-	maxTokens := 40000 // Default value
-	if maxTokensEnv := os.Getenv("ORCHESTRATOR_MAIN_LLM_MAX_TOKENS"); maxTokensEnv != "" {
-		if parsed, err := strconv.Atoi(maxTokensEnv); err == nil && parsed > 0 {
-			maxTokens = parsed
-		}
-	}
-
-	finalOpts := []llmtypes.CallOption{
-		llmtypes.WithMaxTokens(maxTokens), // Set reasonable default for final answer
-	}
+	finalOpts := []llmtypes.CallOption{}
 	if !llm.IsO3O4Model(a.ModelID) {
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}

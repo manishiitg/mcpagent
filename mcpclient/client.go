@@ -556,7 +556,30 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 			loggerv2.String("server", name),
 			loggerv2.String("protocol", string(srvCfg.Protocol)))
 		go func(name string, srvCfg MCPServerConfig) {
-			defer wg.Done()
+			// Ensure we always send a result and call wg.Done, even if we panic
+			resultSent := false
+			defer func() {
+				if !resultSent {
+					logger.Warn("Goroutine exiting without sending result, sending error result",
+						loggerv2.String("server", name))
+					// Send error result to prevent deadlock
+					select {
+					case resultsCh <- ParallelToolDiscoveryResult{
+						ServerName: name,
+						Tools:      nil,
+						Error:      fmt.Errorf("goroutine exited unexpectedly without sending result"),
+						Client:     nil,
+					}:
+						resultSent = true
+					default:
+						// Channel might be closed or full, but we tried
+						logger.Error("Failed to send error result, channel may be closed", nil,
+							loggerv2.String("server", name))
+					}
+				}
+				wg.Done()
+			}()
+
 			logger.Debug("Goroutine started for server", loggerv2.String("server", name))
 
 			client := New(srvCfg, logger)
@@ -592,6 +615,7 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 					cancel() // Clean up context on connection failure
 				}
 				resultsCh <- ParallelToolDiscoveryResult{ServerName: name, Tools: nil, Error: err, Client: nil}
+				resultSent = true
 				return
 			}
 
@@ -648,6 +672,7 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 
 			logger.Debug("Sending result for server", loggerv2.String("server", name))
 			resultsCh <- ParallelToolDiscoveryResult{ServerName: name, Tools: tools, Error: err, Client: client}
+			resultSent = true
 			logger.Debug("Result sent for server", loggerv2.String("server", name))
 		}(name, srvCfg)
 	}
@@ -665,8 +690,15 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 		close(done)
 	}()
 
+	// Add a maximum timeout for result collection (30 minutes to allow for retries)
+	// This prevents infinite waiting if goroutines get stuck
+	resultCollectionTimeout := 30 * time.Minute
+	resultCollectionCtx, resultCollectionCancel := context.WithTimeout(ctx, resultCollectionTimeout)
+	defer resultCollectionCancel()
+
 	resultCollectionStartTime := time.Now()
-	for receivedCount := 0; receivedCount < total && !timeout; {
+	allGoroutinesDone := false
+	for receivedCount := 0; receivedCount < total && !timeout && !allGoroutinesDone; {
 		logger.Debug("Waiting for results",
 			loggerv2.Int("received", receivedCount),
 			loggerv2.Int("total", total))
@@ -679,12 +711,28 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 				loggerv2.String("server", r.ServerName),
 				loggerv2.Int("total_received", receivedCount),
 				loggerv2.Int("total", total))
-		case <-ctx.Done():
-			logger.Warn("Parent context cancelled, stopping result collection")
+		case <-resultCollectionCtx.Done():
+			logger.Warn("Result collection timeout or parent context cancelled, stopping result collection",
+				loggerv2.String("reason", resultCollectionCtx.Err().Error()))
 			timeout = true
 		case <-done:
-			logger.Debug("All goroutines finished, stopping result collection")
-			// All goroutines finished
+			logger.Debug("All goroutines finished, draining remaining results")
+			allGoroutinesDone = true
+			// Drain any remaining results before breaking
+			drained := false
+			for !drained {
+				select {
+				case r := <-resultsCh:
+					results = append(results, r)
+					received[r.ServerName] = true
+					receivedCount++
+					logger.Debug("Drained result for server",
+						loggerv2.String("server", r.ServerName),
+						loggerv2.Int("total_received", receivedCount))
+				default:
+					drained = true
+				}
+			}
 		}
 	}
 
