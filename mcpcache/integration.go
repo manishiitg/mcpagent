@@ -1261,12 +1261,21 @@ func GetFreshConnection(ctx context.Context, serverName, configPath string, logg
 		invalidateDone <- InvalidateServerCacheWithContext(invalidateCtx, configPath, serverName, logger)
 	}()
 
+	invalidationTimedOut := false
 	select {
 	case <-invalidateCtx.Done():
 		// Timeout or cancellation - log warning but continue with connection creation
 		logger.Warn("🔧 [FRESH CONNECTION] Invalidation timed out or was cancelled (continuing with connection creation)",
 			loggerv2.String("server", serverName),
 			loggerv2.Error(invalidateCtx.Err()))
+		invalidationTimedOut = true
+		// Drain the channel in a non-blocking way to avoid goroutine leak
+		select {
+		case <-invalidateDone:
+			logger.Debug("🔧 [FRESH CONNECTION] Drained invalidation result after timeout")
+		default:
+			// Channel not ready yet, goroutine will complete in background
+		}
 	case invalidateErr := <-invalidateDone:
 		if invalidateErr != nil {
 			logger.Warn("🔧 [FRESH CONNECTION] Failed to invalidate cache for server (continuing anyway)",
@@ -1277,16 +1286,25 @@ func GetFreshConnection(ctx context.Context, serverName, configPath string, logg
 		}
 	}
 
+	// Determine if we should disable cache
+	// If invalidation timed out, cache state is uncertain, so bypass it entirely
+	disableCache := invalidationTimedOut
+
+	// Add timeout wrapper around GetCachedOrFreshConnection to prevent indefinite blocking
+	// Use a reasonable timeout (5 minutes) for connection creation
+	connectionCtx, connectionCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer connectionCancel()
+
 	// Get fresh connection using existing infrastructure
-	// Pass disableCache=false since we want to use cache infrastructure but force fresh connection via invalidation
+	// If invalidation timed out, disable cache to avoid inconsistent state
 	result, err := GetCachedOrFreshConnection(
-		ctx,
+		connectionCtx,
 		nil, // No LLM needed for tool execution
 		serverName,
 		configPath,
 		nil, // No tracers needed
 		logger,
-		false, // disableCache=false - we invalidated cache above, so it will miss and create fresh
+		disableCache, // disableCache=true if invalidation timed out, false otherwise
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fresh connection for server %s: %w", serverName, err)
