@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -103,10 +104,13 @@ func main() {
 	defer unsubscribe()
 
 	// Start goroutine to handle streaming events and tool calls
+	var wg sync.WaitGroup
+	wg.Add(1)
 	var streamedContent strings.Builder
 	var chunkCount int
 	var toolCallCount int
 	go func() {
+		defer wg.Done()
 		for event := range eventChan {
 			if event.Data == nil {
 				continue
@@ -205,8 +209,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Give event handler a moment to finish
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the event handler goroutine to finish processing all events.
+	// NOTE: This example uses a WaitGroup for proper synchronization instead of time.Sleep;
+	// in production, always prefer synchronization primitives over arbitrary sleeps.
+	wg.Wait()
 
 	// Step 7: Print the final answer (for comparison)
 	fmt.Println("\n=== Final Complete Response ===")

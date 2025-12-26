@@ -12,7 +12,7 @@ This example demonstrates how to use the MCP Agent with **streaming enabled** to
 ## Setup
 
 1. Create `.env` file with your OpenAI API key:
-   ```
+   ```bash
    OPENAI_API_KEY=your-api-key-here
    ```
 
@@ -109,7 +109,7 @@ The agent emits the following streaming events:
 
 ## Example Output
 
-```
+```text
 Question: Write a short story about a robot learning to paint.
 
 Streaming response (text appears as it's generated):
