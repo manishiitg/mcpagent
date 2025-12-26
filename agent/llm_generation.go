@@ -248,16 +248,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// Start goroutine to process streaming chunks
 			go func() {
 				defer func() {
-					// Ensure channel is closed
-					if streamChan != nil {
-						// Channel will be closed by LLM provider, but we add this as safety
-						select {
-						case <-streamChan:
-							// Channel already closed
-						default:
-							// Channel still open (shouldn't happen, but safe)
-						}
-					}
+					// Signal that streaming is done; the channel itself is owned and closed by the LLM provider.
+					// The for-range loop below will naturally exit when the provider closes the channel.
 					streamingDone <- true
 				}()
 

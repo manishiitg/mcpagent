@@ -68,6 +68,11 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
+// Local development replaces:
+// These assume this example is run from within the mcpagent repository with:
+// - the mcpagent module root located at ../../
+// - the multi-llm-provider-go module (if used) at ../../../multi-llm-provider-go
+// Adjust or remove these for your own setup if your directory layout differs.
 replace mcpagent => ../../
 
 replace github.com/manishiitg/multi-llm-provider-go => ../../../multi-llm-provider-go
