@@ -582,6 +582,25 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 
 			logger.Debug("Goroutine started for server", loggerv2.String("server", name))
 
+			// Check parent context cancellation before starting connection
+			// This prevents creating isolated contexts when parent is already cancelled
+			select {
+			case <-ctx.Done():
+				logger.Warn("Parent context cancelled before starting connection, skipping server",
+					loggerv2.String("server", name),
+					loggerv2.Error(ctx.Err()))
+				resultsCh <- ParallelToolDiscoveryResult{
+					ServerName: name,
+					Tools:      nil,
+					Error:      fmt.Errorf("parent context cancelled: %w", ctx.Err()),
+					Client:     nil,
+				}
+				resultSent = true
+				return
+			default:
+				// Parent context still valid, continue
+			}
+
 			client := New(srvCfg, logger)
 			var cancel context.CancelFunc
 			var connCtx context.Context
@@ -631,6 +650,28 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 			// For SSE connections, use the same isolated context for tool listing
 			// For other protocols, use the same isolated context
 			listCtx := connCtx // Use the same isolated context for all protocols
+
+			// Check parent context cancellation before tool listing
+			// This allows early exit if parent context is cancelled
+			select {
+			case <-ctx.Done():
+				logger.Warn("Parent context cancelled before tool listing, aborting",
+					loggerv2.String("server", name),
+					loggerv2.Error(ctx.Err()))
+				if cancel != nil {
+					cancel() // Clean up context
+				}
+				resultsCh <- ParallelToolDiscoveryResult{
+					ServerName: name,
+					Tools:      nil,
+					Error:      fmt.Errorf("parent context cancelled during tool listing: %w", ctx.Err()),
+					Client:     nil,
+				}
+				resultSent = true
+				return
+			default:
+				// Parent context still valid, continue
+			}
 
 			logger.Debug("Starting tool listing for server", loggerv2.String("server", name))
 			logger.Debug("Context info before ListTools",
