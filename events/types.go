@@ -197,6 +197,9 @@ const (
 
 	// Decision step evaluation events
 	DecisionEvaluated EventType = "decision_evaluated"
+
+	// Pre-validation events
+	PreValidationCompleted EventType = "pre_validation_completed"
 )
 
 // Unified Event structure with hierarchy support
