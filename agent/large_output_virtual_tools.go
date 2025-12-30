@@ -27,7 +27,12 @@ func validateFilePath(filePath, baseDir string) error {
 	}
 
 	// Check if file path is within base directory
-	if !strings.HasPrefix(absFilePath, absBaseDir) {
+	// Ensure base directory ends with separator for correct prefix check
+	// or matches exactly
+	cleanBaseDir := filepath.Clean(absBaseDir)
+	cleanFilePath := filepath.Clean(absFilePath)
+
+	if !strings.HasPrefix(cleanFilePath, cleanBaseDir+string(filepath.Separator)) && cleanFilePath != cleanBaseDir {
 		return fmt.Errorf("file path escapes allowed directory")
 	}
 
@@ -396,7 +401,7 @@ func (a *Agent) searchWithRipgrep(filePath, pattern string, maxResults int, case
 		args = append(args, "-w")
 	}
 
-	args = append(args, "-n", "-A", "2", "-B", "2", "--max-count", strconv.Itoa(maxResults), pattern, filePath)
+	args = append(args, "-n", "-A", "2", "-B", "2", "--max-count", strconv.Itoa(maxResults), "--", pattern, filePath)
 
 	// Execute ripgrep
 	//nolint:gosec // G204: filePath and pattern are validated, exec.Command uses separate args (no shell injection)
@@ -429,7 +434,7 @@ func (a *Agent) executeJqQuery(filePath, query string, compact, raw bool) (strin
 		args = append(args, "-r")
 	}
 
-	args = append(args, query, filePath)
+	args = append(args, "--", query, filePath)
 
 	// Execute jq
 	//nolint:gosec // G204: filePath and query are validated, exec.Command uses separate args (no shell injection)

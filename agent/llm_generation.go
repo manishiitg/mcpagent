@@ -40,11 +40,14 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 	logger.Info(logMsg)
 	sendMessage(userMsg)
 
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
 	// Wait for delay or context cancellation
 	select {
 	case <-ctx.Done():
 		return false, delay, ctx.Err()
-	case <-time.After(delay):
+	case <-timer.C:
 	}
 
 	var retryLogMsg string

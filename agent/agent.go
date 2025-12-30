@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -829,7 +830,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		LargeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
 		ToolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
 		CleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
-		cleanupDone:                   make(chan bool),                  // Initialize cleanup done channel
+		cleanupDone:                   make(chan bool, 1),               // Initialize cleanup done channel (buffered to prevent blocking/leaks)
 		EnableContextSummarization:    false,                            // Default to disabled
 		SummarizeOnTokenThreshold:     false,                            // Default to disabled
 		TokenThresholdPercent:         0.8,                              // Default to 80% if enabled
@@ -903,6 +904,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	serverName := ag.serverName
 	if serverName == "" {
 		serverName = mcpclient.AllServers
+	}
+
+	// Initialize TraceID if not set (prevent empty folder collisions)
+	if ag.TraceID == "" {
+		ag.TraceID = observability.TraceID(uuid.New().String())
 	}
 
 	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
@@ -1754,9 +1760,14 @@ func (a *Agent) startCleanupRoutine() {
 		return
 	}
 
-	// Use default retention period if not explicitly set (shouldn't happen with new default, but safety check)
+	// If retention period is 0, automatic cleanup is disabled
+	if a.ToolOutputRetentionPeriod == 0 {
+		return
+	}
+
+	// Use default retention period if negative (safety check)
 	retentionPeriod := a.ToolOutputRetentionPeriod
-	if retentionPeriod <= 0 {
+	if retentionPeriod < 0 {
 		retentionPeriod = DefaultToolOutputRetentionPeriod
 	}
 

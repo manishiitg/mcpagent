@@ -389,7 +389,7 @@ func (h *ToolOutputHandler) CleanupOldFiles(maxAge time.Duration) error {
 	}
 
 	// Clean up empty session directories after file deletion
-	h.cleanupEmptyDirectories()
+	// h.cleanupEmptyDirectories() - REMOVED: potentially unsafe if multiple agents share folder
 
 	if totalErrors > 0 {
 		return fmt.Errorf("deleted %d files, but encountered %d errors", totalDeleted, totalErrors)
