@@ -155,16 +155,16 @@ func WithToolChoice(toolChoice string) AgentOption {
 	}
 }
 
-// WithLargeOutputVirtualTools enables the "Context Offloading" pattern.
+// WithContextOffloading enables the "Context Offloading" pattern.
 //
 // When enabled, if a tool returns a massive output (exceeding LargeOutputThreshold),
 // the agent will automatically save it to a file and provide the LLM with a "virtual tool"
 // to read that file on demand, rather than flooding the context window.
 //
 // Default: true (Enabled)
-func WithLargeOutputVirtualTools(enabled bool) AgentOption {
+func WithContextOffloading(enabled bool) AgentOption {
 	return func(a *Agent) {
-		a.EnableLargeOutputVirtualTools = enabled
+		a.EnableContextOffloading = enabled
 	}
 }
 
@@ -567,7 +567,7 @@ type Agent struct {
 	toolOutputHandler *ToolOutputHandler
 
 	// Context offloading configuration: enables virtual tools for accessing offloaded outputs
-	EnableLargeOutputVirtualTools bool
+	EnableContextOffloading bool
 
 	// Context offloading threshold: custom threshold for when to offload tool outputs (0 = use default)
 	LargeOutputThreshold int
@@ -822,7 +822,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		AgentMode:                     SimpleAgent,                 // Default to simple mode
 		TraceID:                       "",                          // Default: empty trace ID
 		provider:                      "",                          // Will be set by caller
-		EnableLargeOutputVirtualTools: true,                        // Default to enabled
+		EnableContextOffloading:       true,                        // Default to enabled
 		LargeOutputThreshold:          0,                           // Default: 0 means use default threshold (10000)
 		ToolOutputRetentionPeriod:     0,                           // Default: 0 means no automatic cleanup
 		CleanupToolOutputOnSessionEnd: false,                       // Default: false means files persist after session
@@ -902,6 +902,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
+	logger.Info("NewAgent initialization", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
 
 	// Load merged MCP servers configuration (base + user)
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
@@ -921,10 +922,27 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Enable code generation in cache manager if code execution mode is enabled
 	// This ensures MCP server code is only generated when needed
+	logger.Info("Getting cache manager")
+	cacheManagerStartTime := time.Now()
 	cacheManager := mcpcache.GetCacheManager(logger)
-	cacheManager.SetCodeGenerationEnabled(ag.UseCodeExecutionMode)
+	cacheManagerDuration := time.Since(cacheManagerStartTime)
+	logger.Info("Cache manager obtained", loggerv2.String("duration", cacheManagerDuration.String()))
 
+	logger.Info("Setting code generation enabled", loggerv2.Any("enabled", ag.UseCodeExecutionMode))
+	setCodeGenStartTime := time.Now()
+	cacheManager.SetCodeGenerationEnabled(ag.UseCodeExecutionMode)
+	setCodeGenDuration := time.Since(setCodeGenStartTime)
+	logger.Info("Code generation enabled set", loggerv2.String("duration", setCodeGenDuration.String()))
+
+	logger.Info("Calling NewAgentConnection", loggerv2.String("server_name", serverName))
+	connectionStartTime := time.Now()
 	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+	connectionDuration := time.Since(connectionStartTime)
+	if err != nil {
+		logger.Error("NewAgentConnection failed", err, loggerv2.String("duration", connectionDuration.String()))
+	} else {
+		logger.Info("NewAgentConnection completed", loggerv2.String("duration", connectionDuration.String()))
+	}
 
 	if err != nil {
 		logger.Error("NewAgentConnection failed", err)
@@ -969,6 +987,14 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	ag.prompts = prompts
 	ag.resources = resources
 	ag.configPath = configPath
+
+	// 🔧 Ensure generated code exists for all connected MCP servers
+	// This handles cases where cache exists but generated code was deleted
+	if ag.UseCodeExecutionMode {
+		// Use agent's ToolTimeout (same as used for normal tool calls)
+		toolTimeout := getToolExecutionTimeout(ag)
+		cacheManager.EnsureGeneratedCodeForServers(servers, configPath, toolTimeout, logger)
+	}
 
 	// Set selectedServers based on serverName parameter if not already set via options
 	// This ensures discover_code_structure filters correctly when a single server is specified
@@ -1839,7 +1865,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		ModelID:                       modelID,
 		AgentMode:                     SimpleAgent,
 		TraceID:                       "", // Will be generated if not set via options
-		EnableLargeOutputVirtualTools: true,
+		EnableContextOffloading:       true,
 		ToolOutputRetentionPeriod:     0,                     // Default: 0 means no automatic cleanup
 		CleanupToolOutputOnSessionEnd: false,                 // Default: false means files persist after session
 		EnableContextSummarization:    false,                 // Default to disabled

@@ -63,7 +63,7 @@ func validateJqQuery(query string) error {
 // These tools allow the LLM to access offloaded tool outputs on-demand
 func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 	// Check if context offloading virtual tools are enabled
-	if !a.EnableLargeOutputVirtualTools {
+	if !a.EnableContextOffloading {
 		return []llmtypes.Tool{}
 	}
 
@@ -140,7 +140,7 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 // These tools allow accessing offloaded tool outputs on-demand
 func (a *Agent) HandleLargeOutputVirtualTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	// Check if context offloading virtual tools are enabled
-	if !a.EnableLargeOutputVirtualTools {
+	if !a.EnableContextOffloading {
 		return "", fmt.Errorf("context offloading virtual tools are disabled")
 	}
 
