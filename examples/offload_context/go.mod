@@ -1,4 +1,4 @@
-module offload-context-example
+module context-offloading-example
 
 go 1.24.11
 

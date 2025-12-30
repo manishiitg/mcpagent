@@ -13,6 +13,54 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// retryOriginalModel handles retry logic for throttling and zero_candidates errors
+// Returns: shouldRetry (bool), delay (time.Duration), error
+func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt, maxRetries int, baseDelay, maxDelay time.Duration, turn int, logger loggerv2.Logger, sendMessage func(string), usage observability.UsageMetrics) (bool, time.Duration, error) {
+	delay := time.Duration(float64(baseDelay) * (1.5 + float64(attempt)*0.5))
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+
+	// Emit retry attempt event with proper model/provider info for UI display
+	retryAttemptEvent := events.NewFallbackAttemptEvent(
+		turn, attempt+1, maxRetries,
+		a.ModelID, string(a.provider), "retry", // Use "retry" phase to distinguish from actual fallbacks
+		false, delay, fmt.Sprintf("%s - retrying original model", errorType),
+	)
+	a.EmitTypedEvent(ctx, retryAttemptEvent)
+
+	var logMsg, userMsg string
+	if errorType == "zero_candidates_error" {
+		logMsg = fmt.Sprintf("🔄 [ZERO_CANDIDATES] Retrying original model FIRST (before fallbacks). Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
+		userMsg = fmt.Sprintf("\n⏳ Zero candidates error detected. Retrying original model first. Waiting %v before retry...", delay)
+	} else {
+		logMsg = fmt.Sprintf("🔄 [THROTTLING] Retrying original model FIRST (before fallbacks). Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
+		userMsg = fmt.Sprintf("\n⏳ Throttling error detected. Retrying original model first. Waiting %v before retry...", delay)
+	}
+	logger.Info(logMsg)
+	sendMessage(userMsg)
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	// Wait for delay or context cancellation
+	select {
+	case <-ctx.Done():
+		return false, delay, ctx.Err()
+	case <-timer.C:
+	}
+
+	var retryLogMsg string
+	if errorType == "zero_candidates_error" {
+		retryLogMsg = fmt.Sprintf("🔄 [ZERO_CANDIDATES] Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries)
+	} else {
+		retryLogMsg = fmt.Sprintf("🔄 [THROTTLING] Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries)
+	}
+	logger.Info(retryLogMsg)
+	sendMessage(fmt.Sprintf("\n🔄 Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries))
+	return true, delay, nil
+}
+
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
 func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int, sendMessage func(string)) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
 	// 🆕 DETAILED GENERATECONTENTWITHRETRY DEBUG LOGGING
@@ -69,6 +117,16 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "empty content error") ||
 			strings.Contains(msg, "choice.Content is empty") ||
 			strings.Contains(msg, "empty response")
+	}
+
+	isZeroCandidatesError := func(err error) bool {
+		if err == nil {
+			return false
+		}
+		msg := err.Error()
+		return strings.Contains(msg, "zero candidates") ||
+			strings.Contains(msg, "returned zero candidates") ||
+			strings.Contains(msg, "no candidates")
 	}
 
 	isConnectionError := func(err error) bool {
@@ -345,6 +403,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			errorType = "max_token_error"
 		} else if isThrottlingError(err) {
 			errorType = "throttling_error"
+		} else if isZeroCandidatesError(err) {
+			errorType = "zero_candidates_error"
 		} else if isEmptyContentError(err) {
 			errorType = "empty_content_error"
 		} else if isConnectionError(err) {
@@ -356,6 +416,19 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		}
 
 		if errorType != "" {
+			// Special handling for throttling_error and zero_candidates_error: retry original model FIRST before fallbacks
+			// This handles transient API issues where retrying the same model might succeed
+			if (errorType == "throttling_error" || errorType == "zero_candidates_error") && attempt < maxRetries-1 {
+				shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, maxRetries, baseDelay, maxDelay, turn, logger, sendMessage, usage)
+				if retryErr != nil {
+					return nil, usage, retryErr
+				}
+				if shouldRetry {
+					continue
+				}
+			}
+
+			// For throttling_error and zero_candidates_error after retries exhausted, or other error types: try fallbacks
 			// Use unified fallback logic
 			fResp, fUsage, fErr := handleErrorWithFallback(a, ctx, err, errorType, turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
 
@@ -365,39 +438,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 			lastErr = fErr
 
-			// Special handling for throttling: retry with original model if fallbacks failed
-			if errorType == "throttling_error" && attempt < maxRetries-1 {
-				delay := time.Duration(float64(baseDelay) * (1.5 + float64(attempt)*0.5))
-				if delay > maxDelay {
-					delay = maxDelay
-				}
-
-				// Emit and log delay
-				retryDelayEvent := &events.GenericEventData{
-					BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-					Data: map[string]interface{}{
-						"delay_duration": delay.String(),
-						"attempt":        attempt + 1,
-						"max_retries":    maxRetries,
-						"operation":      "retry_delay",
-						"error_type":     "throttling",
-					},
-				}
-				a.EmitTypedEvent(ctx, retryDelayEvent)
-				sendMessage(fmt.Sprintf("\n⏳ All fallback models failed. Waiting %v before retry with original model...", delay))
-
-				// Wait for delay or context cancellation
-				select {
-				case <-ctx.Done():
-					return nil, usage, ctx.Err()
-				case <-time.After(delay):
-				}
-
-				sendMessage(fmt.Sprintf("\n🔄 Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries))
-				continue
-			}
-
-			// For other error types, or if max retries reached for throttling, break loops
+			// For throttling_error and zero_candidates_error: if fallbacks failed and retries exhausted, break
+			// For other error types, break loops
 			break
 		}
 

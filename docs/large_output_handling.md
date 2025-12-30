@@ -20,7 +20,7 @@ This pattern follows the "Offload Context" strategy described in [Manus's contex
 |-----------|------|---------------|
 | **Handler** | [`tool_output_handler.go`](../agent/tool_output_handler.go) | `NewToolOutputHandler()`, `IsLargeToolOutputWithModel()`, `WriteToolOutputToFile()`, `CreateToolOutputMessageWithPreview()` |
 | **Virtual Tools** | [`large_output_virtual_tools.go`](../agent/large_output_virtual_tools.go) | `CreateLargeOutputVirtualTools()`, `HandleLargeOutputVirtualTool()`, `handleReadLargeOutput()`, `handleSearchLargeOutput()`, `handleQueryLargeOutput()` |
-| **Agent Integration** | [`agent.go`](../agent/agent.go) | `WithLargeOutputVirtualTools()`, `WithLargeOutputThreshold()`, `WithToolOutputFolder()` |
+| **Agent Integration** | [`agent.go`](../agent/agent.go) | `WithContextOffloading()`, `WithLargeOutputThreshold()`, `WithToolOutputFolder()` |
 
 ---
 
@@ -141,7 +141,7 @@ Executes `jq` queries on JSON files.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `WithLargeOutputVirtualTools(enabled)` | `bool` | `true` | Enable/disable virtual tools for large outputs |
+| `WithContextOffloading(enabled)` | `bool` | `true` | Enable/disable context offloading virtual tools |
 | `WithLargeOutputThreshold(tokens)` | `int` | `10000` | Token threshold for considering output as "large" (uses tiktoken encoding) |
 | `WithToolOutputFolder(path)` | `string` | `"tool_output_folder"` | Directory path for storing large outputs |
 
@@ -162,7 +162,7 @@ func main() {
         mcpagent.WithProvider(llm.NewOpenAIProvider()),
         
         // Enable large output handling (enabled by default)
-        mcpagent.WithLargeOutputVirtualTools(true),
+        mcpagent.WithContextOffloading(true),
         
         // Set threshold in tokens (default: 10000)
         mcpagent.WithLargeOutputThreshold(10000),
@@ -186,7 +186,7 @@ func main() {
 | `path traversal detected` error | LLM tried to access files outside output folder | Only use filenames from the summary message. Path traversal (`../`) is blocked for security. See [`large_output_virtual_tools.go:16`](../agent/large_output_virtual_tools.go#L16) |
 | `ripgrep not found` | `rg` command not installed on system | Install ripgrep: `brew install ripgrep` (Mac) or `apt-get install ripgrep` (Linux) |
 | `jq not found` | `jq` command not installed on system | Install jq: `brew install jq` (Mac) or `apt-get install jq` (Linux) |
-| Large output not intercepted | Threshold too high or handler disabled | Check `WithLargeOutputThreshold()` and `WithLargeOutputVirtualTools(true)` settings |
+| Large output not intercepted | Threshold too high or handler disabled | Check `WithLargeOutputThreshold()` and `WithContextOffloading(true)` settings |
 
 ---
 
