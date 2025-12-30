@@ -203,53 +203,52 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	}
 
 	// Emit user message event for the current conversation
-	// Extract the first user message (for new conversations) and last user message (for continuing conversations)
-	var firstUserMessage string
+	// Extract the last user message (latest turn) - this is the message from the current turn
+	// In multi-turn conversations, we want the latest user message, not the first one
 	var lastUserMessage string
 
-	// Find first user message (for new conversations)
-	for i := 0; i < len(messages); i++ {
-		if messages[i].Role == llmtypes.ChatMessageTypeHuman {
-			// Get the text content from the message
-			for _, part := range messages[i].Parts {
-				if textPart, ok := part.(llmtypes.TextContent); ok {
-					firstUserMessage = textPart.Text
-					break
-				}
-			}
-			break
-		}
-	}
-
-	// Find last user message (for continuing conversations)
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == llmtypes.ChatMessageTypeHuman {
-			// Get the text content from the message
-			for _, part := range messages[i].Parts {
+	// CRITICAL: The last message in the array should be the current user query
+	// Check if the last message is a user message first (most common case)
+	if len(messages) > 0 {
+		lastMsg := messages[len(messages)-1]
+		if lastMsg.Role == llmtypes.ChatMessageTypeHuman {
+			// Get the text content from the last message (current query)
+			for _, part := range lastMsg.Parts {
 				if textPart, ok := part.(llmtypes.TextContent); ok {
 					lastUserMessage = textPart.Text
 					break
 				}
 			}
-			break
 		}
 	}
 
-	// Use first user message if available, otherwise use last, otherwise use default
+	// Fallback: If last message is not a user message, iterate backwards to find the most recent user message
+	// This handles edge cases where there might be system messages or other message types at the end
+	if lastUserMessage == "" {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == llmtypes.ChatMessageTypeHuman {
+				// Get the text content from the message
+				for _, part := range messages[i].Parts {
+					if textPart, ok := part.(llmtypes.TextContent); ok {
+						lastUserMessage = textPart.Text
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Use last user message (latest turn) if available, otherwise use default
 	var userMessageForEvent string
-	if firstUserMessage != "" {
-		userMessageForEvent = firstUserMessage
-	} else if lastUserMessage != "" {
+	if lastUserMessage != "" {
 		userMessageForEvent = lastUserMessage
 	} else {
 		userMessageForEvent = "conversation_with_history"
 	}
 
-	// Use lastUserMessage for backward compatibility with existing code
-	lastUserMessage = userMessageForEvent
-
 	// NEW: Set the current query for hierarchy tracking
-	a.SetCurrentQuery(lastUserMessage)
+	a.SetCurrentQuery(userMessageForEvent)
 
 	// NEW: Start agent session for hierarchy tracking
 	a.StartAgentSession(ctx)
@@ -257,7 +256,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Emit user message event - this will appear in basic events (user_message is not in ADVANCED_MODE_EVENTS)
 	userMessageEvent := events.NewUserMessageEvent(0, userMessageForEvent, "user")
 	a.EmitTypedEvent(ctx, userMessageEvent)
-	v2Logger.Info("🔄 Emitted user_message event for first user message",
+	v2Logger.Info("🔄 Emitted user_message event for latest user message",
 		loggerv2.String("content", userMessageForEvent),
 		loggerv2.Int("content_length", len(userMessageForEvent)))
 
