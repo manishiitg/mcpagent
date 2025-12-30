@@ -118,10 +118,39 @@ func callToolWithTimeoutWrapper(
 	}
 	resultChan := make(chan result, 1)
 
-	// Start the call in a goroutine
+	// Start the call in a goroutine with proper cleanup to prevent leaks
+	// Use nested goroutine pattern to ensure this wrapper goroutine exits
+	// even if client.CallTool blocks indefinitely and doesn't respect context cancellation
 	go func() {
-		res, err := client.CallTool(ctx, toolName, args)
-		resultChan <- result{res: res, err: err}
+		// Create a done channel to signal when the actual call completes
+		callDone := make(chan struct{})
+		var res *mcp.CallToolResult
+		var err error
+
+		// Run the actual call in an inner goroutine
+		go func() {
+			defer close(callDone)
+			res, err = client.CallTool(ctx, toolName, args)
+		}()
+
+		// Wait for either completion or context cancellation
+		select {
+		case <-callDone:
+			// Call completed - try to send result (non-blocking if context expired)
+			select {
+			case resultChan <- result{res: res, err: err}:
+				// Successfully sent result
+			case <-ctx.Done():
+				// Context expired while trying to send - exit without blocking
+				// This prevents goroutine leak if function already returned
+				return
+			}
+		case <-ctx.Done():
+			// Context expired before call completed - exit immediately
+			// Note: The inner client.CallTool goroutine may still be running,
+			// but at least this wrapper goroutine exits cleanly
+			return
+		}
 	}()
 
 	startTime := time.Now()
