@@ -165,7 +165,7 @@ agent, err := mcpagent.NewAgent(
     llmModel,
     configPath,
     // Enable context offloading (enabled by default)
-    mcpagent.WithLargeOutputVirtualTools(true),
+    mcpagent.WithContextOffloading(true),
     
     // Optional: Set custom threshold (default: 10000 tokens)
     mcpagent.WithLargeOutputThreshold(10000),
@@ -269,7 +269,7 @@ apt-get install ripgrep jq
 ### Large output not offloaded
 
 - Check threshold setting: `WithLargeOutputThreshold()`
-- Verify handler is enabled: `WithLargeOutputVirtualTools(true)`
+- Verify handler is enabled: `WithContextOffloading(true)`
 - Check output size: Must exceed threshold to trigger offloading
 
 ## Next Steps

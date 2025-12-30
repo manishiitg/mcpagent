@@ -41,7 +41,7 @@ func main() {
 
 	// Define log file paths
 	llmLogFile := filepath.Join(logDir, "llm.log")
-	agentLogFile := filepath.Join(logDir, "offload-context.log")
+	agentLogFile := filepath.Join(logDir, "context-offloading.log")
 
 	// Clear existing log files to start fresh for this run
 	if err := os.Truncate(llmLogFile, 0); err != nil && !os.IsNotExist(err) {
@@ -117,7 +117,7 @@ func main() {
 		configPath,
 		mcpagent.WithLogger(agentLogger), // Use file logger for agent operations
 		// Enable context offloading (enabled by default)
-		mcpagent.WithLargeOutputVirtualTools(true),
+		mcpagent.WithContextOffloading(true),
 		// Set threshold to 100 tokens for testing (triggers more easily)
 		// Default is 10000 tokens, but we set it lower for demonstration
 		mcpagent.WithLargeOutputThreshold(100),
@@ -130,7 +130,7 @@ func main() {
 	fmt.Println("Context offloading threshold set to 100 tokens (for testing)")
 
 	// Step 8: Ask the agent a question that will produce large output
-	// The agent will automatically offload large results to filesystem
+	// The agent will automatically use context offloading to save large results to filesystem
 	question := "Search for comprehensive information about React library documentation and best practices. Provide detailed results."
 	if len(os.Args) > 2 {
 		question = os.Args[2]
@@ -138,10 +138,10 @@ func main() {
 
 	fmt.Println("=== Context Offloading Example ===")
 	fmt.Println("Question:", question)
-	fmt.Println("\nNote: If the tool output is large (>100 tokens), it will be:")
-	fmt.Println("  1. Saved to tool_output_folder/{session-id}/")
-	fmt.Println("  2. Replaced with file path + preview in LLM context")
-	fmt.Println("  3. Accessible via virtual tools (read_large_output, search_large_output, query_large_output)")
+	fmt.Println("\nNote: If the tool output is large (>100 tokens), context offloading will:")
+	fmt.Println("  1. Save the full output to tool_output_folder/{session-id}/")
+	fmt.Println("  2. Replace it with file path + preview in LLM context")
+	fmt.Println("  3. Make it accessible via context offloading virtual tools (read_large_output, search_large_output, query_large_output)")
 	fmt.Println()
 
 	// Log question to agent log file
@@ -162,16 +162,16 @@ func main() {
 	// Log completion to agent log file
 	agentLogger.Info("Context offloading example completed", loggerv2.Field{Key: "answer_length", Value: len(answer)})
 
-	// Step 10: Show where offloaded files are stored
+	// Step 10: Show where context offloading saved the files
 	toolOutputHandler := agent.GetToolOutputHandler()
 	if toolOutputHandler != nil {
 		outputFolder := toolOutputHandler.GetToolOutputFolder()
 		sessionID := toolOutputHandler.GetSessionID()
 		if sessionID != "" {
-			fmt.Printf("\n📁 Offloaded files location: %s/%s/\n", outputFolder, sessionID)
+			fmt.Printf("\n📁 Context offloading files location: %s/%s/\n", outputFolder, sessionID)
 		} else {
-			fmt.Printf("\n📁 Offloaded files location: %s/\n", outputFolder)
+			fmt.Printf("\n📁 Context offloading files location: %s/\n", outputFolder)
 		}
-		fmt.Println("   (Check this directory for any large tool outputs that were offloaded)")
+		fmt.Println("   (Check this directory for any large tool outputs that were saved via context offloading)")
 	}
 }
