@@ -134,7 +134,7 @@ Check that files were actually created:
    - Check for permission errors or disk space issues
 
 2. **Virtual tools not available**: If agent tries to use virtual tools but they're not registered
-   - Check that `EnableLargeOutputVirtualTools` is true
+   - Check that `EnableContextOffloading` is true
    - Verify virtual tools are in the agent's tool list
 
 3. **Threshold not exceeded**: If output size is below threshold
@@ -187,7 +187,7 @@ Check that files were actually created:
 - **Check**: Check file permissions on `tool_output_folder`
 
 ### Issue: Virtual tools not found
-- **Check**: Verify `EnableLargeOutputVirtualTools` is true
+- **Check**: Verify `EnableContextOffloading` is true
 - **Check**: Check agent's tool list includes virtual tools
 - **Check**: Verify virtual tools are registered in the agent
 

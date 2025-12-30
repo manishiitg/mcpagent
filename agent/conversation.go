@@ -87,6 +87,98 @@ func getToolExecutionTimeout(a *Agent) time.Duration {
 	return timeout
 }
 
+// callToolWithTimeoutWrapper wraps MCP client CallTool with explicit timeout monitoring.
+// This ensures timeouts work even if the underlying library doesn't properly respect context cancellation.
+// The wrapper runs the call in a goroutine and monitors the context deadline explicitly.
+func callToolWithTimeoutWrapper(
+	ctx context.Context,
+	client mcpclient.ClientInterface,
+	toolName string,
+	args map[string]interface{},
+	logger loggerv2.Logger,
+	serverName string,
+) (*mcp.CallToolResult, error) {
+	// Get deadline from context
+	deadline, hasDeadline := ctx.Deadline()
+	if !hasDeadline {
+		// No deadline, just call directly
+		return client.CallTool(ctx, toolName, args)
+	}
+
+	// Calculate remaining time
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return nil, context.DeadlineExceeded
+	}
+
+	// Create result channels
+	type result struct {
+		res *mcp.CallToolResult
+		err error
+	}
+	resultChan := make(chan result, 1)
+
+	// Start the call in a goroutine
+	go func() {
+		res, err := client.CallTool(ctx, toolName, args)
+		resultChan <- result{res: res, err: err}
+	}()
+
+	// Monitor with explicit timeout check
+	timeoutCheckInterval := 5 * time.Second
+	if remaining < timeoutCheckInterval {
+		timeoutCheckInterval = remaining / 2
+		if timeoutCheckInterval < 100*time.Millisecond {
+			timeoutCheckInterval = 100 * time.Millisecond
+		}
+	}
+
+	// Create a ticker to periodically check timeout
+	ticker := time.NewTicker(timeoutCheckInterval)
+	defer ticker.Stop()
+
+	startTime := time.Now()
+	for {
+		select {
+		case res := <-resultChan:
+			// Call completed
+			return res.res, res.err
+
+		case <-ctx.Done():
+			// Context cancelled or timed out
+			logger.Warn("🔧 [TOOL_TIMEOUT] Context cancelled/timed out while waiting for tool call",
+				loggerv2.String("tool_name", toolName),
+				loggerv2.String("server_name", serverName),
+				loggerv2.String("elapsed", time.Since(startTime).String()),
+				loggerv2.Error(ctx.Err()))
+			return nil, ctx.Err()
+
+		case <-ticker.C:
+			// Periodic timeout check
+			elapsed := time.Since(startTime)
+			remaining := time.Until(deadline)
+
+			// Log progress for long-running calls
+			if elapsed > 30*time.Second {
+				logger.Debug("🔧 [TOOL_CALL] Still waiting for tool response",
+					loggerv2.String("tool_name", toolName),
+					loggerv2.String("server_name", serverName),
+					loggerv2.String("elapsed", elapsed.String()),
+					loggerv2.String("remaining", remaining.String()))
+			}
+
+			// Force timeout if deadline has passed
+			if remaining <= 0 {
+				logger.Warn("🔧 [TOOL_TIMEOUT] Deadline exceeded, forcing timeout",
+					loggerv2.String("tool_name", toolName),
+					loggerv2.String("server_name", serverName),
+					loggerv2.String("elapsed", elapsed.String()))
+				return nil, context.DeadlineExceeded
+			}
+		}
+	}
+}
+
 // ensureSystemPrompt ensures that the system prompt is included in the messages
 func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes.MessageContent {
 	// Check if the first message is already a system message
@@ -1274,14 +1366,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							}
 						}
 					} else {
-						v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_EXECUTION] Tool '%s' not found in customTools map (map has %d tools) - attempting MCP client call", tc.FunctionCall.Name, len(a.customTools)))
 						// Handle regular MCP tool execution
 						v2Logger.Debug("🔧 [TOOL_CALL] About to call MCP tool via client (from customTools fallback)",
 							loggerv2.String("tool_name", tc.FunctionCall.Name),
 							loggerv2.String("server_name", serverName),
 							loggerv2.String("timeout", toolTimeout.String()))
 						callStart := time.Now()
-						result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
+						result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, tc.FunctionCall.Name, args, v2Logger, serverName)
 						callDuration := time.Since(callStart)
 						v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed (from customTools fallback)",
 							loggerv2.String("tool_name", tc.FunctionCall.Name),
@@ -1297,7 +1388,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						loggerv2.String("server_name", serverName),
 						loggerv2.String("timeout", toolTimeout.String()))
 					callStart := time.Now()
-					result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
+					result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, tc.FunctionCall.Name, args, v2Logger, serverName)
 					callDuration := time.Since(callStart)
 					v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed",
 						loggerv2.String("tool_name", tc.FunctionCall.Name),

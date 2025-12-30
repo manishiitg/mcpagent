@@ -187,7 +187,7 @@ func (a *Agent) HandleVirtualTool(ctx context.Context, toolName string, args map
 		return a.handleWriteCode(ctx, args)
 	default:
 		// Check if it's a context offloading virtual tool
-		if a.EnableLargeOutputVirtualTools {
+		if a.EnableContextOffloading {
 			return a.HandleLargeOutputVirtualTool(ctx, toolName, args)
 		}
 		return "", fmt.Errorf("unknown virtual tool: %s", toolName)

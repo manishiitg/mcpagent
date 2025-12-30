@@ -136,16 +136,34 @@ func LoadConfig(configPath string) (*MCPConfig, error) {
 	if configPath == "" {
 		return nil, fmt.Errorf("config path cannot be empty")
 	}
+
+	// DEBUG: Log before os.ReadFile
+	fmt.Printf("[LoadConfig] DEBUG: About to read config file: %s\n", configPath)
+	startTime := time.Now()
+
 	//nolint:gosec // G304: configPath comes from command-line/config, not user input
 	data, err := os.ReadFile(configPath)
+
+	readDuration := time.Since(startTime)
 	if err != nil {
+		fmt.Printf("[LoadConfig] DEBUG: os.ReadFile failed after %v: %v\n", readDuration, err)
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
+	fmt.Printf("[LoadConfig] DEBUG: os.ReadFile completed in %v, read %d bytes\n", readDuration, len(data))
+
+	// DEBUG: Log before json.Unmarshal
+	fmt.Printf("[LoadConfig] DEBUG: About to unmarshal JSON for: %s\n", configPath)
+	unmarshalStartTime := time.Now()
 
 	var config MCPConfig
 	if err := json.Unmarshal(data, &config); err != nil {
+		unmarshalDuration := time.Since(unmarshalStartTime)
+		fmt.Printf("[LoadConfig] DEBUG: json.Unmarshal failed after %v: %v\n", unmarshalDuration, err)
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
+
+	unmarshalDuration := time.Since(unmarshalStartTime)
+	fmt.Printf("[LoadConfig] DEBUG: json.Unmarshal completed in %v for: %s\n", unmarshalDuration, configPath)
 
 	return &config, nil
 }
@@ -153,16 +171,30 @@ func LoadConfig(configPath string) (*MCPConfig, error) {
 // LoadMergedConfig loads the merged configuration (base + user additions)
 // This mirrors the logic from mcp_config_routes.go to ensure consistency
 func LoadMergedConfig(configPath string, logger interface{}) (*MCPConfig, error) {
+	userConfigPath := strings.Replace(configPath, ".json", "_user.json", 1)
+	fmt.Printf("[LoadMergedConfig] DEBUG: Starting LoadMergedConfig\n")
+	fmt.Printf("[LoadMergedConfig] DEBUG: Base config file: %s\n", configPath)
+	fmt.Printf("[LoadMergedConfig] DEBUG: User config file: %s\n", userConfigPath)
+	startTime := time.Now()
+
 	// Load base config
+	fmt.Printf("[LoadMergedConfig] DEBUG: About to load base config: %s\n", configPath)
+	baseConfigStartTime := time.Now()
 	baseConfig, err := LoadConfig(configPath)
+	baseConfigDuration := time.Since(baseConfigStartTime)
 	if err != nil {
+		fmt.Printf("[LoadMergedConfig] DEBUG: Failed to load base config after %v: %v\n", baseConfigDuration, err)
 		return nil, fmt.Errorf("failed to load base config: %w", err)
 	}
+	fmt.Printf("[LoadMergedConfig] DEBUG: Base config loaded successfully in %v, found %d servers\n", baseConfigDuration, len(baseConfig.MCPServers))
 
 	// Load user additions (if any)
-	userConfigPath := strings.Replace(configPath, ".json", "_user.json", 1)
+	fmt.Printf("[LoadMergedConfig] DEBUG: About to load user config: %s\n", userConfigPath)
+	userConfigStartTime := time.Now()
 	userConfig, err := LoadConfig(userConfigPath)
+	userConfigDuration := time.Since(userConfigStartTime)
 	if err != nil {
+		fmt.Printf("[LoadMergedConfig] DEBUG: User config load failed after %v (this is OK if file doesn't exist): %v\n", userConfigDuration, err)
 		// User config doesn't exist yet, use empty config
 		userConfig = &MCPConfig{MCPServers: make(map[string]MCPServerConfig)}
 		if logger != nil {
@@ -171,9 +203,13 @@ func LoadMergedConfig(configPath string, logger interface{}) (*MCPConfig, error)
 				logFunc.Debugf("No user config found at %s, using empty user config", userConfigPath)
 			}
 		}
+	} else {
+		fmt.Printf("[LoadMergedConfig] DEBUG: User config loaded successfully in %v, found %d servers\n", userConfigDuration, len(userConfig.MCPServers))
 	}
 
 	// Merge base config with user additions
+	fmt.Printf("[LoadMergedConfig] DEBUG: Starting merge operation\n")
+	mergeStartTime := time.Now()
 	mergedConfig := &MCPConfig{
 		MCPServers: make(map[string]MCPServerConfig),
 	}
@@ -187,6 +223,8 @@ func LoadMergedConfig(configPath string, logger interface{}) (*MCPConfig, error)
 	for name, server := range userConfig.MCPServers {
 		mergedConfig.MCPServers[name] = server
 	}
+	mergeDuration := time.Since(mergeStartTime)
+	fmt.Printf("[LoadMergedConfig] DEBUG: Merge operation completed in %v\n", mergeDuration)
 
 	if logger != nil {
 		// Try to log if logger supports it
@@ -196,6 +234,8 @@ func LoadMergedConfig(configPath string, logger interface{}) (*MCPConfig, error)
 		}
 	}
 
+	totalDuration := time.Since(startTime)
+	fmt.Printf("[LoadMergedConfig] DEBUG: LoadMergedConfig completed successfully in %v\n", totalDuration)
 	return mergedConfig, nil
 }
 

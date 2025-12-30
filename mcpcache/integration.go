@@ -210,11 +210,13 @@ func GetCachedOrFreshConnection(
 
 	// If cache is disabled, skip cache lookup and go directly to fresh connection
 	if disableCache {
+		logger.Info("Cache disabled", loggerv2.String("server_name", serverName))
 		logger.Info("Cache disabled - performing fresh connection",
 			loggerv2.String("server_name", serverName),
 			loggerv2.String("disable_cache", "true"))
 
 		// Load merged MCP configuration to get server details (base + user)
+		logger.Info("Loading merged config")
 		config, err := mcpclient.LoadMergedConfig(configPath, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
@@ -224,8 +226,10 @@ func GetCachedOrFreshConnection(
 		var servers []string
 		if serverName == "all" || serverName == "" {
 			servers = config.ListServers()
+			logger.Info("Using all servers", loggerv2.Int("server_count", len(servers)))
 		} else if serverName == mcpclient.NoServers {
 			servers = []string{}
+			logger.Info("NoServers specified, servers list is empty")
 		} else {
 			requestedServers := strings.Split(serverName, ",")
 			for _, reqServer := range requestedServers {
@@ -239,8 +243,49 @@ func GetCachedOrFreshConnection(
 			}
 		}
 
-		// Perform fresh connection directly
+		// Handle special case: no servers requested (pure LLM reasoning)
+		// Skip connection when NoServers is specified
+		if len(servers) == 0 {
+			logger.Info("Servers list is empty, returning early (NoServers mode)")
+			logger.Info("No servers requested (NoServers) - skipping connection, returning empty result",
+				loggerv2.String("server_name", serverName),
+				loggerv2.Int("server_count", 0),
+				loggerv2.Int("tools_count", 0))
+
+			// Return empty result for pure LLM reasoning
+			result.CacheUsed = false
+			result.FreshFallback = true
+			result.CacheKey = mcpclient.NoServers
+
+			// Set empty collections
+			result.Clients = make(map[string]mcpclient.ClientInterface)
+			result.ToolToServer = make(map[string]string)
+			result.Tools = []llmtypes.Tool{}
+			result.Prompts = make(map[string][]mcp.Prompt)
+			result.Resources = make(map[string][]mcp.Resource)
+			result.SystemPrompt = ""
+
+			// Emit comprehensive cache event
+			cacheTime := time.Since(cacheStartTime)
+			EmitComprehensiveCacheEvent(
+				tracers,
+				"complete",
+				configPath,
+				servers,
+				result,
+				serverStatus,
+				time.Duration(0),
+				cacheTime,
+				nil,
+			)
+
+			return result, nil
+		}
+
+		// Perform fresh connection directly (only if servers list is not empty)
+		logger.Info("Calling performFreshConnection", loggerv2.Int("server_count", len(servers)))
 		freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
+		logger.Info("performFreshConnection completed")
 		if err != nil {
 			return nil, err
 		}
@@ -285,9 +330,11 @@ func GetCachedOrFreshConnection(
 	var servers []string
 	if serverName == "all" || serverName == "" {
 		servers = config.ListServers()
+		logger.Info("Using all servers", loggerv2.Int("server_count", len(servers)))
 	} else if serverName == mcpclient.NoServers {
 		// Special case: no servers should be connected
 		servers = []string{}
+		logger.Info("NoServers specified (cache enabled), servers list is empty")
 		logger.Info("No servers requested - pure LLM reasoning mode",
 			loggerv2.Int("server_count", 0),
 			loggerv2.Any("servers", []string{}))
@@ -312,6 +359,7 @@ func GetCachedOrFreshConnection(
 
 	// Handle special case: no servers requested (pure LLM reasoning)
 	if len(servers) == 0 {
+		logger.Info("Servers list is empty (cache enabled), returning early (NoServers mode)")
 		logger.Info("No servers requested - returning empty connection result",
 			loggerv2.Int("server_count", 0),
 			loggerv2.Int("tools_count", 0),
