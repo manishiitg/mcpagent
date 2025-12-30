@@ -156,8 +156,6 @@ const (
 	EventTypeUnifiedCompletion EventType = "unified_completion"
 )
 
-<<<<<<< HEAD
-=======
 // Orchestrator Event Types (from orchestrator/events/events.go)
 const (
 	// Orchestrator events
@@ -204,7 +202,6 @@ const (
 	PreValidationCompleted EventType = "pre_validation_completed"
 )
 
->>>>>>> c2f8d038ac72f7e4caf7fc624f41b72280e86c95
 // Unified Event structure with hierarchy support
 type Event struct {
 	Type          EventType              `json:"type"`
