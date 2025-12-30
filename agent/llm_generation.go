@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"mcpagent/events"
 	"mcpagent/llm"
@@ -12,6 +13,20 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// isContextCanceledError checks if an error is due to context cancellation
+// Context cancellation errors should NOT trigger fallback attempts
+func isContextCanceledError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Check for context cancellation errors - these should NOT trigger fallback
+	return strings.Contains(errStr, "context canceled") ||
+		strings.Contains(errStr, "context cancelled") ||
+		strings.Contains(errStr, "context.Canceled") ||
+		errors.Is(err, context.Canceled)
+}
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
 func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int, sendMessage func(string)) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
@@ -28,13 +43,17 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	var usage observability.UsageMetrics
 
 	// Helper functions for error classification
+
 	isMaxTokenError := func(err error) bool {
 		if err == nil {
 			return false
 		}
 		msg := err.Error()
+		// Exclude context cancellation from max token errors
+		if isContextCanceledError(err) {
+			return false
+		}
 		return strings.Contains(msg, "max_token") ||
-			strings.Contains(msg, "context") ||
 			strings.Contains(msg, "max tokens") ||
 			strings.Contains(msg, "Input is too long") ||
 			strings.Contains(msg, "ValidationException") ||
@@ -43,6 +62,10 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 	isThrottlingError := func(err error) bool {
 		if err == nil {
+			return false
+		}
+		// Exclude context cancellation from throttling errors
+		if isContextCanceledError(err) {
 			return false
 		}
 		errStr := err.Error()
@@ -75,6 +98,10 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		if err == nil {
 			return false
 		}
+		// Exclude context cancellation from connection errors
+		if isContextCanceledError(err) {
+			return false
+		}
 		msg := err.Error()
 		return strings.Contains(msg, "EOF") ||
 			strings.Contains(msg, "connection refused") ||
@@ -91,6 +118,10 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 	isStreamError := func(err error) bool {
 		if err == nil {
+			return false
+		}
+		// Exclude context cancellation from stream errors
+		if isContextCanceledError(err) {
 			return false
 		}
 		msg := err.Error()
@@ -327,6 +358,24 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		// Error handling
 		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - ERROR: %v", attempt+1, err))
 
+		// Check for context cancellation FIRST - do not attempt fallback for canceled contexts
+		if isContextCanceledError(err) || ctx.Err() != nil {
+			logger.Info(fmt.Sprintf("🔄 [DEBUG] Context canceled - returning error without fallback: %v", err))
+			// Emit error event
+			llmAttemptErrorEvent := &events.LLMGenerationErrorEvent{
+				BaseEventData: events.BaseEventData{
+					Timestamp: time.Now(),
+				},
+				Turn:     turn + 1,
+				ModelID:  a.ModelID,
+				Error:    err.Error(),
+				Duration: time.Since(llmGenerationStartEvent.Timestamp),
+			}
+			a.EmitTypedEvent(ctx, llmAttemptErrorEvent)
+			// Return immediately without attempting fallback
+			return nil, usage, fmt.Errorf("context canceled: %w", err)
+		}
+
 		// Emit error event
 		llmAttemptErrorEvent := &events.LLMGenerationErrorEvent{
 			BaseEventData: events.BaseEventData{
@@ -339,7 +388,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		}
 		a.EmitTypedEvent(ctx, llmAttemptErrorEvent)
 
-		// Determine error type
+		// Determine error type (context cancellation already handled above)
 		var errorType string
 		if isMaxTokenError(err) {
 			errorType = "max_token_error"
@@ -413,6 +462,16 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 // handleErrorWithFallback is a generic function that handles any error type with fallback models
 func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
 	// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
+
+	// Check if context is canceled - we should not do fallback if context is canceled
+	if ctx.Err() != nil {
+		return nil, observability.UsageMetrics{}, fmt.Errorf("context canceled: we should not do fallback: %w", ctx.Err())
+	}
+
+	// Also check if the error itself is a context cancellation
+	if isContextCanceledError(err) {
+		return nil, observability.UsageMetrics{}, fmt.Errorf("context canceled: we should not do fallback: %w", err)
+	}
 
 	// Track error start time
 	errorStartTime := time.Now()

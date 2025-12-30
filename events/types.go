@@ -156,49 +156,6 @@ const (
 	EventTypeUnifiedCompletion EventType = "unified_completion"
 )
 
-// Orchestrator Event Types (from orchestrator/events/events.go)
-const (
-	// Orchestrator events
-	OrchestratorStart EventType = "orchestrator_start"
-	OrchestratorEnd   EventType = "orchestrator_end"
-	OrchestratorError EventType = "orchestrator_error"
-
-	// Orchestrator Agent lifecycle events
-	OrchestratorAgentStart EventType = "orchestrator_agent_start"
-	OrchestratorAgentEnd   EventType = "orchestrator_agent_end"
-	OrchestratorAgentError EventType = "orchestrator_agent_error"
-
-	// Parallel execution events
-	IndependentStepsSelected EventType = "independent_steps_selected"
-
-	// Todo planning events
-	TodoStepsExtracted  EventType = "todo_steps_extracted"
-	VariablesExtracted  EventType = "variables_extracted"
-	StepProgressUpdated EventType = "step_progress_updated"
-
-	// Batch execution events (for variable groups)
-	BatchExecutionStart    EventType = "batch_execution_start"
-	BatchGroupStart        EventType = "batch_group_start"
-	BatchGroupEnd          EventType = "batch_group_end"
-	BatchExecutionEnd      EventType = "batch_execution_end"
-	BatchExecutionCanceled EventType = "batch_execution_canceled"
-
-	// Human Verification events
-	HumanVerificationResponse EventType = "human_verification_response"
-	RequestHumanFeedback      EventType = "request_human_feedback"
-	BlockingHumanFeedback     EventType = "blocking_human_feedback"
-
-	// Step token usage event
-	StepTokenUsage EventType = "step_token_usage"
-
-	// Learning events
-	LearningSkipped EventType = "learning_skipped"
-	TempLLMSkipped  EventType = "temp_llm_skipped"
-
-	// Decision step evaluation events
-	DecisionEvaluated EventType = "decision_evaluated"
-)
-
 // Unified Event structure with hierarchy support
 type Event struct {
 	Type          EventType              `json:"type"`
@@ -254,12 +211,8 @@ func (b *BaseEventData) GetBaseEventData() *BaseEventData {
 // Helper function to get component from event type
 func GetComponentFromEventType(eventType EventType) string {
 	switch eventType {
-	case OrchestratorStart, OrchestratorEnd, OrchestratorError,
-		OrchestratorAgentStart, OrchestratorAgentEnd, OrchestratorAgentError,
-		StructuredOutputStart, StructuredOutputEnd, StructuredOutputError,
+	case StructuredOutputStart, StructuredOutputEnd, StructuredOutputError,
 		JSONValidationStart, JSONValidationEnd,
-		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
-		StepTokenUsage, StepProgressUpdated,
 		StepExecutionStart, StepExecutionEnd, StepExecutionFailed:
 		return "orchestrator"
 	case AgentStart, AgentEnd, AgentError:
@@ -288,9 +241,7 @@ func IsStartEvent(eventType EventType) bool {
 		eventType == ConversationTurn ||
 		eventType == LLMGenerationStart ||
 		eventType == ToolCallStart ||
-		eventType == AgentStart ||
-		eventType == OrchestratorStart ||
-		eventType == OrchestratorAgentStart
+		eventType == AgentStart
 }
 
 // Helper function to check if event is an end event
@@ -298,7 +249,5 @@ func IsEndEvent(eventType EventType) bool {
 	return eventType == ConversationEnd ||
 		eventType == LLMGenerationEnd ||
 		eventType == ToolCallEnd ||
-		eventType == AgentEnd ||
-		eventType == OrchestratorEnd ||
-		eventType == OrchestratorAgentEnd
+		eventType == AgentEnd
 }

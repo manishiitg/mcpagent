@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/utils"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -63,38 +64,10 @@ func mapToParameters(paramsMap map[string]interface{}) *llmtypes.Parameters {
 	return params
 }
 
-// normalizeArrayParameters recursively normalizes JSON Schema properties to ensure
-// all array types have an 'items' field (required by Gemini and some other LLM providers).
-// This function fixes array parameters that are missing the items field by defaulting to string type.
+// normalizeArrayParameters is now provided by multi-llm-provider-go/pkg/utils
+// This is kept as an alias for backward compatibility, but delegates to utils.NormalizeArrayParameters
 func normalizeArrayParameters(schema map[string]interface{}) {
-	if schema == nil {
-		return
-	}
-
-	// Process properties if they exist
-	if properties, ok := schema["properties"].(map[string]interface{}); ok {
-		for _, propValue := range properties {
-			if propMap, ok := propValue.(map[string]interface{}); ok {
-				// Check if this property is an array type
-				if propType, typeExists := propMap["type"].(string); typeExists && propType == "array" {
-					// If items field is missing, add default string type
-					if _, itemsExists := propMap["items"]; !itemsExists {
-						propMap["items"] = map[string]interface{}{
-							"type": "string",
-						}
-					} else {
-						// If items exists, recursively normalize nested objects
-						if itemsMap, ok := propMap["items"].(map[string]interface{}); ok {
-							normalizeArrayParameters(itemsMap)
-						}
-					}
-				} else if propType == "object" {
-					// Recursively normalize nested objects
-					normalizeArrayParameters(propMap)
-				}
-			}
-		}
-	}
+	utils.NormalizeArrayParameters(schema)
 }
 
 // NormalizeLLMTools normalizes array parameters in llmtypes.Tool objects to ensure
