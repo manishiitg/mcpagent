@@ -34,7 +34,7 @@ func LoadTestMCPConfig(path string, logger loggerv2.Logger) (*mcpclient.MCPConfi
 		return nil, fmt.Errorf("MCP config file does not exist: %s", path)
 	}
 
-	config, err := mcpclient.LoadConfig(path)
+	config, err := mcpclient.LoadConfig(path, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load MCP config from %s: %w", path, err)
 	}
@@ -73,7 +73,7 @@ func CreateTempMCPConfig(servers map[string]interface{}, logger loggerv2.Logger)
 
 	// Write config to file
 	if _, err := tmpFile.Write(jsonData); err != nil {
-		_ = tmpFile.Close() //nolint:gosec // Close errors are non-critical in cleanup
+		_ = tmpFile.Close()    //nolint:gosec // Close errors are non-critical in cleanup
 		_ = os.Remove(tmpPath) //nolint:gosec // Cleanup errors are non-critical
 		return "", nil, fmt.Errorf("failed to write temp config: %w", err)
 	}
