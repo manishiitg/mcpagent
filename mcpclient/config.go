@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	loggerv2 "mcpagent/logger/v2"
 )
 
 // ProtocolType defines the connection protocol
@@ -131,14 +133,16 @@ type MCPConfig struct {
 }
 
 // LoadConfig loads MCP server configuration from the specified file
-func LoadConfig(configPath string) (*MCPConfig, error) {
+// logger is optional - if provided, debug information will be logged at debug level
+func LoadConfig(configPath string, logger loggerv2.Logger) (*MCPConfig, error) {
 	// Validate config path (basic check - path comes from trusted source)
 	if configPath == "" {
 		return nil, fmt.Errorf("config path cannot be empty")
 	}
 
-	// DEBUG: Log before os.ReadFile
-	fmt.Printf("[LoadConfig] DEBUG: About to read config file: %s\n", configPath)
+	if logger != nil {
+		logger.Debug("About to read config file", loggerv2.String("config_path", configPath))
+	}
 	startTime := time.Now()
 
 	//nolint:gosec // G304: configPath comes from command-line/config, not user input
@@ -146,69 +150,111 @@ func LoadConfig(configPath string) (*MCPConfig, error) {
 
 	readDuration := time.Since(startTime)
 	if err != nil {
-		fmt.Printf("[LoadConfig] DEBUG: os.ReadFile failed after %v: %v\n", readDuration, err)
+		if logger != nil {
+			logger.Debug("os.ReadFile failed",
+				loggerv2.String("config_path", configPath),
+				loggerv2.Any("duration", readDuration),
+				loggerv2.Error(err))
+		}
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
-	fmt.Printf("[LoadConfig] DEBUG: os.ReadFile completed in %v, read %d bytes\n", readDuration, len(data))
+	if logger != nil {
+		logger.Debug("os.ReadFile completed",
+			loggerv2.String("config_path", configPath),
+			loggerv2.Any("duration", readDuration),
+			loggerv2.Int("bytes_read", len(data)))
+	}
 
-	// DEBUG: Log before json.Unmarshal
-	fmt.Printf("[LoadConfig] DEBUG: About to unmarshal JSON for: %s\n", configPath)
+	if logger != nil {
+		logger.Debug("About to unmarshal JSON", loggerv2.String("config_path", configPath))
+	}
 	unmarshalStartTime := time.Now()
 
 	var config MCPConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		unmarshalDuration := time.Since(unmarshalStartTime)
-		fmt.Printf("[LoadConfig] DEBUG: json.Unmarshal failed after %v: %v\n", unmarshalDuration, err)
+		if logger != nil {
+			logger.Debug("json.Unmarshal failed",
+				loggerv2.String("config_path", configPath),
+				loggerv2.Any("duration", unmarshalDuration),
+				loggerv2.Error(err))
+		}
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
 	unmarshalDuration := time.Since(unmarshalStartTime)
-	fmt.Printf("[LoadConfig] DEBUG: json.Unmarshal completed in %v for: %s\n", unmarshalDuration, configPath)
+	if logger != nil {
+		logger.Debug("json.Unmarshal completed",
+			loggerv2.String("config_path", configPath),
+			loggerv2.Any("duration", unmarshalDuration))
+	}
 
 	return &config, nil
 }
 
 // LoadMergedConfig loads the merged configuration (base + user additions)
 // This mirrors the logic from mcp_config_routes.go to ensure consistency
-func LoadMergedConfig(configPath string, logger interface{}) (*MCPConfig, error) {
+func LoadMergedConfig(configPath string, logger loggerv2.Logger) (*MCPConfig, error) {
 	userConfigPath := strings.Replace(configPath, ".json", "_user.json", 1)
-	fmt.Printf("[LoadMergedConfig] DEBUG: Starting LoadMergedConfig\n")
-	fmt.Printf("[LoadMergedConfig] DEBUG: Base config file: %s\n", configPath)
-	fmt.Printf("[LoadMergedConfig] DEBUG: User config file: %s\n", userConfigPath)
+	if logger != nil {
+		logger.Debug("Starting LoadMergedConfig",
+			loggerv2.String("base_config_path", configPath),
+			loggerv2.String("user_config_path", userConfigPath))
+	}
 	startTime := time.Now()
 
 	// Load base config
-	fmt.Printf("[LoadMergedConfig] DEBUG: About to load base config: %s\n", configPath)
+	if logger != nil {
+		logger.Debug("About to load base config", loggerv2.String("config_path", configPath))
+	}
 	baseConfigStartTime := time.Now()
-	baseConfig, err := LoadConfig(configPath)
+	baseConfig, err := LoadConfig(configPath, logger)
 	baseConfigDuration := time.Since(baseConfigStartTime)
 	if err != nil {
-		fmt.Printf("[LoadMergedConfig] DEBUG: Failed to load base config after %v: %v\n", baseConfigDuration, err)
+		if logger != nil {
+			logger.Debug("Failed to load base config",
+				loggerv2.String("config_path", configPath),
+				loggerv2.Any("duration", baseConfigDuration),
+				loggerv2.Error(err))
+		}
 		return nil, fmt.Errorf("failed to load base config: %w", err)
 	}
-	fmt.Printf("[LoadMergedConfig] DEBUG: Base config loaded successfully in %v, found %d servers\n", baseConfigDuration, len(baseConfig.MCPServers))
+	if logger != nil {
+		logger.Debug("Base config loaded successfully",
+			loggerv2.String("config_path", configPath),
+			loggerv2.Any("duration", baseConfigDuration),
+			loggerv2.Int("server_count", len(baseConfig.MCPServers)))
+	}
 
 	// Load user additions (if any)
-	fmt.Printf("[LoadMergedConfig] DEBUG: About to load user config: %s\n", userConfigPath)
+	if logger != nil {
+		logger.Debug("About to load user config", loggerv2.String("config_path", userConfigPath))
+	}
 	userConfigStartTime := time.Now()
-	userConfig, err := LoadConfig(userConfigPath)
+	userConfig, err := LoadConfig(userConfigPath, logger)
 	userConfigDuration := time.Since(userConfigStartTime)
 	if err != nil {
-		fmt.Printf("[LoadMergedConfig] DEBUG: User config load failed after %v (this is OK if file doesn't exist): %v\n", userConfigDuration, err)
+		if logger != nil {
+			logger.Debug("User config load failed (this is OK if file doesn't exist)",
+				loggerv2.String("config_path", userConfigPath),
+				loggerv2.Any("duration", userConfigDuration),
+				loggerv2.Error(err))
+		}
 		// User config doesn't exist yet, use empty config
 		userConfig = &MCPConfig{MCPServers: make(map[string]MCPServerConfig)}
-		if logger != nil {
-			// Try to log if logger supports it
-			if logFunc, ok := logger.(interface{ Debugf(string, ...interface{}) }); ok {
-				logFunc.Debugf("No user config found at %s, using empty user config", userConfigPath)
-			}
-		}
 	} else {
-		fmt.Printf("[LoadMergedConfig] DEBUG: User config loaded successfully in %v, found %d servers\n", userConfigDuration, len(userConfig.MCPServers))
+		if logger != nil {
+			logger.Debug("User config loaded successfully",
+				loggerv2.String("config_path", userConfigPath),
+				loggerv2.Any("duration", userConfigDuration),
+				loggerv2.Int("server_count", len(userConfig.MCPServers)))
+		}
 	}
 
 	// Merge base config with user additions
-	fmt.Printf("[LoadMergedConfig] DEBUG: Starting merge operation\n")
+	if logger != nil {
+		logger.Debug("Starting merge operation")
+	}
 	mergeStartTime := time.Now()
 	mergedConfig := &MCPConfig{
 		MCPServers: make(map[string]MCPServerConfig),
@@ -224,18 +270,23 @@ func LoadMergedConfig(configPath string, logger interface{}) (*MCPConfig, error)
 		mergedConfig.MCPServers[name] = server
 	}
 	mergeDuration := time.Since(mergeStartTime)
-	fmt.Printf("[LoadMergedConfig] DEBUG: Merge operation completed in %v\n", mergeDuration)
+	if logger != nil {
+		logger.Debug("Merge operation completed",
+			loggerv2.Any("duration", mergeDuration))
+	}
 
 	if logger != nil {
-		// Try to log if logger supports it
-		if logFunc, ok := logger.(interface{ Infof(string, ...interface{}) }); ok {
-			logFunc.Infof("✅ Merged config: %d base servers + %d user servers = %d total",
-				len(baseConfig.MCPServers), len(userConfig.MCPServers), len(mergedConfig.MCPServers))
-		}
+		logger.Info("Merged config",
+			loggerv2.Int("base_servers", len(baseConfig.MCPServers)),
+			loggerv2.Int("user_servers", len(userConfig.MCPServers)),
+			loggerv2.Int("total_servers", len(mergedConfig.MCPServers)))
 	}
 
 	totalDuration := time.Since(startTime)
-	fmt.Printf("[LoadMergedConfig] DEBUG: LoadMergedConfig completed successfully in %v\n", totalDuration)
+	if logger != nil {
+		logger.Debug("LoadMergedConfig completed successfully",
+			loggerv2.Any("duration", totalDuration))
+	}
 	return mergedConfig, nil
 }
 
@@ -289,8 +340,9 @@ func (c *MCPConfig) RemoveServer(name string, configPath string) error {
 }
 
 // ReloadConfig reloads the config from disk
-func (c *MCPConfig) ReloadConfig(configPath string) error {
-	newConfig, err := LoadConfig(configPath)
+// logger is optional - if provided, debug information will be logged at debug level
+func (c *MCPConfig) ReloadConfig(configPath string, logger loggerv2.Logger) error {
+	newConfig, err := LoadConfig(configPath, logger)
 	if err != nil {
 		return err
 	}

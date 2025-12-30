@@ -124,20 +124,45 @@ func callToolWithTimeoutWrapper(
 		resultChan <- result{res: res, err: err}
 	}()
 
-	// Monitor with explicit timeout check
-	timeoutCheckInterval := 5 * time.Second
-	if remaining < timeoutCheckInterval {
-		timeoutCheckInterval = remaining / 2
-		if timeoutCheckInterval < 100*time.Millisecond {
-			timeoutCheckInterval = 100 * time.Millisecond
-		}
+	startTime := time.Now()
+
+	// Set up periodic progress logging for long-running calls (every 30 seconds)
+	// Use time.AfterFunc instead of ticker for better efficiency - only schedules timers when needed
+	// The context deadline will handle timeout automatically via ctx.Done()
+	done := make(chan struct{})
+	var nextLogTimer *time.Timer
+	var scheduleNextLog func()
+
+	scheduleNextLog = func() {
+		nextLogTimer = time.AfterFunc(30*time.Second, func() {
+			select {
+			case <-done:
+				// Call already completed, don't log or reschedule
+				return
+			default:
+				// Still waiting, log progress and reschedule
+				elapsed := time.Since(startTime)
+				remaining := time.Until(deadline)
+				logger.Debug("🔧 [TOOL_CALL] Still waiting for tool response",
+					loggerv2.String("tool_name", toolName),
+					loggerv2.String("server_name", serverName),
+					loggerv2.String("elapsed", elapsed.String()),
+					loggerv2.String("remaining", remaining.String()))
+				// Reschedule next log if still waiting
+				scheduleNextLog()
+			}
+		})
 	}
 
-	// Create a ticker to periodically check timeout
-	ticker := time.NewTicker(timeoutCheckInterval)
-	defer ticker.Stop()
+	// Schedule the first progress log
+	scheduleNextLog()
+	defer func() {
+		close(done)
+		if nextLogTimer != nil {
+			nextLogTimer.Stop()
+		}
+	}()
 
-	startTime := time.Now()
 	for {
 		select {
 		case res := <-resultChan:
@@ -152,29 +177,6 @@ func callToolWithTimeoutWrapper(
 				loggerv2.String("elapsed", time.Since(startTime).String()),
 				loggerv2.Error(ctx.Err()))
 			return nil, ctx.Err()
-
-		case <-ticker.C:
-			// Periodic timeout check
-			elapsed := time.Since(startTime)
-			remaining := time.Until(deadline)
-
-			// Log progress for long-running calls
-			if elapsed > 30*time.Second {
-				logger.Debug("🔧 [TOOL_CALL] Still waiting for tool response",
-					loggerv2.String("tool_name", toolName),
-					loggerv2.String("server_name", serverName),
-					loggerv2.String("elapsed", elapsed.String()),
-					loggerv2.String("remaining", remaining.String()))
-			}
-
-			// Force timeout if deadline has passed
-			if remaining <= 0 {
-				logger.Warn("🔧 [TOOL_TIMEOUT] Deadline exceeded, forcing timeout",
-					loggerv2.String("tool_name", toolName),
-					loggerv2.String("server_name", serverName),
-					loggerv2.String("elapsed", elapsed.String()))
-				return nil, context.DeadlineExceeded
-			}
 		}
 	}
 }

@@ -99,7 +99,6 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 			}
 		}
 
-		logger.Error("Connection failed", err)
 		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("connection failed: %w", err)
 	}
 

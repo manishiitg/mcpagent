@@ -186,11 +186,12 @@ func WithLargeOutputThreshold(threshold int) AgentOption {
 // WithToolOutputRetentionPeriod sets the retention policy for offloaded tool output files.
 //
 // Files created by context offloading will be deleted if they are older than this duration.
+// A periodic cleanup routine runs every hour to remove files older than the retention period.
 //
 // Parameters:
-//   - retentionPeriod: Duration to keep files.
+//   - retentionPeriod: Duration to keep files. Set to 0 to disable automatic cleanup.
 //
-// Default: 0 (No automatic cleanup based on time). Recommended: 7 days.
+// Default: 7 days (DefaultToolOutputRetentionPeriod). Periodic cleanup runs every hour.
 func WithToolOutputRetentionPeriod(retentionPeriod time.Duration) AgentOption {
 	return func(a *Agent) {
 		a.ToolOutputRetentionPeriod = retentionPeriod
@@ -573,8 +574,10 @@ type Agent struct {
 	LargeOutputThreshold int
 
 	// Tool output cleanup configuration
-	ToolOutputRetentionPeriod     time.Duration // How long to keep tool output files (0 = no automatic cleanup)
+	ToolOutputRetentionPeriod     time.Duration // How long to keep tool output files (0 = use default, default: 7 days)
 	CleanupToolOutputOnSessionEnd bool          // Whether to clean up current session folder on session end
+	cleanupTicker                 *time.Ticker  // Ticker for periodic cleanup of old tool output files
+	cleanupDone                   chan bool     // Channel to signal cleanup routine to stop
 
 	// Context summarization configuration (see context_summarization.go)
 	EnableContextSummarization     bool    // Enable context summarization feature
@@ -819,24 +822,25 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		Temperature:                   0.0,                             // Default temperature
 		ToolChoice:                    "auto",                          // Default tool choice
 		ModelID:                       modelID,
-		AgentMode:                     SimpleAgent,                 // Default to simple mode
-		TraceID:                       "",                          // Default: empty trace ID
-		provider:                      "",                          // Will be set by caller
-		EnableContextOffloading:       true,                        // Default to enabled
-		LargeOutputThreshold:          0,                           // Default: 0 means use default threshold (10000)
-		ToolOutputRetentionPeriod:     0,                           // Default: 0 means no automatic cleanup
-		CleanupToolOutputOnSessionEnd: false,                       // Default: false means files persist after session
-		EnableContextSummarization:    false,                       // Default to disabled
-		SummarizeOnTokenThreshold:     false,                       // Default to disabled
-		TokenThresholdPercent:         0.8,                         // Default to 80% if enabled
-		SummaryKeepLastMessages:       0,                           // Default: 0 means use default (4 messages)
-		SummarizationCooldownTurns:    0,                           // Default: 0 means use default (3 turns)
-		lastSummarizationTurn:         -1,                          // Default: -1 means never summarized
-		EnableContextEditing:          false,                       // Default to disabled
-		ContextEditingThreshold:       0,                           // Default: 0 means use default threshold (1000)
-		ContextEditingTurnThreshold:   0,                           // Default: 0 means use default (10 turns)
-		Logger:                        loggerv2.NewDefault(),       // Default logger
-		customTools:                   make(map[string]CustomTool), // Initialize custom tools map
+		AgentMode:                     SimpleAgent,                      // Default to simple mode
+		TraceID:                       "",                               // Default: empty trace ID
+		provider:                      "",                               // Will be set by caller
+		EnableContextOffloading:       true,                             // Default to enabled
+		LargeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
+		ToolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
+		CleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
+		cleanupDone:                   make(chan bool),                  // Initialize cleanup done channel
+		EnableContextSummarization:    false,                            // Default to disabled
+		SummarizeOnTokenThreshold:     false,                            // Default to disabled
+		TokenThresholdPercent:         0.8,                              // Default to 80% if enabled
+		SummaryKeepLastMessages:       0,                                // Default: 0 means use default (4 messages)
+		SummarizationCooldownTurns:    0,                                // Default: 0 means use default (3 turns)
+		lastSummarizationTurn:         -1,                               // Default: -1 means never summarized
+		EnableContextEditing:          false,                            // Default to disabled
+		ContextEditingThreshold:       0,                                // Default: 0 means use default threshold (1000)
+		ContextEditingTurnThreshold:   0,                                // Default: 0 means use default (10 turns)
+		Logger:                        loggerv2.NewDefault(),            // Default logger
+		customTools:                   make(map[string]CustomTool),      // Initialize custom tools map
 
 		// Smart routing configuration with defaults
 		EnableSmartRouting: false, // Default to disabled for now
@@ -922,32 +926,26 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Enable code generation in cache manager if code execution mode is enabled
 	// This ensures MCP server code is only generated when needed
-	logger.Info("Getting cache manager")
+	logger.Debug("Getting cache manager")
 	cacheManagerStartTime := time.Now()
 	cacheManager := mcpcache.GetCacheManager(logger)
 	cacheManagerDuration := time.Since(cacheManagerStartTime)
-	logger.Info("Cache manager obtained", loggerv2.String("duration", cacheManagerDuration.String()))
+	logger.Debug("Cache manager obtained", loggerv2.String("duration", cacheManagerDuration.String()))
 
-	logger.Info("Setting code generation enabled", loggerv2.Any("enabled", ag.UseCodeExecutionMode))
+	logger.Debug("Setting code generation enabled", loggerv2.Any("enabled", ag.UseCodeExecutionMode))
 	setCodeGenStartTime := time.Now()
 	cacheManager.SetCodeGenerationEnabled(ag.UseCodeExecutionMode)
 	setCodeGenDuration := time.Since(setCodeGenStartTime)
-	logger.Info("Code generation enabled set", loggerv2.String("duration", setCodeGenDuration.String()))
+	logger.Debug("Code generation enabled set", loggerv2.String("duration", setCodeGenDuration.String()))
 
-	logger.Info("Calling NewAgentConnection", loggerv2.String("server_name", serverName))
+	logger.Debug("Calling NewAgentConnection", loggerv2.String("server_name", serverName))
 	connectionStartTime := time.Now()
 	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
-		logger.Error("NewAgentConnection failed", err, loggerv2.String("duration", connectionDuration.String()))
-	} else {
-		logger.Info("NewAgentConnection completed", loggerv2.String("duration", connectionDuration.String()))
-	}
-
-	if err != nil {
-		logger.Error("NewAgentConnection failed", err)
 		return nil, err
 	}
+	logger.Info("NewAgentConnection completed", loggerv2.String("duration", connectionDuration.String()))
 
 	// Use first client for legacy compatibility
 	var firstClient mcpclient.ClientInterface
@@ -987,6 +985,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	ag.prompts = prompts
 	ag.resources = resources
 	ag.configPath = configPath
+
+	// Start periodic cleanup routine for tool output files
+	ag.startCleanupRoutine()
 
 	// 🔧 Ensure generated code exists for all connected MCP servers
 	// This handles cases where cache exists but generated code was deleted
@@ -1690,6 +1691,9 @@ func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.D
 	)
 	a.EmitTypedEvent(ctx, agentEndEvent)
 
+	// Stop periodic cleanup routine
+	a.stopCleanupRoutine()
+
 	// Cleanup agent-specific generated directory (only in code execution mode)
 	if a.UseCodeExecutionMode {
 		a.cleanupAgentGeneratedDir()
@@ -1738,6 +1742,63 @@ func (a *Agent) cleanupAgentGeneratedDir() {
 		}
 	} else if a.Logger != nil {
 		a.Logger.Info("🧹 Cleaned up agent directory", loggerv2.String("directory", agentDir))
+	}
+}
+
+// startCleanupRoutine starts the background cleanup routine for old tool output files.
+// It runs periodically (every hour by default) to clean up files older than the retention period.
+// This ensures cleanup happens even if sessions don't end properly or agents run for long periods.
+func (a *Agent) startCleanupRoutine() {
+	// Only start if context offloading is enabled and retention period is set
+	if !a.EnableContextOffloading || a.toolOutputHandler == nil {
+		return
+	}
+
+	// Use default retention period if not explicitly set (shouldn't happen with new default, but safety check)
+	retentionPeriod := a.ToolOutputRetentionPeriod
+	if retentionPeriod <= 0 {
+		retentionPeriod = DefaultToolOutputRetentionPeriod
+	}
+
+	// Create ticker for periodic cleanup (default: every hour)
+	a.cleanupTicker = time.NewTicker(DefaultToolOutputCleanupInterval)
+
+	go func() {
+		for {
+			select {
+			case <-a.cleanupTicker.C:
+				// Perform periodic cleanup
+				if a.toolOutputHandler != nil && retentionPeriod > 0 {
+					if err := a.toolOutputHandler.CleanupOldFiles(retentionPeriod); err != nil {
+						if a.Logger != nil {
+							a.Logger.Warn("Periodic cleanup of old tool output files failed", loggerv2.Error(err))
+						}
+					} else if a.Logger != nil {
+						a.Logger.Debug("Periodic cleanup of old tool output files completed", loggerv2.Any("retention_period", retentionPeriod))
+					}
+				}
+			case <-a.cleanupDone:
+				if a.Logger != nil {
+					a.Logger.Debug("Tool output cleanup routine stopped")
+				}
+				return
+			}
+		}
+	}()
+}
+
+// stopCleanupRoutine stops the background cleanup routine.
+// This should be called when the agent is closed or session ends to prevent resource leaks.
+func (a *Agent) stopCleanupRoutine() {
+	if a.cleanupTicker != nil {
+		a.cleanupTicker.Stop()
+		a.cleanupTicker = nil
+		// Signal cleanup routine to stop (non-blocking)
+		select {
+		case a.cleanupDone <- true:
+		default:
+			// Channel already has a signal, skip
+		}
 	}
 }
 
@@ -1866,15 +1927,16 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		AgentMode:                     SimpleAgent,
 		TraceID:                       "", // Will be generated if not set via options
 		EnableContextOffloading:       true,
-		ToolOutputRetentionPeriod:     0,                     // Default: 0 means no automatic cleanup
-		CleanupToolOutputOnSessionEnd: false,                 // Default: false means files persist after session
-		EnableContextSummarization:    false,                 // Default to disabled
-		SummarizeOnTokenThreshold:     false,                 // Default to disabled
-		TokenThresholdPercent:         0.8,                   // Default to 80% if enabled
-		SummaryKeepLastMessages:       0,                     // Default: 0 means use default (4 messages)
-		SummarizationCooldownTurns:    0,                     // Default: 0 means use default (3 turns)
-		lastSummarizationTurn:         -1,                    // Default: -1 means never summarized
-		Logger:                        loggerv2.NewDefault(), // Default logger
+		ToolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
+		CleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
+		cleanupDone:                   make(chan bool),                  // Initialize cleanup done channel
+		EnableContextSummarization:    false,                            // Default to disabled
+		SummarizeOnTokenThreshold:     false,                            // Default to disabled
+		TokenThresholdPercent:         0.8,                              // Default to 80% if enabled
+		SummaryKeepLastMessages:       0,                                // Default: 0 means use default (4 messages)
+		SummarizationCooldownTurns:    0,                                // Default: 0 means use default (3 turns)
+		lastSummarizationTurn:         -1,                               // Default: -1 means never summarized
+		Logger:                        loggerv2.NewDefault(),            // Default logger
 		customTools:                   make(map[string]CustomTool),
 		EnableSmartRouting:            false,
 		DiscoverResource:              true,
@@ -1971,6 +2033,9 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	ag.toolOutputHandler = toolOutputHandler
 	ag.prompts = prompts
 	ag.resources = resources
+
+	// Start periodic cleanup routine for tool output files
+	ag.startCleanupRoutine()
 
 	// No more event listeners - events go directly to tracer
 	// Tracing is handled by the tracer itself based on TRACING_PROVIDER
@@ -2216,6 +2281,9 @@ func getClientNames(clients map[string]mcpclient.ClientInterface) []string {
 // It iterates through all active MCP client connections and closes them.
 // This method should be called when the agent is no longer needed to prevent resource leaks.
 func (a *Agent) Close() {
+	// Stop periodic cleanup routine
+	a.stopCleanupRoutine()
+
 	// Close all clients in the map
 	for serverName, client := range a.Clients {
 		if client != nil {

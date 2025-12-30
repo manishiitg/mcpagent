@@ -20,6 +20,13 @@ const (
 
 	// DefaultToolOutputFolder is the default folder for storing offloaded tool outputs
 	DefaultToolOutputFolder = "tool_output_folder"
+
+	// DefaultToolOutputRetentionPeriod is the default retention period for offloaded tool output files
+	// Files older than this duration will be automatically cleaned up
+	DefaultToolOutputRetentionPeriod = 7 * 24 * time.Hour // 7 days
+
+	// DefaultToolOutputCleanupInterval is the default interval for periodic cleanup of old tool output files
+	DefaultToolOutputCleanupInterval = 1 * time.Hour // 1 hour
 )
 
 // ToolOutputHandler implements context offloading by writing large tool outputs to files

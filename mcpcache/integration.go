@@ -1167,7 +1167,7 @@ func cacheFreshConnectionData(
 			// IMPORTANT: Normalize tools BEFORE caching to ensure all array parameters have 'items' field
 			// This prevents race conditions from normalizing after cache retrieval
 			// Normalization is required for LLM providers (especially Gemini/Vertex)
-			mcpclient.NormalizeLLMTools(serverTools)
+			mcpclient.NormalizeLLMTools(serverTools, logger)
 
 			// Build ToolOwnership map to mark which tools this server owns
 			// This prevents duplicate tool detection issues when loading from cache
