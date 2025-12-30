@@ -1092,24 +1092,22 @@ func (cm *CacheManager) regenerateCodeForServer(serverName string, cacheEntry *C
 }
 
 // EnsureGeneratedCodeForServers checks if generated code exists for multiple servers and regenerates if missing
-// This is a convenience method that loads config and checks all servers in one call
+// This is a convenience method that checks all servers in one call
 // Returns the number of servers that were regenerated
-func (cm *CacheManager) EnsureGeneratedCodeForServers(serverNames []string, configPath string, timeout time.Duration, logger loggerv2.Logger) int {
+func (cm *CacheManager) EnsureGeneratedCodeForServers(serverNames []string, config *mcpclient.MCPConfig, timeout time.Duration, logger loggerv2.Logger) int {
 	if len(serverNames) == 0 {
+		return 0
+	}
+
+	if config == nil {
+		if logger != nil {
+			logger.Warn("Config is nil, skipping code generation check")
+		}
 		return 0
 	}
 
 	if logger != nil {
 		logger.Info("🔍 Checking generated code for MCP servers", loggerv2.Int("server_count", len(serverNames)))
-	}
-
-	// Load merged config to get server configurations
-	config, err := mcpclient.LoadMergedConfig(configPath, logger)
-	if err != nil {
-		if logger != nil {
-			logger.Warn("Failed to load merged config for code generation check", loggerv2.Error(err))
-		}
-		return 0
 	}
 
 	regeneratedCount := 0

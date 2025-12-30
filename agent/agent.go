@@ -994,7 +994,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	if ag.UseCodeExecutionMode {
 		// Use agent's ToolTimeout (same as used for normal tool calls)
 		toolTimeout := getToolExecutionTimeout(ag)
-		cacheManager.EnsureGeneratedCodeForServers(servers, configPath, toolTimeout, logger)
+		cacheManager.EnsureGeneratedCodeForServers(servers, config, toolTimeout, logger)
 	}
 
 	// Set selectedServers based on serverName parameter if not already set via options
