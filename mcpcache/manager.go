@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	loggerv2 "mcpagent/logger/v2"
@@ -74,9 +75,8 @@ type CacheManager struct {
 	cacheDir             string
 	ttlMinutes           int
 	logger               loggerv2.Logger
-	mu                   sync.RWMutex
-	cache                map[string]*CacheEntry // cache key -> entry
-	enableCodeGeneration bool                   // Only generate code when code execution mode is enabled
+	cache                sync.Map // cache key (string) -> entry (*CacheEntry) - thread-safe map
+	enableCodeGeneration int32    // Only generate code when code execution mode is enabled (atomic: 0=false, 1=true)
 }
 
 // Singleton instance
@@ -114,8 +114,8 @@ func GetCacheManager(logger loggerv2.Logger) *CacheManager {
 			cacheDir:             cacheDir,
 			ttlMinutes:           ttlMinutes, // Configurable TTL via environment variable
 			logger:               logger,
-			cache:                make(map[string]*CacheEntry),
-			enableCodeGeneration: false, // Default to false - only enable when code execution mode is active
+			enableCodeGeneration: 0, // Default to false (0) - only enable when code execution mode is active
+			// cache is sync.Map, zero value is ready to use
 		}
 
 		// NOTE: Cache directory is created lazily when actually saving entries
@@ -130,16 +130,24 @@ func GetCacheManager(logger loggerv2.Logger) *CacheManager {
 
 // SetCodeGenerationEnabled enables or disables code generation in the cache manager
 // Code generation should only be enabled when code execution mode is active
+// Uses atomic operations to avoid lock contention during initialization
 func (cm *CacheManager) SetCodeGenerationEnabled(enabled bool) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	cm.enableCodeGeneration = enabled
+	if cm.logger != nil {
+		cm.logger.Info("SetCodeGenerationEnabled: Setting code generation", loggerv2.Any("enabled", enabled))
+	}
+	var value int32
+	if enabled {
+		value = 1
+	} else {
+		value = 0
+	}
+	atomic.StoreInt32(&cm.enableCodeGeneration, value)
 	if cm.logger != nil {
 		enabledStr := "false"
 		if enabled {
 			enabledStr = "true"
 		}
-		cm.logger.Debug("Code generation setting updated",
+		cm.logger.Info("SetCodeGenerationEnabled: Code generation setting updated",
 			loggerv2.String("enabled", enabledStr))
 	}
 }
@@ -218,11 +226,14 @@ func GenerateUnifiedCacheKey(serverName string, config mcpclient.MCPServerConfig
 
 // Get retrieves a cache entry if it exists and is valid
 func (cm *CacheManager) Get(cacheKey string) (*CacheEntry, bool) {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
-	entry, exists := cm.cache[cacheKey]
+	value, exists := cm.cache.Load(cacheKey)
 	if !exists {
+		return nil, false
+	}
+
+	entry, ok := value.(*CacheEntry)
+	if !ok {
+		cm.logger.Warn("Invalid cache entry type", loggerv2.String("key", cacheKey))
 		return nil, false
 	}
 
@@ -250,9 +261,7 @@ func (cm *CacheManager) Get(cacheKey string) (*CacheEntry, bool) {
 
 // Put stores a cache entry using configuration-aware cache key
 func (cm *CacheManager) Put(entry *CacheEntry, config mcpclient.MCPServerConfig) error {
-	cm.logger.Debug("Put: Acquiring lock", loggerv2.String("server", entry.ServerName))
-	cm.mu.Lock()
-	cm.logger.Debug("Put: Lock acquired", loggerv2.String("server", entry.ServerName))
+	cm.logger.Debug("Put: Storing cache entry", loggerv2.String("server", entry.ServerName))
 
 	// Use configuration-aware cache key
 	cacheKey := GenerateUnifiedCacheKey(entry.ServerName, config)
@@ -260,19 +269,14 @@ func (cm *CacheManager) Put(entry *CacheEntry, config mcpclient.MCPServerConfig)
 	// Set LastAccessed only once when storing (no longer updated on reads)
 	entry.LastAccessed = time.Now()
 
-	// Store in memory cache
-	cm.cache[cacheKey] = entry
+	// Store in memory cache (sync.Map is thread-safe, no lock needed)
+	cm.cache.Store(cacheKey, entry)
 	cm.logger.Debug("Put: Stored in memory cache", loggerv2.String("server", entry.ServerName))
 
-	// Get code generation flag while holding the lock (read it directly, no need for RLock)
-	shouldGenerateCode := cm.enableCodeGeneration
+	// Get code generation flag using atomic read (lock-free)
+	shouldGenerateCode := atomic.LoadInt32(&cm.enableCodeGeneration) == 1
 
-	// Release lock before calling saveToFile to avoid deadlock
-	// saveToFile may need to acquire RLock for code generation check
-	cm.logger.Debug("Put: Releasing lock before saveToFile", loggerv2.String("server", entry.ServerName))
-	cm.mu.Unlock()
-
-	// Persist to file using configuration-aware naming (without holding the lock)
+	// Persist to file (sync.Map operations are lock-free)
 	cm.logger.Debug("Put: Calling saveToFile", loggerv2.String("server", entry.ServerName))
 	err := cm.saveToFile(entry, config, shouldGenerateCode)
 	cm.logger.Debug("Put: saveToFile returned", loggerv2.String("server", entry.ServerName), loggerv2.Error(err))
@@ -284,23 +288,24 @@ func (cm *CacheManager) Put(entry *CacheEntry, config mcpclient.MCPServerConfig)
 func (cm *CacheManager) Invalidate(cacheKey string) error {
 	cm.logger.Debug("🔧 [INVALIDATE] Starting invalidation for cache key", loggerv2.String("key", cacheKey))
 
-	// Step 1: Get server name and prepare paths while holding the lock (minimal lock duration)
-	cm.logger.Debug("🔧 [INVALIDATE] Acquiring lock to collect entry data", loggerv2.String("key", cacheKey))
-	cm.mu.Lock()
+	// Step 1: Get server name and prepare paths (sync.Map is thread-safe, no lock needed)
+	cm.logger.Debug("🔧 [INVALIDATE] Collecting entry data", loggerv2.String("key", cacheKey))
 
 	var serverName string
 	var exists bool
-	if entry, found := cm.cache[cacheKey]; found {
-		serverName = entry.ServerName
-		exists = true
+	if value, found := cm.cache.Load(cacheKey); found {
+		if entry, ok := value.(*CacheEntry); ok {
+			serverName = entry.ServerName
+			exists = true
+		}
 	}
 
-	// Remove from in-memory cache map
+	// Remove from in-memory cache map (sync.Map is thread-safe)
 	if exists {
-		delete(cm.cache, cacheKey)
+		cm.cache.Delete(cacheKey)
 	}
 
-	// Pre-compute paths while we have the lock
+	// Pre-compute paths
 	cacheFile := cm.getCacheFilePath(cacheKey)
 	var generatedDir string
 	var packageDir string
@@ -310,10 +315,9 @@ func (cm *CacheManager) Invalidate(cacheKey string) error {
 		packageDir = filepath.Join(generatedDir, packageName)
 	}
 
-	cm.logger.Debug("🔧 [INVALIDATE] Releasing lock before blocking I/O operations",
+	cm.logger.Debug("🔧 [INVALIDATE] Entry data collected, proceeding with I/O operations",
 		loggerv2.String("key", cacheKey),
 		loggerv2.Any("entry_exists", exists))
-	cm.mu.Unlock() // Release lock before blocking I/O operations
 
 	// Step 2: Perform all blocking I/O operations OUTSIDE the lock
 	if !exists {
@@ -407,29 +411,37 @@ func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, confi
 	default:
 	}
 
-	// Step 1: Collect keys and cache file paths while holding the lock (minimal lock duration)
-	cm.logger.Debug("🔧 [INVALIDATE] Acquiring lock to collect keys", loggerv2.String("server", serverName))
-	cm.mu.Lock()
+	// Step 1: Collect keys and cache file paths (sync.Map is thread-safe, no lock needed)
+	cm.logger.Debug("🔧 [INVALIDATE] Collecting keys", loggerv2.String("server", serverName))
 
 	var keysToRemove []string
 	var cacheFilesToRemove []string
 
-	// Find all keys for this server
-	for key, entry := range cm.cache {
+	// Find all keys for this server using Range
+	cm.cache.Range(func(key, value interface{}) bool {
+		keyStr, ok := key.(string)
+		if !ok {
+			return true // Continue iteration
+		}
+		entry, ok := value.(*CacheEntry)
+		if !ok {
+			return true // Continue iteration
+		}
 		if entry.ServerName == serverName {
-			keysToRemove = append(keysToRemove, key)
-			// Pre-compute cache file paths while we have the lock
-			cacheFile := cm.getCacheFilePath(key)
+			keysToRemove = append(keysToRemove, keyStr)
+			// Pre-compute cache file paths
+			cacheFile := cm.getCacheFilePath(keyStr)
 			cacheFilesToRemove = append(cacheFilesToRemove, cacheFile)
 		}
-	}
+		return true // Continue iteration
+	})
 
-	// Remove entries from in-memory cache map
+	// Remove entries from in-memory cache map (sync.Map is thread-safe)
 	for _, key := range keysToRemove {
-		delete(cm.cache, key)
+		cm.cache.Delete(key)
 	}
 
-	// Pre-compute directory paths while we have the lock
+	// Pre-compute directory paths
 	var generatedDir string
 	var packageDir string
 	if len(keysToRemove) > 0 {
@@ -438,10 +450,9 @@ func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, confi
 		packageDir = filepath.Join(generatedDir, packageName)
 	}
 
-	cm.logger.Debug("🔧 [INVALIDATE] Releasing lock before blocking I/O operations",
+	cm.logger.Debug("🔧 [INVALIDATE] Keys collected, proceeding with I/O operations",
 		loggerv2.String("server", serverName),
 		loggerv2.Int("keys_count", len(keysToRemove)))
-	cm.mu.Unlock() // Release lock before blocking I/O operations
 
 	// Check context after releasing lock
 	select {
@@ -582,12 +593,18 @@ func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, confi
 // GetAllEntries returns all cached entries (for debugging and registry integration)
 // Returns deep copies to prevent race conditions from external mutations
 func (cm *CacheManager) GetAllEntries() map[string]*CacheEntry {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
 	// Return deep copies of cache entries to prevent external mutations
 	result := make(map[string]*CacheEntry)
-	for key, entry := range cm.cache {
+	cm.cache.Range(func(key, value interface{}) bool {
+		keyStr, ok := key.(string)
+		if !ok {
+			return true // Continue iteration
+		}
+		entry, ok := value.(*CacheEntry)
+		if !ok {
+			return true // Continue iteration
+		}
+
 		// Create a deep copy of the entry
 		entryCopy := *entry // Copy struct fields
 
@@ -625,18 +642,19 @@ func (cm *CacheManager) GetAllEntries() map[string]*CacheEntry {
 			}
 		}
 
-		result[key] = &entryCopy
-	}
+		result[keyStr] = &entryCopy
+		return true // Continue iteration
+	})
 	return result
 }
 
 // Clear removes all cache entries
 func (cm *CacheManager) Clear() error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// Clear memory cache
-	cm.cache = make(map[string]*CacheEntry)
+	// Clear memory cache by deleting all entries
+	cm.cache.Range(func(key, value interface{}) bool {
+		cm.cache.Delete(key)
+		return true // Continue iteration
+	})
 
 	// Remove all cache files
 	return cm.clearCacheDirectory()
@@ -644,15 +662,19 @@ func (cm *CacheManager) Clear() error {
 
 // GetStats returns cache statistics
 func (cm *CacheManager) GetStats() map[string]interface{} {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
-	totalEntries := len(cm.cache)
+	totalEntries := 0
 	validEntries := 0
 	expiredEntries := 0
 	totalSize := int64(0)
 
-	for _, entry := range cm.cache {
+	// Count entries using Range (sync.Map doesn't have len())
+	cm.cache.Range(func(key, value interface{}) bool {
+		entry, ok := value.(*CacheEntry)
+		if !ok {
+			return true // Continue iteration
+		}
+
+		totalEntries++
 		if entry.IsValid && !entry.IsExpired() {
 			validEntries++
 		} else {
@@ -665,7 +687,9 @@ func (cm *CacheManager) GetStats() map[string]interface{} {
 			entrySize += len(tool.Function.Name) + len(tool.Function.Description)
 		}
 		totalSize += int64(entrySize)
-	}
+
+		return true // Continue iteration
+	})
 
 	return map[string]interface{}{
 		"total_entries":   totalEntries,
@@ -679,21 +703,27 @@ func (cm *CacheManager) GetStats() map[string]interface{} {
 
 // Cleanup removes expired entries from both memory and filesystem
 func (cm *CacheManager) Cleanup() error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
 	var expiredKeys []string
 
-	// Find expired entries
-	for key, entry := range cm.cache {
-		if entry.IsExpired() {
-			expiredKeys = append(expiredKeys, key)
+	// Find expired entries using Range
+	cm.cache.Range(func(key, value interface{}) bool {
+		keyStr, ok := key.(string)
+		if !ok {
+			return true // Continue iteration
 		}
-	}
+		entry, ok := value.(*CacheEntry)
+		if !ok {
+			return true // Continue iteration
+		}
+		if entry.IsExpired() {
+			expiredKeys = append(expiredKeys, keyStr)
+		}
+		return true // Continue iteration
+	})
 
-	// Remove expired entries
+	// Remove expired entries (sync.Map is thread-safe)
 	for _, key := range expiredKeys {
-		delete(cm.cache, key)
+		cm.cache.Delete(key)
 
 		// Remove from filesystem
 		cacheFile := cm.getCacheFilePath(key)
@@ -732,7 +762,7 @@ func (cm *CacheManager) loadExistingCache() {
 			if entry := cm.loadFromFile(cacheFile); entry != nil {
 				// Use filename as cache key (config-aware format)
 				fileName := strings.TrimSuffix(file.Name(), ".json")
-				cm.cache[fileName] = entry
+				cm.cache.Store(fileName, entry)
 				loadedCount++
 				if cm.logger != nil {
 					cm.logger.Debug("Loaded cache entry", loggerv2.String("file", fileName))
@@ -741,9 +771,8 @@ func (cm *CacheManager) loadExistingCache() {
 				// Ensure Go code is generated for this cache entry if it's missing
 				// This handles cases where cache exists but generated code was deleted
 				// Only generate code if code generation is enabled (code execution mode)
-				cm.mu.RLock()
-				shouldGenerateCode := cm.enableCodeGeneration
-				cm.mu.RUnlock()
+				// Use atomic read (lock-free)
+				shouldGenerateCode := atomic.LoadInt32(&cm.enableCodeGeneration) == 1
 
 				if shouldGenerateCode && entry.IsValid && len(entry.Tools) > 0 {
 					generatedDir := cm.getGeneratedDir()
@@ -907,10 +936,8 @@ func (cm *CacheManager) ReloadFromDisk(cacheKey string) *CacheEntry {
 		return nil
 	}
 
-	// Only lock for the memory update (minimal lock time)
-	cm.mu.Lock()
-	cm.cache[cacheKey] = entry
-	cm.mu.Unlock()
+	// Store in cache (sync.Map is thread-safe, no lock needed)
+	cm.cache.Store(cacheKey, entry)
 
 	if cm.logger != nil {
 		cm.logger.Debug("Reloaded cache entry from disk",
@@ -934,9 +961,8 @@ func (cm *CacheManager) getGeneratedDir() string {
 
 	// Only create directory if code generation is enabled
 	// This prevents unnecessary directory creation in simple agent mode
-	cm.mu.RLock()
-	shouldCreate := cm.enableCodeGeneration
-	cm.mu.RUnlock()
+	// Use atomic read (lock-free)
+	shouldCreate := atomic.LoadInt32(&cm.enableCodeGeneration) == 1
 
 	if shouldCreate {
 		_ = EnsureGeneratedDir(path, cm.logger)
@@ -971,14 +997,143 @@ func (cm *CacheManager) GetCacheDirectory() string {
 
 // SetTTL sets the TTL for cache entries (in minutes)
 func (cm *CacheManager) SetTTL(minutes int) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
 	cm.ttlMinutes = minutes
 }
 
 // GetTTL returns the current TTL setting
 func (cm *CacheManager) GetTTL() int {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
 	return cm.ttlMinutes
+}
+
+// EnsureGeneratedCodeForServer checks if generated code exists for a server and regenerates it if missing
+// This handles cases where cache exists but generated code was deleted (e.g., after cache invalidation)
+// Returns true if code was regenerated, false if it already existed or couldn't be regenerated
+func (cm *CacheManager) EnsureGeneratedCodeForServer(serverName string, config mcpclient.MCPServerConfig, timeout time.Duration) bool {
+	// Check if code generation is enabled
+	shouldGenerateCode := atomic.LoadInt32(&cm.enableCodeGeneration) == 1
+	if !shouldGenerateCode {
+		return false
+	}
+
+	// Generate cache key to look up cached entry
+	cacheKey := GenerateUnifiedCacheKey(serverName, config)
+	cacheEntry, found := cm.Get(cacheKey)
+	if !found || cacheEntry == nil || !cacheEntry.IsValid || len(cacheEntry.Tools) == 0 {
+		if cm.logger != nil {
+			cm.logger.Debug("No valid cache entry found for server, skipping code generation check", loggerv2.String("server", serverName))
+		}
+		return false
+	}
+
+	// Check if generated code directory exists and has Go files
+	generatedDir := cm.getGeneratedDir()
+	packageName := codegen.GetPackageName(serverName)
+	packageDir := filepath.Join(generatedDir, packageName)
+
+	// Check if directory exists
+	if _, err := os.Stat(packageDir); os.IsNotExist(err) {
+		// Directory doesn't exist - regenerate
+		if cm.logger != nil {
+			cm.logger.Info("🔧 Generated code missing for server, regenerating", loggerv2.String("server", serverName), loggerv2.String("package", packageName))
+		}
+		return cm.regenerateCodeForServer(serverName, cacheEntry, generatedDir, timeout)
+	}
+
+	// Directory exists - check if it has any .go files
+	entries, err := os.ReadDir(packageDir)
+	if err != nil {
+		if cm.logger != nil {
+			cm.logger.Warn("Failed to read package directory", loggerv2.Error(err), loggerv2.String("server", serverName), loggerv2.String("package_dir", packageDir))
+		}
+		return false
+	}
+
+	hasGoFiles := false
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+			hasGoFiles = true
+			break
+		}
+	}
+
+	if !hasGoFiles {
+		// Directory exists but has no Go files - regenerate
+		if cm.logger != nil {
+			cm.logger.Info("🔧 Generated code directory exists but empty, regenerating", loggerv2.String("server", serverName), loggerv2.String("package", packageName))
+		}
+		return cm.regenerateCodeForServer(serverName, cacheEntry, generatedDir, timeout)
+	}
+
+	// Code exists - nothing to do
+	if cm.logger != nil {
+		cm.logger.Debug("Generated code exists for server", loggerv2.String("server", serverName), loggerv2.String("package", packageName))
+	}
+	return false
+}
+
+// regenerateCodeForServer regenerates code for a server from its cache entry
+func (cm *CacheManager) regenerateCodeForServer(serverName string, cacheEntry *CacheEntry, generatedDir string, timeout time.Duration) bool {
+	entryForCodeGen := &codegen.CacheEntryForCodeGen{
+		ServerName: serverName,
+		Tools:      cacheEntry.Tools,
+	}
+	if err := codegen.GenerateServerToolsCode(entryForCodeGen, serverName, generatedDir, cm.logger, timeout); err != nil {
+		if cm.logger != nil {
+			cm.logger.Warn("Failed to regenerate code for server",
+				loggerv2.Error(err),
+				loggerv2.String("server", serverName))
+		}
+		return false
+	}
+	if cm.logger != nil {
+		cm.logger.Info("✅ Successfully regenerated code for server", loggerv2.String("server", serverName))
+	}
+	return true
+}
+
+// EnsureGeneratedCodeForServers checks if generated code exists for multiple servers and regenerates if missing
+// This is a convenience method that checks all servers in one call
+// Returns the number of servers that were regenerated
+func (cm *CacheManager) EnsureGeneratedCodeForServers(serverNames []string, config *mcpclient.MCPConfig, timeout time.Duration, logger loggerv2.Logger) int {
+	if len(serverNames) == 0 {
+		return 0
+	}
+
+	if config == nil {
+		if logger != nil {
+			logger.Warn("Config is nil, skipping code generation check")
+		}
+		return 0
+	}
+
+	if logger != nil {
+		logger.Info("🔍 Checking generated code for MCP servers", loggerv2.Int("server_count", len(serverNames)))
+	}
+
+	regeneratedCount := 0
+	for _, serverName := range serverNames {
+		// Get server configuration
+		serverConfig, exists := config.MCPServers[serverName]
+		if !exists {
+			if logger != nil {
+				logger.Debug("Server not found in config, skipping code check", loggerv2.String("server", serverName))
+			}
+			continue
+		}
+
+		// Use reusable method to ensure code exists
+		if regenerated := cm.EnsureGeneratedCodeForServer(serverName, serverConfig, timeout); regenerated {
+			regeneratedCount++
+		}
+	}
+
+	if logger != nil {
+		if regeneratedCount > 0 {
+			logger.Info("✅ Regenerated missing generated code", loggerv2.Int("servers_regenerated", regeneratedCount), loggerv2.Int("total_servers", len(serverNames)))
+		} else {
+			logger.Debug("✅ All servers have generated code", loggerv2.Int("total_servers", len(serverNames)))
+		}
+	}
+
+	return regeneratedCount
 }

@@ -156,6 +156,55 @@ const (
 	EventTypeUnifiedCompletion EventType = "unified_completion"
 )
 
+<<<<<<< HEAD
+=======
+// Orchestrator Event Types (from orchestrator/events/events.go)
+const (
+	// Orchestrator events
+	OrchestratorStart EventType = "orchestrator_start"
+	OrchestratorEnd   EventType = "orchestrator_end"
+	OrchestratorError EventType = "orchestrator_error"
+
+	// Orchestrator Agent lifecycle events
+	OrchestratorAgentStart EventType = "orchestrator_agent_start"
+	OrchestratorAgentEnd   EventType = "orchestrator_agent_end"
+	OrchestratorAgentError EventType = "orchestrator_agent_error"
+
+	// Parallel execution events
+	IndependentStepsSelected EventType = "independent_steps_selected"
+
+	// Todo planning events
+	TodoStepsExtracted  EventType = "todo_steps_extracted"
+	VariablesExtracted  EventType = "variables_extracted"
+	StepProgressUpdated EventType = "step_progress_updated"
+
+	// Batch execution events (for variable groups)
+	BatchExecutionStart    EventType = "batch_execution_start"
+	BatchGroupStart        EventType = "batch_group_start"
+	BatchGroupEnd          EventType = "batch_group_end"
+	BatchExecutionEnd      EventType = "batch_execution_end"
+	BatchExecutionCanceled EventType = "batch_execution_canceled"
+
+	// Human Verification events
+	HumanVerificationResponse EventType = "human_verification_response"
+	RequestHumanFeedback      EventType = "request_human_feedback"
+	BlockingHumanFeedback     EventType = "blocking_human_feedback"
+
+	// Step token usage event
+	StepTokenUsage EventType = "step_token_usage"
+
+	// Learning events
+	LearningSkipped EventType = "learning_skipped"
+	TempLLMSkipped  EventType = "temp_llm_skipped"
+
+	// Decision step evaluation events
+	DecisionEvaluated EventType = "decision_evaluated"
+
+	// Pre-validation events
+	PreValidationCompleted EventType = "pre_validation_completed"
+)
+
+>>>>>>> c2f8d038ac72f7e4caf7fc624f41b72280e86c95
 // Unified Event structure with hierarchy support
 type Event struct {
 	Type          EventType              `json:"type"`

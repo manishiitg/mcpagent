@@ -166,9 +166,8 @@ As agents execute tasks, tool call results accumulate in the context window. Res
 
 ```go
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "", "config.json", "model-id",
-    nil, "", nil,
-    mcpagent.WithLargeOutputVirtualTools(true),
+    ctx, llmModel, "config.json",
+    mcpagent.WithContextOffloading(true),
     mcpagent.WithLargeOutputThreshold(10000), // tokens (default)
 )
 ```
@@ -527,8 +526,12 @@ The agent supports extensive configuration via functional options:
 
 ```go
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "", "config.json", "model-id",
-    tracer, traceID, logger,
+    ctx, llmModel, "config.json",
+    // Observability (optional)
+    mcpagent.WithTracer(tracer),
+    mcpagent.WithTraceID(traceID),
+    mcpagent.WithLogger(logger),
+    
     // Agent mode
     mcpagent.WithMode(mcpagent.SimpleAgent),
     
@@ -546,7 +549,7 @@ agent, err := mcpagent.NewAgent(
     mcpagent.WithSmartRoutingThresholds(20, 3),
     
     // Context offloading (offload large tool outputs to filesystem)
-    mcpagent.WithLargeOutputVirtualTools(true),
+    mcpagent.WithContextOffloading(true),
     mcpagent.WithLargeOutputThreshold(10000),
 
     // Context summarization

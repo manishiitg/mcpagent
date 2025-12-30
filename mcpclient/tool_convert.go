@@ -8,6 +8,8 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/utils"
 
+	loggerv2 "mcpagent/logger/v2"
+
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -74,7 +76,8 @@ func normalizeArrayParameters(schema map[string]interface{}) {
 // all arrays have an 'items' field (required by Gemini and some other LLM providers).
 // This function normalizes tools in-place, modifying their Parameters schema.
 // Uses JSON round-trip to ensure structure preservation for llmtypes conversion.
-func NormalizeLLMTools(tools []llmtypes.Tool) {
+// logger is optional - if provided, debug information will be logged at debug level
+func NormalizeLLMTools(tools []llmtypes.Tool, logger loggerv2.Logger) {
 	fixedCount := 0
 	totalMissing := 0
 	totalFixed := 0
@@ -92,15 +95,26 @@ func NormalizeLLMTools(tools []llmtypes.Tool) {
 				// Convert Parameters struct to map via JSON
 				paramsBytes, marshalErr := json.Marshal(tools[i].Function.Parameters)
 				if marshalErr != nil {
-					fmt.Printf("[TOOL_NORMALIZE] Failed to marshal Parameters for tool %s: %v\n", toolName, marshalErr)
+					if logger != nil {
+						logger.Debug("Failed to marshal Parameters for tool",
+							loggerv2.String("tool_name", toolName),
+							loggerv2.Error(marshalErr))
+					}
 					continue
 				}
 				if err = json.Unmarshal(paramsBytes, &paramsMap); err != nil {
-					fmt.Printf("[TOOL_NORMALIZE] Failed to unmarshal Parameters for tool %s: %v\n", toolName, err)
+					if logger != nil {
+						logger.Debug("Failed to unmarshal Parameters for tool",
+							loggerv2.String("tool_name", toolName),
+							loggerv2.Error(err))
+					}
 					continue
 				}
 			} else {
-				fmt.Printf("[TOOL_NORMALIZE] Tool %s has nil Parameters, skipping\n", toolName)
+				if logger != nil {
+					logger.Debug("Tool has nil Parameters, skipping",
+						loggerv2.String("tool_name", toolName))
+				}
 				continue
 			}
 
@@ -112,7 +126,13 @@ func NormalizeLLMTools(tools []llmtypes.Tool) {
 						if propMap, ok := prop.(map[string]interface{}); ok {
 							propType := propMap["type"]
 							hasItems := propMap["items"] != nil
-							fmt.Printf("[TOOL_NORMALIZE] Tool %s.%s: type=%v, hasItems=%v\n", toolName, propName, propType, hasItems)
+							if logger != nil {
+								logger.Debug("Tool property check",
+									loggerv2.String("tool_name", toolName),
+									loggerv2.String("property_name", propName),
+									loggerv2.Any("type", propType),
+									loggerv2.Any("has_items", hasItems))
+							}
 						}
 					}
 				}
@@ -121,14 +141,23 @@ func NormalizeLLMTools(tools []llmtypes.Tool) {
 			beforeFix := countMissingItems(paramsMap)
 			totalMissing += beforeFix
 			if beforeFix > 0 {
-				fmt.Printf("[TOOL_NORMALIZE] Tool %s has %d missing items fields\n", toolName, beforeFix)
+				if logger != nil {
+					logger.Debug("Tool has missing items fields",
+						loggerv2.String("tool_name", toolName),
+						loggerv2.Int("missing_count", beforeFix))
+				}
 			}
 			normalizeArrayParameters(paramsMap)
 			afterFix := countMissingItems(paramsMap)
 			totalFixed += (beforeFix - afterFix)
 			if afterFix < beforeFix {
 				fixedCount++
-				fmt.Printf("[TOOL_NORMALIZE] Fixed tool %s: %d -> %d missing items\n", toolName, beforeFix, afterFix)
+				if logger != nil {
+					logger.Debug("Fixed tool missing items",
+						loggerv2.String("tool_name", toolName),
+						loggerv2.Int("before", beforeFix),
+						loggerv2.Int("after", afterFix))
+				}
 			}
 
 			// Clean up empty properties and required arrays (OpenAI rejects empty properties)
@@ -159,9 +188,16 @@ func NormalizeLLMTools(tools []llmtypes.Tool) {
 		}
 	}
 	if totalMissing > 0 {
-		fmt.Printf("[TOOL_NORMALIZE] Summary: Found %d missing items fields, fixed %d, %d tools affected\n", totalMissing, totalFixed, fixedCount)
+		if logger != nil {
+			logger.Debug("Tool normalization summary",
+				loggerv2.Int("total_missing", totalMissing),
+				loggerv2.Int("total_fixed", totalFixed),
+				loggerv2.Int("tools_affected", fixedCount))
+		}
 	} else {
-		fmt.Printf("[TOOL_NORMALIZE] Summary: All tools already have items fields\n")
+		if logger != nil {
+			logger.Debug("All tools already have items fields")
+		}
 	}
 }
 
