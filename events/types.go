@@ -257,9 +257,7 @@ func (b *BaseEventData) GetBaseEventData() *BaseEventData {
 // Helper function to get component from event type
 func GetComponentFromEventType(eventType EventType) string {
 	switch eventType {
-	case OrchestratorStart, OrchestratorEnd, OrchestratorError,
-		OrchestratorAgentStart, OrchestratorAgentEnd, OrchestratorAgentError,
-		StructuredOutputStart, StructuredOutputEnd, StructuredOutputError,
+	case StructuredOutputStart, StructuredOutputEnd, StructuredOutputError,
 		JSONValidationStart, JSONValidationEnd,
 		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
 		StepTokenUsage, StepProgressUpdated,
@@ -295,9 +293,7 @@ func IsStartEvent(eventType EventType) bool {
 		eventType == ConversationTurn ||
 		eventType == LLMGenerationStart ||
 		eventType == ToolCallStart ||
-		eventType == AgentStart ||
-		eventType == OrchestratorStart ||
-		eventType == OrchestratorAgentStart
+		eventType == AgentStart
 }
 
 // Helper function to check if event is an end event
@@ -305,7 +301,5 @@ func IsEndEvent(eventType EventType) bool {
 	return eventType == ConversationEnd ||
 		eventType == LLMGenerationEnd ||
 		eventType == ToolCallEnd ||
-		eventType == AgentEnd ||
-		eventType == OrchestratorEnd ||
-		eventType == OrchestratorAgentEnd
+		eventType == AgentEnd
 }
