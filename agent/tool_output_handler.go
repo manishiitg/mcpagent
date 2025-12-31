@@ -429,37 +429,6 @@ func (h *ToolOutputHandler) CleanupCurrentSessionFolder() error {
 	return h.CleanupSessionFolder(h.SessionID)
 }
 
-// cleanupEmptyDirectories removes empty directories in the output folder
-// This is called after file cleanup to remove orphaned session directories
-func (h *ToolOutputHandler) cleanupEmptyDirectories() {
-	if h.OutputFolder == "" {
-		return
-	}
-
-	// Walk through directories bottom-up and remove empty ones
-	err := filepath.Walk(h.OutputFolder, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		// Skip the root output folder itself
-		if path == h.OutputFolder {
-			return nil
-		}
-
-		// Only process directories
-		if !info.IsDir() {
-			return nil
-		}
-
-		// Try to remove directory (will fail if not empty)
-		_ = os.Remove(path)
-		return nil
-	})
-	// Ignore errors from cleanup - this is best-effort and shouldn't fail the main operation
-	_ = err
-}
-
 // isJSONContent checks if the given string is valid JSON
 func isJSONContent(content string) bool {
 	var js json.RawMessage
