@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"mcpagent/events"
 	"mcpagent/llm"
@@ -12,6 +13,17 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// isContextCanceledError checks if an error is due to context cancellation or deadline exceeded
+func isContextCanceledError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		strings.Contains(err.Error(), "context canceled") ||
+		strings.Contains(err.Error(), "context deadline exceeded")
+}
 
 // retryOriginalModel handles retry logic for throttling and zero_candidates errors
 // Returns: shouldRetry (bool), delay (time.Duration), error
@@ -272,6 +284,15 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		select {
 		case <-ctx.Done():
+			// Check for context cancellation FIRST - do not attempt fallback for canceled contexts
+			logger.Info(fmt.Sprintf("🔄 [DEBUG] Context canceled - returning error without fallback: %v", ctx.Err()))
+			// Emit context cancellation event instead of error event
+			cancellationEvent := events.NewContextCancelledEvent(
+				turn,
+				ctx.Err().Error(),
+				time.Since(llmGenerationStartEvent.Timestamp),
+			)
+			a.EmitTypedEvent(ctx, cancellationEvent)
 			return nil, usage, ctx.Err()
 		default:
 		}
@@ -385,7 +406,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		// Error handling
 		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - ERROR: %v", attempt+1, err))
 
-		// Emit error event
+		// Construct error event once before context check
 		llmAttemptErrorEvent := &events.LLMGenerationErrorEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
@@ -395,6 +416,21 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			Error:    err.Error(),
 			Duration: time.Since(llmGenerationStartEvent.Timestamp),
 		}
+
+		// Check for context cancellation FIRST - do not attempt fallback for canceled contexts
+		if isContextCanceledError(err) || ctx.Err() != nil {
+			logger.Info(fmt.Sprintf("🔄 [DEBUG] Context canceled - returning error without fallback: %v", err))
+			// Emit context cancellation event instead of error event
+			cancellationEvent := events.NewContextCancelledEvent(
+				turn,
+				err.Error(),
+				time.Since(llmGenerationStartEvent.Timestamp),
+			)
+			a.EmitTypedEvent(ctx, cancellationEvent)
+			return nil, usage, err
+		}
+
+		// Emit error event for actual errors (not cancellations)
 		a.EmitTypedEvent(ctx, llmAttemptErrorEvent)
 
 		// Determine error type

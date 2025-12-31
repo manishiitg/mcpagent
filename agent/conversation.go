@@ -380,7 +380,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Emit user message event - this will appear in basic events (user_message is not in ADVANCED_MODE_EVENTS)
 	userMessageEvent := events.NewUserMessageEvent(0, userMessageForEvent, "user")
 	a.EmitTypedEvent(ctx, userMessageEvent)
-	v2Logger.Info("🔄 Emitted user_message event for first user message",
+	v2Logger.Debug("🔄 Emitted user_message event for first user message",
 		loggerv2.String("content", userMessageForEvent),
 		loggerv2.Int("content_length", len(userMessageForEvent)))
 
@@ -786,6 +786,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 			// TEMPORARILY DISABLED: Don't return error, continue with the turn
 			// This allows HTTP requests to work while we investigate the root cause
+			// When re-enabled, emit ContextCancelledEvent instead of returning error:
+			// cancellationEvent := events.NewContextCancelledEvent(
+			// 	turn+1,
+			// 	agentCtx.Err().Error(),
+			// 	time.Since(conversationStartTime),
+			// )
+			// a.EmitTypedEvent(ctx, cancellationEvent)
 			// return "", messages, fmt.Errorf("conversation cancelled after LLM generation: %w", agentCtx.Err())
 		}
 
@@ -823,6 +830,22 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 			// If still have an error after fallback attempt, emit error event and return
 			if genErr != nil {
+				// Check for context cancellation FIRST - distinguish cancellations from errors
+				if isContextCanceledError(genErr) || ctx.Err() != nil {
+					v2Logger.Debug("Context cancelled during LLM generation",
+						loggerv2.Int("turn", turn+1),
+						loggerv2.Error(genErr),
+						loggerv2.String("duration", time.Since(conversationStartTime).String()))
+					// Emit context cancellation event instead of error events
+					cancellationEvent := events.NewContextCancelledEvent(
+						turn+1,
+						genErr.Error(),
+						time.Since(conversationStartTime),
+					)
+					a.EmitTypedEvent(ctx, cancellationEvent)
+					return "", messages, fmt.Errorf("conversation cancelled: %w", genErr)
+				}
+
 				// Emit LLM generation error event using typed event data
 				llmErrorEvent := events.NewLLMGenerationErrorEvent(turn+1, a.ModelID, genErr.Error(), time.Since(llmStartTime))
 				a.EmitTypedEvent(ctx, llmErrorEvent)
@@ -1304,6 +1327,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						loggerv2.String("tool_name", tc.FunctionCall.Name),
 						loggerv2.Error(agentCtx.Err()),
 						loggerv2.String("duration", time.Since(conversationStartTime).String()))
+					// Emit context cancellation event instead of just returning error
+					cancellationEvent := events.NewContextCancelledEvent(
+						turn+1,
+						fmt.Sprintf("cancelled before tool execution: %s", tc.FunctionCall.Name),
+						time.Since(conversationStartTime),
+					)
+					a.EmitTypedEvent(ctx, cancellationEvent)
 					return "", messages, fmt.Errorf("conversation cancelled before tool execution: %w", agentCtx.Err())
 				}
 

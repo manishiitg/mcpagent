@@ -263,6 +263,10 @@ func GetComponentFromEventType(eventType EventType) string {
 		JSONValidationStart, JSONValidationEnd,
 		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
 		StepTokenUsage, StepProgressUpdated,
+		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,
+		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback,
+		LearningSkipped, TempLLMSkipped,
+		DecisionEvaluated, PreValidationCompleted,
 		StepExecutionStart, StepExecutionEnd, StepExecutionFailed:
 		return "orchestrator"
 	case AgentStart, AgentEnd, AgentError:
