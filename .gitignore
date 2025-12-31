@@ -85,6 +85,7 @@ gitleaks-final-test.json
 tmp/
 temp/
 *.tmp
+*.bak
 
 # Coverage reports
 coverage.txt
