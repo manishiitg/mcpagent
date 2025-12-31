@@ -82,3 +82,6 @@ require (
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// Local development: use local multi-llm-provider-go for latest changes
+replace github.com/manishiitg/multi-llm-provider-go => ../multi-llm-provider-go
