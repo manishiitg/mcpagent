@@ -3,6 +3,7 @@ package mcpclient
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -572,21 +573,6 @@ func (p *StdioConnectionPool) Stop() {
 	p.CloseAllConnections()
 }
 
-// sanitizeServerKeyForFilename removes invalid characters from server key for use as filename
-func sanitizeServerKeyForFilename(serverKey string) string {
-	// Replace invalid filename characters with underscores
-	invalidChars := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|", "[", "]", " ", "-"}
-	result := serverKey
-	for _, char := range invalidChars {
-		result = strings.ReplaceAll(result, char, "_")
-	}
-	// Limit length
-	if len(result) > 100 {
-		result = result[:100]
-	}
-	return result
-}
-
 // captureStderr reads from the stderr reader, logs each line, and detects fatal errors
 func (p *StdioConnectionPool) captureStderr(stderrReader io.Reader, serverKey string, fatalErrorChan chan<- error) {
 	scanner := bufio.NewScanner(stderrReader)
@@ -621,7 +607,7 @@ func (p *StdioConnectionPool) captureStderr(stderrReader io.Reader, serverKey st
 	}
 
 	if err := scanner.Err(); err != nil {
-		if err != io.EOF {
+		if !errors.Is(err, io.EOF) {
 			p.logger.Warn(fmt.Sprintf("⚠️ [MCP STDERR] Error reading stderr - server=%s: %v", serverKey, err),
 				loggerv2.String("server", serverKey),
 				loggerv2.Error(err))

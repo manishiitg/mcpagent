@@ -31,15 +31,6 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// contextKey is a custom type for context keys to avoid collisions
-type contextKey string
-
-const (
-	contextKeyWorkspaceEventEmitter contextKey = "workspace_event_emitter"
-	contextKeyTurn                  contextKey = "turn"
-	contextKeyServerName            contextKey = "server_name"
-)
-
 // Generic tool execution context keys
 // These are injected into context for all tool executions to provide metadata
 // Tools can extract these values if needed (e.g., workspace tools for event emission)
