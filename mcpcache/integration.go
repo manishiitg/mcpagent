@@ -283,12 +283,17 @@ func GetCachedOrFreshConnection(
 		}
 
 		// Perform fresh connection directly (only if servers list is not empty)
+		logger.Info("🔍 [DEBUG] GetCachedOrFreshConnection: About to call performFreshConnection", loggerv2.Int("server_count", len(servers)), loggerv2.Any("servers", servers))
+		freshStartTime := time.Now()
 		logger.Info("Calling performFreshConnection", loggerv2.Int("server_count", len(servers)))
 		freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
-		logger.Info("performFreshConnection completed")
+		freshDuration := time.Since(freshStartTime)
 		if err != nil {
+			logger.Error("❌ [DEBUG] GetCachedOrFreshConnection: performFreshConnection failed", err, loggerv2.String("duration", freshDuration.String()))
 			return nil, err
 		}
+		logger.Info("✅ [DEBUG] GetCachedOrFreshConnection: performFreshConnection completed successfully", loggerv2.String("duration", freshDuration.String()), loggerv2.Int("clients_count", len(freshResult.Clients)))
+		logger.Info("performFreshConnection completed")
 
 		// Copy fresh result data
 		result.Clients = freshResult.Clients
@@ -795,13 +800,19 @@ func performFreshConnection(
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
 ) (*CachedConnectionResult, error) {
+	logger.Info("🔍 [DEBUG] performFreshConnection: Starting", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
+	performStartTime := time.Now()
 
 	// This would call the original NewAgentConnection function
 	// For now, we'll simulate the call - in practice, this would be refactored
+	logger.Info("🔍 [DEBUG] performFreshConnection: About to call performOriginalConnectionLogic")
 	clients, toolToServer, tools, _, prompts, resources, systemPrompt, err := performOriginalConnectionLogic(ctx, llm, serverName, configPath, "fresh-connection", tracers, logger)
+	performDuration := time.Since(performStartTime)
 	if err != nil {
+		logger.Error("❌ [DEBUG] performFreshConnection: performOriginalConnectionLogic failed", err, loggerv2.String("duration", performDuration.String()))
 		return nil, err
 	}
+	logger.Info("✅ [DEBUG] performFreshConnection: performOriginalConnectionLogic completed successfully", loggerv2.String("duration", performDuration.String()), loggerv2.Int("clients_count", len(clients)))
 
 	result := &CachedConnectionResult{
 		Clients:      clients,
@@ -870,10 +881,16 @@ func performOriginalConnectionLogic(
 		loggerv2.String("start_time", discoveryStartTime.Format(time.RFC3339)))
 
 	// Log discovery start (events handled by connection.go)
+	logger.Info("🔍 [DEBUG] performOriginalConnectionLogic: About to call DiscoverAllToolsParallel",
+		loggerv2.Int("server_count", len(servers)),
+		loggerv2.Any("servers", servers))
 
 	parallelResults := mcpclient.DiscoverAllToolsParallel(ctx, filteredConfig, logger)
 
 	discoveryDuration := time.Since(discoveryStartTime)
+	logger.Info("✅ [DEBUG] performOriginalConnectionLogic: DiscoverAllToolsParallel completed",
+		loggerv2.String("duration", discoveryDuration.String()),
+		loggerv2.Int("result_count", len(parallelResults)))
 	logger.Info("Parallel tool discovery completed",
 		loggerv2.Int("result_count", len(parallelResults)),
 		loggerv2.Any("discovery_time", discoveryDuration.String()),
@@ -881,6 +898,9 @@ func performOriginalConnectionLogic(
 
 	// Track seen tools to prevent duplicates (Gemini/Vertex rejects duplicate function declarations)
 	seenTools := make(map[string]bool)
+
+	// Collect all server errors for detailed error reporting
+	var serverErrors []string
 
 	for _, r := range parallelResults {
 		srvName := r.ServerName
@@ -890,6 +910,7 @@ func performOriginalConnectionLogic(
 			logger.Warn("Server not found in config, skipping",
 				loggerv2.String("server", srvName),
 				loggerv2.Error(err))
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: server not found in config: %v", srvName, err))
 			continue // Skip this server instead of failing everything
 		}
 
@@ -897,6 +918,8 @@ func performOriginalConnectionLogic(
 			logger.Warn("Failed to connect to server, skipping",
 				loggerv2.String("server", srvName),
 				loggerv2.Error(r.Error))
+			// Collect the raw error for this server
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: %v", srvName, r.Error))
 			continue // Skip this server instead of failing everything
 		}
 
@@ -912,6 +935,7 @@ func performOriginalConnectionLogic(
 				logger.Warn("Failed to reconnect to server, skipping",
 					loggerv2.String("server", srvName),
 					loggerv2.Error(err))
+				serverErrors = append(serverErrors, fmt.Sprintf("%s: failed to reconnect: %v", srvName, err))
 				continue // Skip this server instead of failing everything
 			}
 		}
@@ -922,6 +946,7 @@ func performOriginalConnectionLogic(
 			logger.Warn("Failed to convert tools for server, skipping",
 				loggerv2.String("server", srvName),
 				loggerv2.Error(err))
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: failed to convert tools: %v", srvName, err))
 			continue // Skip this server instead of failing everything
 		}
 
@@ -956,7 +981,12 @@ func performOriginalConnectionLogic(
 
 	// Check if we have at least one successful connection
 	if len(clients) == 0 {
-		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("no servers could be connected - all servers failed or were skipped")
+		// Build detailed error message with all individual server errors
+		errorMsg := "no servers could be connected - all servers failed or were skipped"
+		if len(serverErrors) > 0 {
+			errorMsg += "; individual server errors: " + strings.Join(serverErrors, "; ")
+		}
+		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf(errorMsg)
 	}
 
 	logger.Info("Aggregated tools",

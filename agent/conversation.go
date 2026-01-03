@@ -40,6 +40,20 @@ const (
 	contextKeyServerName            contextKey = "server_name"
 )
 
+// Generic tool execution context keys
+// These are injected into context for all tool executions to provide metadata
+// Tools can extract these values if needed (e.g., workspace tools for event emission)
+// Using string keys ensures compatibility across packages
+const (
+	// ToolExecutionAgentKey is the context key for the agent executing the tool
+	// Tools can use this to emit events or access agent functionality
+	ToolExecutionAgentKey = "tool_execution_agent"
+	// ToolExecutionTurnKey is the context key for the current conversation turn
+	ToolExecutionTurnKey = "tool_execution_turn"
+	// ToolExecutionServerKey is the context key for the server name providing the tool
+	ToolExecutionServerKey = "tool_execution_server"
+)
+
 // getLogger returns the agent's logger (guaranteed to be non-nil)
 func getLogger(a *Agent) loggerv2.Logger {
 	// Agent logger is guaranteed to be non-nil in the new architecture
@@ -744,9 +758,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		a.StartLLMGeneration(ctx)
 
 		// Use GenerateContentWithRetry for robust fallback handling
-		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
-			// Streaming callback - no ReAct reasoning tracking needed
-		})
+		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
@@ -805,9 +817,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					loggerv2.Int("turn", turn+1))
 
 				// Try fallback models by calling GenerateContentWithRetry again with fallback
-				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
-					v2Logger.Info(fmt.Sprintf("[FALLBACK] %s", msg))
-				})
+				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
 
 				if fallbackErr == nil && fallbackResp != nil && len(fallbackResp.Choices) > 0 &&
 					fallbackResp.Choices[0].Content != "" {
@@ -1373,10 +1383,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 				}
 
-				// Inject event emitter, turn, and server name into context for workspace tools
-				toolCtx = context.WithValue(toolCtx, contextKeyWorkspaceEventEmitter, a)
-				toolCtx = context.WithValue(toolCtx, contextKeyTurn, turn+1)
-				toolCtx = context.WithValue(toolCtx, contextKeyServerName, serverName)
+				// Inject generic tool execution metadata into context
+				// Any tool can extract these values if needed (e.g., workspace tools for event emission)
+				// Using generic keys keeps conversation.go agnostic about specific tool implementations
+				toolCtx = context.WithValue(toolCtx, ToolExecutionAgentKey, a)
+				toolCtx = context.WithValue(toolCtx, ToolExecutionTurnKey, turn+1)
+				toolCtx = context.WithValue(toolCtx, ToolExecutionServerKey, serverName)
 
 				var result *mcp.CallToolResult
 				var toolErr error
@@ -1756,9 +1768,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
-	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
-		// Optional: stream the final response
-	})
+	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1)
 
 	// Log finalUsage for debugging
 	v2Logger.Info(fmt.Sprintf("🔍 [FINAL LLM CALL DEBUG] finalUsage from GenerateContentWithRetry:"))

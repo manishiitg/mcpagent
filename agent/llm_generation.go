@@ -27,7 +27,7 @@ func isContextCanceledError(err error) bool {
 
 // retryOriginalModel handles retry logic for throttling and zero_candidates errors
 // Returns: shouldRetry (bool), delay (time.Duration), error
-func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt, maxRetries int, baseDelay, maxDelay time.Duration, turn int, logger loggerv2.Logger, sendMessage func(string), usage observability.UsageMetrics) (bool, time.Duration, error) {
+func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt, maxRetries int, baseDelay, maxDelay time.Duration, turn int, logger loggerv2.Logger, usage observability.UsageMetrics) (bool, time.Duration, error) {
 	delay := time.Duration(float64(baseDelay) * (1.5 + float64(attempt)*0.5))
 	if delay > maxDelay {
 		delay = maxDelay
@@ -41,16 +41,13 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 	)
 	a.EmitTypedEvent(ctx, retryAttemptEvent)
 
-	var logMsg, userMsg string
+	var logMsg string
 	if errorType == "zero_candidates_error" {
 		logMsg = fmt.Sprintf("🔄 [ZERO_CANDIDATES] Retrying original model FIRST (before fallbacks). Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
-		userMsg = fmt.Sprintf("\n⏳ Zero candidates error detected. Retrying original model first. Waiting %v before retry...", delay)
 	} else {
 		logMsg = fmt.Sprintf("🔄 [THROTTLING] Retrying original model FIRST (before fallbacks). Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
-		userMsg = fmt.Sprintf("\n⏳ Throttling error detected. Retrying original model first. Waiting %v before retry...", delay)
 	}
 	logger.Info(logMsg)
-	sendMessage(userMsg)
 
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -69,163 +66,174 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 		retryLogMsg = fmt.Sprintf("🔄 [THROTTLING] Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries)
 	}
 	logger.Info(retryLogMsg)
-	sendMessage(fmt.Sprintf("\n🔄 Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries))
 	return true, delay, nil
 }
 
-// GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
-func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int, sendMessage func(string)) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
-	// 🆕 DETAILED GENERATECONTENTWITHRETRY DEBUG LOGGING
-	logger := getLogger(a)
-	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry START - Time: %v", time.Now()))
-	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry params - Messages: %d, Options: %d, Turn: %d", len(messages), len(opts), turn))
-	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry context - Err: %v, Done: %v", ctx.Err(), ctx.Done()))
-
-	maxRetries := 5
-	baseDelay := 30 * time.Second // Start with 30s for throttling
-	maxDelay := 5 * time.Minute   // Maximum 5 minutes
-	var lastErr error
-	var usage observability.UsageMetrics
-
-	// Helper functions for error classification
-
-	isMaxTokenError := func(err error) bool {
-		if err == nil {
-			return false
-		}
-		msg := err.Error()
-		// Exclude context cancellation from max token errors
-		if isContextCanceledError(err) {
-			return false
-		}
-		return strings.Contains(msg, "max_token") ||
-			strings.Contains(msg, "max tokens") ||
-			strings.Contains(msg, "Input is too long") ||
-			strings.Contains(msg, "ValidationException") ||
-			strings.Contains(msg, "too long")
+// isMaxTokenError checks if an error is due to reaching maximum token limit
+func isMaxTokenError(err error) bool {
+	if err == nil {
+		return false
 	}
-
-	isThrottlingError := func(err error) bool {
-		if err == nil {
-			return false
-		}
-		// Exclude context cancellation from throttling errors
-		if isContextCanceledError(err) {
-			return false
-		}
-		errStr := err.Error()
-		return strings.Contains(errStr, "ThrottlingException") ||
-			strings.Contains(errStr, "Too many tokens") ||
-			strings.Contains(errStr, "StatusCode: 429") ||
-			strings.Contains(errStr, "API returned unexpected status code: 429") ||
-			strings.Contains(errStr, "status code: 429") ||
-			strings.Contains(errStr, "status code 429") ||
-			strings.Contains(errStr, "429") ||
-			strings.Contains(errStr, "rate limit") ||
-			strings.Contains(errStr, "throttled")
+	msg := err.Error()
+	// Exclude context cancellation from max token errors
+	if isContextCanceledError(err) {
+		return false
 	}
+	return strings.Contains(msg, "max_token") ||
+		strings.Contains(msg, "max tokens") ||
+		strings.Contains(msg, "Input is too long") ||
+		strings.Contains(msg, "ValidationException") ||
+		strings.Contains(msg, "too long")
+}
 
-	isEmptyContentError := func(err error) bool {
-		if err == nil {
-			return false
-		}
-		msg := err.Error()
-		if strings.Contains(msg, "MALFORMED_FUNCTION_CALL") {
-			return false
-		}
-		return strings.Contains(msg, "Choice.Content is empty string") ||
-			strings.Contains(msg, "empty content error") ||
-			strings.Contains(msg, "choice.Content is empty") ||
-			strings.Contains(msg, "empty response")
+// isThrottlingError checks if an error is due to API throttling
+func isThrottlingError(err error) bool {
+	if err == nil {
+		return false
 	}
-
-	isZeroCandidatesError := func(err error) bool {
-		if err == nil {
-			return false
-		}
-		msg := err.Error()
-		return strings.Contains(msg, "zero candidates") ||
-			strings.Contains(msg, "returned zero candidates") ||
-			strings.Contains(msg, "no candidates")
+	// Exclude context cancellation from throttling errors
+	if isContextCanceledError(err) {
+		return false
 	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "ThrottlingException") ||
+		strings.Contains(errStr, "Too many tokens") ||
+		strings.Contains(errStr, "StatusCode: 429") ||
+		strings.Contains(errStr, "API returned unexpected status code: 429") ||
+		strings.Contains(errStr, "status code: 429") ||
+		strings.Contains(errStr, "status code 429") ||
+		strings.Contains(errStr, "429") ||
+		strings.Contains(errStr, "rate limit") ||
+		strings.Contains(errStr, "throttled")
+}
 
-	isConnectionError := func(err error) bool {
-		if err == nil {
-			return false
-		}
-		// Exclude context cancellation from connection errors
-		if isContextCanceledError(err) {
-			return false
-		}
-		msg := err.Error()
-		return strings.Contains(msg, "EOF") ||
-			strings.Contains(msg, "connection refused") ||
-			strings.Contains(msg, "timeout") ||
-			strings.Contains(msg, "network") ||
-			strings.Contains(msg, "dial tcp") ||
-			strings.Contains(msg, "context deadline exceeded") ||
-			strings.Contains(msg, "connection reset") ||
-			strings.Contains(msg, "broken pipe") ||
-			strings.Contains(msg, "connection lost") ||
-			strings.Contains(msg, "connection closed") ||
-			strings.Contains(msg, "unexpected EOF")
+// isEmptyContentError checks if an error is due to empty content in response
+func isEmptyContentError(err error) bool {
+	if err == nil {
+		return false
 	}
-
-	isStreamError := func(err error) bool {
-		if err == nil {
-			return false
-		}
-		// Exclude context cancellation from stream errors
-		if isContextCanceledError(err) {
-			return false
-		}
-		msg := err.Error()
-		return strings.Contains(msg, "stream error") ||
-			strings.Contains(msg, "stream ID") ||
-			strings.Contains(msg, "streaming") ||
-			strings.Contains(msg, "stream closed") ||
-			strings.Contains(msg, "stream interrupted") ||
-			strings.Contains(msg, "stream timeout") ||
-			strings.Contains(msg, "streaming error")
+	msg := err.Error()
+	if strings.Contains(msg, "MALFORMED_FUNCTION_CALL") {
+		return false
 	}
+	return strings.Contains(msg, "Choice.Content is empty string") ||
+		strings.Contains(msg, "empty content error") ||
+		strings.Contains(msg, "choice.Content is empty") ||
+		strings.Contains(msg, "empty response")
+}
 
-	isInternalError := func(err error) bool {
-		if err == nil {
-			return false
-		}
-		msg := err.Error()
-		return strings.Contains(msg, "INTERNAL_ERROR") ||
-			strings.Contains(msg, "internal error") ||
-			strings.Contains(msg, "server error") ||
-			strings.Contains(msg, "unexpected error") ||
-			strings.Contains(msg, "received from peer") ||
-			strings.Contains(msg, "peer error") ||
-			strings.Contains(msg, "internal server error") ||
-			strings.Contains(msg, "service error") ||
-			strings.Contains(msg, "status 500") ||
-			strings.Contains(msg, "status code: 500") ||
-			strings.Contains(msg, "status code 500") ||
-			strings.Contains(msg, "StatusCode: 500") ||
-			strings.Contains(msg, "500") ||
-			strings.Contains(msg, "status 502") ||
-			strings.Contains(msg, "status code: 502") ||
-			strings.Contains(msg, "status code 502") ||
-			strings.Contains(msg, "502") ||
-			strings.Contains(msg, "status 503") ||
-			strings.Contains(msg, "status code: 503") ||
-			strings.Contains(msg, "status code 503") ||
-			strings.Contains(msg, "503") ||
-			strings.Contains(msg, "status 504") ||
-			strings.Contains(msg, "status code: 504") ||
-			strings.Contains(msg, "status code 504") ||
-			strings.Contains(msg, "504") ||
-			strings.Contains(msg, "API returned unexpected status code: 5") ||
-			strings.Contains(msg, "Bad Gateway") ||
-			strings.Contains(msg, "Service Unavailable") ||
-			strings.Contains(msg, "Gateway Timeout")
+// isZeroCandidatesError checks if an error is due to zero candidates returned
+func isZeroCandidatesError(err error) bool {
+	if err == nil {
+		return false
 	}
+	msg := err.Error()
+	return strings.Contains(msg, "zero candidates") ||
+		strings.Contains(msg, "returned zero candidates") ||
+		strings.Contains(msg, "no candidates")
+}
 
-	// Get fallback models for the current provider
+// isConnectionError checks if an error is due to connection issues
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Exclude context cancellation from connection errors
+	if isContextCanceledError(err) {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "network") ||
+		strings.Contains(msg, "dial tcp") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "connection lost") ||
+		strings.Contains(msg, "connection closed") ||
+		strings.Contains(msg, "unexpected EOF")
+}
+
+// isStreamError checks if an error is due to streaming issues
+func isStreamError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Exclude context cancellation from stream errors
+	if isContextCanceledError(err) {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "stream error") ||
+		strings.Contains(msg, "stream ID") ||
+		strings.Contains(msg, "streaming") ||
+		strings.Contains(msg, "stream closed") ||
+		strings.Contains(msg, "stream interrupted") ||
+		strings.Contains(msg, "stream timeout") ||
+		strings.Contains(msg, "streaming error")
+}
+
+// isInternalError checks if an error is due to internal server issues
+func isInternalError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "INTERNAL_ERROR") ||
+		strings.Contains(msg, "internal error") ||
+		strings.Contains(msg, "server error") ||
+		strings.Contains(msg, "unexpected error") ||
+		strings.Contains(msg, "received from peer") ||
+		strings.Contains(msg, "peer error") ||
+		strings.Contains(msg, "internal server error") ||
+		strings.Contains(msg, "service error") ||
+		strings.Contains(msg, "status 500") ||
+		strings.Contains(msg, "status code: 500") ||
+		strings.Contains(msg, "status code 500") ||
+		strings.Contains(msg, "StatusCode: 500") ||
+		strings.Contains(msg, "500") ||
+		strings.Contains(msg, "status 502") ||
+		strings.Contains(msg, "status code: 502") ||
+		strings.Contains(msg, "status code 502") ||
+		strings.Contains(msg, "502") ||
+		strings.Contains(msg, "status 503") ||
+		strings.Contains(msg, "status code: 503") ||
+		strings.Contains(msg, "status code 503") ||
+		strings.Contains(msg, "503") ||
+		strings.Contains(msg, "status 504") ||
+		strings.Contains(msg, "status code: 504") ||
+		strings.Contains(msg, "status code 504") ||
+		strings.Contains(msg, "504") ||
+		strings.Contains(msg, "API returned unexpected status code: 5") ||
+		strings.Contains(msg, "Bad Gateway") ||
+		strings.Contains(msg, "Service Unavailable") ||
+		strings.Contains(msg, "Gateway Timeout")
+}
+
+// classifyLLMError categorizes the given error into a known LLM error type
+func classifyLLMError(err error) string {
+	if isMaxTokenError(err) {
+		return "max_token_error"
+	} else if isThrottlingError(err) {
+		return "throttling_error"
+	} else if isZeroCandidatesError(err) {
+		return "zero_candidates_error"
+	} else if isEmptyContentError(err) {
+		return "empty_content_error"
+	} else if isConnectionError(err) {
+		return "connection_error"
+	} else if isStreamError(err) {
+		return "stream_error"
+	} else if isInternalError(err) {
+		return "internal_error"
+	}
+	return ""
+}
+
+// prepareFallbackModels determines the provider and fallback models for the agent
+func (a *Agent) prepareFallbackModels() (llm.Provider, []string, []string) {
 	v2Logger := a.Logger
 	v2Logger.Debug("Getting fallback models", loggerv2.String("provider_field", string(a.provider)))
 
@@ -235,277 +243,216 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	if a.provider != "" {
 		provider, err = llm.ValidateProvider(string(a.provider))
 		if err != nil {
-			// Log the error and use a default provider
 			v2Logger.Warn("Invalid provider, using default provider 'bedrock'",
 				loggerv2.String("provider", string(a.provider)),
 				loggerv2.Error(err))
 			provider = llm.ProviderBedrock
 		}
 	} else {
-		// If no provider specified, default to bedrock
 		v2Logger.Debug("No provider specified, using default provider 'bedrock'")
 		provider = llm.ProviderBedrock
 	}
 
-	v2Logger.Debug("Validated provider", loggerv2.String("provider", string(provider)))
-
 	// Determine fallback models
 	sameProviderFallbacks := llm.GetDefaultFallbackModels(provider)
 	var crossProviderFallbacks []string
-	var crossProviderName string
 
 	if a.CrossProviderFallback != nil {
 		crossProviderFallbacks = a.CrossProviderFallback.Models
-		crossProviderName = a.CrossProviderFallback.Provider
-		v2Logger.Debug("Using frontend cross-provider fallback",
-			loggerv2.String("provider", crossProviderName),
-			loggerv2.Any("models", crossProviderFallbacks))
 	} else {
 		crossProviderFallbacks = llm.GetCrossProviderFallbackModels(provider)
-		if len(crossProviderFallbacks) > 0 {
-			crossProviderName = string(detectProviderFromModelID(crossProviderFallbacks[0]))
-		} else {
-			if provider == llm.ProviderVertex {
-				crossProviderName = string(llm.ProviderAnthropic)
-			} else {
-				crossProviderName = string(llm.ProviderOpenAI)
-			}
-		}
-		v2Logger.Debug("Using default cross-provider fallback",
-			loggerv2.String("provider", crossProviderName),
-			loggerv2.Any("models", crossProviderFallbacks))
 	}
 
-	v2Logger.Debug("Fallback models loaded",
-		loggerv2.Any("same_provider", sameProviderFallbacks),
-		loggerv2.Any("cross_provider", crossProviderFallbacks))
+	return provider, sameProviderFallbacks, crossProviderFallbacks
+}
+
+// streamingManager handles streaming state and goroutine management
+type streamingManager struct {
+	streamChan        chan llmtypes.StreamChunk
+	streamingDone     chan bool
+	contentChunkIndex int
+	totalChunks       int
+	startTime         time.Time
+}
+
+// startStreaming initializes streaming if enabled and on the first attempt
+func (a *Agent) startStreaming(ctx context.Context, attempt int, opts *[]llmtypes.CallOption) *streamingManager {
+	if !a.EnableStreaming || attempt != 0 {
+		return nil
+	}
+
+	sm := &streamingManager{
+		streamChan:    make(chan llmtypes.StreamChunk, 100),
+		streamingDone: make(chan bool, 1),
+		startTime:     time.Now(),
+	}
+
+	*opts = append(*opts, llmtypes.WithStreamingChan(sm.streamChan))
+
+	a.EmitTypedEvent(ctx, &events.StreamingStartEvent{
+		BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+		Model:         a.ModelID,
+		Provider:      string(a.provider),
+	})
+
+	go sm.processChunks(ctx, a)
+	return sm
+}
+
+// processChunks runs in a goroutine to handle incoming streaming chunks
+func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
+	defer func() {
+		sm.streamingDone <- true
+	}()
+
+	for chunk := range sm.streamChan {
+		if chunk.Type == llmtypes.StreamChunkTypeContent && chunk.Content != "" {
+			sm.contentChunkIndex++
+			sm.totalChunks++
+
+			a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+				BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+				Content:       chunk.Content,
+				ChunkIndex:    sm.contentChunkIndex,
+				IsToolCall:    false,
+			})
+
+			if a.StreamingCallback != nil {
+				a.StreamingCallback(chunk)
+			}
+		}
+	}
+}
+
+// finishStreaming waits for streaming to complete and emits the end event
+func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp *llmtypes.ContentResponse) {
+	if sm == nil {
+		return
+	}
+
+	<-sm.streamingDone
+
+	endEvent := &events.StreamingEndEvent{
+		BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+		TotalChunks:   sm.totalChunks,
+		Duration:      time.Since(sm.startTime).String(),
+	}
+
+	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		if resp.Choices[0].GenerationInfo.TotalTokens != nil {
+			endEvent.TotalTokens = *resp.Choices[0].GenerationInfo.TotalTokens
+		}
+		if resp.Choices[0].StopReason != "" {
+			endEvent.FinishReason = resp.Choices[0].StopReason
+		}
+	}
+	a.EmitTypedEvent(ctx, endEvent)
+}
+
+// GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
+func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
+	logger := getLogger(a)
+	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry START - Messages: %d, Options: %d, Turn: %d", len(messages), len(opts), turn))
+
+	maxRetries := 5
+	baseDelay := 30 * time.Second
+	maxDelay := 5 * time.Minute
+	var lastErr error
+	var usage observability.UsageMetrics
+
+	provider, sameProviderFallbacks, crossProviderFallbacks := a.prepareFallbackModels()
+	
+	generationStartTime := time.Now()
 
 	// Emit start event
-	llmGenerationStartEvent := &events.LLMGenerationWithRetryEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
+	a.EmitTypedEvent(ctx, &events.LLMGenerationWithRetryEvent{
+		BaseEventData:          events.BaseEventData{Timestamp: generationStartTime},
 		Turn:                   turn,
 		MaxRetries:             maxRetries,
 		PrimaryModel:           a.ModelID,
 		CurrentLLM:             a.ModelID,
 		SameProviderFallbacks:  sameProviderFallbacks,
 		CrossProviderFallbacks: crossProviderFallbacks,
-		Provider:               string(a.provider),
+		Provider:               string(provider),
 		Operation:              "llm_generation_with_fallback",
 		Status:                 "started",
-	}
-	a.EmitTypedEvent(ctx, llmGenerationStartEvent)
+	})
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		select {
-		case <-ctx.Done():
-			// Check for context cancellation FIRST - do not attempt fallback for canceled contexts
-			logger.Info(fmt.Sprintf("🔄 [DEBUG] Context canceled - returning error without fallback: %v", ctx.Err()))
-			// Emit context cancellation event instead of error event
-			cancellationEvent := events.NewContextCancelledEvent(
-				turn,
-				ctx.Err().Error(),
-				time.Since(llmGenerationStartEvent.Timestamp),
-			)
-			a.EmitTypedEvent(ctx, cancellationEvent)
-			return nil, usage, ctx.Err()
-		default:
+		if ctx.Err() != nil {
+			return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
 		}
+		
+		// Create a copy of options for this attempt to avoid polluting the original slice
+		// especially when appending streaming channel
+		currentOpts := make([]llmtypes.CallOption, len(opts))
+		copy(currentOpts, opts)
 
-		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - About to call a.LLM.GenerateContent", attempt+1))
+		sm := a.startStreaming(ctx, attempt, &currentOpts)
 
-		// Handle streaming if enabled
-		var streamChan chan llmtypes.StreamChunk
-		var streamingDone chan bool
-		var contentChunkIndex int
-		var totalChunks int
-		streamStartTime := time.Now()
-
-		if a.EnableStreaming && attempt == 0 {
-			// Only enable streaming on first attempt (disable during fallback)
-			streamChan = make(chan llmtypes.StreamChunk, 100)
-			streamingDone = make(chan bool, 1)
-
-			// Add streaming channel to options
-			opts = append(opts, llmtypes.WithStreamingChan(streamChan))
-
-			// Emit streaming start event
-			streamingStartEvent := &events.StreamingStartEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Model:    a.ModelID,
-				Provider: string(a.provider),
-			}
-			a.EmitTypedEvent(ctx, streamingStartEvent)
-
-			// Start goroutine to process streaming chunks
-			go func() {
-				defer func() {
-					// Signal that streaming is done; the channel itself is owned and closed by the LLM provider.
-					// The for-range loop below will naturally exit when the provider closes the channel.
-					streamingDone <- true
-				}()
-
-				for chunk := range streamChan {
-					switch chunk.Type {
-					case llmtypes.StreamChunkTypeContent:
-						// Stream text content fragments
-						if chunk.Content != "" {
-							contentChunkIndex++
-							totalChunks++
-
-							// Emit streaming chunk event for text content
-							streamingChunkEvent := &events.StreamingChunkEvent{
-								BaseEventData: events.BaseEventData{
-									Timestamp: time.Now(),
-								},
-								Content:    chunk.Content,
-								ChunkIndex: contentChunkIndex,
-								IsToolCall: false,
-							}
-							a.EmitTypedEvent(ctx, streamingChunkEvent)
-
-							// Call optional callback if provided
-							if a.StreamingCallback != nil {
-								a.StreamingCallback(chunk)
-							}
-						}
-
-					case llmtypes.StreamChunkTypeToolCall:
-						// Tool calls are processed normally (no streaming events)
-						// Just accumulate silently - they'll be in the final response
-						if chunk.ToolCall != nil {
-							// No event emission for tool calls - process normally after streaming
-						}
-					}
-				}
-			}()
-		}
-
-		llmCallStart := time.Now()
-		resp, err := a.LLM.GenerateContent(ctx, messages, opts...)
-		llmCallDuration := time.Since(llmCallStart)
-		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - Duration: %v, Error: %v", attempt+1, llmCallDuration, err != nil))
-
-		// Wait for streaming to complete if enabled
-		if a.EnableStreaming && attempt == 0 && streamChan != nil {
-			// Wait for streaming goroutine to finish
-			<-streamingDone
-
-			// Emit streaming end event
-			streamingEndEvent := &events.StreamingEndEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				TotalChunks: totalChunks,
-				Duration:    time.Since(streamStartTime).String(),
-			}
-			if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
-				if resp.Choices[0].GenerationInfo.TotalTokens != nil {
-					streamingEndEvent.TotalTokens = *resp.Choices[0].GenerationInfo.TotalTokens
-				}
-				if resp.Choices[0].StopReason != "" {
-					streamingEndEvent.FinishReason = resp.Choices[0].StopReason
-				}
-			}
-			a.EmitTypedEvent(ctx, streamingEndEvent)
-		}
+		resp, err := a.LLM.GenerateContent(ctx, messages, currentOpts...)
+		
+		a.finishStreaming(ctx, sm, resp)
 
 		if err == nil {
-			logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - SUCCESS", attempt+1))
 			usage = extractUsageMetricsWithMessages(resp, messages)
 			return resp, usage, nil
 		}
-
-		// Error handling
-		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - ERROR: %v", attempt+1, err))
-
-		// Construct error event once before context check
-		llmAttemptErrorEvent := &events.LLMGenerationErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:     turn + 1,
-			ModelID:  a.ModelID,
-			Error:    err.Error(),
-			Duration: time.Since(llmGenerationStartEvent.Timestamp),
-		}
-
-		// Check for context cancellation FIRST - do not attempt fallback for canceled contexts
+		
+		// Handle context cancellation specifically
 		if isContextCanceledError(err) || ctx.Err() != nil {
-			logger.Info(fmt.Sprintf("🔄 [DEBUG] Context canceled - returning error without fallback: %v", err))
-			// Emit context cancellation event instead of error event
-			cancellationEvent := events.NewContextCancelledEvent(
-				turn,
-				err.Error(),
-				time.Since(llmGenerationStartEvent.Timestamp),
-			)
-			a.EmitTypedEvent(ctx, cancellationEvent)
-			return nil, usage, err
+			return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
 		}
-
+		
 		// Emit error event for actual errors (not cancellations)
-		a.EmitTypedEvent(ctx, llmAttemptErrorEvent)
+		a.EmitTypedEvent(ctx, &events.LLMGenerationErrorEvent{
+			BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+			Turn:          turn + 1,
+			ModelID:       a.ModelID,
+			Error:         err.Error(),
+			Duration:      time.Since(generationStartTime),
+		})
 
-		// Determine error type (context cancellation already handled above)
-		var errorType string
-		if isMaxTokenError(err) {
-			errorType = "max_token_error"
-		} else if isThrottlingError(err) {
-			errorType = "throttling_error"
-		} else if isZeroCandidatesError(err) {
-			errorType = "zero_candidates_error"
-		} else if isEmptyContentError(err) {
-			errorType = "empty_content_error"
-		} else if isConnectionError(err) {
-			errorType = "connection_error"
-		} else if isStreamError(err) {
-			errorType = "stream_error"
-		} else if isInternalError(err) {
-			errorType = "internal_error"
-		}
-
-		if errorType != "" {
-			// Special handling for throttling_error and zero_candidates_error: retry original model FIRST before fallbacks
-			// This handles transient API issues where retrying the same model might succeed
-			if (errorType == "throttling_error" || errorType == "zero_candidates_error") && attempt < maxRetries-1 {
-				shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, maxRetries, baseDelay, maxDelay, turn, logger, sendMessage, usage)
-				if retryErr != nil {
-					return nil, usage, retryErr
-				}
-				if shouldRetry {
-					continue
-				}
-			}
-
-			// For throttling_error and zero_candidates_error after retries exhausted, or other error types: try fallbacks
-			// Use unified fallback logic
-			fResp, fUsage, fErr := handleErrorWithFallback(a, ctx, err, errorType, turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
-
-			if fErr == nil {
-				return fResp, fUsage, nil
-			}
-
-			lastErr = fErr
-
-			// For throttling_error and zero_candidates_error: if fallbacks failed and retries exhausted, break
-			// For other error types, break loops
+		errorType := classifyLLMError(err)
+		if errorType == "" {
+			lastErr = err
 			break
 		}
 
-		// Unknown error type - break and return last error
-		lastErr = err
+		// Special handling for retrying original model
+		if (errorType == "throttling_error" || errorType == "zero_candidates_error") && attempt < maxRetries-1 {
+			shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, maxRetries, baseDelay, maxDelay, turn, logger, usage)
+			if retryErr != nil {
+				return nil, usage, retryErr
+			}
+			if shouldRetry {
+				continue
+			}
+		}
+
+		fResp, fUsage, fErr := handleErrorWithFallback(a, ctx, err, errorType, turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, messages, opts)
+		if fErr == nil {
+			return fResp, fUsage, nil
+		}
+		lastErr = fErr
 		break
 	}
 
-	sendMessage(fmt.Sprintf("\n❌ LLM generation failed after %d attempts (turn %d): %v", maxRetries, turn, lastErr))
 	return nil, usage, lastErr
 }
 
+// handleContextCancellation emits cancellation event and returns the error
+func (a *Agent) handleContextCancellation(ctx context.Context, turn int, startTime time.Time) error {
+	err := ctx.Err()
+	if err == nil {
+		err = context.Canceled
+	}
+	a.EmitTypedEvent(ctx, events.NewContextCancelledEvent(turn, err.Error(), time.Since(startTime)))
+	return err
+}
+
 // handleErrorWithFallback is a generic function that handles any error type with fallback models
-func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
+func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
 	// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
 
 	// Check if context is canceled - we should not do fallback if context is canceled
@@ -542,37 +489,14 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 	}
 	a.EmitTypedEvent(ctx, errorFallbackEvent)
 
-	// Send user message based on error type
-	var userMessage string
-	switch errorType {
-	case "stream_error":
-		userMessage = fmt.Sprintf("\n⚠️ Stream error detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries)
-	case "internal_error":
-		userMessage = fmt.Sprintf("\n⚠️ Internal server error detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries)
-	case "connection_error":
-		userMessage = fmt.Sprintf("\n⚠️ Connection/network error detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries)
-	case "empty_content_error":
-		userMessage = fmt.Sprintf("\n⚠️ Empty content error detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries)
-	case "throttling_error":
-		userMessage = fmt.Sprintf("\n⚠️ Throttling error detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries)
-	case "max_token_error":
-		userMessage = fmt.Sprintf("\n⚠️ Max token error detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries)
-	default:
-		userMessage = fmt.Sprintf("\n⚠️ %s error detected (turn %d, attempt %d/%d). Trying fallback models...", errorType, turn, attempt+1, maxRetries)
-	}
-	sendMessage(userMessage)
-
 	// Phase 1: Try same-provider fallbacks first
-	sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), string(a.provider)))
 	for i, fallbackModelID := range sameProviderFallbacks {
-		sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", string(a.provider), i+1, len(sameProviderFallbacks), fallbackModelID))
 
 		origModelID := a.ModelID
 		a.ModelID = fallbackModelID
 		fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 		if ferr != nil {
 			a.ModelID = origModelID
-			sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
 			continue
 		}
 
@@ -611,10 +535,8 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 			a.ModelID = fallbackModelID
 			a.LLM = fallbackLLM
 
-			sendMessage(fmt.Sprintf("\n✅ %s fallback successful with %s model: %s", errorType, string(fallbackProvider), fallbackModelID))
 			return fresp, usage, nil
 		} else {
-			sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
 			// Emit fallback attempt event for generation failure
 			failureEvent := events.NewFallbackAttemptEvent(
 				turn, i+1, len(sameProviderFallbacks),
@@ -627,19 +549,12 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 
 	// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
 	if len(crossProviderFallbacks) > 0 {
-		// Detect provider for the first cross-provider model to show in phase message
-		crossProviderName := string(detectProviderFromModelID(crossProviderFallbacks[0]))
-		sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), crossProviderName))
 		for i, fallbackModelID := range crossProviderFallbacks {
-			fallbackProvider := detectProviderFromModelID(fallbackModelID)
-			sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", string(fallbackProvider), i+1, len(crossProviderFallbacks), fallbackModelID))
-
 			origModelID := a.ModelID
 			a.ModelID = fallbackModelID
 			fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 			if ferr != nil {
 				a.ModelID = origModelID
-				sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
 				continue
 			}
 
@@ -678,10 +593,8 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 				a.ModelID = fallbackModelID
 				a.LLM = fallbackLLM
 
-				sendMessage(fmt.Sprintf("\n✅ %s cross-provider fallback successful with %s model: %s", errorType, string(fallbackProvider), fallbackModelID))
 				return fresp, usage, nil
 			} else {
-				sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
 				// Emit fallback attempt event for generation failure
 				failureEvent := events.NewFallbackAttemptEvent(
 					turn, i+1, len(crossProviderFallbacks),

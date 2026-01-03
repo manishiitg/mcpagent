@@ -66,14 +66,14 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 		loggerv2.String("disable_cache", fmt.Sprintf("%v", disableCache)))
 
 	// Try to get cached or fresh connection data (always connects to servers)
-	logger.Info("Calling GetCachedOrFreshConnection")
+	logger.Info("🔍 [DEBUG] NewAgentConnection: About to call GetCachedOrFreshConnection", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", disableCache))
 	getCacheStartTime := time.Now()
 	result, err := mcpcache.GetCachedOrFreshConnection(ctx, llm, serverName, configPath, tracers, logger, disableCache)
 	getCacheDuration := time.Since(getCacheStartTime)
 	if err != nil {
-		logger.Error("GetCachedOrFreshConnection failed", err, loggerv2.String("duration", getCacheDuration.String()))
+		logger.Error("❌ [DEBUG] NewAgentConnection: GetCachedOrFreshConnection failed", err, loggerv2.String("duration", getCacheDuration.String()), loggerv2.String("server_name", serverName))
 	} else {
-		logger.Info("GetCachedOrFreshConnection completed", loggerv2.String("duration", getCacheDuration.String()))
+		logger.Info("✅ [DEBUG] NewAgentConnection: GetCachedOrFreshConnection completed successfully", loggerv2.String("duration", getCacheDuration.String()), loggerv2.Int("clients_count", len(result.Clients)), loggerv2.Int("tools_count", len(result.Tools)))
 	}
 	if err != nil {
 		connectionDuration := time.Since(connectionStartTime)
