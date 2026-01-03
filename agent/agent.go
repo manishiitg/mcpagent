@@ -911,14 +911,20 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.TraceID = observability.TraceID(uuid.New().String())
 	}
 
+	logger.Info("🔍 [DEBUG] NewAgent: Starting initialization", loggerv2.String("config_path", configPath), loggerv2.String("server_name", serverName))
 	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
 	logger.Info("NewAgent initialization", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
 
 	// Load merged MCP servers configuration (base + user)
+	logger.Info("🔍 [DEBUG] NewAgent: About to load merged MCP config", loggerv2.String("config_path", configPath))
+	configLoadStartTime := time.Now()
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
+	configLoadDuration := time.Since(configLoadStartTime)
 	if err != nil {
+		logger.Error("❌ [DEBUG] NewAgent: Failed to load merged MCP config", err, loggerv2.String("duration", configLoadDuration.String()))
 		return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
+	logger.Info("✅ [DEBUG] NewAgent: Merged MCP config loaded successfully", loggerv2.String("duration", configLoadDuration.String()), loggerv2.Int("server_count", len(config.MCPServers)))
 
 	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
 	for name := range config.MCPServers {
@@ -944,14 +950,15 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	setCodeGenDuration := time.Since(setCodeGenStartTime)
 	logger.Debug("Code generation enabled set", loggerv2.String("duration", setCodeGenDuration.String()))
 
-	logger.Debug("Calling NewAgentConnection", loggerv2.String("server_name", serverName))
+	logger.Info("🔍 [DEBUG] NewAgent: About to call NewAgentConnection", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.DisableCache))
 	connectionStartTime := time.Now()
 	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
+		logger.Error("❌ [DEBUG] NewAgent: NewAgentConnection failed", err, loggerv2.String("duration", connectionDuration.String()), loggerv2.String("server_name", serverName))
 		return nil, err
 	}
-	logger.Info("NewAgentConnection completed", loggerv2.String("duration", connectionDuration.String()))
+	logger.Info("✅ [DEBUG] NewAgent: NewAgentConnection completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)))
 
 	// Use first client for legacy compatibility
 	var firstClient mcpclient.ClientInterface

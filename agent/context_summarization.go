@@ -69,7 +69,7 @@ func summarizeConversationHistory(a *Agent, ctx context.Context, oldMessages []l
 		loggerv2.Int("conversation_text_length", len(conversationText)),
 		loggerv2.String("model_id", a.ModelID))
 
-	resp, _, err := GenerateContentWithRetry(a, ctx, summaryMessages, summaryOpts, 0, nil)
+	resp, _, err := GenerateContentWithRetry(a, ctx, summaryMessages, summaryOpts, 0)
 	if err != nil {
 		return "", 0, 0, 0, 0, 0, nil, fmt.Errorf("failed to generate conversation summary: %w", err)
 	}
