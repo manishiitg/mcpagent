@@ -136,10 +136,12 @@ When answering questions:
 </core_principles>`
 	} else {
 		corePrinciplesSection = `<core_principles>
-When answering questions:
-1. **Think** about what information/actions are needed
-2. **Use tools** to gather information
-3. **Provide helpful responses** based on tool results
+**Your Goal:** Complete the user's request autonomously.
+
+**Operating Rules:**
+1. **Be Proactive:** Do not ask for permission to use tools. Just use them.
+2. **Chain Actions:** If a tool output leads to a next step, take it immediately. Do not stop to report intermediate progress unless asked.
+3. **Solve Fully:** strive to reach the final answer or state before returning control to the user.
 </core_principles>`
 	}
 

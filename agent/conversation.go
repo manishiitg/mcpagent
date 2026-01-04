@@ -1113,7 +1113,14 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					messages = append(messages, userMessage)
 
 					// Emit tool call end event (for observability only)
-					toolEndEvent := events.NewToolCallEndEvent(turn+1, tc.FunctionCall.Name, "Image loaded and added to conversation", serverName, duration, "")
+					// Get current token usage information for the tool call end event
+					_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.GetTokenUsageWithPricing()
+					a.tokenTrackingMutex.RLock()
+					modelContextWindow := a.modelContextWindow
+					contextWindowUsage := a.currentContextWindowUsage
+					a.tokenTrackingMutex.RUnlock()
+
+					toolEndEvent := events.NewToolCallEndEventWithTokenUsage(turn+1, tc.FunctionCall.Name, "Image loaded and added to conversation", serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage)
 					a.EmitTypedEvent(ctx, toolEndEvent)
 
 					// Continue to next iteration (tool call and response messages are already added)
@@ -1663,8 +1670,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Tool execution completed - emit tool call end event
 				// Only emit ToolCallEndEvent if result is not an error (errors should emit ToolCallErrorEvent)
 				if result == nil || !result.IsError {
+					// Get current token usage information for the tool call end event
+					_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.GetTokenUsageWithPricing()
+					a.tokenTrackingMutex.RLock()
+					modelContextWindow := a.modelContextWindow
+					contextWindowUsage := a.currentContextWindowUsage
+					a.tokenTrackingMutex.RUnlock()
+
 					// Emit tool call end event using typed event data (consolidated - contains all tool information)
-					toolEndEvent := events.NewToolCallEndEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "")
+					toolEndEvent := events.NewToolCallEndEventWithTokenUsage(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage)
 					a.EmitTypedEvent(ctx, toolEndEvent)
 				} else if result.IsError {
 					// Result contains an error - emit tool call error event

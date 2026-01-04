@@ -346,14 +346,27 @@ func GetCachedOrFreshConnection(
 	} else {
 		// Handle comma-separated server names
 		requestedServers := strings.Split(serverName, ",")
+		availableServers := config.ListServers()
+		logger.Info("Validating requested servers against config",
+			loggerv2.String("server_name", serverName),
+			loggerv2.Any("requested_servers", requestedServers),
+			loggerv2.Any("available_servers", availableServers))
+
 		for _, reqServer := range requestedServers {
 			reqServer = strings.TrimSpace(reqServer)
+			found := false
 			// Check if this server exists in config
-			for _, configServer := range config.ListServers() {
+			for _, configServer := range availableServers {
 				if configServer == reqServer {
 					servers = append(servers, reqServer)
+					found = true
 					break
 				}
+			}
+			if !found {
+				logger.Warn("Requested server not found in config - skipping",
+					loggerv2.String("requested_server", reqServer),
+					loggerv2.Any("available_servers", availableServers))
 			}
 		}
 	}
