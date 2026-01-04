@@ -402,6 +402,10 @@ type ToolCallEndEvent struct {
 	Result     string        `json:"result"`
 	Duration   time.Duration `json:"duration"`
 	ServerName string        `json:"server_name"`
+	// Token usage information (optional)
+	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"`
+	ModelContextWindow  int     `json:"model_context_window,omitempty"`
+	ContextWindowUsage  int     `json:"context_window_usage,omitempty"`
 }
 
 func (e *ToolCallEndEvent) GetEventType() EventType {
@@ -979,6 +983,24 @@ func NewToolCallEndEvent(turn int, toolName, result, serverName string, duration
 		Result:     result,
 		Duration:   duration,
 		ServerName: serverName,
+	}
+}
+
+// NewToolCallEndEventWithTokenUsage creates a new ToolCallEndEvent with token usage information
+func NewToolCallEndEventWithTokenUsage(turn int, toolName, result, serverName string, duration time.Duration, spanID string, contextUsagePercent float64, modelContextWindow, contextWindowUsage int) *ToolCallEndEvent {
+	return &ToolCallEndEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+			SpanID:    spanID,
+		},
+		Turn:                turn,
+		ToolName:            toolName,
+		Result:              result,
+		Duration:            duration,
+		ServerName:          serverName,
+		ContextUsagePercent: contextUsagePercent,
+		ModelContextWindow:  modelContextWindow,
+		ContextWindowUsage:  contextWindowUsage,
 	}
 }
 
