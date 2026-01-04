@@ -733,6 +733,9 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
 	cmd.Dir = workspaceDir
 
+	// SECURITY: Start with a safe, empty environment
+	cmd.Env = BuildSafeEnvironment()
+
 	// 🔧 FIX: Only check for go.work if we have generated packages
 	// go.work is only needed when importing generated packages, not for standard library
 	if hasGeneratedPackages {
@@ -744,7 +747,7 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 			// go.work exists, set GOWORK to use it explicitly
 			absGoWorkPath, err := filepath.Abs(goWorkPath)
 			if err == nil {
-				cmd.Env = append(os.Environ(), fmt.Sprintf("GOWORK=%s", absGoWorkPath))
+				cmd.Env = append(cmd.Env, fmt.Sprintf("GOWORK=%s", absGoWorkPath))
 				if a.Logger != nil {
 					a.Logger.Info("🔧 Set GOWORK environment variable", loggerv2.String("path", absGoWorkPath))
 				}
@@ -774,7 +777,7 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 	// Set environment variables
 	// Note: We don't set GOWORK explicitly - since cmd.Dir is set to workspaceDir,
 	// Go will automatically find go.work in that directory if it exists
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(cmd.Env,
 		"MCP_API_URL="+mcpAPIURL,
 		// Note: MCP_SERVER_NAME is NOT needed - server name is hardcoded in generated functions
 	)
@@ -1691,4 +1694,28 @@ func (a *Agent) syncGoWorkspace(workspaceDir string) error {
 	}
 
 	return nil
+}
+
+// BuildSafeEnvironment creates a minimal, safe environment for shell commands
+// Only includes essential variables, excludes all secrets
+// Exported so it can be used by workspace security and other packages
+func BuildSafeEnvironment() []string {
+	return []string{
+		// Essential shell variables
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/tmp",
+		"USER=agent",
+		"SHELL=/bin/sh",
+
+		// Locale settings
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+
+		// DO NOT include:
+		// - DATABASE_URL
+		// - API_KEYS
+		// - JWT_SECRET
+		// - GITHUB_TOKEN
+		// - Any other secrets from parent process
+	}
 }
