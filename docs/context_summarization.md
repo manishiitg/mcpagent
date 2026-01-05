@@ -102,13 +102,13 @@ graph TD
 | `WithContextSummarization(enabled)` | `bool` | `false` | Enable/disable context summarization feature |
 | `WithSummarizeOnTokenThreshold(enabled, thresholdPercent)` | `bool, float64` | `false, 0.7` | Enable token-based summarization with threshold percentage (0.0-1.0, e.g., 0.7 = 70%) |
 | `WithSummarizeOnFixedTokenThreshold(enabled, thresholdTokens)` | `bool, int` | `false, 0` | Enable fixed token-based summarization with absolute threshold (e.g., 200000 = 200k tokens, regardless of context window size) |
-| `WithSummaryKeepLastMessages(count)` | `int` | `8` | Number of recent messages to keep when summarizing |
+| `WithSummaryKeepLastMessages(count)` | `int` | `4` | Number of recent messages to keep when summarizing |
 
 ### Constants
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `DefaultSummaryKeepLastMessages` | `8` | Default number of recent messages to keep (roughly 3-4 turns) |
+| `DefaultSummaryKeepLastMessages` | `4` | Default number of recent messages to keep (roughly 2 turns) |
 
 ### Example Configuration
 
@@ -246,15 +246,53 @@ summarizedMessages, err := mcpagent.SummarizeConversationHistory(
 
 ### Summary Message Format
 
-The summary is inserted into the conversation as a user message with this format:
+The summary is inserted into the conversation as a user message with this structured format:
 
 ```text
 === CONVERSATION SUMMARY (Previous N messages) ===
 
-[Generated summary text here]
+This session is being continued from a previous conversation that ran out of context. The conversation is summarized below:
+
+**Analysis:**
+Let me analyze the conversation chronologically:
+[Chronological narrative of what happened in the conversation]
+
+**Summary:**
+
+1. **Primary Request and Intent:**
+   - [Main goals and sub-tasks]
+
+2. **Key Technical Concepts:**
+   - [Important technical terms and patterns discussed]
+
+3. **Files and Code Sections:**
+   - [File paths with descriptions and line numbers]
+   - [Code snippets that were written or modified]
+
+4. **Errors and Fixes:**
+   - [Errors encountered, root causes, and resolutions]
+
+5. **Problem Solving:**
+   - [Key insights and approaches that worked or didn't]
+
+6. **All User Messages:**
+   - [Chronological list of user requests as quotes/paraphrases]
+
+7. **Pending Tasks:**
+   - [Incomplete tasks and TODOs]
+
+8. **Current Work:**
+   - [What was being worked on and its state]
+
+9. **Optional Next Step:**
+   - [Suggested next action with direct quote from user if relevant]
+
+Please continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.
 
 === END SUMMARY ===
 ```
+
+This structured format ensures the AI agent can seamlessly continue the conversation with full context awareness.
 
 ---
 
@@ -358,7 +396,7 @@ Context Summarization maintains long-running conversations without exceeding con
   - `WithSummarizeOnFixedTokenThreshold(true, thresholdTokens)` - Fixed token threshold (e.g., 200k tokens)
 - Both thresholds can be enabled simultaneously (OR logic: either can trigger summarization)
 - Default percentage threshold is 70% of context window (configurable via `WithSummarizeOnTokenThreshold()`)
-- Default keeps last 8 messages (configurable via `WithSummaryKeepLastMessages()`)
+- Default keeps last 4 messages (configurable via `WithSummaryKeepLastMessages()`)
 - Automatically preserves tool call/response pairs
 - Emits events for monitoring and debugging
 - Tracks comprehensive token usage metrics
