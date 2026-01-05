@@ -424,6 +424,25 @@ func WithCrossProviderFallback(crossProviderFallback *CrossProviderFallback) Age
 	}
 }
 
+// WithLLMConfig sets the full LLM configuration (primary + fallbacks).
+// This replaces provider, ModelID, and CrossProviderFallback legacy fields.
+func WithLLMConfig(config AgentLLMConfiguration) AgentOption {
+	return func(a *Agent) {
+		a.LLMConfig = config
+		// Sync legacy fields for backward compatibility
+		a.ModelID = config.Primary.ModelID
+		a.provider = llm.Provider(config.Primary.Provider)
+	}
+}
+
+// WithAPIKeys sets the API keys for different providers.
+// These keys are used as fallback when per-model API keys are not set.
+func WithAPIKeys(keys *AgentAPIKeys) AgentOption {
+	return func(a *Agent) {
+		a.APIKeys = keys
+	}
+}
+
 // WithSelectedTools restricts the agent to a specific subset of tools.
 //
 // Parameters:
@@ -701,6 +720,28 @@ type Agent struct {
 	// Context window is based on input tokens only, not output tokens.
 	currentContextWindowUsage int
 	modelContextWindow        int // Cached model context window size (0 = not cached yet)
+	
+	// LLM Configuration
+	LLMConfig AgentLLMConfiguration
+}
+
+// LLMModel represents a single LLM configuration
+type LLMModel struct {
+	Provider string  `json:"provider"` // "anthropic", "openai", "bedrock", etc.
+	ModelID  string  `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
+
+	// Auth per model
+	APIKey *string `json:"api_key,omitempty"` // For OpenRouter, OpenAI, Anthropic, Vertex
+	Region *string `json:"region,omitempty"`  // For Bedrock
+
+	// Model-specific options
+	Temperature *float64 `json:"temperature,omitempty"` // Override default temperature (0.0-1.0)
+}
+
+// AgentLLMConfiguration holds the primary and fallback LLM configurations
+type AgentLLMConfiguration struct {
+	Primary   LLMModel   `json:"primary"`
+	Fallbacks []LLMModel `json:"fallbacks"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1351,8 +1392,23 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	a.tokenTrackingMutex.Lock()
 	defer a.tokenTrackingMutex.Unlock()
 
-	// Use unified extraction from multi-llm-provider-go
-	cacheTokens, _, reasoningTokens := extractAllTokenTypes(resp)
+	// Use passed-in cache and reasoning tokens from usageMetrics (preferred)
+	// Fall back to extraction from resp only if passed values are 0
+	// Cache tokens: subset of prompt tokens that were cached (for pricing at lower rate)
+	// Reasoning tokens: part of output (total output = completion + reasoning)
+	cacheTokens := usageMetrics.CacheTokens
+	reasoningTokens := usageMetrics.ReasoningTokens
+
+	// If not passed in usageMetrics, extract from response as fallback
+	if cacheTokens == 0 || reasoningTokens == 0 {
+		extractedCache, _, extractedReasoning := extractAllTokenTypes(resp)
+		if cacheTokens == 0 {
+			cacheTokens = extractedCache
+		}
+		if reasoningTokens == 0 {
+			reasoningTokens = extractedReasoning
+		}
+	}
 
 	// Extract cache discount (only available in GenerationInfo)
 	var cacheDiscount float64
@@ -1364,6 +1420,10 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	}
 
 	// Accumulate tokens (only actual values from LLM response)
+	// - PromptTokens: total input tokens (includes cached portion)
+	// - CompletionTokens: output tokens (excludes reasoning tokens)
+	// - CacheTokens: subset of PromptTokens that were cached (for metrics/billing)
+	// - ReasoningTokens: additional output tokens for reasoning (total output = completion + reasoning)
 	a.cumulativePromptTokens += usageMetrics.PromptTokens
 	a.cumulativeCompletionTokens += usageMetrics.CompletionTokens
 	a.cumulativeTotalTokens += usageMetrics.TotalTokens

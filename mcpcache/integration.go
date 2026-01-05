@@ -364,9 +364,11 @@ func GetCachedOrFreshConnection(
 				}
 			}
 			if !found {
-				logger.Warn("Requested server not found in config - skipping",
+				err := fmt.Errorf("requested MCP server '%s' not found in config. Available servers: %v. Please add '%s' to your MCP servers config file or remove it from the workflow/step configuration", reqServer, availableServers, reqServer)
+				logger.Error("Requested server not found in config", err,
 					loggerv2.String("requested_server", reqServer),
 					loggerv2.Any("available_servers", availableServers))
+				return result, err
 			}
 		}
 	}
