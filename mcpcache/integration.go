@@ -2,6 +2,7 @@ package mcpcache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1001,7 +1002,7 @@ func performOriginalConnectionLogic(
 		if len(serverErrors) > 0 {
 			errorMsg += "; individual server errors: " + strings.Join(serverErrors, "; ")
 		}
-		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf(errorMsg)
+		return nil, nil, nil, nil, nil, nil, "", errors.New(errorMsg)
 	}
 
 	logger.Info("Aggregated tools",
