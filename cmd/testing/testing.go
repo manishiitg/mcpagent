@@ -10,6 +10,7 @@ import (
 
 	agentlangfuse "mcpagent/cmd/testing/agent-langfuse"
 	agentmcp "mcpagent/cmd/testing/agent-mcp"
+	connectionisolation "mcpagent/cmd/testing/connection-isolation"
 	executortest "mcpagent/cmd/testing/executor"
 	humanfeedbackcodeexec "mcpagent/cmd/testing/human-feedback-code-exec"
 	langfuse "mcpagent/cmd/testing/langfuse"
@@ -95,6 +96,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(toolfilter.GetToolFilterTestCmd())
 	TestingCmd.AddCommand(agentlangfuse.GetLangfuseTracerTestCmd())
 	TestingCmd.AddCommand(agentmcp.GetAgentMCPTestCmd())
+	TestingCmd.AddCommand(connectionisolation.GetConnectionIsolationTestCmd())
 	TestingCmd.AddCommand(executortest.GetExecutorTestCmd())
 	TestingCmd.AddCommand(mcpagentcodeexec.GetMCPAgentCodeExecTestCmd())
 	TestingCmd.AddCommand(humanfeedbackcodeexec.GetHumanFeedbackCodeExecTestCmd())
