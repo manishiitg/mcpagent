@@ -1120,7 +1120,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					contextWindowUsage := a.currentContextWindowUsage
 					a.tokenTrackingMutex.RUnlock()
 
-					toolEndEvent := events.NewToolCallEndEventWithTokenUsage(turn+1, tc.FunctionCall.Name, "Image loaded and added to conversation", serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage)
+					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, "Image loaded and added to conversation", serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
 					a.EmitTypedEvent(ctx, toolEndEvent)
 
 					// Continue to next iteration (tool call and response messages are already added)
@@ -1678,7 +1678,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					a.tokenTrackingMutex.RUnlock()
 
 					// Emit tool call end event using typed event data (consolidated - contains all tool information)
-					toolEndEvent := events.NewToolCallEndEventWithTokenUsage(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage)
+					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
 					a.EmitTypedEvent(ctx, toolEndEvent)
 				} else if result.IsError {
 					// Result contains an error - emit tool call error event
