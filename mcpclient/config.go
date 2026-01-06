@@ -8,6 +8,7 @@ import (
 	"time"
 
 	loggerv2 "mcpagent/logger/v2"
+	"mcpagent/oauth"
 )
 
 // ProtocolType defines the connection protocol
@@ -90,6 +91,8 @@ type MCPServerConfig struct {
 	// SSE/HTTP specific fields
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+	// OAuth configuration
+	OAuth       *oauth.OAuthConfig `json:"oauth,omitempty"`
 }
 
 // GetPoolConfig returns the pool configuration, using defaults if not specified
