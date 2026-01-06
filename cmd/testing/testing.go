@@ -15,6 +15,7 @@ import (
 	langfuse "mcpagent/cmd/testing/langfuse"
 	largetooloutput "mcpagent/cmd/testing/large-tool-output"
 	mcpagentcodeexec "mcpagent/cmd/testing/mcp-agent-code-exec"
+	oauthflow "mcpagent/cmd/testing/oauth-flow"
 	smartrouting "mcpagent/cmd/testing/smart-routing"
 	"mcpagent/cmd/testing/structured-output/conversion"
 	"mcpagent/cmd/testing/structured-output/tool"
@@ -99,6 +100,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(humanfeedbackcodeexec.GetHumanFeedbackCodeExecTestCmd())
 	TestingCmd.AddCommand(langfuse.GetLangfuseReadTestCmd())
 	TestingCmd.AddCommand(largetooloutput.GetLargeToolOutputTestCmd())
+	TestingCmd.AddCommand(oauthflow.GetOAuthFlowTestCmd())
 	TestingCmd.AddCommand(smartrouting.GetSmartRoutingTestCmd())
 	TestingCmd.AddCommand(conversion.GetStructuredOutputConversionTestCmd())
 	TestingCmd.AddCommand(tool.GetStructuredOutputToolTestCmd())

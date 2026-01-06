@@ -417,6 +417,7 @@ agent, err := mcpagent.NewAgent(
 
 Comprehensive documentation is available in the [docs/](docs/) directory:
 
+- **[OAuth Authentication](docs/oauth.md)** - OAuth 2.0 authentication for MCP servers
 - **[Code Execution Agent](docs/code_execution_agent.md)** - Execute Go code with MCP tools
 - **[Tool-Use Agent](docs/tool_use_agent.md)** - Standard tool calling mode
 - **[Context Summarization](docs/context_summarization.md)** - Automatic history summarization

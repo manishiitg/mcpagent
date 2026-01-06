@@ -743,15 +743,25 @@ func (cm *CacheManager) Cleanup() error {
 
 // loadExistingCache loads cache entries from the filesystem
 func (cm *CacheManager) loadExistingCache() {
+	// Log the cache directory being used for debugging
+	if cm.logger != nil {
+		cm.logger.Info("🔍 Loading existing cache from directory", loggerv2.String("cache_dir", cm.cacheDir))
+	}
+
 	// Try to read cache directory - if it doesn't exist, that's fine (lazy creation)
 	// Only create directory if cache files actually exist
 	files, err := os.ReadDir(cm.cacheDir)
 	if err != nil {
 		// Directory doesn't exist yet - that's fine, it will be created when saving entries
 		if cm.logger != nil {
-			cm.logger.Debug("Cache directory does not exist yet (will be created lazily)", loggerv2.String("cache_dir", cm.cacheDir))
+			cm.logger.Info("📁 Cache directory does not exist yet (will be created lazily)", loggerv2.String("cache_dir", cm.cacheDir))
 		}
 		return
+	}
+
+	// Log number of files found
+	if cm.logger != nil {
+		cm.logger.Info("📁 Found files in cache directory", loggerv2.Int("file_count", len(files)), loggerv2.String("cache_dir", cm.cacheDir))
 	}
 
 	loadedCount := 0
@@ -765,7 +775,11 @@ func (cm *CacheManager) loadExistingCache() {
 				cm.cache.Store(fileName, entry)
 				loadedCount++
 				if cm.logger != nil {
-					cm.logger.Debug("Loaded cache entry", loggerv2.String("file", fileName))
+					cm.logger.Info("📦 Loaded cache entry from disk",
+						loggerv2.String("server", entry.ServerName),
+						loggerv2.String("cache_key", fileName),
+						loggerv2.Int("tools", len(entry.Tools)),
+						loggerv2.Int("ttl_minutes", entry.TTLMinutes))
 				}
 
 				// Ensure Go code is generated for this cache entry if it's missing
