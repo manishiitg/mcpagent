@@ -130,8 +130,8 @@ func createNotionOAuthConfig(log loggerv2.Logger) (string, string, func(), error
 		loggerv2.String("token_file", tokenFile))
 
 	cleanup := func() {
-		os.Remove(configPath)
-		os.Remove(tokenFile)
+		_ = os.Remove(configPath)
+		_ = os.Remove(tokenFile)
 		log.Info("🧹 Cleaned up temporary files")
 	}
 
@@ -158,11 +158,12 @@ func testOAuthLogin(ctx context.Context, configPath, tokenFile string, log logge
 
 	// Auto-discover endpoints from 401 response
 	log.Info("Auto-discovering OAuth endpoints from Notion...")
+	//nolint:gosec // G107: Test URL
 	resp, err := http.Get(notionConfig.URL)
 	if err != nil {
 		return fmt.Errorf("failed to reach Notion MCP: %w", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if resp.StatusCode == 401 {
 		endpoints, err := oauth.DiscoverFromResponse(resp)
@@ -212,6 +213,7 @@ func verifyTokenFile(tokenFile string, log loggerv2.Logger) error {
 	}
 
 	// Check file contents
+	//nolint:gosec // G304: Test file inclusion
 	data, err := os.ReadFile(tokenFile)
 	if err != nil {
 		return fmt.Errorf("failed to read token file: %w", err)

@@ -594,34 +594,3 @@ func (a *Agent) handleContextCancellation(ctx context.Context, turn int, startTi
 	a.EmitTypedEvent(ctx, events.NewContextCancelledEvent(turn, err.Error(), time.Since(startTime)))
 	return err
 }
-
-// detectProviderFromModelID detects the provider based on the model ID
-func detectProviderFromModelID(modelID string) llm.Provider {
-	// OpenAI models: gpt-*, gpt-4*, gpt-3*, o3*, o4*
-	if strings.HasPrefix(modelID, "gpt-") || strings.HasPrefix(modelID, "o3") || strings.HasPrefix(modelID, "o4") {
-		return llm.ProviderOpenAI
-	}
-
-	// Bedrock models: us.anthropic.* (Bedrock-specific prefix)
-	if strings.HasPrefix(modelID, "us.anthropic.") {
-		return llm.ProviderBedrock
-	}
-
-	// Anthropic models: claude-* (for direct API, not Bedrock)
-	if strings.HasPrefix(modelID, "claude-") {
-		return llm.ProviderAnthropic
-	}
-
-	// Vertex/Gemini models: gemini-* (Google Vertex AI)
-	if strings.HasPrefix(modelID, "gemini-") {
-		return llm.ProviderVertex
-	}
-
-	// OpenRouter models: various model names with "/" separator
-	if strings.Contains(modelID, "/") {
-		return llm.ProviderOpenRouter
-	}
-
-	// Default to Bedrock for unknown models (conservative approach)
-	return llm.ProviderBedrock
-}

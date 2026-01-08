@@ -221,6 +221,7 @@ func DiscoverFromWellKnown(serverURL string) (*OAuthEndpoints, error) {
 // FetchProtectedResourceMetadata fetches the OAuth 2.0 Protected Resource Metadata (RFC 9728)
 // from the given resource_metadata URL
 func FetchProtectedResourceMetadata(resourceMetadataURL string) (*ProtectedResourceMetadata, error) {
+	//nolint:gosec // G107: Discovery URLs are dynamic by design
 	resp, err := http.Get(resourceMetadataURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch protected resource metadata: %w", err)
@@ -291,6 +292,7 @@ func DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *Au
 
 // fetchAuthServerMetadataFromURL fetches auth server metadata from a specific URL
 func fetchAuthServerMetadataFromURL(wellKnownURL string) (*AuthServerMetadata, error) {
+	//nolint:gosec // G107: Discovery URLs are dynamic by design
 	resp, err := http.Get(wellKnownURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch well-known metadata: %w", err)
@@ -326,6 +328,7 @@ func FetchAuthServerMetadata(serverURL string) (*AuthServerMetadata, error) {
 	wellKnownURL := baseURL + "/.well-known/oauth-authorization-server"
 
 	// Try to fetch the metadata
+	//nolint:gosec // G107: Discovery URLs are dynamic by design
 	resp, err := http.Get(wellKnownURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch well-known metadata: %w", err)
@@ -392,6 +395,7 @@ func RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrati
 	}
 
 	// Send POST request to registration endpoint
+	//nolint:gosec // G107: Discovery URLs are dynamic by design
 	resp, err := http.Post(registrationEndpoint, "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to send registration request: %w", err)
