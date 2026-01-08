@@ -535,6 +535,32 @@ func WithServerName(serverName string) AgentOption {
 	}
 }
 
+// WithSessionID sets the session ID for connection sharing across agents.
+//
+// When set: MCP connections are managed by SessionConnectionRegistry and persist across
+// multiple agents with the same SessionID. Agent.Close() does NOT close connections.
+// Call CloseSession(sessionID) explicitly when the workflow/conversation ends.
+//
+// When empty (default): Legacy behavior - each agent creates and owns its connections,
+// which are closed when Agent.Close() is called.
+//
+// Usage:
+//
+//	// Create agents with shared session
+//	agent1, _ := NewSimpleAgent(ctx, llm, config, WithSessionID("workflow-123"))
+//	agent1.Close() // Connections preserved
+//
+//	agent2, _ := NewSimpleAgent(ctx, llm, config, WithSessionID("workflow-123"))
+//	agent2.Close() // Connections still preserved
+//
+//	// At workflow end
+//	CloseSession("workflow-123") // Now connections are closed
+func WithSessionID(sessionID string) AgentOption {
+	return func(a *Agent) {
+		a.SessionID = sessionID
+	}
+}
+
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
 // It is the central component that orchestrates interactions between the Large Language Model (LLM),
 // Model Context Protocol (MCP) servers, and various tools.
@@ -675,6 +701,12 @@ type Agent struct {
 	// When enabled: Skips cache lookup and always performs fresh connections
 	// When disabled (default): Uses cache to speed up connection establishment (60-85% faster)
 	DisableCache bool
+
+	// Session-scoped connection management
+	// When set: Connections are stored in SessionConnectionRegistry and shared across agents with same SessionID
+	//           Agent.Close() does NOT close connections - call CloseSession(sessionID) at workflow end
+	// When empty: Legacy behavior - each agent creates/owns its connections, closed on Agent.Close()
+	SessionID string
 
 	// Streaming configuration
 	// When enabled: LLM text responses are streamed incrementally with events
@@ -991,15 +1023,35 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	setCodeGenDuration := time.Since(setCodeGenStartTime)
 	logger.Debug("Code generation enabled set", loggerv2.String("duration", setCodeGenDuration.String()))
 
-	logger.Info("🔍 [DEBUG] NewAgent: About to call NewAgentConnection", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.DisableCache))
+	logger.Info("🔍 [DEBUG] NewAgent: About to call NewAgentConnection", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.DisableCache), loggerv2.String("session_id", ag.SessionID))
 	connectionStartTime := time.Now()
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+
+	// Check if session-scoped connection management is enabled
+	var clients map[string]mcpclient.ClientInterface
+	var toolToServer map[string]string
+	var allLLMTools []llmtypes.Tool
+	var servers []string
+	var prompts map[string][]mcp.Prompt
+	var resources map[string][]mcp.Resource
+	var systemPrompt string
+
+	if ag.SessionID != "" {
+		// Use session registry - connections are shared and persist until CloseSession is called
+		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+	} else {
+		// Legacy behavior - connections are created fresh and owned by this agent
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+	}
+
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
 		logger.Error("❌ [DEBUG] NewAgent: NewAgentConnection failed", err, loggerv2.String("duration", connectionDuration.String()), loggerv2.String("server_name", serverName))
 		return nil, err
 	}
-	logger.Info("✅ [DEBUG] NewAgent: NewAgentConnection completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)))
+	logger.Info("✅ [DEBUG] NewAgent: NewAgentConnection completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)), loggerv2.String("session_id", ag.SessionID))
 
 	// Use first client for legacy compatibility
 	var firstClient mcpclient.ClientInterface
@@ -2060,7 +2112,27 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		ag.TraceID = observability.TraceID(fmt.Sprintf("agent-session-%s-%d", modelID, time.Now().UnixNano()))
 	}
 
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+	// Check if session-scoped connection management is enabled
+	var clients map[string]mcpclient.ClientInterface
+	var toolToServer map[string]string
+	var allLLMTools []llmtypes.Tool
+	var servers []string
+	var prompts map[string][]mcp.Prompt
+	var resources map[string][]mcp.Resource
+	var systemPrompt string
+	var err error
+
+	if ag.SessionID != "" {
+		// Use session registry - connections are shared and persist until CloseSession is called
+		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+	} else {
+		// Legacy behavior - connections are created fresh and owned by this agent
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -2362,6 +2434,17 @@ func (a *Agent) Close() {
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
 
+	// Check if using session-scoped connections
+	if a.SessionID != "" {
+		// Session-scoped mode: connections are shared and managed by session registry
+		// Do NOT close connections here - they persist until CloseSession(sessionID) is called
+		a.Logger.Info("Agent closed (session-scoped mode: connections persist in session registry)",
+			loggerv2.String("session_id", a.SessionID),
+			loggerv2.Int("client_count", len(a.Clients)))
+		return
+	}
+
+	// Legacy mode: agent owns its connections, close them on agent close
 	// Close all clients in the map
 	for serverName, client := range a.Clients {
 		if client != nil {

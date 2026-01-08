@@ -318,7 +318,7 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 // getEffectiveLLMConfig returns a unified LLM configuration, compatible with legacy settings
 func (a *Agent) getEffectiveLLMConfig() AgentLLMConfiguration {
 	// If the new config is populated, use it
-	if a.LLMConfig.Primary.ModelID != "" {
+	if a.LLMConfig.Primary.ModelID != "" && a.LLMConfig.Primary.Provider != "" {
 		return a.LLMConfig
 	}
 
