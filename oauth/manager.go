@@ -233,7 +233,7 @@ func (m *Manager) StartAuthFlow(ctx context.Context) (*oauth2.Token, error) {
 
 	token, err := m.oauth2Config.Exchange(ctx, code, tokenOptions...)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCodeExchange, err)
+		return nil, fmt.Errorf("%w: %w", ErrCodeExchange, err)
 	}
 
 	m.logger.Info("Token obtained successfully",
@@ -255,7 +255,7 @@ func (m *Manager) refreshToken(ctx context.Context, token *oauth2.Token) (*oauth
 	tokenSource := m.oauth2Config.TokenSource(ctx, token)
 	newToken, err := tokenSource.Token()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTokenExpired, err)
+		return nil, fmt.Errorf("%w: %w", ErrTokenExpired, err)
 	}
 
 	// Save refreshed token

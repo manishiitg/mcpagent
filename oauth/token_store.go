@@ -78,7 +78,7 @@ func (ts *TokenStore) Load() (*oauth2.Token, error) {
 	// Unmarshal token
 	var token oauth2.Token
 	if err := json.Unmarshal(data, &token); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidTokenFile, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidTokenFile, err)
 	}
 
 	return &token, nil
