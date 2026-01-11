@@ -24,9 +24,10 @@ func GetOrCreateMCPClient(ctx context.Context, serverName, configPath string, lo
 		nil, // No LLM needed for tool execution
 		serverName,
 		configPath,
-		nil, // No tracers needed
+		nil,   // No tracers needed
 		logger,
 		false, // disableCache - use cache by default for executor
+		nil,   // No runtime overrides needed for executor
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connection for server %s: %w", serverName, err)

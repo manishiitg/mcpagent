@@ -12,8 +12,11 @@ import (
 
 // GetCodeExecutionInstructions returns the code execution mode instructions section
 // This can be reused by agents that need to include code execution guidance in their prompts
-func GetCodeExecutionInstructions() string {
-	return `**CODE EXECUTION MODE - Access MCP Servers via Go Code:**
+// workspacePath: the actual workspace path to substitute in examples (e.g., "Workflow/runs/iteration-1/execution")
+// If workspacePath is empty (chat mode), workspace-related instructions are excluded
+func GetCodeExecutionInstructions(workspacePath string) string {
+	// Base instructions (always included)
+	baseInstructions := `**CODE EXECUTION MODE - Access MCP Servers via Go Code:**
 
 {{TOOL_STRUCTURE}}
 
@@ -27,10 +30,17 @@ func GetCodeExecutionInstructions() string {
 - ✅ **MUST have package main declaration**
 - ✅ **Use fmt.Println()/fmt.Printf() to output results**
 - ✅ **Import generated packages** (e.g., import "workspace_tools", import "aws") - go.work is set up automatically
-- ✅ **ALWAYS use discover_code_files FIRST** to see exact function signatures and parameter names
+- ✅ **ALWAYS use discover_code_files FIRST** to see exact function signatures and parameter names`
+
+	// Workspace-specific instructions (only for workflow mode with workspace path)
+	workspaceInstructions := `
 - ❌ **NEVER use Go standard file I/O** (os.WriteFile, os.ReadFile, etc.) - files go to wrong directory
 - ✅ **ALWAYS use workspace_tools package** for file operations (ReadWorkspaceFile, UpdateWorkspaceFile)
-- ✅ **CLI parameters**: Use optional 'args' parameter in write_code (accessible via os.Args[1], os.Args[2], etc.)
+- ✅ **ALWAYS pass WorkspacePath as first arg**: write_code args=["` + workspacePath + `"] → access via os.Args[1] in Go
+- ✅ **ALWAYS use filepath.Join()**: Never hardcode paths. Use filepath.Join(os.Args[1], "step-N/file.json")`
+
+	// Error handling (always included)
+	errorHandling := `
 
 **⚠️ Error Handling Pattern:**
 Functions return only string (no error). Follow this pattern for EVERY tool call:
@@ -41,24 +51,43 @@ Functions return only string (no error). Follow this pattern for EVERY tool call
 
 - **API Errors** (network, HTTP): Functions panic - exceptional cases
 - **Tool Errors**: Returned in result string - examine output to detect errors
-- **✅ ALWAYS print output BEFORE checking errors** - helps discover error patterns
+- **✅ ALWAYS print output BEFORE checking errors** - helps discover error patterns`
+
+	// Workspace-specific error note
+	workspaceErrorNote := `
+- **⚠️ ReadWorkspaceFile PANICS if file missing** - Use ListWorkspaceFiles to verify existence first`
+
+	// Best practices (always included)
+	bestPractices := `
 
 **🔧 Best Practices:**
 - **Debugging**: Use fmt.Printf() liberally to trace execution and print variable values
 - **Complex problems**: Break down into steps, test each tool individually, build incrementally
 - **Multiple tools**: Test tools separately first, then combine once you understand their response patterns
-- **Error recovery**: Use discover_code_files to verify parameter names, check imports/types for build errors
+- **Error recovery**: Use discover_code_files to verify parameter names, check imports/types for build errors`
 
-**Example - Tool Call with Error Handling:**
+	// Workspace example (only for workflow mode)
+	workspaceExample := `
+
+**Example - Tool Call with WorkspacePath (CRITICAL):**
   package main
-  import ("fmt"; "strings"; "workspace_tools")
-  
+  import ("fmt"; "os"; "path/filepath"; "strings"; "workspace_tools")
+
   func main() {
-      // Use discover_code_files to see exact struct definition first!
-      params := workspace_tools.ReadWorkspaceFileParams{
-          Filepath: "data/file.txt",
+      // ✅ CRITICAL: Get workspace path from CLI args (passed via write_code args parameter)
+      if len(os.Args) < 2 {
+          fmt.Println("❌ Error: WorkspacePath required as first argument")
+          os.Exit(1)
       }
-      output := workspace_tools.ReadWorkspaceFile(params)
+      basePath := os.Args[1]  // e.g., "` + workspacePath + `"
+
+      // ✅ CORRECT: Use filepath.Join for all paths (NEVER hardcode full paths)
+      inputPath := filepath.Join(basePath, "step-1/credentials.json")
+
+      // Use discover_code_files to see exact struct definition first!
+      output := workspace_tools.ReadWorkspaceFile(workspace_tools.ReadWorkspaceFileParams{
+          Filepath: inputPath,
+      })
       fmt.Printf("Tool output: %%s\n", output)
       if strings.HasPrefix(output, "Error:") {
           fmt.Printf("❌ Error: %%s\n", output)
@@ -67,14 +96,18 @@ Functions return only string (no error). Follow this pattern for EVERY tool call
       fmt.Printf("✅ Success!\n")
   }
 
+  // ⚠️ Call this with: write_code(code="...", args=["` + workspacePath + `"])
+
 **Example - File Operations (CRITICAL):**
   package main
-  import ("fmt"; "strings"; "workspace_tools")
-  
+  import ("fmt"; "os"; "path/filepath"; "strings"; "workspace_tools")
+
   func main() {
-      // ✅ CORRECT: Use workspace_tools for file operations
+      basePath := os.Args[1]  // ✅ ALWAYS get from CLI args
+      outputPath := filepath.Join(basePath, "step-2/results.json")  // ✅ ALWAYS use filepath.Join
+
       result := workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{
-          Filepath: "data/results.json",
+          Filepath: outputPath,
           Content:  "{\"status\": \"success\"}",
       })
       fmt.Printf("Tool output: %%s\n", result)
@@ -82,17 +115,59 @@ Functions return only string (no error). Follow this pattern for EVERY tool call
           fmt.Printf("❌ Error: %%s\n", result)
           return
       }
-      
-      // ❌ WRONG: NEVER use os.WriteFile, os.ReadFile, etc. - files go to wrong directory!
-  }
+
+      // ❌ WRONG: NEVER hardcode paths like "` + workspacePath + `/step-2/file.json"
+      // ❌ WRONG: NEVER use os.WriteFile, os.ReadFile - files go to wrong directory!
+  }`
+
+	// Simple example for chat mode (no workspace)
+	simpleExample := `
+
+**Example - Basic Tool Call:**
+  package main
+  import ("fmt"; "strings"; "your_server_tools")
+
+  func main() {
+      // Use discover_code_files to see exact struct definition first!
+      output := your_server_tools.YourToolFunction(your_server_tools.YourToolParams{
+          ParamName: "value",
+      })
+      fmt.Printf("Tool output: %%s\n", output)
+      if strings.HasPrefix(output, "Error:") {
+          fmt.Printf("❌ Error: %%s\n", output)
+          return
+      }
+      fmt.Printf("✅ Success!\n")
+  }`
+
+	// Common mistakes base (always included)
+	commonMistakesBase := `
 
 **🚨 Common Mistakes:**
 - ❌ Checking err != nil (functions return string, no error)
 - ❌ Not printing output before checking errors
 - ❌ Using wrong parameter names - always use discover_code_files first
-- ❌ Using standard Go file I/O - must use workspace_tools package
 - ❌ Writing placeholder code - always implement actual logic
-- ❌ Looping on completion messages - recognize completion and move on`
+- ❌ Looping on completion messages - recognize completion and move on
+- ❌ Wrong imports - use "workspace_tools" NOT "generated/workspace_tools"`
+
+	// Workspace-specific mistakes
+	workspaceMistakes := `
+- ❌ Using standard Go file I/O - must use workspace_tools package
+- ❌ Missing args in write_code - MUST pass args=["` + workspacePath + `"]
+- ❌ Hardcoding paths - NEVER use "Workflow/runs/iteration-X/..." in Go code`
+
+	// Build instructions based on mode
+	var instructions string
+	if workspacePath != "" {
+		// Workflow mode with workspace path
+		instructions = baseInstructions + workspaceInstructions + errorHandling + workspaceErrorNote + bestPractices + workspaceExample + commonMistakesBase + workspaceMistakes
+	} else {
+		// Chat mode without workspace path
+		instructions = baseInstructions + errorHandling + bestPractices + simpleExample + commonMistakesBase
+	}
+
+	return instructions
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
@@ -136,10 +211,12 @@ When answering questions:
 </core_principles>`
 	} else {
 		corePrinciplesSection = `<core_principles>
-When answering questions:
-1. **Think** about what information/actions are needed
-2. **Use tools** to gather information
-3. **Provide helpful responses** based on tool results
+**Your Goal:** Complete the user's request autonomously.
+
+**Operating Rules:**
+1. **Be Proactive:** Do not ask for permission to use tools. Just use them.
+2. **Chain Actions:** If a tool output leads to a next step, take it immediately. Do not stop to report intermediate progress unless asked.
+3. **Solve Fully:** strive to reach the final answer or state before returning control to the user.
 </core_principles>`
 	}
 
@@ -147,7 +224,9 @@ When answering questions:
 	var toolUsageSection string
 	if useCodeExecutionMode {
 		// Get code execution instructions and replace {{TOOL_STRUCTURE}} placeholder
-		codeExecutionInstructions := GetCodeExecutionInstructions()
+		// Note: workspace path is passed as empty here - it will be substituted by workflow agents
+		// that have access to the actual workspace path in their template processing
+		codeExecutionInstructions := GetCodeExecutionInstructions("")
 
 		// Replace {{TOOL_STRUCTURE}} placeholder with actual tool structure
 		if toolStructureJSON != "" {

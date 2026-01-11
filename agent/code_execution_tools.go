@@ -733,6 +733,9 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
 	cmd.Dir = workspaceDir
 
+	// SECURITY: Start with a safe, empty environment
+	cmd.Env = BuildSafeEnvironment()
+
 	// 🔧 FIX: Only check for go.work if we have generated packages
 	// go.work is only needed when importing generated packages, not for standard library
 	if hasGeneratedPackages {
@@ -744,7 +747,7 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 			// go.work exists, set GOWORK to use it explicitly
 			absGoWorkPath, err := filepath.Abs(goWorkPath)
 			if err == nil {
-				cmd.Env = append(os.Environ(), fmt.Sprintf("GOWORK=%s", absGoWorkPath))
+				cmd.Env = append(cmd.Env, fmt.Sprintf("GOWORK=%s", absGoWorkPath))
 				if a.Logger != nil {
 					a.Logger.Info("🔧 Set GOWORK environment variable", loggerv2.String("path", absGoWorkPath))
 				}
@@ -774,11 +777,19 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 	// Set environment variables
 	// Note: We don't set GOWORK explicitly - since cmd.Dir is set to workspaceDir,
 	// Go will automatically find go.work in that directory if it exists
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(cmd.Env,
 		"MCP_API_URL="+mcpAPIURL,
 		// Note: MCP_SERVER_NAME is NOT needed - server name is hardcoded in generated functions
 	)
-	// Note: MCP_SERVER_NAME is NOT needed - server name is hardcoded in generated functions
+
+	// 🔧 Pass session ID for MCP connection reuse (e.g., Playwright browser sharing)
+	// When set, the executor will use session registry instead of creating new connections
+	if a.SessionID != "" {
+		cmd.Env = append(cmd.Env, "MCP_SESSION_ID="+a.SessionID)
+		if a.Logger != nil {
+			a.Logger.Info("🔗 Set MCP_SESSION_ID for code execution", loggerv2.String("session_id", a.SessionID))
+		}
+	}
 
 	// Capture combined output (stdout + stderr)
 	output, err := cmd.CombinedOutput()
@@ -1243,8 +1254,41 @@ func isPathAllowed(inputPath string, allowedPaths []string) bool {
 			return true
 		}
 
-		// Also check if relative input is under allowed path
+		// For relative input paths, check if they match the suffix of an allowed path
+		// This handles cases like input "execution/step-1" matching allowed ".../execution"
 		if !filepath.IsAbs(inputPath) {
+			// Split both paths into segments
+			inputSegments := strings.Split(inputPath, string(filepath.Separator))
+			allowedSegments := strings.Split(allowedPath, string(filepath.Separator))
+
+			// Get the first segment of input (e.g., "execution" from "execution/step-1")
+			if len(inputSegments) > 0 && len(allowedSegments) > 0 {
+				inputFirst := inputSegments[0]
+				allowedLast := allowedSegments[len(allowedSegments)-1]
+
+				// If input's first segment matches allowed path's last segment,
+				// the input is within the allowed path (or a subdirectory)
+				if inputFirst == allowedLast {
+					return true
+				}
+
+				// Also check if input matches multiple trailing segments of allowed path
+				// e.g., input "runs/iteration-4/execution" matches ".../runs/iteration-4/execution"
+				for i := 0; i <= len(allowedSegments)-len(inputSegments); i++ {
+					match := true
+					for j := 0; j < len(inputSegments); j++ {
+						if allowedSegments[i+j] != inputSegments[j] {
+							match = false
+							break
+						}
+					}
+					if match {
+						return true
+					}
+				}
+			}
+
+			// Legacy check: base name matching (kept for backward compatibility)
 			allowedBase := filepath.Base(allowedPath)
 			if strings.HasPrefix(inputPath, allowedBase+"/") || inputPath == allowedBase {
 				return true
@@ -1691,4 +1735,28 @@ func (a *Agent) syncGoWorkspace(workspaceDir string) error {
 	}
 
 	return nil
+}
+
+// BuildSafeEnvironment creates a minimal, safe environment for shell commands
+// Only includes essential variables, excludes all secrets
+// Exported so it can be used by workspace security and other packages
+func BuildSafeEnvironment() []string {
+	return []string{
+		// Essential shell variables
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/tmp",
+		"USER=agent",
+		"SHELL=/bin/sh",
+
+		// Locale settings
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+
+		// DO NOT include:
+		// - DATABASE_URL
+		// - API_KEYS
+		// - JWT_SECRET
+		// - GITHUB_TOKEN
+		// - Any other secrets from parent process
+	}
 }

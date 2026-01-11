@@ -1,0 +1,216 @@
+package mcpclient
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	loggerv2 "mcpagent/logger/v2"
+)
+
+// SessionConnectionRegistry manages MCP connections scoped to session lifecycle.
+// Uses sync.Map for lock-free concurrent access.
+//
+// Design principles:
+// - Connections are created once per (sessionID, serverName) pair
+// - Multiple agents in same session share connections
+// - Connections persist until CloseSession() is explicitly called
+//
+// Usage:
+//
+//	registry := GetSessionRegistry()
+//	client, wasCreated, err := registry.GetOrCreateConnection(ctx, "session-123", "playwright", config, logger)
+//	// ... use client ...
+//	registry.CloseSession("session-123") // At workflow end
+type SessionConnectionRegistry struct {
+	// sessionID -> *sessionConnections
+	sessions sync.Map
+}
+
+// sessionConnections holds all connections for a single session
+type sessionConnections struct {
+	// serverName -> ClientInterface
+	clients sync.Map
+	// Track creation time for debugging
+	createdAt time.Time
+}
+
+// Global singleton registry
+var globalSessionRegistry = &SessionConnectionRegistry{}
+
+// GetSessionRegistry returns the global session connection registry
+func GetSessionRegistry() *SessionConnectionRegistry {
+	return globalSessionRegistry
+}
+
+// GetOrCreateConnection returns existing connection or creates new one.
+// Thread-safe via sync.Map.LoadOrStore pattern.
+//
+// Parameters:
+//   - ctx: context for connection timeout
+//   - sessionID: unique identifier for the session (workflow/conversation)
+//   - serverName: MCP server name (e.g., "playwright", "context7")
+//   - config: MCP server configuration
+//   - logger: logger for connection events
+//
+// Returns:
+//   - ClientInterface: the connection (new or existing)
+//   - wasCreated: true if new connection was created, false if reused
+//   - error: connection error if creation failed
+func (r *SessionConnectionRegistry) GetOrCreateConnection(
+	ctx context.Context,
+	sessionID string,
+	serverName string,
+	config MCPServerConfig,
+	logger loggerv2.Logger,
+) (ClientInterface, bool, error) {
+
+	// Get or create session's connection map
+	sessionConnsRaw, _ := r.sessions.LoadOrStore(sessionID, &sessionConnections{
+		createdAt: time.Now(),
+	})
+	sessionConns := sessionConnsRaw.(*sessionConnections)
+
+	// Check if connection already exists for this server
+	if existing, ok := sessionConns.clients.Load(serverName); ok {
+		logger.Info(fmt.Sprintf("Reusing existing connection for session=%s server=%s", sessionID, serverName))
+		return existing.(ClientInterface), false, nil
+	}
+
+	// Create new connection
+	logger.Info(fmt.Sprintf("Creating new connection for session=%s server=%s", sessionID, serverName))
+	client := New(config, logger)
+	if err := client.ConnectWithRetry(ctx); err != nil {
+		return nil, false, fmt.Errorf("failed to connect to %s: %w", serverName, err)
+	}
+
+	// Store using LoadOrStore to handle race condition
+	// If another goroutine created it first, use theirs
+	actual, loaded := sessionConns.clients.LoadOrStore(serverName, client)
+	if loaded {
+		// Another goroutine created it first, close ours and use theirs
+		logger.Info(fmt.Sprintf("Race condition: closing duplicate connection for session=%s server=%s", sessionID, serverName))
+		_ = client.Close()
+		return actual.(ClientInterface), false, nil
+	}
+
+	logger.Info(fmt.Sprintf("New connection established for session=%s server=%s", sessionID, serverName))
+	return client, true, nil
+}
+
+// GetSessionConnections returns all connections for a session.
+// Used when agent needs to access all its MCP clients.
+func (r *SessionConnectionRegistry) GetSessionConnections(sessionID string) map[string]ClientInterface {
+	sessionConnsRaw, ok := r.sessions.Load(sessionID)
+	if !ok {
+		return nil
+	}
+
+	sessionConns := sessionConnsRaw.(*sessionConnections)
+	result := make(map[string]ClientInterface)
+	sessionConns.clients.Range(func(key, value interface{}) bool {
+		result[key.(string)] = value.(ClientInterface)
+		return true
+	})
+	return result
+}
+
+// HasSession checks if a session exists in the registry
+func (r *SessionConnectionRegistry) HasSession(sessionID string) bool {
+	_, ok := r.sessions.Load(sessionID)
+	return ok
+}
+
+// CloseSession closes all connections for a session and removes it from registry.
+// Should be called when workflow/conversation ends.
+//
+// This is the ONLY way connections get closed when using sessions.
+// Agent.Close() does NOT close connections when SessionID is set.
+func (r *SessionConnectionRegistry) CloseSession(sessionID string) {
+	sessionConnsRaw, ok := r.sessions.LoadAndDelete(sessionID)
+	if !ok {
+		return
+	}
+
+	sessionConns := sessionConnsRaw.(*sessionConnections)
+	sessionConns.clients.Range(func(key, value interface{}) bool {
+		serverName := key.(string)
+		if client, ok := value.(ClientInterface); ok {
+			fmt.Printf("Closing connection for session=%s server=%s\n", sessionID, serverName)
+			_ = client.Close()
+		}
+		return true
+	})
+}
+
+// CloseSessionServer closes a specific server connection within a session.
+// Useful for targeted cleanup (e.g., close browser but keep other connections).
+func (r *SessionConnectionRegistry) CloseSessionServer(sessionID, serverName string) {
+	sessionConnsRaw, ok := r.sessions.Load(sessionID)
+	if !ok {
+		return
+	}
+
+	sessionConns := sessionConnsRaw.(*sessionConnections)
+	if clientRaw, ok := sessionConns.clients.LoadAndDelete(serverName); ok {
+		if client, ok := clientRaw.(ClientInterface); ok {
+			_ = client.Close()
+		}
+	}
+}
+
+// ListSessions returns all active session IDs (for debugging)
+func (r *SessionConnectionRegistry) ListSessions() []string {
+	var sessions []string
+	r.sessions.Range(func(key, value interface{}) bool {
+		sessions = append(sessions, key.(string))
+		return true
+	})
+	return sessions
+}
+
+// SessionStats returns statistics about a session (for debugging)
+type SessionStats struct {
+	SessionID       string
+	ConnectionCount int
+	ServerNames     []string
+	CreatedAt       time.Time
+}
+
+// GetSessionStats returns statistics about a session's connections.
+// Useful for debugging and monitoring.
+func (r *SessionConnectionRegistry) GetSessionStats(sessionID string) *SessionStats {
+	sessionConnsRaw, ok := r.sessions.Load(sessionID)
+	if !ok {
+		return nil
+	}
+
+	sessionConns := sessionConnsRaw.(*sessionConnections)
+	stats := &SessionStats{
+		SessionID: sessionID,
+		CreatedAt: sessionConns.createdAt,
+	}
+
+	sessionConns.clients.Range(func(key, value interface{}) bool {
+		stats.ServerNames = append(stats.ServerNames, key.(string))
+		stats.ConnectionCount++
+		return true
+	})
+
+	return stats
+}
+
+// CloseAllSessions closes all sessions and their connections.
+// Useful for graceful shutdown.
+func (r *SessionConnectionRegistry) CloseAllSessions() {
+	var sessionsToClose []string
+	r.sessions.Range(func(key, value interface{}) bool {
+		sessionsToClose = append(sessionsToClose, key.(string))
+		return true
+	})
+
+	for _, sessionID := range sessionsToClose {
+		r.CloseSession(sessionID)
+	}
+}

@@ -424,6 +424,25 @@ func WithCrossProviderFallback(crossProviderFallback *CrossProviderFallback) Age
 	}
 }
 
+// WithLLMConfig sets the full LLM configuration (primary + fallbacks).
+// This replaces provider, ModelID, and CrossProviderFallback legacy fields.
+func WithLLMConfig(config AgentLLMConfiguration) AgentOption {
+	return func(a *Agent) {
+		a.LLMConfig = config
+		// Sync legacy fields for backward compatibility
+		a.ModelID = config.Primary.ModelID
+		a.provider = llm.Provider(config.Primary.Provider)
+	}
+}
+
+// WithAPIKeys sets the API keys for different providers.
+// These keys are used as fallback when per-model API keys are not set.
+func WithAPIKeys(keys *AgentAPIKeys) AgentOption {
+	return func(a *Agent) {
+		a.APIKeys = keys
+	}
+}
+
 // WithSelectedTools restricts the agent to a specific subset of tools.
 //
 // Parameters:
@@ -477,6 +496,27 @@ func WithDisableCache(disable bool) AgentOption {
 	}
 }
 
+// WithRuntimeOverrides sets runtime configuration overrides for MCP servers.
+//
+// This allows workflow-specific modifications to server configs, such as:
+//   - Changing output directories per workflow run
+//   - Adding workflow-specific environment variables
+//   - Appending additional command arguments
+//
+// Example:
+//
+//	overrides := mcpclient.RuntimeOverrides{
+//	    "playwright": {
+//	        ArgsReplace: map[string]string{"--output-dir": "/path/to/workflow/downloads"},
+//	    },
+//	}
+//	agent, _ := mcpagent.NewAgent(ctx, llm, configPath, mcpagent.WithRuntimeOverrides(overrides))
+func WithRuntimeOverrides(overrides mcpclient.RuntimeOverrides) AgentOption {
+	return func(a *Agent) {
+		a.RuntimeOverrides = overrides
+	}
+}
+
 // WithStreaming enables streaming for LLM text responses.
 //
 // When enabled, text content is streamed incrementally with StreamingChunkEvent events.
@@ -513,6 +553,32 @@ func WithStreamingCallback(callback func(chunk llmtypes.StreamChunk)) AgentOptio
 func WithServerName(serverName string) AgentOption {
 	return func(a *Agent) {
 		a.serverName = serverName
+	}
+}
+
+// WithSessionID sets the session ID for connection sharing across agents.
+//
+// When set: MCP connections are managed by SessionConnectionRegistry and persist across
+// multiple agents with the same SessionID. Agent.Close() does NOT close connections.
+// Call CloseSession(sessionID) explicitly when the workflow/conversation ends.
+//
+// When empty (default): Legacy behavior - each agent creates and owns its connections,
+// which are closed when Agent.Close() is called.
+//
+// Usage:
+//
+//	// Create agents with shared session
+//	agent1, _ := NewSimpleAgent(ctx, llm, config, WithSessionID("workflow-123"))
+//	agent1.Close() // Connections preserved
+//
+//	agent2, _ := NewSimpleAgent(ctx, llm, config, WithSessionID("workflow-123"))
+//	agent2.Close() // Connections still preserved
+//
+//	// At workflow end
+//	CloseSession("workflow-123") // Now connections are closed
+func WithSessionID(sessionID string) AgentOption {
+	return func(a *Agent) {
+		a.SessionID = sessionID
 	}
 }
 
@@ -657,6 +723,16 @@ type Agent struct {
 	// When disabled (default): Uses cache to speed up connection establishment (60-85% faster)
 	DisableCache bool
 
+	// Runtime MCP configuration overrides
+	// Allows workflow-specific modifications to server configs (e.g., output directories)
+	RuntimeOverrides mcpclient.RuntimeOverrides
+
+	// Session-scoped connection management
+	// When set: Connections are stored in SessionConnectionRegistry and shared across agents with same SessionID
+	//           Agent.Close() does NOT close connections - call CloseSession(sessionID) at workflow end
+	// When empty: Legacy behavior - each agent creates/owns its connections, closed on Agent.Close()
+	SessionID string
+
 	// Streaming configuration
 	// When enabled: LLM text responses are streamed incrementally with events
 	// Tool calls are processed normally (no streaming events)
@@ -701,6 +777,28 @@ type Agent struct {
 	// Context window is based on input tokens only, not output tokens.
 	currentContextWindowUsage int
 	modelContextWindow        int // Cached model context window size (0 = not cached yet)
+	
+	// LLM Configuration
+	LLMConfig AgentLLMConfiguration
+}
+
+// LLMModel represents a single LLM configuration
+type LLMModel struct {
+	Provider string  `json:"provider"` // "anthropic", "openai", "bedrock", etc.
+	ModelID  string  `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
+
+	// Auth per model
+	APIKey *string `json:"api_key,omitempty"` // For OpenRouter, OpenAI, Anthropic, Vertex
+	Region *string `json:"region,omitempty"`  // For Bedrock
+
+	// Model-specific options
+	Temperature *float64 `json:"temperature,omitempty"` // Override default temperature (0.0-1.0)
+}
+
+// AgentLLMConfiguration holds the primary and fallback LLM configurations
+type AgentLLMConfiguration struct {
+	Primary   LLMModel   `json:"primary"`
+	Fallbacks []LLMModel `json:"fallbacks"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -911,14 +1009,20 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.TraceID = observability.TraceID(uuid.New().String())
 	}
 
+	logger.Info("🔍 [DEBUG] NewAgent: Starting initialization", loggerv2.String("config_path", configPath), loggerv2.String("server_name", serverName))
 	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
 	logger.Info("NewAgent initialization", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
 
 	// Load merged MCP servers configuration (base + user)
+	logger.Info("🔍 [DEBUG] NewAgent: About to load merged MCP config", loggerv2.String("config_path", configPath))
+	configLoadStartTime := time.Now()
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
+	configLoadDuration := time.Since(configLoadStartTime)
 	if err != nil {
+		logger.Error("❌ [DEBUG] NewAgent: Failed to load merged MCP config", err, loggerv2.String("duration", configLoadDuration.String()))
 		return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
+	logger.Info("✅ [DEBUG] NewAgent: Merged MCP config loaded successfully", loggerv2.String("duration", configLoadDuration.String()), loggerv2.Int("server_count", len(config.MCPServers)))
 
 	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
 	for name := range config.MCPServers {
@@ -944,14 +1048,35 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	setCodeGenDuration := time.Since(setCodeGenStartTime)
 	logger.Debug("Code generation enabled set", loggerv2.String("duration", setCodeGenDuration.String()))
 
-	logger.Debug("Calling NewAgentConnection", loggerv2.String("server_name", serverName))
+	logger.Info("🔍 [DEBUG] NewAgent: About to call NewAgentConnection", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.DisableCache), loggerv2.String("session_id", ag.SessionID))
 	connectionStartTime := time.Now()
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+
+	// Check if session-scoped connection management is enabled
+	var clients map[string]mcpclient.ClientInterface
+	var toolToServer map[string]string
+	var allLLMTools []llmtypes.Tool
+	var servers []string
+	var prompts map[string][]mcp.Prompt
+	var resources map[string][]mcp.Resource
+	var systemPrompt string
+
+	if ag.SessionID != "" {
+		// Use session registry - connections are shared and persist until CloseSession is called
+		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+	} else {
+		// Legacy behavior - connections are created fresh and owned by this agent
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+	}
+
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
+		logger.Error("❌ [DEBUG] NewAgent: NewAgentConnection failed", err, loggerv2.String("duration", connectionDuration.String()), loggerv2.String("server_name", serverName))
 		return nil, err
 	}
-	logger.Info("NewAgentConnection completed", loggerv2.String("duration", connectionDuration.String()))
+	logger.Info("✅ [DEBUG] NewAgent: NewAgentConnection completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)), loggerv2.String("session_id", ag.SessionID))
 
 	// Use first client for legacy compatibility
 	var firstClient mcpclient.ClientInterface
@@ -1344,8 +1469,23 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	a.tokenTrackingMutex.Lock()
 	defer a.tokenTrackingMutex.Unlock()
 
-	// Use unified extraction from multi-llm-provider-go
-	cacheTokens, _, reasoningTokens := extractAllTokenTypes(resp)
+	// Use passed-in cache and reasoning tokens from usageMetrics (preferred)
+	// Fall back to extraction from resp only if passed values are 0
+	// Cache tokens: subset of prompt tokens that were cached (for pricing at lower rate)
+	// Reasoning tokens: part of output (total output = completion + reasoning)
+	cacheTokens := usageMetrics.CacheTokens
+	reasoningTokens := usageMetrics.ReasoningTokens
+
+	// If not passed in usageMetrics, extract from response as fallback
+	if cacheTokens == 0 || reasoningTokens == 0 {
+		extractedCache, _, extractedReasoning := extractAllTokenTypes(resp)
+		if cacheTokens == 0 {
+			cacheTokens = extractedCache
+		}
+		if reasoningTokens == 0 {
+			reasoningTokens = extractedReasoning
+		}
+	}
 
 	// Extract cache discount (only available in GenerationInfo)
 	var cacheDiscount float64
@@ -1357,6 +1497,10 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	}
 
 	// Accumulate tokens (only actual values from LLM response)
+	// - PromptTokens: total input tokens (includes cached portion)
+	// - CompletionTokens: output tokens (excludes reasoning tokens)
+	// - CacheTokens: subset of PromptTokens that were cached (for metrics/billing)
+	// - ReasoningTokens: additional output tokens for reasoning (total output = completion + reasoning)
 	a.cumulativePromptTokens += usageMetrics.PromptTokens
 	a.cumulativeCompletionTokens += usageMetrics.CompletionTokens
 	a.cumulativeTotalTokens += usageMetrics.TotalTokens
@@ -1993,7 +2137,27 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		ag.TraceID = observability.TraceID(fmt.Sprintf("agent-session-%s-%d", modelID, time.Now().UnixNano()))
 	}
 
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+	// Check if session-scoped connection management is enabled
+	var clients map[string]mcpclient.ClientInterface
+	var toolToServer map[string]string
+	var allLLMTools []llmtypes.Tool
+	var servers []string
+	var prompts map[string][]mcp.Prompt
+	var resources map[string][]mcp.Resource
+	var systemPrompt string
+	var err error
+
+	if ag.SessionID != "" {
+		// Use session registry - connections are shared and persist until CloseSession is called
+		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+	} else {
+		// Legacy behavior - connections are created fresh and owned by this agent
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -2295,6 +2459,17 @@ func (a *Agent) Close() {
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
 
+	// Check if using session-scoped connections
+	if a.SessionID != "" {
+		// Session-scoped mode: connections are shared and managed by session registry
+		// Do NOT close connections here - they persist until CloseSession(sessionID) is called
+		a.Logger.Info("Agent closed (session-scoped mode: connections persist in session registry)",
+			loggerv2.String("session_id", a.SessionID),
+			loggerv2.Int("client_count", len(a.Clients)))
+		return
+	}
+
+	// Legacy mode: agent owns its connections, close them on agent close
 	// Close all clients in the map
 	for serverName, client := range a.Clients {
 		if client != nil {

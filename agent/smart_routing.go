@@ -371,10 +371,7 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 
 	// Use GenerateContentWithRetry for automatic fallback support
 	llmCallStart := time.Now()
-	response, usage, err := GenerateContentWithRetry(a, ctx, messages, opts, 0, func(msg string) {
-		// Optional: Could emit streaming events for smart routing if needed
-		// For now, we'll keep it simple since smart routing is typically fast
-	})
+	response, usage, err := GenerateContentWithRetry(a, ctx, messages, opts, 0)
 	llmCallDuration := time.Since(llmCallStart)
 
 	// Post-LLM call debugging
