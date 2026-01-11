@@ -18,7 +18,7 @@
     },
     "awslabs.aws-pricing-mcp-server": {
       "command": "uvx",
-      "args": ["awslabs.aws-pricing-mcp-server@latest"],
+      "args": ["awslabs.aws-pricing-mcp-server"],
       "env": {
         "FASTMCP_LOG_LEVEL": "ERROR",
         "AWS_PROFILE": "default",

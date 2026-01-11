@@ -92,7 +92,71 @@ type MCPServerConfig struct {
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	// OAuth configuration
-	OAuth       *oauth.OAuthConfig `json:"oauth,omitempty"`
+	OAuth *oauth.OAuthConfig `json:"oauth,omitempty"`
+}
+
+// RuntimeConfigOverride allows runtime modification of MCP server configuration
+// This is useful for passing workflow-specific settings like output directories
+type RuntimeConfigOverride struct {
+	// ArgsReplace replaces specific arg values by flag name
+	// e.g., {"--output-dir": "/new/path"} will find "--output-dir" and replace the next arg
+	ArgsReplace map[string]string `json:"args_replace,omitempty"`
+	// ArgsAppend appends additional args to the command
+	ArgsAppend []string `json:"args_append,omitempty"`
+	// EnvOverride adds or overrides environment variables
+	EnvOverride map[string]string `json:"env_override,omitempty"`
+}
+
+// RuntimeOverrides maps server names to their runtime configuration overrides
+type RuntimeOverrides map[string]RuntimeConfigOverride
+
+// ApplyOverride applies a RuntimeConfigOverride to the MCPServerConfig
+// Returns a new MCPServerConfig with the overrides applied (does not modify original)
+func (c MCPServerConfig) ApplyOverride(override RuntimeConfigOverride) MCPServerConfig {
+	// Create a copy of the config
+	newConfig := c
+	newConfig.Args = make([]string, len(c.Args))
+	copy(newConfig.Args, c.Args)
+
+	if c.Env != nil {
+		newConfig.Env = make(map[string]string, len(c.Env))
+		for k, v := range c.Env {
+			newConfig.Env[k] = v
+		}
+	}
+
+	// Apply ArgsReplace - find flag and replace its value
+	for flag, newValue := range override.ArgsReplace {
+		for i := 0; i < len(newConfig.Args); i++ {
+			if newConfig.Args[i] == flag && i+1 < len(newConfig.Args) {
+				// Replace the value after the flag
+				newConfig.Args[i+1] = newValue
+				break
+			}
+			// Also handle --flag=value format
+			if strings.HasPrefix(newConfig.Args[i], flag+"=") {
+				newConfig.Args[i] = flag + "=" + newValue
+				break
+			}
+		}
+	}
+
+	// Apply ArgsAppend
+	if len(override.ArgsAppend) > 0 {
+		newConfig.Args = append(newConfig.Args, override.ArgsAppend...)
+	}
+
+	// Apply EnvOverride
+	if len(override.EnvOverride) > 0 {
+		if newConfig.Env == nil {
+			newConfig.Env = make(map[string]string)
+		}
+		for k, v := range override.EnvOverride {
+			newConfig.Env[k] = v
+		}
+	}
+
+	return newConfig
 }
 
 // GetPoolConfig returns the pool configuration, using defaults if not specified
