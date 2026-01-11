@@ -108,7 +108,7 @@ func testSmartRouting(log loggerv2.Logger) error {
 		},
 		"awslabs.aws-pricing-mcp-server": map[string]interface{}{
 			"command": "uvx",
-			"args":    []interface{}{"awslabs.aws-pricing-mcp-server@latest"},
+			"args":    []interface{}{"awslabs.aws-pricing-mcp-server"},
 			"env": map[string]interface{}{
 				"FASTMCP_LOG_LEVEL": "ERROR",
 				"AWS_PROFILE":       "default",

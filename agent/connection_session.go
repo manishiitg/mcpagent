@@ -63,6 +63,7 @@ func NewAgentConnectionWithSession(
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
 	disableCache bool,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	connectionStartTime := time.Now()
@@ -139,6 +140,18 @@ func NewAgentConnectionWithSession(
 			logger.Warn(fmt.Sprintf("Server %s not found in config, skipping", srvName),
 				loggerv2.Error(err))
 			continue
+		}
+
+		// Apply runtime overrides if provided for this server
+		if runtimeOverrides != nil {
+			if override, hasOverride := runtimeOverrides[srvName]; hasOverride {
+				serverConfig = serverConfig.ApplyOverride(override)
+				logger.Info("Applied runtime overrides to server config",
+					loggerv2.String("server", srvName),
+					loggerv2.Any("args_replace", override.ArgsReplace),
+					loggerv2.Any("args_append", override.ArgsAppend),
+					loggerv2.Any("env_override", override.EnvOverride))
+			}
 		}
 
 		// Get or create connection via registry
