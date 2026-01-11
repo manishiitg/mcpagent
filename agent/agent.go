@@ -496,6 +496,27 @@ func WithDisableCache(disable bool) AgentOption {
 	}
 }
 
+// WithRuntimeOverrides sets runtime configuration overrides for MCP servers.
+//
+// This allows workflow-specific modifications to server configs, such as:
+//   - Changing output directories per workflow run
+//   - Adding workflow-specific environment variables
+//   - Appending additional command arguments
+//
+// Example:
+//
+//	overrides := mcpclient.RuntimeOverrides{
+//	    "playwright": {
+//	        ArgsReplace: map[string]string{"--output-dir": "/path/to/workflow/downloads"},
+//	    },
+//	}
+//	agent, _ := mcpagent.NewAgent(ctx, llm, configPath, mcpagent.WithRuntimeOverrides(overrides))
+func WithRuntimeOverrides(overrides mcpclient.RuntimeOverrides) AgentOption {
+	return func(a *Agent) {
+		a.RuntimeOverrides = overrides
+	}
+}
+
 // WithStreaming enables streaming for LLM text responses.
 //
 // When enabled, text content is streamed incrementally with StreamingChunkEvent events.
@@ -701,6 +722,10 @@ type Agent struct {
 	// When enabled: Skips cache lookup and always performs fresh connections
 	// When disabled (default): Uses cache to speed up connection establishment (60-85% faster)
 	DisableCache bool
+
+	// Runtime MCP configuration overrides
+	// Allows workflow-specific modifications to server configs (e.g., output directories)
+	RuntimeOverrides mcpclient.RuntimeOverrides
 
 	// Session-scoped connection management
 	// When set: Connections are stored in SessionConnectionRegistry and shared across agents with same SessionID
@@ -1039,11 +1064,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		// Use session registry - connections are shared and persist until CloseSession is called
 		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
 		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
 	} else {
 		// Legacy behavior - connections are created fresh and owned by this agent
 		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
 	}
 
 	connectionDuration := time.Since(connectionStartTime)
@@ -2126,11 +2151,11 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		// Use session registry - connections are shared and persist until CloseSession is called
 		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
 		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
 	} else {
 		// Legacy behavior - connections are created fresh and owned by this agent
 		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
 	}
 
 	if err != nil {

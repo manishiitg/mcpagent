@@ -187,6 +187,7 @@ func (e *ComprehensiveCacheEvent) GetParentID() string {
 // GetCachedOrFreshConnection attempts to get MCP connection data from cache first,
 // falling back to fresh connection if cache is unavailable or expired
 // If disableCache is true, skips cache lookup entirely and always performs fresh connections
+// runtimeOverrides allows workflow-specific modifications to server configs (e.g., output directories)
 func GetCachedOrFreshConnection(
 	ctx context.Context,
 	llm llmtypes.Model,
@@ -194,6 +195,7 @@ func GetCachedOrFreshConnection(
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
 	disableCache bool,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (*CachedConnectionResult, error) {
 
 	// Track cache operation start time
@@ -287,7 +289,7 @@ func GetCachedOrFreshConnection(
 		logger.Info("🔍 [DEBUG] GetCachedOrFreshConnection: About to call performFreshConnection", loggerv2.Int("server_count", len(servers)), loggerv2.Any("servers", servers))
 		freshStartTime := time.Now()
 		logger.Info("Calling performFreshConnection", loggerv2.Int("server_count", len(servers)))
-		freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
+		freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger, runtimeOverrides)
 		freshDuration := time.Since(freshStartTime)
 		if err != nil {
 			logger.Error("❌ [DEBUG] GetCachedOrFreshConnection: performFreshConnection failed", err, loggerv2.String("duration", freshDuration.String()))
@@ -536,7 +538,7 @@ func GetCachedOrFreshConnection(
 			nil, // No errors at this point
 		)
 
-		return processCachedData(ctx, llm, cachedData, config, servers, configPath, tracers, logger)
+		return processCachedData(ctx, llm, cachedData, config, servers, configPath, tracers, logger, runtimeOverrides)
 	}
 
 	// SCENARIO 2 & 3: Partial cache or all missed
@@ -553,7 +555,7 @@ func GetCachedOrFreshConnection(
 		result.FreshFallback = true // Indicates hybrid mode
 
 		// Process cached data first
-		cachedResult, err := processCachedData(ctx, llm, cachedData, config, cachedServers, configPath, tracers, logger)
+		cachedResult, err := processCachedData(ctx, llm, cachedData, config, cachedServers, configPath, tracers, logger, runtimeOverrides)
 		if err != nil {
 			logger.Warn("Failed to process cached data in hybrid mode", loggerv2.Error(err))
 			// Continue to fresh connection for missed servers anyway
@@ -569,7 +571,7 @@ func GetCachedOrFreshConnection(
 
 		// Connect only to missed servers
 		missedServersStr := strings.Join(missedServers, ",")
-		freshResult, err := performFreshConnection(ctx, llm, missedServersStr, configPath, tracers, logger)
+		freshResult, err := performFreshConnection(ctx, llm, missedServersStr, configPath, tracers, logger, runtimeOverrides)
 		if err != nil {
 			logger.Error("Failed to connect to missed servers", err)
 			result.Error = err
@@ -630,7 +632,7 @@ func GetCachedOrFreshConnection(
 	result.FreshFallback = true
 
 	// Perform fresh connection (existing logic)
-	freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
+	freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger, runtimeOverrides)
 	if err != nil {
 		result.Error = err
 		return result, err
@@ -678,6 +680,7 @@ func processCachedData(
 	configPath string,
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (*CachedConnectionResult, error) {
 
 	result := &CachedConnectionResult{
@@ -774,7 +777,7 @@ func processCachedData(
 		loggerv2.Any("servers", servers))
 
 	// Create connections using the original connection logic
-	clients, _, _, _, prompts, resources, _, err := performOriginalConnectionLogic(ctx, llm, strings.Join(servers, ","), configPath, "cached-connection", tracers, logger)
+	clients, _, _, _, prompts, resources, _, err := performOriginalConnectionLogic(ctx, llm, strings.Join(servers, ","), configPath, "cached-connection", tracers, logger, runtimeOverrides)
 	if err != nil {
 		logger.Warn("Failed to create connections, but continuing with cached data", loggerv2.Error(err))
 		// Continue with cached data even if connections fail
@@ -815,6 +818,7 @@ func performFreshConnection(
 	serverName, configPath string,
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (*CachedConnectionResult, error) {
 	logger.Info("🔍 [DEBUG] performFreshConnection: Starting", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
 	performStartTime := time.Now()
@@ -822,7 +826,7 @@ func performFreshConnection(
 	// This would call the original NewAgentConnection function
 	// For now, we'll simulate the call - in practice, this would be refactored
 	logger.Info("🔍 [DEBUG] performFreshConnection: About to call performOriginalConnectionLogic")
-	clients, toolToServer, tools, _, prompts, resources, systemPrompt, err := performOriginalConnectionLogic(ctx, llm, serverName, configPath, "fresh-connection", tracers, logger)
+	clients, toolToServer, tools, _, prompts, resources, systemPrompt, err := performOriginalConnectionLogic(ctx, llm, serverName, configPath, "fresh-connection", tracers, logger, runtimeOverrides)
 	performDuration := time.Since(performStartTime)
 	if err != nil {
 		logger.Error("❌ [DEBUG] performFreshConnection: performOriginalConnectionLogic failed", err, loggerv2.String("duration", performDuration.String()))
@@ -851,6 +855,7 @@ func performOriginalConnectionLogic(
 	serverName, configPath, traceID string,
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Load merged MCP server configuration (base + user)
@@ -884,6 +889,17 @@ func performOriginalConnectionLogic(
 	}
 	for _, serverName := range servers {
 		if serverConfig, exists := cfg.MCPServers[serverName]; exists {
+			// Apply runtime overrides if provided for this server
+			if runtimeOverrides != nil {
+				if override, hasOverride := runtimeOverrides[serverName]; hasOverride {
+					serverConfig = serverConfig.ApplyOverride(override)
+					logger.Info("Applied runtime overrides to server config",
+						loggerv2.String("server", serverName),
+						loggerv2.Any("args_replace", override.ArgsReplace),
+						loggerv2.Any("args_append", override.ArgsAppend),
+						loggerv2.Any("env_override", override.EnvOverride))
+				}
+			}
 			filteredConfig.MCPServers[serverName] = serverConfig
 		}
 	}
@@ -1399,6 +1415,7 @@ func GetFreshConnection(ctx context.Context, serverName, configPath string, logg
 		nil, // No tracers needed
 		logger,
 		disableCache, // disableCache=true if invalidation timed out, false otherwise
+		nil,          // No runtime overrides needed for tool execution
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fresh connection for server %s: %w", serverName, err)
