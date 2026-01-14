@@ -1321,6 +1321,14 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Initialize registry with virtual tools
 	codeexec.InitRegistryWithVirtualTools(ag.Clients, customToolExecutors, virtualToolExecutors, ag.toolToServer, logger)
 
+	// Also register session-scoped custom tools to prevent cross-workflow contamination
+	if ag.SessionID != "" {
+		codeexec.InitRegistryForSession(ag.SessionID, customToolExecutors, logger)
+		logger.Info("✅ Session-scoped custom tools registered during initialization",
+			loggerv2.String("session_id", ag.SessionID),
+			loggerv2.Int("count", len(customToolExecutors)))
+	}
+
 	// Generate Go code for virtual tools (only needed in code execution mode)
 	// In simple agent mode, virtual tools are called directly via HandleVirtualTool()
 	// The generated code is only used when LLM writes Go code that imports these packages
@@ -3105,6 +3113,10 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 			a.Logger.Debug("🔧 [CODE_EXECUTION] Custom tools in registry", loggerv2.Any("tools", toolNames))
 		}
 		codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
+		// Also register session-scoped tools
+		if a.SessionID != "" {
+			codeexec.InitRegistryForSession(a.SessionID, customToolExecutors, a.Logger)
+		}
 		if a.Logger != nil {
 			a.Logger.Debug("🔧 [CODE_EXECUTION] Registry updated successfully for tool", loggerv2.String("tool", name))
 		}
@@ -3200,8 +3212,19 @@ func (a *Agent) UpdateCodeExecutionRegistry() error {
 		a.Logger.Debug("🔧 [CODE_EXECUTION] Custom tools being registered", loggerv2.Any("tools", toolNames))
 	}
 
-	// Update the registry
+	// Update the global registry (for backward compatibility)
 	codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
+
+	// Also register session-scoped tools to prevent cross-workflow contamination
+	// When multiple workflows run concurrently, each gets its own scoped tools
+	if a.SessionID != "" {
+		codeexec.InitRegistryForSession(a.SessionID, customToolExecutors, a.Logger)
+		if a.Logger != nil {
+			a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped tools registered",
+				loggerv2.String("session_id", a.SessionID),
+				loggerv2.Int("count", len(customToolExecutors)))
+		}
+	}
 
 	if a.Logger != nil {
 		a.Logger.Info("✅ [CODE_EXECUTION] Registry updated successfully with custom tools", loggerv2.Int("count", len(customToolExecutors)))
