@@ -19,6 +19,7 @@ MCP Agent is a Go library that provides a complete framework for building AI age
 - **Custom Tools**: Register your own tools with the agent for extended functionality
 - **Observability**: Built-in tracing with Langfuse support
 - **Caching**: Intelligent caching of MCP server metadata and tool definitions
+- **Node.js SDK**: Official TypeScript/JavaScript SDK with gRPC streaming support
 
 ## 🚀 Quick Start
 
@@ -92,6 +93,117 @@ See [examples/](examples/) for complete working examples:
   - **[browser-automation/](examples/code_execution/browser-automation/)** - Code execution with browser automation
   - **[multi-mcp-server/](examples/code_execution/multi-mcp-server/)** - Code execution with tool filtering
   - **[custom_tools/](examples/code_execution/custom_tools/)** - Custom tools in code execution mode
+- **[nodejs-sdk/](examples/nodejs-sdk/)** - Node.js SDK examples (see below)
+
+## 🟢 Node.js SDK
+
+The official Node.js/TypeScript SDK provides a simple interface for building MCP agents in JavaScript/TypeScript applications. The SDK communicates with the Go server via **gRPC over Unix sockets** for low-latency, bidirectional streaming.
+
+### Installation
+
+```bash
+npm install @mcpagent/node
+```
+
+### Basic Usage
+
+```typescript
+import { MCPAgent } from '@mcpagent/node';
+
+const agent = new MCPAgent({
+  serverOptions: {
+    mcpConfigPath: './mcp_servers.json',
+    logLevel: 'info',
+  },
+});
+
+// Initialize with your LLM provider
+await agent.initialize({
+  provider: 'openai',
+  modelId: 'gpt-4o',
+  apiKeys: { openai: process.env.OPENAI_API_KEY },
+});
+
+// Ask a question
+const response = await agent.ask('What tools do you have available?');
+console.log(response.response);
+
+// Streaming responses
+for await (const event of agent.askStream('Explain quantum computing')) {
+  if (event.type === 'chunk') {
+    process.stdout.write(event.text);
+  }
+}
+
+// Cleanup
+await agent.destroy();
+```
+
+### Custom Tools
+
+Register JavaScript/TypeScript handlers that the LLM can call:
+
+```typescript
+import { MCPAgent } from '@mcpagent/node';
+
+const agent = new MCPAgent({
+  serverOptions: { mcpConfigPath: './mcp_servers.json' },
+});
+
+// Register a calculator tool
+agent.registerTool(
+  'calculate',
+  'Perform a mathematical calculation',
+  {
+    type: 'object',
+    properties: {
+      expression: { type: 'string', description: 'Math expression to evaluate' },
+    },
+    required: ['expression'],
+  },
+  async (args) => {
+    const result = Function(`"use strict"; return (${args.expression})`)();
+    return String(result);
+  },
+  { timeoutMs: 5000 }
+);
+
+await agent.initialize({
+  provider: 'vertex',
+  modelId: 'gemini-3-flash-preview',
+});
+
+// The LLM can now use your custom tool
+const response = await agent.ask('What is 15 * 7 + 23?');
+// Output: 15 * 7 + 23 = 128
+```
+
+### Architecture
+
+The Node.js SDK uses a **gRPC bidirectional streaming** architecture:
+
+```
+Node.js SDK ◄══════════════════════════════════► Go Server
+            Single bidirectional gRPC stream
+            - Client sends: questions, tool results
+            - Server sends: text chunks, tool calls, events, final response
+```
+
+Benefits:
+- **Real-time streaming**: Token-by-token responses via gRPC stream
+- **Inline tool callbacks**: Custom tools execute in the same connection (no separate callback server)
+- **Low latency**: Unix domain sockets for IPC
+- **Type-safe**: Protocol Buffers for all messages
+
+### SDK Examples
+
+See [examples/nodejs-sdk/](examples/nodejs-sdk/) for complete examples:
+
+- **[basic.ts](examples/nodejs-sdk/src/basic.ts)** - Basic agent setup and queries
+- **[custom-tools.ts](examples/nodejs-sdk/src/custom-tools.ts)** - Register and use custom tools
+- **[multi-turn.ts](examples/nodejs-sdk/src/multi-turn.ts)** - Multi-turn conversations
+
+For full SDK documentation, see [sdk-node/README.md](sdk-node/README.md).
 
 ## 📚 Core Features
 
@@ -595,6 +707,11 @@ mcpagent/
 │   ├── conversation.go # Conversation loop and tool execution
 │   ├── connection.go   # MCP server connection management
 │   └── ...
+├── grpcserver/        # gRPC server (for SDK communication)
+│   ├── server.go      # gRPC server setup
+│   ├── service.go     # AgentService implementation
+│   ├── stream_handler.go # Bidirectional stream handling
+│   └── pb/            # Generated protobuf code
 ├── mcpclient/         # MCP client implementations
 │   ├── client.go       # Client interface and implementations
 │   ├── stdio_manager.go # stdio protocol
@@ -615,6 +732,14 @@ mcpagent/
 │   ├── tracer.go      # Tracer interface
 │   └── langfuse_tracer.go # Langfuse implementation
 ├── executor/          # Tool execution handlers
+├── sdk-node/          # Node.js/TypeScript SDK
+│   ├── src/           # SDK source code
+│   │   ├── agent.ts   # MCPAgent class
+│   │   ├── grpc-client.ts # gRPC client
+│   │   └── stream-handler.ts # Stream management
+│   └── README.md      # SDK documentation
+├── proto/             # Protocol Buffer definitions
+│   └── agent.proto    # gRPC service definitions
 ├── examples/          # Example applications
 └── docs/              # Documentation
 ```
