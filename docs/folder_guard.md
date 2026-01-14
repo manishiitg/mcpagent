@@ -371,11 +371,86 @@ func UpdateWorkspaceFile(params UpdateWorkspaceFileParams) (string, error) {
 
 ---
 
+## 🔄 Session-Scoped Registry (Concurrent Workflows)
+
+### The Problem
+
+When multiple workflows run concurrently, they share a global custom tool registry. This causes **cross-workflow contamination**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    GLOBAL REGISTRY (BEFORE FIX)                  │
+│                                                                  │
+│   customTools: {                                                │
+│     "read_workspace_file": executor_with_B_paths  ← LAST WINS!  │
+│     "list_workspace_files": executor_with_B_paths               │
+│   }                                                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Sequence causing the bug:**
+1. Workflow A sets folder guard paths → registers wrapped tools in global registry
+2. Workflow B sets folder guard paths → **overwrites** A's tools with B's wrapped tools
+3. Workflow A calls a tool → gets B's executor → uses B's folder guard paths → **ERROR**
+
+### The Solution: Session-Scoped Registry
+
+Each workflow uses a unique `SessionID`. Custom tools are registered per-session:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         REGISTRY (AFTER FIX)                     │
+│                                                                  │
+│  globalCustomTools: { ... }  ← fallback for backward compat     │
+│                                                                  │
+│  sessionCustomTools: {                                          │
+│    "session-A": {                                               │
+│      "read_workspace_file": executor_with_A_paths               │
+│      "list_workspace_files": executor_with_A_paths              │
+│    },                                                           │
+│    "session-B": {                                               │
+│      "read_workspace_file": executor_with_B_paths  ← isolated!  │
+│      "list_workspace_files": executor_with_B_paths              │
+│    }                                                            │
+│  }                                                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Functions
+
+| Function | File | Purpose |
+|----------|------|---------|
+| `InitRegistryForSession()` | `codeexec/registry.go` | Registers custom tools scoped to a session |
+| `CallCustomToolWithSession()` | `codeexec/registry.go` | Looks up session-scoped tools first, falls back to global |
+| `CleanupSession()` | `codeexec/registry.go` | Removes session-scoped tools when workflow completes |
+
+### How It Works
+
+1. **Agent Initialization**: When `UpdateCodeExecutionRegistry()` is called, tools are registered both globally (backward compat) and per-session
+2. **Tool Execution**: Generated code passes `session_id` (from `MCP_SESSION_ID` env var) in API calls
+3. **Registry Lookup**: `CallCustomToolWithSession()` checks session-scoped tools first, falls back to global
+4. **Cleanup**: Call `CleanupSession(sessionID)` when workflow completes to free memory
+
+### Usage
+
+```go
+// During agent initialization (automatic in UpdateCodeExecutionRegistry)
+if a.SessionID != "" {
+    codeexec.InitRegistryForSession(a.SessionID, customToolExecutors, a.Logger)
+}
+
+// During workflow cleanup (optional but recommended)
+codeexec.CleanupSession(sessionID)
+```
+
+---
+
 ## 📖 Related Documentation
 
 - [Code Execution Agent](./code_execution_agent.md) - Describes AST-level validation
 - [Workspace Tools](./workspace_tools.md) - Virtual tools for file operations
 - [Orchestrator Architecture](./orchestrator_architecture.md) - Workflow orchestration context
+- [Session-Scoped MCP Connections](./session_scoped_mcp_connections.md) - Related session-scoping for MCP connections
 
 ---
 

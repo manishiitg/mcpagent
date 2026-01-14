@@ -32,8 +32,9 @@ type MCPExecuteResponse struct {
 
 // CustomExecuteRequest represents a request to execute a custom tool
 type CustomExecuteRequest struct {
-	Tool string                 `json:"tool"` // Tool name (e.g., "read_workspace_file")
-	Args map[string]interface{} `json:"args"` // Tool arguments
+	Tool      string                 `json:"tool"`                 // Tool name (e.g., "read_workspace_file")
+	Args      map[string]interface{} `json:"args"`                 // Tool arguments
+	SessionID string                 `json:"session_id,omitempty"` // Optional: Session ID for scoping custom tools (prevents cross-workflow contamination)
 }
 
 // CustomExecuteResponse represents the response from a custom tool execution
@@ -299,7 +300,9 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	h.logger.Info("🔧 Custom Execute request", loggerv2.String("tool", req.Tool))
+	h.logger.Info("🔧 Custom Execute request",
+		loggerv2.String("tool", req.Tool),
+		loggerv2.String("session_id", req.SessionID))
 
 	// Validate request
 	if req.Tool == "" {
@@ -314,9 +317,11 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 
-	// Execute custom tool using codeexec registry
-	h.logger.Info("🚀 Executing custom tool", loggerv2.String("tool", req.Tool))
-	result, err := codeexec.CallCustomTool(ctx, req.Tool, req.Args)
+	// Execute custom tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
+	h.logger.Info("🚀 Executing custom tool",
+		loggerv2.String("tool", req.Tool),
+		loggerv2.String("session_id", req.SessionID))
+	result, err := codeexec.CallCustomToolWithSession(ctx, req.SessionID, req.Tool, req.Args)
 	if err != nil {
 		h.logger.Error("Custom tool execution failed", err, loggerv2.String("tool", req.Tool))
 		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers

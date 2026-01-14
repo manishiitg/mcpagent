@@ -32,6 +32,11 @@ type ToolRegistry struct {
 	toolToServer map[string]string
 	mu           sync.RWMutex
 	logger       loggerv2.Logger
+
+	// Session-scoped custom tools to prevent cross-workflow contamination
+	// Key: sessionID, Value: map of toolName -> executor
+	// When multiple workflows run concurrently, each gets its own scoped tools
+	sessionCustomTools map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 }
 
 var (
@@ -63,11 +68,12 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 	if globalRegistry == nil {
 		// First initialization - create new registry
 		globalRegistry = &ToolRegistry{
-			mcpClients:   make(map[string]mcpclient.ClientInterface),
-			customTools:  make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			virtualTools: make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			toolToServer: make(map[string]string),
-			logger:       logger,
+			mcpClients:         make(map[string]mcpclient.ClientInterface),
+			customTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:       make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:       make(map[string]string),
+			sessionCustomTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			logger:             logger,
 		}
 		logger.Debug("Creating new tool registry")
 	} else {
@@ -332,6 +338,131 @@ func CallVirtualTool(ctx context.Context, toolName string, args map[string]inter
 
 	// Call the executor
 	return executor(ctx, args)
+}
+
+// InitRegistryForSession registers custom tools scoped to a specific session
+// This prevents cross-workflow contamination when multiple workflows run concurrently
+// Each session gets its own set of custom tool executors (with their own folder guard paths)
+func InitRegistryForSession(sessionID string, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), logger loggerv2.Logger) {
+	if sessionID == "" {
+		// No session ID - fall back to global registration
+		if logger != nil {
+			logger.Warn("InitRegistryForSession called with empty sessionID, falling back to global registry")
+		}
+		return
+	}
+
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
+	if logger == nil {
+		logger = loggerv2.NewNoop()
+	}
+
+	// Ensure global registry exists
+	if globalRegistry == nil {
+		globalRegistry = &ToolRegistry{
+			mcpClients:         make(map[string]mcpclient.ClientInterface),
+			customTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:       make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:       make(map[string]string),
+			sessionCustomTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			logger:             logger,
+		}
+	}
+
+	// Ensure sessionCustomTools map is initialized
+	if globalRegistry.sessionCustomTools == nil {
+		globalRegistry.sessionCustomTools = make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+	}
+
+	// Create or update session-scoped tools
+	if globalRegistry.sessionCustomTools[sessionID] == nil {
+		globalRegistry.sessionCustomTools[sessionID] = make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+	}
+
+	// Register all custom tools for this session
+	for toolName, executor := range customTools {
+		globalRegistry.sessionCustomTools[sessionID][toolName] = executor
+		logger.Debug("Registered session-scoped custom tool",
+			loggerv2.String("session_id", sessionID),
+			loggerv2.String("tool", toolName))
+	}
+
+	logger.Info("Session-scoped custom tools registered",
+		loggerv2.String("session_id", sessionID),
+		loggerv2.Int("tool_count", len(customTools)),
+		loggerv2.Int("total_sessions", len(globalRegistry.sessionCustomTools)))
+}
+
+// CallCustomToolWithSession calls a custom tool with session scoping
+// It first checks session-scoped tools, then falls back to global tools
+// This prevents cross-workflow contamination when multiple workflows run concurrently
+func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName string, args map[string]interface{}) (string, error) {
+	registry := GetRegistry()
+	if registry == nil {
+		return "", fmt.Errorf("tool registry not initialized")
+	}
+
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+
+	// Priority 1: Check session-scoped tools first (if sessionID provided)
+	if sessionID != "" && registry.sessionCustomTools != nil {
+		if sessionTools, exists := registry.sessionCustomTools[sessionID]; exists {
+			if executor, exists := sessionTools[toolName]; exists {
+				if registry.logger != nil {
+					registry.logger.Debug("Using session-scoped custom tool",
+						loggerv2.String("session_id", sessionID),
+						loggerv2.String("tool", toolName))
+				}
+				return executor(ctx, args)
+			}
+		}
+		// Session exists but tool not found in session scope - log and continue to global
+		if registry.logger != nil {
+			registry.logger.Debug("Tool not found in session scope, falling back to global",
+				loggerv2.String("session_id", sessionID),
+				loggerv2.String("tool", toolName))
+		}
+	}
+
+	// Priority 2: Fall back to global custom tools
+	executor, exists := registry.customTools[toolName]
+	if !exists {
+		return "", fmt.Errorf("custom tool %s not found (checked session: %s)", toolName, sessionID)
+	}
+
+	if registry.logger != nil {
+		registry.logger.Debug("Using global custom tool (no session scope)",
+			loggerv2.String("tool", toolName),
+			loggerv2.String("session_id", sessionID))
+	}
+
+	return executor(ctx, args)
+}
+
+// CleanupSession removes all session-scoped tools for a given session
+// Call this when a workflow/session completes to free memory
+func CleanupSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
+	if globalRegistry == nil || globalRegistry.sessionCustomTools == nil {
+		return
+	}
+
+	if _, exists := globalRegistry.sessionCustomTools[sessionID]; exists {
+		delete(globalRegistry.sessionCustomTools, sessionID)
+		if globalRegistry.logger != nil {
+			globalRegistry.logger.Info("Cleaned up session-scoped tools",
+				loggerv2.String("session_id", sessionID))
+		}
+	}
 }
 
 // convertResultToString converts MCP CallToolResult to string
