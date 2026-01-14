@@ -1,4 +1,4 @@
-.PHONY: help lint lint-fix install-linter test build clean install-act test-ci test-ci-job list-ci-jobs
+.PHONY: help lint lint-fix install-linter test build clean install-act test-ci test-ci-job list-ci-jobs proto proto-go proto-ts install-proto-tools
 
 # Default target
 help:
@@ -92,4 +92,49 @@ test-ci-job: install-act
 list-ci-jobs: install-act
 	@echo "Available CI workflows and jobs:"
 	@act -l
+
+# Install protobuf tools
+install-proto-tools:
+	@echo "Installing protobuf tools..."
+	@go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	@echo "✓ Go protobuf tools installed"
+	@if [ -d "sdk-node" ]; then \
+		cd sdk-node && npm install ts-proto @grpc/grpc-js --save-dev; \
+		echo "✓ TypeScript protobuf tools installed"; \
+	fi
+
+# Generate all proto files
+proto: proto-go proto-ts
+	@echo "✓ All proto files generated"
+
+# Generate Go proto files
+proto-go:
+	@echo "Generating Go proto files..."
+	@mkdir -p grpcserver/pb
+	@protoc --proto_path=proto \
+		--go_out=grpcserver/pb --go_opt=paths=source_relative \
+		--go-grpc_out=grpcserver/pb --go-grpc_opt=paths=source_relative \
+		proto/agent.proto
+	@echo "✓ Go proto files generated in grpcserver/pb/"
+
+# Generate TypeScript proto files
+proto-ts:
+	@echo "Generating TypeScript proto files..."
+	@if [ -d "sdk-node" ]; then \
+		mkdir -p sdk-node/src/generated; \
+		cd sdk-node && npx protoc \
+			--plugin=./node_modules/.bin/protoc-gen-ts_proto \
+			--ts_proto_out=./src/generated \
+			--ts_proto_opt=outputServices=grpc-js \
+			--ts_proto_opt=esModuleInterop=true \
+			--ts_proto_opt=env=node \
+			--ts_proto_opt=useOptionals=messages \
+			--ts_proto_opt=exportCommonSymbols=false \
+			--proto_path=../proto \
+			../proto/agent.proto; \
+		echo "✓ TypeScript proto files generated in sdk-node/src/generated/"; \
+	else \
+		echo "⚠️  sdk-node directory not found, skipping TypeScript generation"; \
+	fi
 
