@@ -331,7 +331,10 @@ func WithCustomTools(tools []llmtypes.Tool) AgentOption {
 	}
 }
 
-// WithSmartRouting enables intelligent tool filtering (experimental).
+// WithSmartRouting enables intelligent tool filtering (DEPRECATED - will be removed in future version).
+//
+// DEPRECATED: This feature is deprecated and will be removed in a future version.
+// Only use when explicitly needed for legacy compatibility.
 //
 // When enabled, the agent attempts to filter the available tools based on the user's
 // query to reduce context usage and improve LLM focus.
@@ -343,7 +346,10 @@ func WithSmartRouting(enabled bool) AgentOption {
 	}
 }
 
-// WithSmartRoutingThresholds configures the triggers for smart routing.
+// WithSmartRoutingThresholds configures the triggers for smart routing (DEPRECATED).
+//
+// DEPRECATED: This feature is deprecated and will be removed in a future version.
+// Only use when explicitly needed for legacy compatibility.
 //
 // Smart routing will only activate if the number of tools or servers exceeds these limits.
 //
@@ -359,7 +365,10 @@ func WithSmartRoutingThresholds(maxTools, maxServers int) AgentOption {
 	}
 }
 
-// WithSmartRoutingConfig configures the internal mechanics of the smart router.
+// WithSmartRoutingConfig configures the internal mechanics of the smart router (DEPRECATED).
+//
+// DEPRECATED: This feature is deprecated and will be removed in a future version.
+// Only use when explicitly needed for legacy compatibility.
 //
 // Parameters:
 //   - temperature: LLM temperature for the routing decision.
@@ -481,6 +490,47 @@ func WithSelectedServers(servers []string) AgentOption {
 func WithCodeExecutionMode(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.UseCodeExecutionMode = enabled
+	}
+}
+
+// WithToolSearchMode enables the Tool Search mode.
+//
+// In this mode, instead of exposing all tools upfront, only the "search_tools"
+// virtual tool is initially available. The LLM must search for tools using
+// regex patterns, and discovered tools become available for subsequent calls.
+//
+//   - Enabled: Only "search_tools" is initially exposed. LLM discovers tools via search.
+//   - Disabled: All MCP tools are exposed directly (Standard mode).
+//
+// This mode is useful when working with large tool catalogs (30+ tools) to
+// reduce context usage and improve tool selection accuracy.
+//
+// Default: false (Standard mode)
+func WithToolSearchMode(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.UseToolSearchMode = enabled
+		if enabled {
+			a.discoveredTools = make(map[string]llmtypes.Tool)
+		}
+	}
+}
+
+// WithPreDiscoveredTools sets tools that are always available without searching.
+//
+// When tool search mode is enabled, these tools will be immediately available
+// alongside the "search_tools" tool, without requiring the LLM to discover them.
+//
+// This is useful for frequently used tools that should always be accessible.
+//
+// Example:
+//
+//	agent, _ := mcpagent.NewAgent(ctx, llm, configPath,
+//	    mcpagent.WithToolSearchMode(true),
+//	    mcpagent.WithPreDiscoveredTools([]string{"get_weather", "send_message"}),
+//	)
+func WithPreDiscoveredTools(toolNames []string) AgentOption {
+	return func(a *Agent) {
+		a.preDiscoveredTools = toolNames
 	}
 }
 
@@ -718,6 +768,15 @@ type Agent struct {
 	// When disabled (default): All MCP tools are added directly as LLM tools
 	UseCodeExecutionMode bool
 
+	// Tool search mode configuration
+	// When enabled: Only search_tools virtual tool is initially exposed to the LLM
+	// LLM must search for tools using regex patterns, discovered tools become available
+	// When disabled (default): All tools are exposed directly
+	UseToolSearchMode  bool                     // Enable tool search mode
+	discoveredTools    map[string]llmtypes.Tool // Tools discovered during this session
+	allDeferredTools   []llmtypes.Tool          // All available tools (hidden until discovered)
+	preDiscoveredTools []string                 // Tool names that are always available without searching
+
 	// Cache configuration
 	// When enabled: Skips cache lookup and always performs fresh connections
 	// When disabled (default): Uses cache to speed up connection establishment (60-85% faster)
@@ -777,15 +836,15 @@ type Agent struct {
 	// Context window is based on input tokens only, not output tokens.
 	currentContextWindowUsage int
 	modelContextWindow        int // Cached model context window size (0 = not cached yet)
-	
+
 	// LLM Configuration
 	LLMConfig AgentLLMConfiguration
 }
 
 // LLMModel represents a single LLM configuration
 type LLMModel struct {
-	Provider string  `json:"provider"` // "anthropic", "openai", "bedrock", etc.
-	ModelID  string  `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
+	Provider string `json:"provider"` // "anthropic", "openai", "bedrock", etc.
+	ModelID  string `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
 
 	// Auth per model
 	APIKey *string `json:"api_key,omitempty"` // For OpenRouter, OpenAI, Anthropic, Vertex
@@ -1198,6 +1257,18 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 		logger.Debug("Code execution mode: tools available (only virtual tools, MCP and custom tools excluded)",
 			loggerv2.Int("tool_count", len(toolsToUse)))
+	} else if ag.UseToolSearchMode {
+		// Tool search mode: Store all tools as deferred, expose only search_tools
+		logger.Debug("Tool search mode enabled - storing all tools as deferred")
+
+		// Store all MCP and custom tools as deferred (will be discovered via search_tools)
+		ag.allDeferredTools = allLLMTools
+
+		// Don't add any MCP tools to the active tool list yet
+		// They will be discovered dynamically via search_tools
+		toolsToUse = []llmtypes.Tool{}
+		logger.Debug("Tool search mode: All MCP tools deferred for discovery",
+			loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
 	} else {
 		// Normal mode: Use all tools
 		toolsToUse = allLLMTools
@@ -1300,6 +1371,31 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 		virtualTools = filteredVirtualTools
 		logger.Debug("Code execution mode: Filtered virtual tools - only discover_code_files and write_code available")
+	} else if ag.UseToolSearchMode {
+		// In tool search mode, only include search_tools
+		// All other tools are discovered dynamically via search
+		var filteredVirtualTools []llmtypes.Tool
+		for _, tool := range virtualTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				// Only include search_tools in tool search mode
+				if toolName == "search_tools" {
+					filteredVirtualTools = append(filteredVirtualTools, tool)
+				} else {
+					// Store other virtual tools in deferred tools for discovery
+					ag.allDeferredTools = append(ag.allDeferredTools, tool)
+				}
+			}
+		}
+		// Add tool search tools (search_tools)
+		filteredVirtualTools = append(filteredVirtualTools, CreateToolSearchTools()...)
+		virtualTools = filteredVirtualTools
+		logger.Debug("Tool search mode: Only search_tools available, other virtual tools deferred",
+			loggerv2.Int("virtual_count", len(virtualTools)),
+			loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
+
+		// Initialize tool search mode (pre-discover configured tools)
+		ag.initializeToolSearch()
 	} else {
 		// In non-code execution mode, exclude discover_code_files and write_code
 		var filteredVirtualTools []llmtypes.Tool
@@ -1376,7 +1472,14 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts
 	// In code execution mode, tool structure is automatically included
 	if !ag.hasCustomSystemPrompt {
-		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.Logger)
+		// Get tool categories for tool search mode (server/package names)
+		var toolCategories []string
+		if ag.UseToolSearchMode {
+			for serverName := range ag.Clients {
+				toolCategories = append(toolCategories, serverName)
+			}
+		}
+		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.UseToolSearchMode, toolCategories, ag.Logger)
 	}
 
 	// 🎯 SMART ROUTING INITIALIZATION - Run AFTER all tools are loaded (including virtual tools)
@@ -1387,6 +1490,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		serverCount := len(ag.Clients)
 		serverType := "active"
 
+		logger.Warn("⚠️ SMART ROUTING IS DEPRECATED - This feature will be removed in a future version")
 		logger.Info("Smart routing enabled - determining relevant tools after full initialization")
 		logger.Debug("Total tools loaded",
 			loggerv2.Int("tool_count", len(ag.Tools)),
@@ -1435,7 +1539,7 @@ func (a *Agent) SetCurrentQuery(query string) {
 // observability/tracing system. This creates the root or high-level node in the event tree.
 func (a *Agent) StartAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
-	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode)
+	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode, a.UseToolSearchMode)
 	a.EmitTypedEvent(ctx, agentStartEvent)
 }
 
@@ -1749,6 +1853,9 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	totalTokenEvent.ModelContextWindow = a.modelContextWindow
 	totalTokenEvent.ContextUsagePercent = contextUsagePercent
 
+	// Set agent mode information
+	totalTokenEvent.SetAgentMode(string(a.AgentMode), a.UseCodeExecutionMode, a.UseToolSearchMode)
+
 	a.EmitTypedEvent(ctx, totalTokenEvent)
 
 	// Log total token usage summary at Info level for visibility
@@ -2048,6 +2155,14 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 			toolStructureJSON = toolStructure
 		}
 	}
+	// Get tool categories for tool search mode
+	var toolCategoriesFiltered []string
+	if a.UseToolSearchMode {
+		for serverName := range filteredPrompts {
+			toolCategoriesFiltered = append(toolCategoriesFiltered, serverName)
+		}
+	}
+
 	newSystemPrompt := prompt.BuildSystemPromptWithoutTools(
 		filteredPrompts,
 		filteredResources,
@@ -2056,6 +2171,8 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 		a.DiscoverPrompt,
 		a.UseCodeExecutionMode,
 		toolStructureJSON,
+		a.UseToolSearchMode,
+		toolCategoriesFiltered,
 		a.Logger,
 	)
 
@@ -3277,6 +3394,7 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 	}
 
 	// Rebuild system prompt with updated tool structure
+	// Note: This function is only called in code execution mode, so UseToolSearchMode is false
 	newSystemPrompt := prompt.BuildSystemPromptWithoutTools(
 		a.prompts,
 		a.resources,
@@ -3285,6 +3403,8 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 		a.DiscoverPrompt,
 		a.UseCodeExecutionMode,
 		toolStructure,
+		false, // UseToolSearchMode - not applicable in code execution mode
+		nil,   // toolCategories - not applicable in code execution mode
 		a.Logger,
 	)
 

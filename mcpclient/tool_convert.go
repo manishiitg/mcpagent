@@ -369,9 +369,8 @@ func ToolResultAsString(result *mcp.CallToolResult) string {
 	}
 
 	// Check for implicit errors in the content (even when IsError is false)
-	if strings.Contains(joined, "exit status") ||
+	if strings.Contains(joined, "exit status ") ||
 		strings.Contains(joined, "Invalid choice") ||
-		strings.Contains(joined, "usage:") ||
 		strings.Contains(joined, "Error: Access denied") {
 		return fmt.Sprintf("Tool call failed with error: %s", joined)
 	}

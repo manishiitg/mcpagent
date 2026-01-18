@@ -180,6 +180,7 @@ type AgentStartEvent struct {
 	ModelID              string `json:"model_id"`
 	Provider             string `json:"provider"`
 	UseCodeExecutionMode bool   `json:"use_code_execution_mode,omitempty"`
+	UseToolSearchMode    bool   `json:"use_tool_search_mode,omitempty"`
 }
 
 func (e *AgentStartEvent) GetEventType() EventType {
@@ -570,6 +571,10 @@ type TokenUsageEvent struct {
 	CostEstimate     float64       `json:"cost_estimate,omitempty"`
 	Duration         time.Duration `json:"duration"`
 	Context          string        `json:"context"`
+	// Agent mode information
+	AgentMode            string `json:"agent_mode,omitempty"`
+	UseCodeExecutionMode bool   `json:"use_code_execution_mode,omitempty"`
+	UseToolSearchMode    bool   `json:"use_tool_search_mode,omitempty"`
 	// OpenRouter cache information
 	CacheDiscount   float64 `json:"cache_discount,omitempty"`
 	ReasoningTokens int     `json:"reasoning_tokens,omitempty"`
@@ -708,7 +713,7 @@ func NewAgentEvent(eventData EventData) *AgentEvent {
 // NewAgentEndEvent function removed - no longer needed
 
 // NewAgentStartEvent creates a new AgentStartEvent
-func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMode bool) *AgentStartEvent {
+func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMode, useToolSearchMode bool) *AgentStartEvent {
 	return &AgentStartEvent{
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
@@ -717,11 +722,12 @@ func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMod
 		ModelID:              modelID,
 		Provider:             provider,
 		UseCodeExecutionMode: useCodeExecutionMode,
+		UseToolSearchMode:    useToolSearchMode,
 	}
 }
 
 // NewAgentStartEventWithHierarchy creates a new AgentStartEvent with hierarchy fields
-func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID string, level int, sessionID, component string, useCodeExecutionMode bool) *AgentStartEvent {
+func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID string, level int, sessionID, component string, useCodeExecutionMode, useToolSearchMode bool) *AgentStartEvent {
 	return &AgentStartEvent{
 		BaseEventData: BaseEventData{
 			Timestamp:      time.Now(),
@@ -734,6 +740,7 @@ func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID stri
 		ModelID:              modelID,
 		Provider:             provider,
 		UseCodeExecutionMode: useCodeExecutionMode,
+		UseToolSearchMode:    useToolSearchMode,
 	}
 }
 
@@ -1117,6 +1124,13 @@ func NewTokenUsageEventWithCache(turn int, operation, modelID, provider string, 
 		ReasoningTokens:  reasoningTokens,
 		GenerationInfo:   generationInfo,
 	}
+}
+
+// SetAgentMode sets the agent mode information on a TokenUsageEvent
+func (e *TokenUsageEvent) SetAgentMode(agentMode string, useCodeExecutionMode, useToolSearchMode bool) {
+	e.AgentMode = agentMode
+	e.UseCodeExecutionMode = useCodeExecutionMode
+	e.UseToolSearchMode = useToolSearchMode
 }
 
 // NewErrorDetailEvent creates a new ErrorDetailEvent

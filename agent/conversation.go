@@ -57,7 +57,8 @@ func isVirtualTool(toolName string) bool {
 	virtualTools := []string{
 		"get_prompt", "get_resource",
 		"read_large_output", "search_large_output", "query_large_output",
-		"discover_code_files", "write_code", // Code execution mode tools (discover_code_structure removed)
+		"discover_code_files", "write_code", // Code execution mode tools
+		"search_tools", "add_tool", // Tool search mode tools
 	}
 	for _, vt := range virtualTools {
 		if vt == toolName {
@@ -433,6 +434,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	serverCount := len(a.Clients)
 
 	if a.EnableSmartRouting && len(a.Tools) > a.SmartRoutingThreshold.MaxTools && serverCount > a.SmartRoutingThreshold.MaxServers {
+		v2Logger.Warn("⚠️ SMART ROUTING IS DEPRECATED - This feature will be removed in a future version")
 		v2Logger.Info("Smart routing enabled - applying conversation-specific tool filtering")
 
 		// Get the full conversation history for context
@@ -1413,6 +1415,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						result = &mcp.CallToolResult{
 							IsError: false,
 							Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
+						}
+
+						// If this was add_tool in tool search mode, refresh the tools list
+						// to include newly discovered tools
+						if a.UseToolSearchMode && tc.FunctionCall.Name == "add_tool" {
+							a.filteredTools = a.getToolsForToolSearchMode()
+							v2Logger.Debug("🔍 [TOOL_SEARCH] Tools refreshed after add_tool",
+								loggerv2.Int("discovered_count", a.GetDiscoveredToolCount()),
+								loggerv2.Int("total_available", len(a.filteredTools)))
 						}
 					}
 				} else if a.customTools != nil {

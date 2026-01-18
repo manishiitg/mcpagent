@@ -22,6 +22,7 @@ import (
 	"mcpagent/cmd/testing/structured-output/tool"
 	tokentracking "mcpagent/cmd/testing/token-tracking"
 	toolfilter "mcpagent/cmd/testing/tool-filter"
+	toolsearch "mcpagent/cmd/testing/tool-search"
 )
 
 // TestingCmd represents the testing command group
@@ -107,6 +108,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(conversion.GetStructuredOutputConversionTestCmd())
 	TestingCmd.AddCommand(tool.GetStructuredOutputToolTestCmd())
 	TestingCmd.AddCommand(tokentracking.GetTokenTrackingTestCmd())
+	TestingCmd.AddCommand(toolsearch.GetToolSearchTestCmd())
 }
 
 func main() {

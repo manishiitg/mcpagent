@@ -13,7 +13,10 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// Smart routing detection
+// Smart routing detection (DEPRECATED)
+// This feature is deprecated and will be removed in a future version.
+// Smart routing will only activate when explicitly enabled via WithSmartRouting(true)
+// AND when thresholds are exceeded.
 func (a *Agent) shouldUseSmartRouting() bool {
 	logger := a.Logger
 
@@ -25,6 +28,13 @@ func (a *Agent) shouldUseSmartRouting() bool {
 	result := a.EnableSmartRouting &&
 		len(a.Tools) > a.SmartRoutingThreshold.MaxTools &&
 		serverCount > a.SmartRoutingThreshold.MaxServers
+
+	// Add deprecation warning if smart routing would activate
+	if result {
+		logger.Warn("⚠️ SMART ROUTING IS DEPRECATED - This feature will be removed in a future version")
+		logger.Warn("Smart routing activated due to thresholds being exceeded and explicit enable flag set")
+		logger.Warn("Consider migrating away from this feature as it will be removed in future updates")
+	}
 
 	logger.Debug("Smart routing check result",
 		loggerv2.Any("result", result),
@@ -430,6 +440,8 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 				loggerv2.Int("completion_tokens", usage.OutputTokens),
 				loggerv2.Int("total_tokens", usage.TotalTokens))
 		}
+		// Set agent mode information
+		tokenEvent.SetAgentMode(string(a.AgentMode), a.UseCodeExecutionMode, a.UseToolSearchMode)
 		a.EmitTypedEvent(ctx, tokenEvent)
 	}
 
