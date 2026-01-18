@@ -8,10 +8,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	mcpagent "mcpagent/agent"
 	testutils "mcpagent/cmd/testing/testutils"
+	"mcpagent/llm"
 	loggerv2 "mcpagent/logger/v2"
+	"mcpagent/observability"
 
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 )
 
 var agentMCPTestCmd = &cobra.Command{
@@ -93,20 +96,45 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 		loggerv2.String("path", configPath),
 		loggerv2.Int("server_count", len(mcpServers)))
 
-	// Get optional tracer (Langfuse if available, otherwise NoopTracer)
-	tracer, _ := testutils.GetTracerWithLogger("langfuse", log)
-	if tracer == nil {
+	// Get optional tracers (Langfuse and/or LangSmith if available)
+	var tracerOptions []mcpagent.AgentOption
+
+	// Try Langfuse
+	langfuseTracer, _ := testutils.GetTracerWithLogger("langfuse", log)
+	if langfuseTracer != nil && !testutils.IsNoopTracer(langfuseTracer) {
+		tracerOptions = append(tracerOptions, mcpagent.WithTracer(langfuseTracer))
+		log.Info("✅ Langfuse tracer enabled")
+	}
+
+	// Try LangSmith
+	langsmithTracer, _ := testutils.GetTracerWithLogger("langsmith", log)
+	if langsmithTracer != nil && !testutils.IsNoopTracer(langsmithTracer) {
+		tracerOptions = append(tracerOptions, mcpagent.WithTracer(langsmithTracer))
+		log.Info("✅ LangSmith tracer enabled")
+	}
+
+	// Fallback to first available tracer for legacy support
+	var tracer observability.Tracer
+	if langfuseTracer != nil && !testutils.IsNoopTracer(langfuseTracer) {
+		tracer = langfuseTracer
+	} else if langsmithTracer != nil && !testutils.IsNoopTracer(langsmithTracer) {
+		tracer = langsmithTracer
+	} else {
 		tracer, _ = testutils.GetTracerWithLogger("noop", log)
 	}
 
-	// Initialize LLM
+	// Initialize LLM - default to Vertex with gemini-3-flash-preview
 	modelID := viper.GetString("model")
-	if modelID == "" {
-		modelID = openai.ModelGPT41Mini // Default to gpt-4.1-mini
+	provider := viper.GetString("test.provider")
+	if provider == "" {
+		provider = string(llm.ProviderVertex) // Default to Vertex
 	}
-	model, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
-		Provider: "",      // Empty to use viper/flags
-		ModelID:  modelID, // Use model from flag if provided
+	if modelID == "" {
+		modelID = vertex.ModelGemini3FlashPreview // Default to gemini-3-flash-preview
+	}
+	model, llmProvider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+		Provider: provider,
+		ModelID:  modelID,
 		Logger:   log,
 	})
 	if err != nil {
@@ -114,7 +142,8 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 	}
 
 	log.Info("✅ LLM initialized",
-		loggerv2.String("model_id", modelID))
+		loggerv2.String("model_id", modelID),
+		loggerv2.String("provider", string(llmProvider)))
 
 	ctx := context.Background()
 	traceID := testutils.GenerateTestTraceID()
@@ -123,8 +152,8 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 		loggerv2.String("trace_id", string(traceID)),
 		loggerv2.String("config_path", configPath))
 
-	// Create agent with MCP servers
-	ag, err := testutils.CreateAgentWithTracer(ctx, model, configPath, tracer, traceID, log)
+	// Create agent with MCP servers (pass additional tracer options for multi-tracer support)
+	ag, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, traceID, log, tracerOptions...)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
@@ -163,11 +192,20 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 			loggerv2.Int("response_length", len(response)))
 	}
 
-	// Wait for events to be processed (if using Langfuse)
-	if flusher, ok := tracer.(interface{ Flush() }); ok {
-		log.Info("Flushing tracer...")
-		flusher.Flush()
-		log.Info("✅ Tracer flushed")
+	// Flush all tracers (both Langfuse and LangSmith if enabled)
+	if langfuseTracer != nil {
+		if flusher, ok := langfuseTracer.(interface{ Flush() }); ok {
+			log.Info("Flushing Langfuse tracer...")
+			flusher.Flush()
+			log.Info("✅ Langfuse tracer flushed")
+		}
+	}
+	if langsmithTracer != nil {
+		if flusher, ok := langsmithTracer.(interface{ Flush() }); ok {
+			log.Info("Flushing LangSmith tracer...")
+			flusher.Flush()
+			log.Info("✅ LangSmith tracer flushed")
+		}
 	}
 
 	logFile := viper.GetString("log-file")

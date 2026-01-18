@@ -887,6 +887,16 @@ func extractModelIDFromLLM(llm llmtypes.Model) string {
 	return modelID
 }
 
+// extractProviderFromLLM extracts the provider from the LLM instance
+// Checks if the LLM implements GetProvider() method
+func extractProviderFromLLM(model llmtypes.Model) llm.Provider {
+	// Check if model implements GetProvider()
+	if p, ok := model.(interface{ GetProvider() llm.Provider }); ok {
+		return p.GetProvider()
+	}
+	return ""
+}
+
 // NewAgent creates a new Agent instance with the provided configuration.
 //
 // It initializes the agent with the given context, LLM model, and MCP configuration path.
@@ -923,7 +933,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ModelID:                       modelID,
 		AgentMode:                     SimpleAgent,                      // Default to simple mode
 		TraceID:                       "",                               // Default: empty trace ID
-		provider:                      "",                               // Will be set by caller
+		provider:                      "",                               // Will be set by caller or extracted
 		EnableContextOffloading:       true,                             // Default to enabled
 		LargeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
 		ToolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
@@ -989,6 +999,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Apply all options
 	for _, option := range options {
 		option(ag)
+	}
+
+	// If provider is not set, try to extract it from LLM
+	if ag.provider == "" {
+		ag.provider = extractProviderFromLLM(llm)
 	}
 
 	// Use logger from options (or default if not set)

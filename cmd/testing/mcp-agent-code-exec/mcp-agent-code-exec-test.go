@@ -13,6 +13,7 @@ import (
 	testutils "mcpagent/cmd/testing/testutils"
 	"mcpagent/executor"
 	loggerv2 "mcpagent/logger/v2"
+	"mcpagent/observability"
 )
 
 var mcpAgentCodeExecTestCmd = &cobra.Command{
@@ -24,7 +25,10 @@ var mcpAgentCodeExecTestCmd = &cobra.Command{
 3. Agent generates Go code that calls the executor endpoints
 4. Verifies the full integration works
 
-This validates that the refactored executor package works correctly with code execution.`,
+This validates that the refactored executor package works correctly with code execution.
+
+Langfuse tracing is automatically enabled if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set.
+The trace_id will be output at the end for verification in Langfuse.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Initialize logger using shared utilities
 		logger := testutils.NewTestLoggerFromViper()
@@ -32,13 +36,38 @@ This validates that the refactored executor package works correctly with code ex
 		logger.Info("=== MCP Agent Code Execution Test ===")
 		logger.Info("Testing full code execution flow with executor handlers")
 
-		if err := TestCodeExecutionWithExecutor(logger); err != nil {
+		// Get optional tracer (Langfuse if available, otherwise NoopTracer)
+		tracer, isLangfuse := testutils.GetTracerWithLogger("langfuse", logger)
+		if tracer == nil {
+			tracer, _ = testutils.GetTracerWithLogger("noop", logger)
+		}
+		if isLangfuse {
+			logger.Info("✅ Langfuse tracing enabled")
+		} else {
+			logger.Info("ℹ️  Langfuse tracing disabled (set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY to enable)")
+		}
+
+		traceID := testutils.GenerateTestTraceID()
+		logger.Info("Trace ID generated", loggerv2.String("trace_id", string(traceID)))
+
+		if err := TestCodeExecutionWithExecutor(logger, tracer, traceID); err != nil {
 			return fmt.Errorf("test failed: %w", err)
+		}
+
+		// Flush tracer if it supports flushing
+		if flusher, ok := tracer.(interface{ Flush() }); ok {
+			logger.Info("Flushing tracer...")
+			flusher.Flush()
+			logger.Info("✅ Tracer flushed")
 		}
 
 		logger.Info("✅ All code execution tests passed")
 		logger.Info("")
 		logger.Info("📋 For detailed verification, see criteria.md in cmd/testing/mcp-agent-code-exec/")
+		if isLangfuse {
+			logger.Info("📊 Langfuse trace available", loggerv2.String("trace_id", string(traceID)))
+			logger.Info("   View in Langfuse dashboard or use: go run ./cmd/testing/... langfuse-read --trace-id " + string(traceID))
+		}
 		return nil
 	},
 }
@@ -49,7 +78,7 @@ func GetMCPAgentCodeExecTestCmd() *cobra.Command {
 }
 
 // TestCodeExecutionWithExecutor tests the full code execution flow
-func TestCodeExecutionWithExecutor(log loggerv2.Logger) error {
+func TestCodeExecutionWithExecutor(log loggerv2.Logger, tracer observability.Tracer, traceID observability.TraceID) error {
 	ctx := context.Background()
 
 	// Step 1: Start HTTP server with executor handlers (simulating the server)
@@ -67,7 +96,7 @@ func TestCodeExecutionWithExecutor(log loggerv2.Logger) error {
 
 	// Step 2: Create agent in code execution mode
 	log.Info("--- Step 2: Create Code Execution Agent ---")
-	agent, err := createCodeExecutionAgent(ctx, log)
+	agent, err := createCodeExecutionAgent(ctx, log, tracer, traceID)
 	if err != nil {
 		return err
 	}
@@ -77,7 +106,7 @@ func TestCodeExecutionWithExecutor(log loggerv2.Logger) error {
 
 	// Step 3: Test code execution with a simple task
 	log.Info("--- Step 3: Test Code Execution Flow ---")
-	if err := testCodeExecutionFlow(ctx, agent, log); err != nil {
+	if err := testCodeExecutionFlow(ctx, agent, log, traceID); err != nil {
 		return err
 	}
 
@@ -131,11 +160,12 @@ func startExecutorServer(log loggerv2.Logger) (string, func(), error) {
 }
 
 // createCodeExecutionAgent creates an agent in code execution mode
-func createCodeExecutionAgent(ctx context.Context, log loggerv2.Logger) (*mcpagent.Agent, error) {
-	log.Info("Creating code execution agent...")
+func createCodeExecutionAgent(ctx context.Context, log loggerv2.Logger, tracer observability.Tracer, traceID observability.TraceID) (*mcpagent.Agent, error) {
+	log.Info("Creating code execution agent...",
+		loggerv2.String("trace_id", string(traceID)))
 
 	// Create LLM using testutils
-	llm, err := testutils.CreateTestLLMFromViper(log)
+	llm, llmProvider, err := testutils.CreateTestLLMFromViper(log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LLM: %w", err)
 	}
@@ -158,12 +188,10 @@ func createCodeExecutionAgent(ctx context.Context, log loggerv2.Logger) (*mcpage
 	log.Info("✅ Created temporary MCP config with context7",
 		loggerv2.String("path", configPath))
 
-	// Create agent with code execution mode enabled
-	tracer, _ := testutils.GetTracerWithLogger("noop", log)
-	traceID := testutils.GenerateTestTraceID()
-
+	// Create agent with code execution mode enabled using the provided tracer
 	agent, err := testutils.CreateTestAgent(ctx, &testutils.TestAgentConfig{
 		LLM:        llm,
+		Provider:   llmProvider,
 		ConfigPath: configPath,
 		Tracer:     tracer,
 		TraceID:    traceID,
@@ -185,8 +213,9 @@ func createCodeExecutionAgent(ctx context.Context, log loggerv2.Logger) (*mcpage
 }
 
 // testCodeExecutionFlow tests the code execution flow with a real MCP tool
-func testCodeExecutionFlow(ctx context.Context, agent *mcpagent.Agent, log loggerv2.Logger) error {
-	log.Info("Testing code execution with context7 MCP tool...")
+func testCodeExecutionFlow(ctx context.Context, agent *mcpagent.Agent, log loggerv2.Logger, traceID observability.TraceID) error {
+	log.Info("Testing code execution with context7 MCP tool...",
+		loggerv2.String("trace_id", string(traceID)))
 
 	// Test query: Ask agent to use context7 to resolve a library
 	// This will test the full flow: agent → code gen → execution → HTTP → MCP tool

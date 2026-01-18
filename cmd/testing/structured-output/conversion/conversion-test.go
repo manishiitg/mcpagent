@@ -127,7 +127,7 @@ func runStructuredOutputConversionTest() error {
 	logger.Info("How it works: Text response → JSON conversion via second LLM call")
 
 	// Create LLM
-	llm, err := testutils.CreateTestLLMFromViper(logger)
+	llm, llmProvider, err := testutils.CreateTestLLMFromViper(logger)
 	if err != nil {
 		return fmt.Errorf("failed to create LLM: %w", err)
 	}
@@ -139,7 +139,7 @@ func runStructuredOutputConversionTest() error {
 
 	// Create agent
 	ctx := context.Background()
-	agent, err := testutils.CreateMinimalAgent(ctx, llm, tracer, traceID, logger)
+	agent, err := testutils.CreateMinimalAgent(ctx, llm, llmProvider, tracer, traceID, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}

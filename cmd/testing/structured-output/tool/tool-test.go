@@ -59,7 +59,7 @@ func runStructuredOutputToolTest() error {
 	logger.Info("=== Structured Output Tool Test (Model 2) ===")
 	logger.Info("Testing Tool-Based Model: AskWithHistoryStructuredViaTool")
 
-	llm, err := testutils.CreateTestLLMFromViper(logger)
+	llm, llmProvider, err := testutils.CreateTestLLMFromViper(logger)
 	if err != nil {
 		return fmt.Errorf("failed to create LLM: %w", err)
 	}
@@ -69,7 +69,7 @@ func runStructuredOutputToolTest() error {
 	traceID := testutils.GenerateTestTraceID()
 
 	ctx := context.Background()
-	agent, err := testutils.CreateMinimalAgent(ctx, llm, tracer, traceID, logger)
+	agent, err := testutils.CreateMinimalAgent(ctx, llm, llmProvider, tracer, traceID, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}

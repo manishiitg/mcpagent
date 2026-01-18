@@ -605,7 +605,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, log loggerv2.Logger)
 	log.Info("Using server for normal mode integration test", loggerv2.String("server", testServerName))
 
 	// Create LLM instance
-	llmModel, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+	llmModel, llmProvider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider:    string(llm.ProviderOpenAI),
 		ModelID:     openai.ModelGPT4oMini,
 		Temperature: 0.2,
@@ -628,6 +628,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, log loggerv2.Logger)
 		ctx,
 		llmModel,
 		configPath,
+		mcpagent.WithProvider(llmProvider),
 		mcpagent.WithServerName(testServerName),
 		mcpagent.WithTraceID("test-trace"),
 		mcpagent.WithLogger(log),
@@ -679,7 +680,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, log loggerv2.
 	log.Info("Using server for code execution mode integration test", loggerv2.String("server", testServerName))
 
 	// Create LLM instance
-	llmModel, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+	llmModel, llmProvider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider:    string(llm.ProviderOpenAI),
 		ModelID:     openai.ModelGPT4oMini,
 		Temperature: 0.2,
@@ -702,6 +703,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, log loggerv2.
 		ctx,
 		llmModel,
 		configPath,
+		mcpagent.WithProvider(llmProvider),
 		mcpagent.WithServerName(testServerName),
 		mcpagent.WithTraceID("test-trace"),
 		mcpagent.WithLogger(log),
@@ -786,7 +788,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 	}
 
 	// Create LLM instance
-	llmModel, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+	llmModel, llmProvider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider:    string(llm.ProviderOpenAI),
 		ModelID:     openai.ModelGPT4oMini,
 		Temperature: 0.2,
@@ -811,6 +813,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 		ctx,
 		llmModel,
 		configPath,
+		mcpagent.WithProvider(llmProvider),
 		mcpagent.WithServerName(testServerName),
 		mcpagent.WithTraceID("test-trace-normal"),
 		mcpagent.WithLogger(log),
@@ -828,6 +831,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 		ctx,
 		llmModel,
 		configPath,
+		mcpagent.WithProvider(llmProvider),
 		mcpagent.WithServerName(testServerName),
 		mcpagent.WithTraceID("test-trace-codeexec"),
 		mcpagent.WithLogger(log),

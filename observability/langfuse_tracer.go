@@ -14,7 +14,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -62,8 +61,10 @@ const (
 	EventTypeUnifiedCompletion  = "unified_completion"
 	EventTypeLLMGenerationStart = "llm_generation_start"
 	EventTypeLLMGenerationEnd   = "llm_generation_end"
+	EventTypeLLMGenerationError = "llm_generation_error"
 	EventTypeToolCallStart      = "tool_call_start"
 	EventTypeToolCallEnd        = "tool_call_end"
+	EventTypeToolCallError      = "tool_call_error"
 	EventTypeTokenUsage         = "token_usage"
 
 	// MCP Server connection events
@@ -72,6 +73,40 @@ const (
 	EventTypeMCPServerConnectionError = "mcp_server_connection_error"
 	EventTypeMCPServerDiscovery       = "mcp_server_discovery"
 	EventTypeMCPServerSelection       = "mcp_server_selection"
+
+	// Error & Retry events
+	EventTypeFallbackModelUsed  = "fallback_model_used"
+	EventTypeFallbackAttempt    = "fallback_attempt"
+	EventTypeThrottlingDetected = "throttling_detected"
+	EventTypeTokenLimitExceeded = "token_limit_exceeded" //nolint:gosec // G101: false positive
+	EventTypeMaxTurnsReached    = "max_turns_reached"
+
+	// Context summarization events
+	EventTypeContextSummarizationStarted   = "context_summarization_started"
+	EventTypeContextSummarizationCompleted = "context_summarization_completed"
+	EventTypeContextSummarizationError     = "context_summarization_error"
+	EventTypeContextEditingCompleted       = "context_editing_completed"
+
+	// Smart routing events
+	EventTypeSmartRoutingStart = "smart_routing_start"
+	EventTypeSmartRoutingEnd   = "smart_routing_end"
+
+	// Streaming events
+	EventTypeStreamingStart          = "streaming_start"
+	EventTypeStreamingEnd            = "streaming_end"
+	EventTypeStreamingError          = "streaming_error"
+	EventTypeStreamingConnectionLost = "streaming_connection_lost"
+
+	// Cache events
+	EventTypeCacheHit   = "cache_hit"
+	EventTypeCacheMiss  = "cache_miss"
+	EventTypeCacheWrite = "cache_write"
+	EventTypeCacheError = "cache_error"
+
+	// Structured output events
+	EventTypeStructuredOutputStart = "structured_output_start"
+	EventTypeStructuredOutputEnd   = "structured_output_end"
+	EventTypeStructuredOutputError = "structured_output_error"
 )
 
 // LangfuseTracer implements the Tracer interface using Langfuse v2 API patterns.
@@ -92,11 +127,14 @@ type LangfuseTracer struct {
 	agentSpans         map[string]string // traceID -> agent span ID
 	conversationSpans  map[string]string // traceID -> conversation span ID
 	llmGenerationSpans map[string]string // traceID -> current LLM generation span ID
+	toolCallSpans      map[string]string // {traceID}_{turn}_{toolName} -> tool span ID
+	mcpConnectionSpans map[string]string // serverName -> mcp connection span ID
 
 	mu sync.RWMutex
 
 	// Background processing
 	eventQueue chan *langfuseEvent
+	flushCh    chan chan struct{} // Channel to signal flush and wait for completion
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
 
@@ -264,7 +302,10 @@ func initializeSharedLangfuseClientWithLogger(logger loggerv2.Logger) error {
 		agentSpans:         make(map[string]string),
 		conversationSpans:  make(map[string]string),
 		llmGenerationSpans: make(map[string]string),
+		toolCallSpans:      make(map[string]string),
+		mcpConnectionSpans: make(map[string]string),
 		eventQueue:         make(chan *langfuseEvent, 1000),
+		flushCh:            make(chan chan struct{}),
 		stopCh:             make(chan struct{}),
 		logger:             logger, // Use injected logger instead of default
 	}
@@ -370,294 +411,6 @@ func (l *LangfuseTracer) StartSpan(parentID string, name string, input interface
 	return l.StartObservation(parentID, "SPAN", name, input)
 }
 
-// generateAgentSpanName creates an informative name for agent spans using type-safe switches
-func (l *LangfuseTracer) generateAgentSpanName(eventData interface{}) string {
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: generateAgentSpanName called",
-		loggerv2.Any("data_type", fmt.Sprintf("%T", eventData)))
-
-	var modelID string
-	var availableTools int
-
-	// Type switch for concrete event types only
-	switch data := eventData.(type) {
-	case *events.AgentStartEvent:
-		modelID = data.ModelID
-		// AgentStartEvent doesn't have AvailableTools, use 0
-		availableTools = 0
-	default:
-		// Unknown type - use defaults
-		v2Logger.Debug("Langfuse: generateAgentSpanName - unknown event data type, using defaults",
-			loggerv2.String("type", fmt.Sprintf("%T", eventData)))
-		modelID = "unknown"
-		availableTools = 0
-	}
-
-	if modelID == "" {
-		modelID = "unknown"
-	}
-
-	// Extract model name (e.g., "gpt-4.1" from full model ID)
-	modelParts := strings.Split(modelID, "/")
-	shortModel := modelParts[len(modelParts)-1]
-
-	result := fmt.Sprintf("agent_%s_%d_tools", shortModel, availableTools)
-	v2Logger.Debug("Langfuse: generateAgentSpanName returning",
-		loggerv2.String("result", result),
-		loggerv2.String("model_id", modelID),
-		loggerv2.Int("tools", availableTools))
-	return result
-}
-
-// extractFinalResult extracts the final result from event data using type-safe switches
-func (l *LangfuseTracer) extractFinalResult(eventData interface{}) string {
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: extractFinalResult called",
-		loggerv2.Any("data_type", fmt.Sprintf("%T", eventData)))
-
-	// Type switch for concrete event types only
-	switch data := eventData.(type) {
-	case *events.ConversationEndEvent:
-		// ConversationEndEvent has Result field
-		if data.Result != "" {
-			return data.Result
-		}
-	case *events.UnifiedCompletionEvent:
-		// UnifiedCompletionEvent has FinalResult field
-		if data.FinalResult != "" {
-			return data.FinalResult
-		}
-	case *events.AgentEndEvent:
-		// AgentEndEvent doesn't have a direct result field
-		// Return empty string - result should come from ConversationEndEvent or UnifiedCompletionEvent
-	case *events.LLMGenerationEndEvent:
-		// LLMGenerationEndEvent has Content field
-		if data.Content != "" {
-			return data.Content
-		}
-	default:
-		// Unknown type - log and return empty
-		v2Logger.Debug("Langfuse: extractFinalResult - unknown event data type",
-			loggerv2.String("type", fmt.Sprintf("%T", eventData)))
-	}
-
-	v2Logger.Debug("Langfuse: extractFinalResult - no result found")
-	return ""
-}
-
-// cleanQuestionForName cleans and formats a question string for use in trace/span names
-func cleanQuestionForName(question string) string {
-	// Clean up the question: remove extra whitespace, convert to lowercase, replace spaces with underscores
-	cleanQuestion := strings.TrimSpace(strings.ToLower(question))
-
-	// Replace common punctuation and multiple spaces with single underscores
-	cleanQuestion = strings.ReplaceAll(cleanQuestion, "?", "")
-	cleanQuestion = strings.ReplaceAll(cleanQuestion, "!", "")
-	cleanQuestion = strings.ReplaceAll(cleanQuestion, ".", "")
-	cleanQuestion = strings.ReplaceAll(cleanQuestion, ",", "")
-	cleanQuestion = strings.ReplaceAll(cleanQuestion, ";", "")
-	cleanQuestion = strings.ReplaceAll(cleanQuestion, ":", "")
-
-	// Replace multiple spaces with single space, then spaces with underscores
-	words := strings.Fields(cleanQuestion)
-	cleanQuestion = strings.Join(words, "_")
-
-	// Truncate to a reasonable length for trace names (max 80 chars)
-	if len(cleanQuestion) > 80 {
-		// Try to truncate at word boundary if possible
-		if strings.Contains(cleanQuestion[:80], "_") {
-			lastUnderscore := strings.LastIndex(cleanQuestion[:80], "_")
-			if lastUnderscore > 50 { // Only truncate at underscore if we have a reasonable length
-				cleanQuestion = cleanQuestion[:lastUnderscore]
-			} else {
-				cleanQuestion = cleanQuestion[:77] + "..."
-			}
-		} else {
-			cleanQuestion = cleanQuestion[:77] + "..."
-		}
-	}
-
-	return cleanQuestion
-}
-
-// generateTraceName generates a meaningful name for traces based on user query using type-safe switches
-func (l *LangfuseTracer) generateTraceName(eventData interface{}) string {
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: generateTraceName called",
-		loggerv2.Any("event_data_type", fmt.Sprintf("%T", eventData)))
-
-	var question string
-
-	// Type switch for concrete event types only
-	switch data := eventData.(type) {
-	case *events.ConversationStartEvent:
-		question = data.Question
-	case *events.ConversationTurnEvent:
-		question = data.Question
-	case *events.UserMessageEvent:
-		question = data.Content
-	default:
-		// Unknown type - no question available
-		v2Logger.Debug("Langfuse: generateTraceName - unknown event data type, no question found",
-			loggerv2.String("type", fmt.Sprintf("%T", eventData)))
-	}
-
-	if question != "" {
-		cleanQuestion := cleanQuestionForName(question)
-		result := fmt.Sprintf("query_%s", cleanQuestion)
-		v2Logger.Debug("Langfuse: generateTraceName returning",
-			loggerv2.String("result", result),
-			loggerv2.String("original_question", question))
-		return result
-	}
-
-	// Fallback to default name if no question found
-	defaultName := "agent_conversation"
-	v2Logger.Debug("Langfuse: generateTraceName - no question found, using default",
-		loggerv2.String("default", defaultName))
-	return defaultName
-}
-
-// generateConversationSpanName creates an informative name for conversation spans using type-safe switches
-func (l *LangfuseTracer) generateConversationSpanName(eventData interface{}) string {
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: generateConversationSpanName called",
-		loggerv2.Any("data_type", fmt.Sprintf("%T", eventData)))
-
-	var question string
-
-	// Type switch for concrete event types only
-	switch data := eventData.(type) {
-	case *events.ConversationStartEvent:
-		question = data.Question
-	case *events.ConversationTurnEvent:
-		question = data.Question
-	case *events.UserMessageEvent:
-		question = data.Content
-	default:
-		// Unknown type - no question available
-		v2Logger.Debug("Langfuse: generateConversationSpanName - unknown event data type, no question found",
-			loggerv2.String("type", fmt.Sprintf("%T", eventData)))
-	}
-
-	if question != "" {
-		cleanQuestion := cleanQuestionForName(question)
-		// Truncate to a reasonable length for span names (max 50 chars)
-		if len(cleanQuestion) > 50 {
-			if strings.Contains(cleanQuestion[:50], "_") {
-				lastUnderscore := strings.LastIndex(cleanQuestion[:50], "_")
-				if lastUnderscore > 30 {
-					cleanQuestion = cleanQuestion[:lastUnderscore]
-				} else {
-					cleanQuestion = cleanQuestion[:47] + "..."
-				}
-			} else {
-				cleanQuestion = cleanQuestion[:47] + "..."
-			}
-		}
-
-		result := fmt.Sprintf("conversation_%s", cleanQuestion)
-		v2Logger.Debug("Langfuse: generateConversationSpanName returning",
-			loggerv2.String("result", result),
-			loggerv2.String("original_question", question))
-		return result
-	}
-
-	v2Logger.Debug("Langfuse: generateConversationSpanName falling back to default")
-	return "conversation_execution"
-}
-
-// generateLLMSpanName creates an informative name for LLM generation spans using type-safe switches
-func (l *LangfuseTracer) generateLLMSpanName(eventData interface{}) string {
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: generateLLMSpanName called",
-		loggerv2.Any("data_type", fmt.Sprintf("%T", eventData)))
-
-	var turn int
-	var modelID string
-	var toolsCount int
-
-	// Type switch for concrete event types only
-	switch data := eventData.(type) {
-	case *events.LLMGenerationStartEvent:
-		turn = data.Turn
-		modelID = data.ModelID
-		toolsCount = data.ToolsCount
-	case *events.LLMGenerationEndEvent:
-		turn = data.Turn
-		modelID = "unknown" // LLMGenerationEndEvent doesn't have ModelID
-		toolsCount = 0
-	default:
-		// Unknown type - use defaults
-		v2Logger.Debug("Langfuse: generateLLMSpanName - unknown event data type, using defaults",
-			loggerv2.String("type", fmt.Sprintf("%T", eventData)))
-		turn = 0
-		modelID = "unknown"
-		toolsCount = 0
-	}
-
-	if modelID == "" {
-		modelID = "unknown"
-	}
-
-	// Extract model name (e.g., "gpt-4.1" from full model ID)
-	modelParts := strings.Split(modelID, "/")
-	shortModel := modelParts[len(modelParts)-1]
-
-	result := fmt.Sprintf("llm_generation_turn_%d_%s_%d_tools", turn, shortModel, toolsCount)
-	v2Logger.Debug("Langfuse: generateLLMSpanName returning",
-		loggerv2.String("result", result),
-		loggerv2.Int("turn", turn),
-		loggerv2.String("model_id", modelID),
-		loggerv2.Int("tools", toolsCount))
-	return result
-}
-
-// generateToolSpanName creates an informative name for tool call spans using type-safe switches
-func (l *LangfuseTracer) generateToolSpanName(eventData interface{}) string {
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: generateToolSpanName called",
-		loggerv2.Any("data_type", fmt.Sprintf("%T", eventData)))
-
-	var turn int
-	var toolName string
-	var serverName string
-
-	// Type switch for concrete event types only
-	switch data := eventData.(type) {
-	case *events.ToolCallStartEvent:
-		turn = data.Turn
-		toolName = data.ToolName
-		serverName = data.ServerName
-	case *events.ToolCallEndEvent:
-		turn = data.Turn
-		toolName = data.ToolName
-		serverName = data.ServerName
-	default:
-		// Unknown type - use defaults
-		v2Logger.Debug("Langfuse: generateToolSpanName - unknown event data type, using defaults",
-			loggerv2.String("type", fmt.Sprintf("%T", eventData)))
-		turn = 0
-		toolName = "unknown"
-		serverName = "unknown"
-	}
-
-	if toolName == "" {
-		toolName = "unknown"
-	}
-	if serverName == "" {
-		serverName = "unknown"
-	}
-
-	result := fmt.Sprintf("tool_%s_%s_turn_%d", serverName, toolName, turn)
-	v2Logger.Debug("Langfuse: generateToolSpanName returning",
-		loggerv2.String("result", result),
-		loggerv2.Int("turn", turn),
-		loggerv2.String("tool", toolName),
-		loggerv2.String("server", serverName))
-	return result
-}
-
 // StartObservation starts a new observation with the specified type
 func (l *LangfuseTracer) StartObservation(parentID string, obsType string, name string, input interface{}) SpanID {
 	id := generateID()
@@ -730,10 +483,10 @@ func (l *LangfuseTracer) EndSpan(spanID SpanID, output interface{}, err error) {
 	}
 	l.mu.Unlock()
 
-	// Queue span update event
+	// Queue observation update event
 	event := &langfuseEvent{
 		ID:        generateID(),
-		Type:      "span-update",
+		Type:      "observation-update",
 		Timestamp: time.Now(),
 		Body:      span,
 	}
@@ -781,6 +534,28 @@ func (l *LangfuseTracer) EndTrace(traceID TraceID, output interface{}) {
 	v2Logger.Info("Langfuse: Ended trace",
 		loggerv2.String("name", trace.Name),
 		loggerv2.String("id", string(traceID)))
+
+	// Explicitly cleanup trace data to prevent memory leaks
+	l.cleanupTrace(traceID)
+}
+
+// cleanupTrace removes trace-related data from memory
+func (l *LangfuseTracer) cleanupTrace(traceID TraceID) {
+	id := string(traceID)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Remove from traces map
+	delete(l.traces, id)
+
+	// Remove from hierarchy mappings
+	delete(l.agentSpans, id)
+	delete(l.conversationSpans, id)
+	delete(l.llmGenerationSpans, id)
+
+	// Note: We don't iterate spans or toolCallSpans here to avoid O(N) operations.
+	// The background cleanupOldEntries will eventually catch orphaned spans
+	// based on their timestamps.
 }
 
 // CreateGenerationSpan creates a generation span for LLM calls
@@ -844,8 +619,15 @@ func (l *LangfuseTracer) EndGenerationSpan(spanID SpanID, metadata map[string]in
 	endTime := time.Now()
 	span.EndTime = &endTime
 
-	// Store metadata in span input
-	span.Input = metadata
+	// Extract content from metadata for output, store rest as metadata
+	if content, ok := metadata["content"]; ok && content != nil && content != "" {
+		span.Output = content
+		delete(metadata, "content") // Remove from metadata since it's now in output
+		v2Logger.Debug("Langfuse: Set generation output",
+			loggerv2.String("span_id", string(spanID)),
+			loggerv2.Int("content_length", len(fmt.Sprintf("%v", content))))
+	}
+	span.Metadata = metadata
 
 	// Convert usage metrics to Langfuse format
 	// Langfuse will automatically calculate costs based on model name and token usage
@@ -901,6 +683,9 @@ func (l *LangfuseTracer) eventProcessor() {
 	ticker := time.NewTicker(2 * time.Second) // Batch events every 2 seconds
 	defer ticker.Stop()
 
+	cleanupTicker := time.NewTicker(5 * time.Minute) // Cleanup every 5 minutes
+	defer cleanupTicker.Stop()
+
 	var batch []*langfuseEvent
 
 	for {
@@ -921,6 +706,19 @@ func (l *LangfuseTracer) eventProcessor() {
 				batch = nil
 			}
 
+		case <-cleanupTicker.C:
+			// Cleanup old entries from memory
+			l.cleanupOldEntries()
+
+		case doneCh := <-l.flushCh:
+			// Flush signal received - send any pending batch immediately
+			if len(batch) > 0 {
+				l.sendBatch(batch)
+				batch = nil
+			}
+			// Signal completion
+			close(doneCh)
+
 		case <-l.stopCh:
 			// Send final batch and exit
 			if len(batch) > 0 {
@@ -928,6 +726,69 @@ func (l *LangfuseTracer) eventProcessor() {
 			}
 			return
 		}
+	}
+}
+
+// cleanupOldEntries removes old traces and spans from memory to prevent leaks
+func (l *LangfuseTracer) cleanupOldEntries() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Retention period: 1 hour
+	threshold := time.Now().Add(-1 * time.Hour)
+	spansRemoved := 0
+	tracesRemoved := 0
+
+	// 1. Cleanup spans
+	for id, span := range l.spans {
+		// If span finished long ago OR started long ago (if never ended/zombie)
+		if (span.EndTime != nil && span.EndTime.Before(threshold)) || span.StartTime.Before(threshold) {
+			delete(l.spans, id)
+			spansRemoved++
+		}
+	}
+
+	// 2. Cleanup traces
+	for id, trace := range l.traces {
+		if trace.Timestamp.Before(threshold) {
+			delete(l.traces, id)
+			tracesRemoved++
+		}
+	}
+
+	// 3. Cleanup mappings pointing to deleted spans
+	for key, spanID := range l.toolCallSpans {
+		if _, exists := l.spans[spanID]; !exists {
+			delete(l.toolCallSpans, key)
+		}
+	}
+	for key, spanID := range l.mcpConnectionSpans {
+		if _, exists := l.spans[spanID]; !exists {
+			delete(l.mcpConnectionSpans, key)
+		}
+	}
+
+	// 4. Cleanup mappings pointing to deleted traces
+	for traceID := range l.agentSpans {
+		if _, exists := l.traces[traceID]; !exists {
+			delete(l.agentSpans, traceID)
+		}
+	}
+	for traceID := range l.conversationSpans {
+		if _, exists := l.traces[traceID]; !exists {
+			delete(l.conversationSpans, traceID)
+		}
+	}
+	for traceID := range l.llmGenerationSpans {
+		if _, exists := l.traces[traceID]; !exists {
+			delete(l.llmGenerationSpans, traceID)
+		}
+	}
+
+	if spansRemoved > 0 || tracesRemoved > 0 {
+		l.getV2Logger().Debug("Langfuse: Cleaned up old entries",
+			loggerv2.Int("spans_removed", spansRemoved),
+			loggerv2.Int("traces_removed", tracesRemoved))
 	}
 }
 
@@ -1000,24 +861,46 @@ func (l *LangfuseTracer) sendBatch(events []*langfuseEvent) {
 	v2Logger.Info("Langfuse: Sent batch successfully", loggerv2.Int("events_count", len(events)))
 }
 
-// Flush sends any pending events immediately
+// Flush sends any pending events immediately and waits for them to be sent
 func (l *LangfuseTracer) Flush() {
-	// Send a flush signal by closing and reopening the stop channel
-	// This is a simple way to trigger immediate batch sending
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Flush started")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Wait for queue to drain
+	// First, wait for queue to drain (events moved to batch by eventProcessor)
 	for {
 		select {
 		case <-ctx.Done():
+			v2Logger.Warn("Langfuse: Flush timeout waiting for queue to drain")
 			return
 		default:
 			if len(l.eventQueue) == 0 {
-				return
+				break
 			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
+		if len(l.eventQueue) == 0 {
+			break
+		}
+	}
+
+	v2Logger.Debug("Langfuse: Queue drained, sending flush signal")
+
+	// Send flush signal and wait for completion
+	doneCh := make(chan struct{})
+	select {
+	case l.flushCh <- doneCh:
+		// Wait for flush to complete
+		select {
+		case <-doneCh:
+			v2Logger.Debug("Langfuse: Flush completed successfully")
+		case <-ctx.Done():
+			v2Logger.Warn("Langfuse: Flush timeout waiting for batch send")
+		}
+	case <-ctx.Done():
+		v2Logger.Warn("Langfuse: Flush timeout sending flush signal")
 	}
 }
 
@@ -1031,11 +914,12 @@ func (l *LangfuseTracer) Shutdown() {
 // EmitEvent processes an agent event and takes appropriate tracing actions
 func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Processing event",
-		loggerv2.String("type", event.GetType()),
+	eventType := event.GetType()
+	v2Logger.Info("Langfuse: Processing event",
+		loggerv2.String("type", eventType),
 		loggerv2.String("correlation_id", event.GetCorrelationID()))
 
-	switch event.GetType() {
+	switch eventType {
 	case EventTypeAgentStart:
 		return l.handleAgentStart(event)
 	case EventTypeAgentEnd:
@@ -1056,6 +940,8 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 		return l.handleToolCallStart(event)
 	case EventTypeToolCallEnd:
 		return l.handleToolCallEnd(event)
+	case EventTypeToolCallError:
+		return l.handleToolCallError(event)
 	case EventTypeTokenUsage:
 		return l.handleTokenUsage(event)
 
@@ -1070,6 +956,66 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 		return l.handleMCPServerDiscovery(event)
 	case EventTypeMCPServerSelection:
 		return l.handleMCPServerSelection(event)
+
+	// LLM Error events
+	case EventTypeLLMGenerationError:
+		return l.handleLLMGenerationError(event)
+
+	// Error & Retry events
+	case EventTypeFallbackModelUsed:
+		return l.handleFallbackModelUsed(event)
+	case EventTypeFallbackAttempt:
+		return l.handleFallbackAttempt(event)
+	case EventTypeThrottlingDetected:
+		return l.handleThrottlingDetected(event)
+	case EventTypeTokenLimitExceeded:
+		return l.handleTokenLimitExceeded(event)
+	case EventTypeMaxTurnsReached:
+		return l.handleMaxTurnsReached(event)
+
+	// Context summarization events
+	case EventTypeContextSummarizationStarted:
+		return l.handleContextSummarizationStart(event)
+	case EventTypeContextSummarizationCompleted:
+		return l.handleContextSummarizationEnd(event)
+	case EventTypeContextSummarizationError:
+		return l.handleContextSummarizationError(event)
+	case EventTypeContextEditingCompleted:
+		return l.handleContextEditingCompleted(event)
+
+	// Smart routing events
+	case EventTypeSmartRoutingStart:
+		return l.handleSmartRoutingStart(event)
+	case EventTypeSmartRoutingEnd:
+		return l.handleSmartRoutingEnd(event)
+
+	// Streaming events
+	case EventTypeStreamingStart:
+		return l.handleStreamingStart(event)
+	case EventTypeStreamingEnd:
+		return l.handleStreamingEnd(event)
+	case EventTypeStreamingError:
+		return l.handleStreamingError(event)
+	case EventTypeStreamingConnectionLost:
+		return l.handleStreamingConnectionLost(event)
+
+	// Cache events
+	case EventTypeCacheHit:
+		return l.handleCacheHit(event)
+	case EventTypeCacheMiss:
+		return l.handleCacheMiss(event)
+	case EventTypeCacheWrite:
+		return l.handleCacheWrite(event)
+	case EventTypeCacheError:
+		return l.handleCacheError(event)
+
+	// Structured output events
+	case EventTypeStructuredOutputStart:
+		return l.handleStructuredOutputStart(event)
+	case EventTypeStructuredOutputEnd:
+		return l.handleStructuredOutputEnd(event)
+	case EventTypeStructuredOutputError:
+		return l.handleStructuredOutputError(event)
 
 	default:
 		v2Logger.Debug("Langfuse: Unhandled event type", loggerv2.String("type", event.GetType()))
@@ -1093,7 +1039,7 @@ func (l *LangfuseTracer) handleAgentStart(event AgentEvent) error {
 	traceID := event.GetTraceID()
 
 	// Generate meaningful trace name from user query
-	traceName := l.generateTraceName(event.GetData())
+	traceName := GenerateTraceName(event.GetData())
 
 	// Create trace in Langfuse
 	trace := &langfuseTrace{
@@ -1113,7 +1059,7 @@ func (l *LangfuseTracer) handleAgentStart(event AgentEvent) error {
 	l.mu.Unlock()
 
 	// Generate informative span name based on event data
-	spanName := l.generateAgentSpanName(event.GetData())
+	spanName := GenerateAgentSpanName(event.GetData())
 	agentObsID := l.StartObservation(traceID, "SPAN", spanName, event.GetData())
 
 	// Store the agent span ID for this trace to maintain hierarchy
@@ -1144,7 +1090,7 @@ func (l *LangfuseTracer) handleAgentEnd(event AgentEvent) error {
 	l.mu.RUnlock()
 
 	// Extract final result from event data
-	finalResult := l.extractFinalResult(event.GetData())
+	finalResult := ExtractFinalResult(event.GetData())
 	v2Logger := l.getV2Logger()
 
 	if finalResult == "" {
@@ -1209,22 +1155,39 @@ func (l *LangfuseTracer) handleAgentError(event AgentEvent) error {
 func (l *LangfuseTracer) handleConversationStart(event AgentEvent) error {
 	traceID := event.GetTraceID()
 
-	// Update trace name from question (now available in ConversationStartEvent)
+	// Update trace name and input from question (now available in ConversationStartEvent)
 	// This fixes the issue where trace was created with default "agent_conversation" name
-	// before the question was available
+	// and metadata-only input before the question was available
 	l.mu.Lock()
 	trace, exists := l.traces[traceID]
 	if exists {
 		// Generate meaningful trace name from question
-		newTraceName := l.generateTraceName(event.GetData())
+		newTraceName := GenerateTraceName(event.GetData())
 		trace.Name = newTraceName
 
-		v2Logger := l.getV2Logger()
-		v2Logger.Debug("Langfuse: Setting trace name from conversation start",
-			loggerv2.String("trace_id", traceID),
-			loggerv2.String("trace_name", newTraceName))
+		// Extract the actual user question for trace input
+		var userQuestion string
+		switch data := event.GetData().(type) {
+		case *events.ConversationStartEvent:
+			userQuestion = data.Question
+		case *events.ConversationTurnEvent:
+			userQuestion = data.Question
+		case *events.UserMessageEvent:
+			userQuestion = data.Content
+		}
 
-		// Now send the trace to Langfuse with the correct name
+		// Set trace input to the actual user question (not just metadata)
+		if userQuestion != "" {
+			trace.Input = userQuestion
+		}
+
+		v2Logger := l.getV2Logger()
+		v2Logger.Debug("Langfuse: Setting trace name and input from conversation start",
+			loggerv2.String("trace_id", traceID),
+			loggerv2.String("trace_name", newTraceName),
+			loggerv2.Int("input_length", len(userQuestion)))
+
+		// Now send the trace to Langfuse with the correct name and input
 		// (We delayed sending it in handleAgentStart to wait for the question)
 		traceEvent := &langfuseEvent{
 			ID:        generateID(),
@@ -1235,7 +1198,7 @@ func (l *LangfuseTracer) handleConversationStart(event AgentEvent) error {
 
 		select {
 		case l.eventQueue <- traceEvent:
-			v2Logger.Debug("Langfuse: Queued trace creation event with question-based name")
+			v2Logger.Debug("Langfuse: Queued trace creation event with question-based name and input")
 		default:
 			v2Logger.Warn("Langfuse: Event queue full, dropping trace creation event")
 		}
@@ -1256,7 +1219,7 @@ func (l *LangfuseTracer) handleConversationStart(event AgentEvent) error {
 	}
 
 	// Generate informative span name based on event data
-	spanName := l.generateConversationSpanName(event.GetData())
+	spanName := GenerateConversationSpanName(event.GetData())
 	conversationSpanID := l.StartSpan(parentSpanID, spanName, event.GetData())
 
 	// Store the conversation span ID for this trace to maintain hierarchy
@@ -1282,7 +1245,7 @@ func (l *LangfuseTracer) handleConversationEnd(event AgentEvent) error {
 	l.mu.RUnlock()
 
 	// Extract final result from conversation end event
-	finalResult := l.extractFinalResult(event.GetData())
+	finalResult := ExtractFinalResult(event.GetData())
 	v2Logger := l.getV2Logger()
 
 	if finalResult == "" {
@@ -1335,8 +1298,30 @@ func (l *LangfuseTracer) handleLLMGenerationStart(event AgentEvent) error {
 	}
 
 	// Generate informative span name based on event data
-	spanName := l.generateLLMSpanName(event.GetData())
+	spanName := GenerateLLMSpanName(event.GetData())
 	llmGenerationID := l.StartObservation(parentSpanID, "GENERATION", spanName, event.GetData())
+
+	// Extract model and configuration from LLMGenerationStartEvent
+	var modelID string
+	var modelParameters map[string]interface{}
+	if startEvent, ok := event.GetData().(*events.LLMGenerationStartEvent); ok {
+		modelID = startEvent.ModelID
+
+		// Build model parameters map for Langfuse
+		modelParameters = map[string]interface{}{
+			"temperature":    startEvent.Temperature,
+			"tools_count":    startEvent.ToolsCount,
+			"turn":           startEvent.Turn,
+			"messages_count": startEvent.MessagesCount,
+		}
+
+		l.mu.Lock()
+		if obs, exists := l.spans[string(llmGenerationID)]; exists {
+			obs.Model = modelID
+			obs.ModelParameters = modelParameters
+		}
+		l.mu.Unlock()
+	}
 
 	// Store the LLM generation span ID for this trace to maintain hierarchy
 	l.mu.Lock()
@@ -1347,7 +1332,9 @@ func (l *LangfuseTracer) handleLLMGenerationStart(event AgentEvent) error {
 	v2Logger.Debug("Langfuse: Started LLM generation observation",
 		loggerv2.String("span_name", spanName),
 		loggerv2.String("llm_generation_id", string(llmGenerationID)),
-		loggerv2.String("parent", parentSpanID))
+		loggerv2.String("parent", parentSpanID),
+		loggerv2.String("model", modelID),
+		loggerv2.Any("model_parameters", modelParameters))
 	return nil
 }
 
@@ -1427,39 +1414,132 @@ func (l *LangfuseTracer) handleToolCallStart(event AgentEvent) error {
 	}
 
 	// Generate informative span name based on event data
-	spanName := l.generateToolSpanName(event.GetData())
+	spanName := GenerateToolSpanName(event.GetData())
 	toolID := l.StartObservation(parentSpanID, "SPAN", spanName, event.GetData())
 
+	// Store tool span ID for later completion by handleToolCallEnd
+	var toolKey string
+	if startEvent, ok := event.GetData().(*events.ToolCallStartEvent); ok {
+		toolKey = fmt.Sprintf("%s_%d_%s", traceID, startEvent.Turn, startEvent.ToolName)
+		l.mu.Lock()
+		l.toolCallSpans[toolKey] = string(toolID)
+		l.mu.Unlock()
+	}
+
 	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Started tool observation",
+	v2Logger.Info("Langfuse: Started tool observation",
+		loggerv2.String("tool_key", toolKey),
 		loggerv2.String("span_name", spanName),
 		loggerv2.String("tool_id", string(toolID)),
 		loggerv2.String("parent", parentSpanID))
 	return nil
 }
 
-// handleToolCallEnd creates a new span for tool call completion
+// handleToolCallEnd ends the existing tool call span created by handleToolCallStart
 func (l *LangfuseTracer) handleToolCallEnd(event AgentEvent) error {
 	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
 
-	// Get the LLM generation span ID for this trace to use as parent
-	l.mu.RLock()
-	parentSpanID := l.llmGenerationSpans[traceID]
-	l.mu.RUnlock()
+	// Find the existing tool span to end
+	if endEvent, ok := event.GetData().(*events.ToolCallEndEvent); ok {
+		toolKey := fmt.Sprintf("%s_%d_%s", traceID, endEvent.Turn, endEvent.ToolName)
+		l.mu.RLock()
+		toolSpanID := l.toolCallSpans[toolKey]
+		// Also log all available keys for debugging
+		availableKeys := make([]string, 0, len(l.toolCallSpans))
+		for k := range l.toolCallSpans {
+			availableKeys = append(availableKeys, k)
+		}
+		l.mu.RUnlock()
 
-	// If no LLM generation span ID found, use trace ID as fallback
-	if parentSpanID == "" {
-		parentSpanID = traceID
+		v2Logger.Info("Langfuse: Looking for tool span to end",
+			loggerv2.String("tool_key", toolKey),
+			loggerv2.String("found_span_id", toolSpanID),
+			loggerv2.Any("available_keys", availableKeys))
+
+		if toolSpanID != "" {
+			// Build output with result, duration, and additional metadata
+			output := map[string]interface{}{
+				"result":      endEvent.Result,
+				"duration":    endEvent.Duration.String(),
+				"server_name": endEvent.ServerName,
+			}
+			// Add optional fields if present
+			if endEvent.ModelID != "" {
+				output["model_id"] = endEvent.ModelID
+			}
+			if endEvent.ContextUsagePercent > 0 {
+				output["context_usage_percent"] = endEvent.ContextUsagePercent
+			}
+			if endEvent.ModelContextWindow > 0 {
+				output["model_context_window"] = endEvent.ModelContextWindow
+			}
+			if endEvent.ContextWindowUsage > 0 {
+				output["context_window_usage"] = endEvent.ContextWindowUsage
+			}
+
+			// End the existing span with output
+			l.EndSpan(SpanID(toolSpanID), output, nil)
+
+			// Clean up
+			l.mu.Lock()
+			delete(l.toolCallSpans, toolKey)
+			l.mu.Unlock()
+
+			v2Logger.Info("Langfuse: Ended tool span",
+				loggerv2.String("tool_name", endEvent.ToolName),
+				loggerv2.String("span_id", toolSpanID),
+				loggerv2.String("duration", endEvent.Duration.String()))
+			return nil
+		}
 	}
 
-	spanID := l.StartSpan(parentSpanID, "tool_call_completion", event.GetData())
+	// Fallback: log warning if no existing span found
+	v2Logger.Warn("Langfuse: No tool span found to end", loggerv2.String("trace_id", traceID))
+	return nil
+}
 
-	// End the span immediately since this is a completion event
-	l.EndSpan(spanID, event.GetData(), nil)
-
+// handleToolCallError ends the existing tool call span created by handleToolCallStart with an error
+func (l *LangfuseTracer) handleToolCallError(event AgentEvent) error {
+	traceID := event.GetTraceID()
 	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created and ended tool call completion span",
-		loggerv2.String("span_id", string(spanID)))
+
+	// Find the existing tool span to end with error
+	if errorEvent, ok := event.GetData().(*events.ToolCallErrorEvent); ok {
+		toolKey := fmt.Sprintf("%s_%d_%s", traceID, errorEvent.Turn, errorEvent.ToolName)
+		l.mu.RLock()
+		toolSpanID := l.toolCallSpans[toolKey]
+		l.mu.RUnlock()
+
+		v2Logger.Info("Langfuse: Looking for tool span to end with error",
+			loggerv2.String("tool_key", toolKey),
+			loggerv2.String("found_span_id", toolSpanID))
+
+		if toolSpanID != "" {
+			// Build output with error info
+			output := map[string]interface{}{
+				"error":    errorEvent.Error,
+				"duration": errorEvent.Duration.String(),
+			}
+
+			// End the existing span with error
+			l.EndSpan(SpanID(toolSpanID), output, errors.New(errorEvent.Error))
+
+			// Clean up
+			l.mu.Lock()
+			delete(l.toolCallSpans, toolKey)
+			l.mu.Unlock()
+
+			v2Logger.Info("Langfuse: Ended tool span with error",
+				loggerv2.String("tool_name", errorEvent.ToolName),
+				loggerv2.String("span_id", toolSpanID),
+				loggerv2.String("error", errorEvent.Error))
+			return nil
+		}
+	}
+
+	// Fallback: log warning if no existing span found
+	v2Logger.Warn("Langfuse: No tool span found to end with error", loggerv2.String("trace_id", traceID))
 	return nil
 }
 
@@ -1591,40 +1671,128 @@ func (l *LangfuseTracer) handleTokenUsage(event AgentEvent) error {
 func (l *LangfuseTracer) handleMCPServerConnectionStart(event AgentEvent) error {
 	traceID := event.GetTraceID()
 
-	// Create a new span for MCP server connection start
-	spanID := l.StartSpan(traceID, "mcp_server_connection_start", event.GetData())
-
-	// Store the span ID for later completion
-	l.mu.Lock()
-	l.spans[string(spanID)] = &langfuseSpan{
-		ID:        string(spanID),
-		TraceID:   traceID,
-		StartTime: time.Now(),
+	// Get agent span as parent for proper hierarchy
+	l.mu.RLock()
+	parentSpanID := l.agentSpans[traceID]
+	l.mu.RUnlock()
+	if parentSpanID == "" {
+		parentSpanID = traceID
 	}
-	l.mu.Unlock()
+
+	// Extract server name for informative span name
+	spanName := "mcp_connection_start"
+	var serverName string
+	// Try MCPServerConnectionEvent first (what the agent actually emits)
+	if connEvent, ok := event.GetData().(*events.MCPServerConnectionEvent); ok {
+		serverName = connEvent.ServerName
+		if serverName != "" {
+			spanName = fmt.Sprintf("mcp_connection_%s", serverName)
+		}
+	} else if startEvent, ok := event.GetData().(*events.MCPServerConnectionStartEvent); ok {
+		// Fallback to MCPServerConnectionStartEvent
+		serverName = startEvent.ServerName
+		if serverName != "" {
+			spanName = fmt.Sprintf("mcp_connection_%s", serverName)
+		}
+	}
+
+	// Create span with agent as parent
+	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
+
+	// Store for later completion by handleMCPServerConnectionEnd
+	if serverName != "" {
+		l.mu.Lock()
+		l.mcpConnectionSpans[serverName] = string(spanID)
+		l.mu.Unlock()
+	}
 
 	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created MCP server connection start span",
+	v2Logger.Debug("Langfuse: Created MCP server connection span",
 		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("server_name", serverName),
 		loggerv2.String("trace_id", traceID))
 
 	return nil
 }
 
-// handleMCPServerConnectionEnd creates a new span for MCP server connection end
+// handleMCPServerConnectionEnd ends the existing MCP server connection span
 func (l *LangfuseTracer) handleMCPServerConnectionEnd(event AgentEvent) error {
 	traceID := event.GetTraceID()
-
-	// Create a new span for MCP server connection end
-	spanID := l.StartSpan(traceID, "mcp_server_connection_end", event.GetData())
-
-	// End the span immediately since connection end is a point-in-time event
-	l.EndSpan(spanID, event.GetData(), nil)
-
 	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created MCP server connection end span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
+
+	// Extract server info from the event - try MCPServerConnectionEvent first (what agent actually emits)
+	var serverName string
+	var toolCount int
+	var toolNames []string
+	var connectionTime time.Duration
+	var output map[string]interface{}
+
+	if connEvent, ok := event.GetData().(*events.MCPServerConnectionEvent); ok {
+		serverName = connEvent.ServerName
+		toolCount = connEvent.ToolsCount
+		connectionTime = connEvent.ConnectionTime
+		output = map[string]interface{}{
+			"server_name":     serverName,
+			"tool_count":      toolCount,
+			"connection_time": connectionTime.String(),
+			"status":          connEvent.Status,
+		}
+		if connEvent.ServerInfo != nil {
+			output["server_info"] = connEvent.ServerInfo
+		}
+	} else if endEvent, ok := event.GetData().(*events.MCPServerConnectionEndEvent); ok {
+		serverName = endEvent.ServerName
+		toolCount = endEvent.ToolCount
+		toolNames = endEvent.ToolNames
+		output = map[string]interface{}{
+			"server_name": serverName,
+			"tool_count":  toolCount,
+			"tool_names":  toolNames,
+			"duration":    endEvent.Duration,
+		}
+	}
+
+	// Find and end existing span
+	if serverName != "" {
+		l.mu.RLock()
+		spanID := l.mcpConnectionSpans[serverName]
+		l.mu.RUnlock()
+
+		if spanID != "" {
+			l.EndSpan(SpanID(spanID), output, nil)
+
+			// Clean up
+			l.mu.Lock()
+			delete(l.mcpConnectionSpans, serverName)
+			l.mu.Unlock()
+
+			v2Logger.Debug("Langfuse: Ended MCP server connection span",
+				loggerv2.String("span_id", spanID),
+				loggerv2.String("server_name", serverName),
+				loggerv2.Int("tool_count", toolCount),
+				loggerv2.String("connection_time", connectionTime.String()))
+			return nil
+		}
+	}
+
+	// Fallback: create point-in-time span if no matching start
+	l.mu.RLock()
+	parentSpanID := l.agentSpans[traceID]
+	l.mu.RUnlock()
+	if parentSpanID == "" {
+		parentSpanID = traceID
+	}
+
+	spanName := "mcp_connection_end"
+	if serverName != "" {
+		spanName = fmt.Sprintf("mcp_connection_%s_end", serverName)
+	}
+	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
+	l.EndSpan(spanID, output, nil)
+
+	v2Logger.Warn("Langfuse: No MCP connection span found to end, created point-in-time span",
+		loggerv2.String("trace_id", traceID),
+		loggerv2.String("server_name", serverName))
 
 	return nil
 }
@@ -1651,11 +1819,37 @@ func (l *LangfuseTracer) handleMCPServerConnectionError(event AgentEvent) error 
 func (l *LangfuseTracer) handleMCPServerDiscovery(event AgentEvent) error {
 	traceID := event.GetTraceID()
 
-	// Create a new span for MCP server discovery
-	spanID := l.StartSpan(traceID, "mcp_server_discovery", event.GetData())
+	// Get agent span as parent for proper hierarchy
+	l.mu.RLock()
+	parentSpanID := l.agentSpans[traceID]
+	l.mu.RUnlock()
+	if parentSpanID == "" {
+		parentSpanID = traceID
+	}
+
+	// Extract discovery info for informative span name and output
+	spanName := "mcp_discovery"
+	var output map[string]interface{}
+	if discEvent, ok := event.GetData().(*events.MCPServerDiscoveryEvent); ok {
+		spanName = fmt.Sprintf("mcp_discovery_%d_servers_%d_tools",
+			discEvent.ConnectedServers, discEvent.ToolCount)
+		output = map[string]interface{}{
+			"total_servers":     discEvent.TotalServers,
+			"connected_servers": discEvent.ConnectedServers,
+			"failed_servers":    discEvent.FailedServers,
+			"tool_count":        discEvent.ToolCount,
+			"discovery_time":    discEvent.DiscoveryTime.String(),
+		}
+		if discEvent.ServerName != "" {
+			output["server_name"] = discEvent.ServerName
+		}
+	}
+
+	// Create span with agent as parent
+	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
 
 	// End the span immediately since discovery is a point-in-time event
-	l.EndSpan(spanID, event.GetData(), nil)
+	l.EndSpan(spanID, output, nil)
 
 	v2Logger := l.getV2Logger()
 	v2Logger.Debug("Langfuse: Created MCP server discovery span",
@@ -1678,6 +1872,686 @@ func (l *LangfuseTracer) handleMCPServerSelection(event AgentEvent) error {
 	v2Logger := l.getV2Logger()
 	v2Logger.Debug("Langfuse: Created MCP server selection span",
 		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// ============================================================================
+// LLM Error Handlers
+// ============================================================================
+
+// handleLLMGenerationError creates an error span for LLM generation failures
+func (l *LangfuseTracer) handleLLMGenerationError(event AgentEvent) error {
+	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
+
+	// Get the LLM generation span ID to end it with error
+	l.mu.RLock()
+	generationSpanID := l.llmGenerationSpans[traceID]
+	l.mu.RUnlock()
+
+	var output map[string]interface{}
+	var err error
+	if errorEvent, ok := event.GetData().(*events.LLMGenerationErrorEvent); ok {
+		output = map[string]interface{}{
+			"turn":     errorEvent.Turn,
+			"model_id": errorEvent.ModelID,
+			"error":    errorEvent.Error,
+			"duration": errorEvent.Duration.String(),
+		}
+		err = fmt.Errorf("%s", errorEvent.Error)
+	}
+
+	if generationSpanID != "" {
+		l.EndSpan(SpanID(generationSpanID), output, err)
+		v2Logger.Info("Langfuse: Ended LLM generation span with error",
+			loggerv2.String("span_id", generationSpanID),
+			loggerv2.String("trace_id", traceID))
+	} else {
+		// Create point-in-time error span
+		spanID := l.StartSpan(traceID, "llm_generation_error", event.GetData())
+		l.EndSpan(spanID, output, err)
+		v2Logger.Info("Langfuse: Created LLM generation error span",
+			loggerv2.String("span_id", string(spanID)),
+			loggerv2.String("trace_id", traceID))
+	}
+
+	return nil
+}
+
+// ============================================================================
+// Error & Retry Handlers
+// ============================================================================
+
+// handleFallbackModelUsed creates a span for fallback model usage
+func (l *LangfuseTracer) handleFallbackModelUsed(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	spanName := "fallback_model_used"
+	var output map[string]interface{}
+	if fbEvent, ok := event.GetData().(*events.FallbackModelUsedEvent); ok {
+		spanName = fmt.Sprintf("fallback_%s_to_%s", fbEvent.OriginalModel, fbEvent.FallbackModel)
+		output = map[string]interface{}{
+			"turn":           fbEvent.Turn,
+			"original_model": fbEvent.OriginalModel,
+			"fallback_model": fbEvent.FallbackModel,
+			"provider":       fbEvent.Provider,
+			"reason":         fbEvent.Reason,
+			"duration":       fbEvent.Duration,
+		}
+	}
+
+	spanID := l.StartSpan(traceID, spanName, event.GetData())
+	l.EndSpan(spanID, output, nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Info("Langfuse: Created fallback model used span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleFallbackAttempt creates a span for each fallback attempt
+func (l *LangfuseTracer) handleFallbackAttempt(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	spanName := "fallback_attempt"
+	var output map[string]interface{}
+	var err error
+	if fbEvent, ok := event.GetData().(*events.FallbackAttemptEvent); ok {
+		spanName = fmt.Sprintf("fallback_attempt_%d_%s", fbEvent.AttemptIndex, fbEvent.ModelID)
+		output = map[string]interface{}{
+			"turn":           fbEvent.Turn,
+			"attempt_index":  fbEvent.AttemptIndex,
+			"total_attempts": fbEvent.TotalAttempts,
+			"model_id":       fbEvent.ModelID,
+			"provider":       fbEvent.Provider,
+			"phase":          fbEvent.Phase,
+			"success":        fbEvent.Success,
+			"duration":       fbEvent.Duration,
+		}
+		if fbEvent.Error != "" {
+			output["error"] = fbEvent.Error
+			err = fmt.Errorf("%s", fbEvent.Error)
+		}
+	}
+
+	spanID := l.StartSpan(traceID, spanName, event.GetData())
+	l.EndSpan(spanID, output, err)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Created fallback attempt span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleThrottlingDetected creates a span for throttling events
+func (l *LangfuseTracer) handleThrottlingDetected(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	spanID := l.StartSpan(traceID, "throttling_detected", event.GetData())
+	l.EndSpan(spanID, event.GetData(), nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Info("Langfuse: Created throttling detected span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleTokenLimitExceeded creates a span for token limit exceeded events
+func (l *LangfuseTracer) handleTokenLimitExceeded(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	spanID := l.StartSpan(traceID, "token_limit_exceeded", event.GetData())
+	l.EndSpan(spanID, event.GetData(), nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Info("Langfuse: Created token limit exceeded span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleMaxTurnsReached creates a span for max turns reached events
+func (l *LangfuseTracer) handleMaxTurnsReached(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	spanID := l.StartSpan(traceID, "max_turns_reached", event.GetData())
+	l.EndSpan(spanID, event.GetData(), nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Info("Langfuse: Created max turns reached span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// ============================================================================
+// Context Summarization Handlers
+// ============================================================================
+
+// handleContextSummarizationStart creates a span for context summarization start
+func (l *LangfuseTracer) handleContextSummarizationStart(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	// Get conversation span as parent
+	l.mu.RLock()
+	parentSpanID := l.conversationSpans[traceID]
+	l.mu.RUnlock()
+	if parentSpanID == "" {
+		parentSpanID = traceID
+	}
+
+	spanName := "context_summarization"
+	if sumEvent, ok := event.GetData().(*events.ContextSummarizationStartedEvent); ok {
+		spanName = fmt.Sprintf("context_summarization_%d_messages", sumEvent.OriginalMessageCount)
+	}
+
+	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
+
+	// Store for later completion
+	l.mu.Lock()
+	l.mcpConnectionSpans["context_summarization_"+traceID] = string(spanID)
+	l.mu.Unlock()
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Started context summarization span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleContextSummarizationEnd ends the context summarization span
+func (l *LangfuseTracer) handleContextSummarizationEnd(event AgentEvent) error {
+	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
+
+	// Find the existing span
+	spanKey := "context_summarization_" + traceID
+	l.mu.RLock()
+	spanID := l.mcpConnectionSpans[spanKey]
+	l.mu.RUnlock()
+
+	var output map[string]interface{}
+	if sumEvent, ok := event.GetData().(*events.ContextSummarizationCompletedEvent); ok {
+		output = map[string]interface{}{
+			"original_message_count": sumEvent.OriginalMessageCount,
+			"new_message_count":      sumEvent.NewMessageCount,
+			"summary_length":         sumEvent.SummaryLength,
+			"prompt_tokens":          sumEvent.PromptTokens,
+			"completion_tokens":      sumEvent.CompletionTokens,
+			"total_tokens":           sumEvent.TotalTokens,
+		}
+	}
+
+	if spanID != "" {
+		l.EndSpan(SpanID(spanID), output, nil)
+		l.mu.Lock()
+		delete(l.mcpConnectionSpans, spanKey)
+		l.mu.Unlock()
+		v2Logger.Info("Langfuse: Ended context summarization span",
+			loggerv2.String("span_id", spanID),
+			loggerv2.String("trace_id", traceID))
+	} else {
+		// Create point-in-time span
+		newSpanID := l.StartSpan(traceID, "context_summarization_completed", event.GetData())
+		l.EndSpan(newSpanID, output, nil)
+		v2Logger.Info("Langfuse: Created context summarization completed span",
+			loggerv2.String("span_id", string(newSpanID)),
+			loggerv2.String("trace_id", traceID))
+	}
+
+	return nil
+}
+
+// handleContextSummarizationError handles context summarization errors
+func (l *LangfuseTracer) handleContextSummarizationError(event AgentEvent) error {
+	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
+
+	// Find and end the existing span with error
+	spanKey := "context_summarization_" + traceID
+	l.mu.RLock()
+	spanID := l.mcpConnectionSpans[spanKey]
+	l.mu.RUnlock()
+
+	var err error
+	if errEvent, ok := event.GetData().(*events.ContextSummarizationErrorEvent); ok {
+		err = fmt.Errorf("%s", errEvent.Error)
+	}
+
+	if spanID != "" {
+		l.EndSpan(SpanID(spanID), event.GetData(), err)
+		l.mu.Lock()
+		delete(l.mcpConnectionSpans, spanKey)
+		l.mu.Unlock()
+	} else {
+		newSpanID := l.StartSpan(traceID, "context_summarization_error", event.GetData())
+		l.EndSpan(newSpanID, event.GetData(), err)
+	}
+
+	v2Logger.Info("Langfuse: Created context summarization error span",
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleContextEditingCompleted creates a span for context editing completion
+func (l *LangfuseTracer) handleContextEditingCompleted(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	spanID := l.StartSpan(traceID, "context_editing_completed", event.GetData())
+	l.EndSpan(spanID, event.GetData(), nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Created context editing completed span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// ============================================================================
+// Smart Routing Handlers
+// ============================================================================
+
+// handleSmartRoutingStart creates a span for smart routing start
+func (l *LangfuseTracer) handleSmartRoutingStart(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	// Get agent span as parent
+	l.mu.RLock()
+	parentSpanID := l.agentSpans[traceID]
+	l.mu.RUnlock()
+	if parentSpanID == "" {
+		parentSpanID = traceID
+	}
+
+	spanName := "smart_routing"
+	if srEvent, ok := event.GetData().(*events.SmartRoutingStartEvent); ok {
+		spanName = fmt.Sprintf("smart_routing_%d_servers_%d_tools", srEvent.TotalServers, srEvent.TotalTools)
+	}
+
+	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
+
+	// Store for later completion
+	l.mu.Lock()
+	l.mcpConnectionSpans["smart_routing_"+traceID] = string(spanID)
+	l.mu.Unlock()
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Started smart routing span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleSmartRoutingEnd ends the smart routing span
+func (l *LangfuseTracer) handleSmartRoutingEnd(event AgentEvent) error {
+	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
+
+	// Find the existing span
+	spanKey := "smart_routing_" + traceID
+	l.mu.RLock()
+	spanID := l.mcpConnectionSpans[spanKey]
+	l.mu.RUnlock()
+
+	var output map[string]interface{}
+	if srEvent, ok := event.GetData().(*events.SmartRoutingEndEvent); ok {
+		output = map[string]interface{}{
+			"selected_servers":      srEvent.SelectedServers,
+			"relevant_servers":      srEvent.RelevantServers,
+			"filtered_tools":        srEvent.FilteredTools,
+			"total_tools":           srEvent.TotalTools,
+			"routing_reasoning":     srEvent.RoutingReasoning,
+			"routing_duration":      srEvent.RoutingDuration.String(),
+			"has_appended_prompts":  srEvent.HasAppendedPrompts,
+			"appended_prompt_count": srEvent.AppendedPromptCount,
+			"success":               srEvent.Success,
+			"llm_response":          srEvent.LLMResponse,
+		}
+	}
+
+	if spanID != "" {
+		l.EndSpan(SpanID(spanID), output, nil)
+		l.mu.Lock()
+		delete(l.mcpConnectionSpans, spanKey)
+		l.mu.Unlock()
+		v2Logger.Info("Langfuse: Ended smart routing span",
+			loggerv2.String("span_id", spanID),
+			loggerv2.String("trace_id", traceID))
+	} else {
+		newSpanID := l.StartSpan(traceID, "smart_routing_completed", event.GetData())
+		l.EndSpan(newSpanID, output, nil)
+		v2Logger.Info("Langfuse: Created smart routing completed span",
+			loggerv2.String("span_id", string(newSpanID)),
+			loggerv2.String("trace_id", traceID))
+	}
+
+	return nil
+}
+
+// ============================================================================
+// Streaming Handlers
+// ============================================================================
+
+// handleStreamingStart creates a span for streaming start
+func (l *LangfuseTracer) handleStreamingStart(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	// Get LLM generation span as parent
+	l.mu.RLock()
+	parentSpanID := l.llmGenerationSpans[traceID]
+	l.mu.RUnlock()
+	if parentSpanID == "" {
+		parentSpanID = traceID
+	}
+
+	spanID := l.StartSpan(parentSpanID, "streaming", event.GetData())
+
+	// Store for later completion
+	l.mu.Lock()
+	l.mcpConnectionSpans["streaming_"+traceID] = string(spanID)
+	l.mu.Unlock()
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Started streaming span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleStreamingEnd ends the streaming span
+func (l *LangfuseTracer) handleStreamingEnd(event AgentEvent) error {
+	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
+
+	spanKey := "streaming_" + traceID
+	l.mu.RLock()
+	spanID := l.mcpConnectionSpans[spanKey]
+	l.mu.RUnlock()
+
+	var output map[string]interface{}
+	if seEvent, ok := event.GetData().(*events.StreamingEndEvent); ok {
+		output = map[string]interface{}{
+			"total_chunks":  seEvent.TotalChunks,
+			"total_tokens":  seEvent.TotalTokens,
+			"duration":      seEvent.Duration,
+			"finish_reason": seEvent.FinishReason,
+		}
+	}
+
+	if spanID != "" {
+		l.EndSpan(SpanID(spanID), output, nil)
+		l.mu.Lock()
+		delete(l.mcpConnectionSpans, spanKey)
+		l.mu.Unlock()
+	} else {
+		newSpanID := l.StartSpan(traceID, "streaming_completed", event.GetData())
+		l.EndSpan(newSpanID, output, nil)
+	}
+
+	v2Logger.Debug("Langfuse: Ended streaming span",
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleStreamingError handles streaming errors
+func (l *LangfuseTracer) handleStreamingError(event AgentEvent) error {
+	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
+
+	spanKey := "streaming_" + traceID
+	l.mu.RLock()
+	spanID := l.mcpConnectionSpans[spanKey]
+	l.mu.RUnlock()
+
+	var err error
+	if errEvent, ok := event.GetData().(*events.StreamingErrorEvent); ok {
+		err = fmt.Errorf("%s", errEvent.Error)
+	}
+
+	if spanID != "" {
+		l.EndSpan(SpanID(spanID), event.GetData(), err)
+		l.mu.Lock()
+		delete(l.mcpConnectionSpans, spanKey)
+		l.mu.Unlock()
+	} else {
+		newSpanID := l.StartSpan(traceID, "streaming_error", event.GetData())
+		l.EndSpan(newSpanID, event.GetData(), err)
+	}
+
+	v2Logger.Info("Langfuse: Created streaming error span",
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleStreamingConnectionLost handles streaming connection lost events
+func (l *LangfuseTracer) handleStreamingConnectionLost(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	spanID := l.StartSpan(traceID, "streaming_connection_lost", event.GetData())
+	l.EndSpan(spanID, event.GetData(), nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Info("Langfuse: Created streaming connection lost span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// ============================================================================
+// Cache Handlers
+// ============================================================================
+
+// handleCacheHit creates a span for cache hits
+func (l *LangfuseTracer) handleCacheHit(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	var output map[string]interface{}
+	if cacheEvent, ok := event.GetData().(*events.CacheHitEvent); ok {
+		output = map[string]interface{}{
+			"cache_key":     cacheEvent.CacheKey,
+			"cache_type":    cacheEvent.CacheType,
+			"ttl_remaining": cacheEvent.TTLRemaining,
+		}
+	}
+
+	spanID := l.StartSpan(traceID, "cache_hit", event.GetData())
+	l.EndSpan(spanID, output, nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Created cache hit span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleCacheMiss creates a span for cache misses
+func (l *LangfuseTracer) handleCacheMiss(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	var output map[string]interface{}
+	if cacheEvent, ok := event.GetData().(*events.CacheMissEvent); ok {
+		output = map[string]interface{}{
+			"cache_key":  cacheEvent.CacheKey,
+			"cache_type": cacheEvent.CacheType,
+			"reason":     cacheEvent.Reason,
+		}
+	}
+
+	spanID := l.StartSpan(traceID, "cache_miss", event.GetData())
+	l.EndSpan(spanID, output, nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Created cache miss span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleCacheWrite creates a span for cache writes
+func (l *LangfuseTracer) handleCacheWrite(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	var output map[string]interface{}
+	if cacheEvent, ok := event.GetData().(*events.CacheWriteEvent); ok {
+		output = map[string]interface{}{
+			"cache_key":  cacheEvent.CacheKey,
+			"cache_type": cacheEvent.CacheType,
+			"ttl":        cacheEvent.TTL,
+			"size":       cacheEvent.Size,
+		}
+	}
+
+	spanID := l.StartSpan(traceID, "cache_write", event.GetData())
+	l.EndSpan(spanID, output, nil)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Created cache write span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleCacheError creates a span for cache errors
+func (l *LangfuseTracer) handleCacheError(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	var err error
+	if cacheEvent, ok := event.GetData().(*events.CacheErrorEvent); ok {
+		err = fmt.Errorf("%s", cacheEvent.Error)
+	}
+
+	spanID := l.StartSpan(traceID, "cache_error", event.GetData())
+	l.EndSpan(spanID, event.GetData(), err)
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Info("Langfuse: Created cache error span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// ============================================================================
+// Structured Output Handlers
+// ============================================================================
+
+// handleStructuredOutputStart creates a span for structured output start
+func (l *LangfuseTracer) handleStructuredOutputStart(event AgentEvent) error {
+	traceID := event.GetTraceID()
+
+	// Get LLM generation span as parent
+	l.mu.RLock()
+	parentSpanID := l.llmGenerationSpans[traceID]
+	l.mu.RUnlock()
+	if parentSpanID == "" {
+		parentSpanID = traceID
+	}
+
+	spanName := "structured_output"
+	if soEvent, ok := event.GetData().(*events.StructuredOutputStartEvent); ok {
+		if soEvent.SchemaName != "" {
+			spanName = fmt.Sprintf("structured_output_%s", soEvent.SchemaName)
+		}
+	}
+
+	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
+
+	// Store for later completion
+	l.mu.Lock()
+	l.mcpConnectionSpans["structured_output_"+traceID] = string(spanID)
+	l.mu.Unlock()
+
+	v2Logger := l.getV2Logger()
+	v2Logger.Debug("Langfuse: Started structured output span",
+		loggerv2.String("span_id", string(spanID)),
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleStructuredOutputEnd ends the structured output span
+func (l *LangfuseTracer) handleStructuredOutputEnd(event AgentEvent) error {
+	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
+
+	spanKey := "structured_output_" + traceID
+	l.mu.RLock()
+	spanID := l.mcpConnectionSpans[spanKey]
+	l.mu.RUnlock()
+
+	var output map[string]interface{}
+	if soEvent, ok := event.GetData().(*events.StructuredOutputEndEvent); ok {
+		output = map[string]interface{}{
+			"success":       soEvent.Success,
+			"schema_name":   soEvent.SchemaName,
+			"target_type":   soEvent.TargetType,
+			"parsed_output": soEvent.ParsedOutput,
+		}
+	}
+
+	if spanID != "" {
+		l.EndSpan(SpanID(spanID), output, nil)
+		l.mu.Lock()
+		delete(l.mcpConnectionSpans, spanKey)
+		l.mu.Unlock()
+	} else {
+		newSpanID := l.StartSpan(traceID, "structured_output_completed", event.GetData())
+		l.EndSpan(newSpanID, output, nil)
+	}
+
+	v2Logger.Debug("Langfuse: Ended structured output span",
+		loggerv2.String("trace_id", traceID))
+
+	return nil
+}
+
+// handleStructuredOutputError handles structured output errors
+func (l *LangfuseTracer) handleStructuredOutputError(event AgentEvent) error {
+	traceID := event.GetTraceID()
+	v2Logger := l.getV2Logger()
+
+	spanKey := "structured_output_" + traceID
+	l.mu.RLock()
+	spanID := l.mcpConnectionSpans[spanKey]
+	l.mu.RUnlock()
+
+	var err error
+	if errEvent, ok := event.GetData().(*events.StructuredOutputErrorEvent); ok {
+		err = fmt.Errorf("%s", errEvent.Error)
+	}
+
+	if spanID != "" {
+		l.EndSpan(SpanID(spanID), event.GetData(), err)
+		l.mu.Lock()
+		delete(l.mcpConnectionSpans, spanKey)
+		l.mu.Unlock()
+	} else {
+		newSpanID := l.StartSpan(traceID, "structured_output_error", event.GetData())
+		l.EndSpan(newSpanID, event.GetData(), err)
+	}
+
+	v2Logger.Info("Langfuse: Created structured output error span",
 		loggerv2.String("trace_id", traceID))
 
 	return nil
