@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go run:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go get:*)",
+      "Bash(tee:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.smith.langchain.com)",
+      "WebFetch(domain:docs.smith.langchain.com)",
+      "WebFetch(domain:reference.langchain.com)",
+      "Bash(source .env)",
+      "Bash(curl:*)",
+      "Bash(go doc:*)"
+    ]
+  }
+}

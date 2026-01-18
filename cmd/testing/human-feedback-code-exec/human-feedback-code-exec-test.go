@@ -82,7 +82,7 @@ func testHumanFeedbackInCodeExecMode(log loggerv2.Logger) error {
 	if modelID == "" {
 		modelID = openai.ModelGPT41 // Default
 	}
-	model, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+	model, llmProvider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider: "",      // Empty to use viper/flags
 		ModelID:  modelID, // Use model from flag if provided
 		Logger:   log,
@@ -91,11 +91,11 @@ func testHumanFeedbackInCodeExecMode(log loggerv2.Logger) error {
 		return fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
-	log.Info("✅ LLM initialized", loggerv2.String("model_id", modelID))
+	log.Info("✅ LLM initialized", loggerv2.String("model_id", modelID), loggerv2.String("provider", string(llmProvider)))
 
 	// Create agent in code execution mode
 	log.Info("--- Step 1: Create Agent in Code Execution Mode ---")
-	ag, err := testutils.CreateAgentWithTracer(ctx, model, configPath, tracer, traceID, log,
+	ag, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, traceID, log,
 		mcpagent.WithCodeExecutionMode(true), // Enable code execution mode
 	)
 	if err != nil {

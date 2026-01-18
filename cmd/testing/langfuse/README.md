@@ -13,10 +13,10 @@
 
 **Note**: Do not build binaries. Use `go run` to execute tests directly.
 
-1. **Run real agent test** to create a trace:
+1. **Run agent-mcp test** to create a trace (Langfuse is automatically used if credentials are available):
    ```bash
    cd mcpagent
-   go run ./cmd/testing langfuse-tracer --provider openai --model gpt-4.1-mini
+   go run ./cmd/testing agent-mcp --provider openai --model gpt-4.1-mini
    ```
 
 2. **Read the trace** to verify it was created properly:
@@ -25,14 +25,14 @@
    go run ./cmd/testing langfuse-read --trace-id <trace-id> --observations
    ```
 
-The real agent test will output a `trace_id` in the logs - use that to read the trace and verify token usage and output are present.
+The agent-mcp test will output a `trace_id` in the logs - use that to read the trace and verify token usage and output are present.
 
 ## Alternative: Using Existing Binary
 
 If a binary already exists (e.g., `mcpagent-test` in parent directory):
 ```bash
 # From mcpagent/ directory
-../mcpagent-test langfuse-tracer --provider openai --model gpt-4.1-mini
+../mcpagent-test agent-mcp --provider openai --model gpt-4.1-mini
 ../mcpagent-test langfuse-read --trace-id <trace-id> --observations
 ```
 

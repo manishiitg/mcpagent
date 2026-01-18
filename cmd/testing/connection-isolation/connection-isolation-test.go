@@ -231,7 +231,7 @@ func testParallelAgentCreation(log loggerv2.Logger) error {
 	numAgents := 2
 
 	// Try to create an LLM - if it fails, skip this test
-	model, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+	model, llmProvider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider: "", // Use viper default
 		ModelID:  "", // Use default model
 		Logger:   log,
@@ -242,7 +242,7 @@ func testParallelAgentCreation(log loggerv2.Logger) error {
 		return nil // Skip, don't fail
 	}
 
-	log.Info("LLM available, proceeding with agent creation test")
+	log.Info("LLM available, proceeding with agent creation test", loggerv2.String("provider", string(llmProvider)))
 
 	var wg sync.WaitGroup
 	results := make(chan struct {
@@ -266,6 +266,7 @@ func testParallelAgentCreation(log loggerv2.Logger) error {
 				model,
 				configPath,
 				mcpagent.WithLogger(log),
+				mcpagent.WithProvider(llmProvider),
 				mcpagent.WithServerName("sequential-thinking"),
 			)
 
