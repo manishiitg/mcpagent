@@ -98,6 +98,9 @@ vendor/
 # Example-specific ignores (examples may have their own .env files)
 examples/**/.env
 examples/**/mcp_servers.json
+# Compiled binaries in examples
+examples/**/tool_search
+examples/**/*_search
 
 
 .claude/
