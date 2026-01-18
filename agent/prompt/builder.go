@@ -10,6 +10,56 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// GetToolSearchInstructions returns the tool search mode instructions section
+// This provides guidance on how to use the search_tools virtual tool to discover tools
+// toolCategories: optional list of tool categories/servers available for searching
+func GetToolSearchInstructions(toolCategories []string) string {
+	var categoriesSection string
+	if len(toolCategories) > 0 {
+		categoriesSection = "\n\n**Available Tool Categories:**\n"
+		for _, category := range toolCategories {
+			categoriesSection += fmt.Sprintf("- %s\n", category)
+		}
+	}
+
+	return fmt.Sprintf(`**TOOL SEARCH MODE - Dynamic Tool Discovery:**
+
+You have access to a large catalog of tools, but they are not loaded by default to optimize performance.
+Use the **search_tools** function to discover tools, and then **add_tool** to load them.
+
+**📋 How to Search & Add:**
+1. Call search_tools with a search pattern (regex or keywords)
+2. Review the returned tools with their descriptions
+3. Call add_tool with the names of the tools you want to use
+4. Use the discovered tools to complete your task
+
+**🔍 Search Examples:**
+- search_tools(query="weather") - Find weather-related tools
+- search_tools(query="database.*query") - Regex for database query tools
+- search_tools(query="(?i)slack") - Case-insensitive search for Slack tools
+- search_tools(query="file") - Find file manipulation tools
+
+**⚠️ Search Behavior:**
+- Regex patterns are tried first for precise matching
+- If no regex matches found, fuzzy search is automatically applied
+- Fuzzy search considers tool names and descriptions
+- Top 5 fuzzy matches are returned when exact matches fail
+%s
+**📝 Workflow:**
+1. **Understand** the user's request
+2. **Search** for relevant tools using search_tools
+3. **Add** the tools you need using add_tool(tool_names=["tool1", "tool2"])
+4. **Use** the discovered tools to complete the task
+5. **Search again** if needed for additional capabilities
+
+**💡 Tips:**
+- Start with broad searches, then narrow down
+- Discovered tools must be explicitly added with add_tool
+- Once added, tools remain available for the entire conversation
+- You can search multiple times to find different tools
+- Check tool descriptions to understand parameters`, categoriesSection)
+}
+
 // GetCodeExecutionInstructions returns the code execution mode instructions section
 // This can be reused by agents that need to include code execution guidance in their prompts
 // workspacePath: the actual workspace path to substitute in examples (e.g., "Workflow/runs/iteration-1/execution")
@@ -173,7 +223,9 @@ Functions return only string (no error). Follow this pattern for EVERY tool call
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 // toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
-func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, logger loggerv2.Logger) string {
+// useToolSearchMode enables tool search mode instructions when true
+// toolCategories is optional list of tool categories for tool search mode
+func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, useToolSearchMode bool, toolCategories []string, logger loggerv2.Logger) string {
 	// Build prompts section with previews (only if discoverPrompt is true and NOT in code execution mode)
 	// In code execution mode, prompts/resources are not accessible via get_prompt/get_resource
 	var promptsSection string
@@ -193,7 +245,7 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 	}
 
 	// Build virtual tools section (only mention tools that are actually available)
-	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode, prompts, resources)
+	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode, useToolSearchMode, prompts, resources)
 
 	// Get current date and time
 	now := time.Now()
@@ -208,6 +260,16 @@ When answering questions:
 1. **Think** about what information/actions are needed
 2. **Write code** to gather information and perform actions
 3. **Provide helpful responses** based on execution results
+</core_principles>`
+	} else if useToolSearchMode {
+		corePrinciplesSection = `<core_principles>
+**Your Goal:** Complete the user's request autonomously using discovered tools.
+
+**Operating Rules:**
+1. **Search First:** Use search_tools to find relevant tools before attempting to use them.
+2. **Be Proactive:** Once tools are discovered, use them without asking for permission.
+3. **Chain Actions:** If a tool output leads to a next step, take it immediately.
+4. **Search Again:** If you need additional capabilities, search for more tools.
 </core_principles>`
 	} else {
 		corePrinciplesSection = `<core_principles>
@@ -263,6 +325,13 @@ When answering questions:
 		toolUsageSection = `<code_usage>
 ` + codeExecutionInstructions + `
 </code_usage>`
+	} else if useToolSearchMode {
+		// Get tool search instructions
+		toolSearchInstructions := GetToolSearchInstructions(toolCategories)
+
+		toolUsageSection = `<tool_search>
+` + toolSearchInstructions + `
+</tool_search>`
 	} else {
 		toolUsageSection = `<tool_usage>
 **Guidelines:**
@@ -437,7 +506,7 @@ func buildResourcesSection(resources map[string][]mcp.Resource) string {
 
 // buildVirtualToolsSection builds the virtual tools section
 // Only mentions tools that are actually available (prompts/resources must exist)
-func buildVirtualToolsSection(useCodeExecutionMode bool, prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource) string {
+func buildVirtualToolsSection(useCodeExecutionMode bool, useToolSearchMode bool, prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource) string {
 	if useCodeExecutionMode {
 		// Code execution mode: Show simplified virtual tools section
 		return `🔧 AVAILABLE FUNCTIONS:
@@ -449,6 +518,21 @@ func buildVirtualToolsSection(useCodeExecutionMode bool, prompts map[string][]mc
   Code runs as separate process via 'go run'
   Use fmt.Println() to output results
   Optional 'args' parameter: Array of strings passed as CLI arguments (accessible via os.Args[1], os.Args[2], etc.)`
+	}
+
+	if useToolSearchMode {
+		// Tool search mode: Show search_tools as the primary discovery mechanism
+		return `🔧 TOOL DISCOVERY:
+
+- **search_tools** - Search for available tools by name or description
+  Usage: search_tools(query="regex_pattern")
+  Returns matching tools (you must use add_tool to load them)
+  Supports regex patterns and fuzzy matching
+
+- **add_tool** - Add one or more tools to your toolkit
+  Usage: add_tool(tool_names=["name1", "name2"])
+  
+Once you discover tools using search_tools, add them using add_tool, then they will be available for you to call directly.`
 	}
 
 	// Check if prompts actually exist

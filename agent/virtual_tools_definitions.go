@@ -333,3 +333,56 @@ func GetWorkspaceToolCategory() string {
 func GetHumanToolCategory() string {
 	return "human"
 }
+
+// GetToolSearchToolCategory returns the category name for tool search tools
+func GetToolSearchToolCategory() string {
+	return "tool_search"
+}
+
+// CreateToolSearchTools creates the search_tools virtual tool for tool search mode
+func CreateToolSearchTools() []llmtypes.Tool {
+	var tools []llmtypes.Tool
+
+	// Add search_tools tool
+	searchToolsTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "search_tools",
+			Description: "Search for available tools by name or description using regex patterns. Returns matching tools but DOES NOT add them to your toolkit. You must use 'add_tool' to load the tools you find.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Search pattern to find tools. Can be:\n- Simple text: 'weather' matches tools with 'weather' in name/description\n- Regex pattern: 'database.*query' matches tools like 'database_query', 'database_raw_query'\n- Case-insensitive: '(?i)slack' matches 'Slack', 'SLACK', 'slack'\n- Alternation: 'file|folder' matches tools with 'file' OR 'folder'\n- Prefix match: 'get_.*' matches all tools starting with 'get_'",
+					},
+				},
+				"required": []string{"query"},
+			}),
+		},
+	}
+	tools = append(tools, searchToolsTool)
+
+	// Add add_tool tool
+	addToolTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "add_tool",
+			Description: "Add one or more tools to your available tools. Use this after finding tools with search_tools.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"tool_names": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Array of exact names of the tools to add (e.g., ['read_file', 'weather_get']).",
+					},
+				},
+				"required": []string{"tool_names"},
+			}),
+		},
+	}
+	tools = append(tools, addToolTool)
+
+	return tools
+}

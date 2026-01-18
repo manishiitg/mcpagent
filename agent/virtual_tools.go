@@ -185,6 +185,10 @@ func (a *Agent) HandleVirtualTool(ctx context.Context, toolName string, args map
 		return a.handleDiscoverCodeFiles(ctx, args)
 	case "write_code":
 		return a.handleWriteCode(ctx, args)
+	case "search_tools":
+		return a.handleSearchTools(ctx, args)
+	case "add_tool":
+		return a.handleAddTool(ctx, args)
 	default:
 		// Check if it's a context offloading virtual tool
 		if a.EnableContextOffloading {

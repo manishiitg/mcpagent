@@ -13,7 +13,8 @@ MCP Agent is a Go library that provides a complete framework for building AI age
 - **LLM Integration**: Works with OpenAI, AWS Bedrock, Google Vertex AI, and other LLM providers
 - **Tool Execution**: Automatic tool discovery, execution, and result handling
 - **Code Execution Mode**: Execute Go code instead of JSON tool calls for complex workflows
-- **Smart Routing**: Dynamically filter tools based on conversation context
+- **Tool Search Mode**: Dynamic tool discovery for large tool catalogs - LLM searches and loads tools on-demand
+- **Smart Routing** (DEPRECATED): Dynamically filter tools based on conversation context
 - **Context Offloading**: Automatically offload large tool outputs to filesystem to prevent context window overflow
 - **Structured Output**: Get structured data from LLM responses using fixed conversion or tool-based methods
 - **Custom Tools**: Register your own tools with the agent for extended functionality
@@ -93,6 +94,7 @@ See [examples/](examples/) for complete working examples:
   - **[browser-automation/](examples/code_execution/browser-automation/)** - Code execution with browser automation
   - **[multi-mcp-server/](examples/code_execution/multi-mcp-server/)** - Code execution with tool filtering
   - **[custom_tools/](examples/code_execution/custom_tools/)** - Custom tools in code execution mode
+- **[tool_search/](examples/tool_search/)** - Tool search mode for dynamic tool discovery
 - **[nodejs-sdk/](examples/nodejs-sdk/)** - Node.js SDK examples (see below)
 
 ## 🟢 Node.js SDK
@@ -219,7 +221,34 @@ agent, err := mcpagent.NewAgent(
 )
 ```
 
-### 2. **Code Execution Mode**
+### 2. **Tool Search Mode**
+
+Enable dynamic tool discovery for large tool catalogs. The LLM starts with only `search_tools` and discovers tools on-demand:
+
+```go
+agent, err := mcpagent.NewAgent(
+    ctx, llmModel, "config.json",
+    mcpagent.WithToolSearchMode(true),
+    // Optional: pre-discover frequently used tools
+    mcpagent.WithPreDiscoveredTools([]string{"get_weather", "send_message"}),
+)
+```
+
+**How it works:**
+1. LLM sees only `search_tools` initially
+2. LLM calls `search_tools(query: "weather")` to find relevant tools
+3. Discovered tools (`get_weather`, `weather_forecast`) become available
+4. LLM can now use discovered tools
+
+**Features:**
+- Regex pattern matching for flexible search
+- Fuzzy search fallback when no exact matches found
+- Pre-discovered tools option for frequently used tools
+- Works with any LLM provider
+
+See [docs/tool_search_mode.md](docs/tool_search_mode.md) for details.
+
+### 3. **Code Execution Mode**
 
 Execute Go code instead of JSON tool calls for complex logic:
 
@@ -248,7 +277,9 @@ The LLM can write Go programs that import and use MCP tools and custom tools as 
 
 **Note**: Code execution mode requires an HTTP server running (default port 8000, configurable via `MCP_API_URL` environment variable).
 
-### 3. **Smart Routing**
+### 4. **Smart Routing (DEPRECATED)**
+
+⚠️ **DEPRECATED**: This feature is deprecated and will be removed in a future version. Only use when explicitly needed for legacy compatibility.
 
 Dynamically filter tools based on conversation context to reduce token usage:
 
@@ -256,12 +287,12 @@ Dynamically filter tools based on conversation context to reduce token usage:
 agent, err := mcpagent.NewAgent(
     ctx, llmModel, "", "config.json", "model-id",
     nil, "", nil,
-    mcpagent.WithSmartRouting(true),
-    mcpagent.WithSmartRoutingThresholds(20, 3), // max tools, max servers
+    mcpagent.WithSmartRouting(true), // DEPRECATED
+    mcpagent.WithSmartRoutingThresholds(20, 3), // DEPRECATED
 )
 ```
 
-### 4. **Context Offloading**
+### 5. **Context Offloading**
 
 Context offloading is a context engineering strategy that automatically saves large tool outputs to the filesystem instead of keeping them in the LLM's context window. This implements the **"offload context"** pattern, one of three primary context engineering approaches used in production agents like [Manus](https://rlancemartin.github.io/2025/10/15/manus/).
 
@@ -372,7 +403,7 @@ See the [Context Offloading example](examples/offload_context/) for a complete d
 
 See the [Context Offloading example](examples/offload_context/) for a complete demonstration.
 
-### 5. **Context Summarization**
+### 6. **Context Summarization**
 
 Automatically summarize conversation history when token usage exceeds a threshold to maintain long-running conversations:
 
@@ -391,7 +422,7 @@ agent, err := mcpagent.NewAgent(
 
 The agent monitors token usage and automatically replaces older messages with a concise LLM-generated summary when the threshold is reached, while preserving recent messages and tool call integrity. This enables "infinite" conversation depth within fixed context windows.
 
-### 6. **MCP Server Caching**
+### 7. **MCP Server Caching**
 
 Intelligent caching reduces connection times by 60-85%:
 
@@ -402,7 +433,7 @@ Intelligent caching reduces connection times by 60-85%:
 // MCP_CACHE_TTL_MINUTES=10080 (7 days)
 ```
 
-### 7. **Structured Output**
+### 8. **Structured Output**
 
 Get structured data from LLM responses in two ways:
 
@@ -439,7 +470,7 @@ if result.HasStructuredOutput {
 
 See [examples/structured_output/](examples/structured_output/) for complete examples.
 
-### 8. **Custom Tools**
+### 9. **Custom Tools**
 
 Register your own tools that work alongside MCP server tools. Custom tools work in both standard mode and code execution mode:
 
@@ -513,7 +544,7 @@ err := agent.RegisterCustomTool(
 
 See [examples/custom_tools/](examples/custom_tools/) for standard mode examples and [examples/code_execution/custom_tools/](examples/code_execution/custom_tools/) for code execution mode examples.
 
-### 9. **Observability**
+### 10. **Observability**
 
 Built-in tracing with Langfuse support:
 
@@ -531,9 +562,10 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 
 - **[OAuth Authentication](docs/oauth.md)** - OAuth 2.0 authentication for MCP servers
 - **[Code Execution Agent](docs/code_execution_agent.md)** - Execute Go code with MCP tools
+- **[Tool Search Mode](docs/tool_search_mode.md)** - Dynamic tool discovery for large tool catalogs
 - **[Tool-Use Agent](docs/tool_use_agent.md)** - Standard tool calling mode
 - **[Context Summarization](docs/context_summarization.md)** - Automatic history summarization
-- **[Smart Routing](docs/smart_routing.md)** - Dynamic tool filtering
+- **[Smart Routing](docs/smart_routing.md)** (DEPRECATED) - Dynamic tool filtering
 - **[Context Offloading](docs/large_output_handling.md)** - Offload large tool outputs to filesystem (offload context pattern)
   - Implements the "offload context" strategy from [Manus's context engineering approach](https://rlancemartin.github.io/2025/10/15/manus/)
   - Prevents context window overflow and reduces token costs
@@ -579,6 +611,14 @@ Complete working examples are available in the [examples/](examples/) directory:
   - Shows how tool results are stored externally and accessed on-demand
   - Uses virtual tools (`read_large_output`, `search_large_output`, `query_large_output`) for efficient data exploration
   - Example: Search operations that produce large results, automatically offloaded and accessed incrementally
+
+### Tool Search Example
+- **[tool_search/](examples/tool_search/)** - Tool search mode for dynamic tool discovery
+  - LLM starts with only `search_tools` virtual tool
+  - Demonstrates searching for tools using regex patterns
+  - Shows how discovered tools become available dynamically
+  - Uses Vertex AI with Gemini 3 Flash
+  - Example: Search for documentation tools and use them to get library information
 
 ### Code Execution Examples
 - **[code_execution/simple/](examples/code_execution/simple/)** - Basic code execution mode
@@ -656,10 +696,14 @@ agent, err := mcpagent.NewAgent(
     // Code execution
     mcpagent.WithCodeExecutionMode(true),
     mcpagent.SetFolderGuardPaths(allowedRead, allowedWrite),
-    
-    // Smart routing
-    mcpagent.WithSmartRouting(true),
-    mcpagent.WithSmartRoutingThresholds(20, 3),
+
+    // Tool search mode (dynamic tool discovery)
+    mcpagent.WithToolSearchMode(true),
+    mcpagent.WithPreDiscoveredTools([]string{"tool1", "tool2"}),
+
+    // Smart routing (DEPRECATED)
+    mcpagent.WithSmartRouting(true), // DEPRECATED
+    mcpagent.WithSmartRoutingThresholds(20, 3), // DEPRECATED
     
     // Context offloading (offload large tool outputs to filesystem)
     mcpagent.WithContextOffloading(true),
