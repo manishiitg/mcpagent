@@ -1378,6 +1378,16 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		for _, tool := range virtualTools {
 			if tool.Function != nil {
 				toolName := tool.Function.Name
+<<<<<<< HEAD
+=======
+
+				// Explicitly exclude code execution tools from discovery in tool search mode
+				// They should only be available if UseCodeExecutionMode is true (handled in the if block above)
+				if toolName == "discover_code_files" || toolName == "write_code" {
+					continue
+				}
+
+>>>>>>> ce5ba8fd281605ba6a610229363c1bb06ea6fb9a
 				// Only include search_tools in tool search mode
 				if toolName == "search_tools" {
 					filteredVirtualTools = append(filteredVirtualTools, tool)

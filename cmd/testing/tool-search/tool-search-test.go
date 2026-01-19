@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -251,8 +250,8 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 
 	// Parse the result
 	var searchResult struct {
-		Found   int `json:"found"`
-		Tools   []struct {
+		Found int `json:"found"`
+		Tools []struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
 		} `json:"tools"`
@@ -272,7 +271,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 		if len(searchResult.Tools) > 0 {
 			toolToAdd := searchResult.Tools[0].Name
 			log.Info("Testing add_tool with found tool...", loggerv2.String("tool", toolToAdd))
-			
+
 			_, err := agentInstance.HandleVirtualTool(ctx, "add_tool", map[string]interface{}{
 				"tool_names": []string{toolToAdd},
 			})
@@ -283,7 +282,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 			// Verify discovered tools count increased
 			discoveredCountAfterAdd := agentInstance.GetDiscoveredToolCount()
 			log.Info("Tool search mode: Discovered tools count after add_tool", loggerv2.Int("count", discoveredCountAfterAdd))
-			
+
 			if discoveredCountAfterAdd <= discoveredCount {
 				return fmt.Errorf("expected discovered tool count to increase after add_tool")
 			}
