@@ -104,3 +104,5 @@ examples/**/*_search
 
 
 .claude/
+
+generated/*

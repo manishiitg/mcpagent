@@ -12,17 +12,8 @@ import (
 
 // GetToolSearchInstructions returns the tool search mode instructions section
 // This provides guidance on how to use the search_tools virtual tool to discover tools
-// toolCategories: optional list of tool categories/servers available for searching
-func GetToolSearchInstructions(toolCategories []string) string {
-	var categoriesSection string
-	if len(toolCategories) > 0 {
-		categoriesSection = "\n\n**Available Tool Categories:**\n"
-		for _, category := range toolCategories {
-			categoriesSection += fmt.Sprintf("- %s\n", category)
-		}
-	}
-
-	return fmt.Sprintf(`**TOOL SEARCH MODE - Dynamic Tool Discovery:**
+func GetToolSearchInstructions() string {
+	return `**TOOL SEARCH MODE - Dynamic Tool Discovery:**
 
 You have access to a large catalog of tools, but they are not loaded by default to optimize performance.
 Use the **search_tools** function to discover tools, and then **add_tool** to load them.
@@ -44,7 +35,7 @@ Use the **search_tools** function to discover tools, and then **add_tool** to lo
 - If no regex matches found, fuzzy search is automatically applied
 - Fuzzy search considers tool names and descriptions
 - Top 5 fuzzy matches are returned when exact matches fail
-%s
+
 **📝 Workflow:**
 1. **Understand** the user's request
 2. **Search** for relevant tools using search_tools
@@ -57,7 +48,7 @@ Use the **search_tools** function to discover tools, and then **add_tool** to lo
 - Discovered tools must be explicitly added with add_tool
 - Once added, tools remain available for the entire conversation
 - You can search multiple times to find different tools
-- Check tool descriptions to understand parameters`, categoriesSection)
+- Check tool descriptions to understand parameters`
 }
 
 // GetCodeExecutionInstructions returns the code execution mode instructions section
@@ -327,7 +318,7 @@ When answering questions:
 </code_usage>`
 	} else if useToolSearchMode {
 		// Get tool search instructions
-		toolSearchInstructions := GetToolSearchInstructions(toolCategories)
+		toolSearchInstructions := GetToolSearchInstructions()
 
 		toolUsageSection = `<tool_search>
 ` + toolSearchInstructions + `
