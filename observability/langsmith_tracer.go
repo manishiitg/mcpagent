@@ -1050,13 +1050,6 @@ func (l *LangsmithTracer) getOrCreateUUID(externalTraceID string) string {
 	return uuid
 }
 
-// getLangSmithUUID gets the LangSmith UUID for an external trace ID (read-only, returns empty if not found)
-func (l *LangsmithTracer) getLangSmithUUID(externalTraceID string) string {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.traceIDToUUID[externalTraceID]
-}
-
 func (l *LangsmithTracer) handleAgentStart(event AgentEvent) error {
 	externalTraceID := event.GetTraceID()
 

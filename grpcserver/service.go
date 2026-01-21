@@ -6,7 +6,6 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"mcpagent/grpcserver/pb"
@@ -98,12 +97,12 @@ func (s *AgentService) GetAgent(ctx context.Context, req *pb.GetAgentRequest) (*
 			Servers: caps.Servers,
 		},
 		TokenUsage: &pb.TokenUsage{
-			PromptTokens:     int32(promptTokens),
-			CompletionTokens: int32(completionTokens),
-			TotalTokens:      int32(totalTokens),
-			CacheTokens:      int32(cacheTokens),
-			ReasoningTokens:  int32(reasoningTokens),
-			LlmCallCount:     int32(llmCallCount),
+			PromptTokens:     safeIntToInt32(promptTokens),
+			CompletionTokens: safeIntToInt32(completionTokens),
+			TotalTokens:      safeIntToInt32(totalTokens),
+			CacheTokens:      safeIntToInt32(cacheTokens),
+			ReasoningTokens:  safeIntToInt32(reasoningTokens),
+			LlmCallCount:     safeIntToInt32(llmCallCount),
 		},
 	}, nil
 }
@@ -159,12 +158,12 @@ func (s *AgentService) GetTokenUsage(ctx context.Context, req *pb.GetTokenUsageR
 
 	return &pb.TokenUsageResponse{
 		TokenUsage: &pb.TokenUsage{
-			PromptTokens:     int32(promptTokens),
-			CompletionTokens: int32(completionTokens),
-			TotalTokens:      int32(totalTokens),
-			CacheTokens:      int32(cacheTokens),
-			ReasoningTokens:  int32(reasoningTokens),
-			LlmCallCount:     int32(llmCallCount),
+			PromptTokens:     safeIntToInt32(promptTokens),
+			CompletionTokens: safeIntToInt32(completionTokens),
+			TotalTokens:      safeIntToInt32(totalTokens),
+			CacheTokens:      safeIntToInt32(cacheTokens),
+			ReasoningTokens:  safeIntToInt32(reasoningTokens),
+			LlmCallCount:     safeIntToInt32(llmCallCount),
 		},
 		Costs: &pb.Costs{
 			InputCost:     inputCost,
@@ -207,12 +206,12 @@ func (s *AgentService) Ask(ctx context.Context, req *pb.AskRequest) (*pb.AskResp
 	return &pb.AskResponse{
 		Response: response,
 		TokenUsage: &pb.TokenUsage{
-			PromptTokens:     int32(promptTokens),
-			CompletionTokens: int32(completionTokens),
-			TotalTokens:      int32(totalTokens),
-			CacheTokens:      int32(cacheTokens),
-			ReasoningTokens:  int32(reasoningTokens),
-			LlmCallCount:     int32(llmCallCount),
+			PromptTokens:     safeIntToInt32(promptTokens),
+			CompletionTokens: safeIntToInt32(completionTokens),
+			TotalTokens:      safeIntToInt32(totalTokens),
+			CacheTokens:      safeIntToInt32(cacheTokens),
+			ReasoningTokens:  safeIntToInt32(reasoningTokens),
+			LlmCallCount:     safeIntToInt32(llmCallCount),
 		},
 		DurationMs: duration.Milliseconds(),
 	}, nil
@@ -297,12 +296,12 @@ func (s *AgentService) AskWithHistory(ctx context.Context, req *pb.AskWithHistor
 		Response:        response,
 		UpdatedMessages: pbMessages,
 		TokenUsage: &pb.TokenUsage{
-			PromptTokens:     int32(promptTokens),
-			CompletionTokens: int32(completionTokens),
-			TotalTokens:      int32(totalTokens),
-			CacheTokens:      int32(cacheTokens),
-			ReasoningTokens:  int32(reasoningTokens),
-			LlmCallCount:     int32(llmCallCount),
+			PromptTokens:     safeIntToInt32(promptTokens),
+			CompletionTokens: safeIntToInt32(completionTokens),
+			TotalTokens:      safeIntToInt32(totalTokens),
+			CacheTokens:      safeIntToInt32(cacheTokens),
+			ReasoningTokens:  safeIntToInt32(reasoningTokens),
+			LlmCallCount:     safeIntToInt32(llmCallCount),
 		},
 		DurationMs: duration.Milliseconds(),
 	}, nil
@@ -361,45 +360,15 @@ func (s *AgentService) convertAgentConfig(pbConfig *pb.AgentConfig) (AgentConfig
 	}, nil
 }
 
-// Helper to convert map to protobuf Struct
-func mapToStruct(m map[string]interface{}) (*structpb.Struct, error) {
-	if m == nil {
-		return nil, nil
+// safeIntToInt32 safely converts int to int32 with bounds checking
+func safeIntToInt32(n int) int32 {
+	const maxInt32 = 1<<31 - 1
+	const minInt32 = -1 << 31
+	if n > maxInt32 {
+		return maxInt32
 	}
-	return structpb.NewStruct(m)
-}
-
-// Helper to convert error to gRPC status with appropriate code
-func toGRPCError(err error, defaultCode codes.Code) error {
-	if err == nil {
-		return nil
+	if n < minInt32 {
+		return minInt32
 	}
-
-	// Check for specific error types and map to gRPC codes
-	errMsg := err.Error()
-	switch {
-	case contains(errMsg, "not found"):
-		return status.Error(codes.NotFound, errMsg)
-	case contains(errMsg, "invalid"):
-		return status.Error(codes.InvalidArgument, errMsg)
-	case contains(errMsg, "timeout"):
-		return status.Error(codes.DeadlineExceeded, errMsg)
-	case contains(errMsg, "cancelled"), contains(errMsg, "canceled"):
-		return status.Error(codes.Canceled, errMsg)
-	default:
-		return status.Error(defaultCode, errMsg)
-	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
-}
-
-func containsAt(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return int32(n)
 }

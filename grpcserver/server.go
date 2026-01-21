@@ -115,7 +115,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	// Clean up socket file
 	if s.socketPath != "" {
-		os.Remove(s.socketPath)
+		_ = os.Remove(s.socketPath)
 	}
 
 	return nil

@@ -302,15 +302,6 @@ type runResponse struct {
 	CompletionTokens int               `json:"completion_tokens,omitempty"`
 }
 
-// runsQueryRequest represents a request to query runs
-type runsQueryRequest struct {
-	SessionName string   `json:"session_name,omitempty"`
-	RunType     string   `json:"run_type,omitempty"`
-	TraceID     string   `json:"trace_id,omitempty"`
-	Limit       int      `json:"limit,omitempty"`
-	Offset      int      `json:"offset,omitempty"`
-}
-
 // getRun retrieves a specific run by ID
 func (c *langsmithAPIClient) getRun(id string) (map[string]interface{}, error) {
 	endpoint := fmt.Sprintf("/runs/%s", url.PathEscape(id))

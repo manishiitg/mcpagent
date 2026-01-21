@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -111,7 +112,7 @@ func (h *StreamHandler) receiveLoop(ctx context.Context, cancel context.CancelFu
 
 		// Receive message from client
 		req, err := h.stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			h.logger.Debug("Stream closed by client")
 			cancel()
 			return
@@ -239,12 +240,12 @@ func (h *StreamHandler) handleQuestion(ctx context.Context, agentID string, ques
 				Response:        response,
 				UpdatedMessages: h.convertMessagesToProto(updatedMessages),
 				TokenUsage: &pb.TokenUsage{
-					PromptTokens:     int32(promptTokens),
-					CompletionTokens: int32(completionTokens),
-					TotalTokens:      int32(totalTokens),
-					CacheTokens:      int32(cacheTokens),
-					ReasoningTokens:  int32(reasoningTokens),
-					LlmCallCount:     int32(llmCallCount),
+					PromptTokens:     safeIntToInt32(promptTokens),
+					CompletionTokens: safeIntToInt32(completionTokens),
+					TotalTokens:      safeIntToInt32(totalTokens),
+					CacheTokens:      safeIntToInt32(cacheTokens),
+					ReasoningTokens:  safeIntToInt32(reasoningTokens),
+					LlmCallCount:     safeIntToInt32(llmCallCount),
 				},
 				DurationMs: duration.Milliseconds(),
 			},
@@ -315,7 +316,7 @@ func (h *StreamHandler) sendAgentEvent(event events.AgentEvent) {
 		SpanId:         event.SpanID,
 		ParentId:       event.ParentID,
 		CorrelationId:  event.CorrelationID,
-		HierarchyLevel: int32(event.HierarchyLevel),
+		HierarchyLevel: safeIntToInt32(event.HierarchyLevel),
 		SessionId:      event.SessionID,
 		Component:      event.Component,
 	}
@@ -501,7 +502,7 @@ func (h *StreamHandler) registerCustomTools(ctx context.Context, agent *ManagedA
 						CallId:    callID,
 						ToolName:  toolName,
 						Arguments: argsStruct,
-						TimeoutMs: int32(toolDef.TimeoutMs),
+						TimeoutMs: safeIntToInt32(toolDef.TimeoutMs),
 					},
 				},
 			}
