@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -113,6 +114,42 @@ func (a *Agent) handleAddTool(ctx context.Context, args map[string]interface{}) 
 	}
 
 	return strings.Join(msgs, "\n"), nil
+}
+
+// handleShowAllTools returns all available tool names
+func (a *Agent) handleShowAllTools(ctx context.Context, args map[string]interface{}) (string, error) {
+	var toolNames []string
+
+	// Add discovered tool names
+	for name := range a.discoveredTools {
+		toolNames = append(toolNames, name)
+	}
+
+	// Add deferred tool names (not yet discovered)
+	discoveredSet := make(map[string]bool)
+	for name := range a.discoveredTools {
+		discoveredSet[name] = true
+	}
+
+	for _, tool := range a.allDeferredTools {
+		if tool.Function != nil && !discoveredSet[tool.Function.Name] {
+			toolNames = append(toolNames, tool.Function.Name)
+		}
+	}
+
+	// Sort for consistent output
+	sort.Strings(toolNames)
+
+	result := map[string]interface{}{
+		"total": len(toolNames),
+		"tools": toolNames,
+	}
+
+	jsonBytes, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(jsonBytes), nil
 }
 
 // formatSearchResults formats the search results as JSON

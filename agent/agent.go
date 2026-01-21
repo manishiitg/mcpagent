@@ -1258,17 +1258,68 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		logger.Debug("Code execution mode: tools available (only virtual tools, MCP and custom tools excluded)",
 			loggerv2.Int("tool_count", len(toolsToUse)))
 	} else if ag.UseToolSearchMode {
-		// Tool search mode: Store all tools as deferred, expose only search_tools
-		logger.Debug("Tool search mode enabled - storing all tools as deferred")
+		// Tool search mode: Store filtered tools as deferred, expose only search_tools
+		logger.Debug("Tool search mode enabled - storing tools as deferred (with filtering)")
 
-		// Store all MCP and custom tools as deferred (will be discovered via search_tools)
-		ag.allDeferredTools = allLLMTools
+		// Apply tool filtering to deferred tools
+		// Only tools that pass the filter should be discoverable via search_tools
+		if !ag.toolFilter.IsNoFilteringActive() {
+			// Build set of custom tool names for category determination
+			customToolNames := make(map[string]bool)
+			for toolName, customTool := range ag.customTools {
+				customToolNames[toolName] = true
+				if customTool.Category != "" {
+					customToolNames[customTool.Category+":"+toolName] = true
+				}
+			}
+
+			// Filter deferred tools
+			var filteredDeferredTools []llmtypes.Tool
+			for _, tool := range allLLMTools {
+				if tool.Function == nil {
+					continue
+				}
+				toolName := tool.Function.Name
+
+				// Determine the package/server name and tool type
+				serverName, isMCPTool := toolToServer[toolName]
+				isCustomTool := customToolNames[toolName]
+
+				// Determine package name
+				var packageName string
+				if isMCPTool {
+					packageName = serverName
+				} else if isCustomTool {
+					if customTool, ok := ag.customTools[toolName]; ok && customTool.Category != "" {
+						packageName = customTool.Category
+					} else {
+						packageName = "custom"
+					}
+				} else {
+					// Virtual tool - always include in deferred (will be filtered later)
+					filteredDeferredTools = append(filteredDeferredTools, tool)
+					continue
+				}
+
+				// Use unified filter to check if tool should be included
+				if ag.toolFilter.ShouldIncludeTool(packageName, toolName, isCustomTool, false) {
+					filteredDeferredTools = append(filteredDeferredTools, tool)
+				}
+			}
+			ag.allDeferredTools = filteredDeferredTools
+			logger.Debug("Tool search mode: Filtered tools deferred for discovery",
+				loggerv2.Int("deferred_count", len(ag.allDeferredTools)),
+				loggerv2.Int("total_available", len(allLLMTools)))
+		} else {
+			// No filtering - all tools available for discovery
+			ag.allDeferredTools = allLLMTools
+			logger.Debug("Tool search mode: All MCP tools deferred for discovery (no filtering)",
+				loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
+		}
 
 		// Don't add any MCP tools to the active tool list yet
 		// They will be discovered dynamically via search_tools
 		toolsToUse = []llmtypes.Tool{}
-		logger.Debug("Tool search mode: All MCP tools deferred for discovery",
-			loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
 	} else {
 		// Normal mode: Use all tools
 		toolsToUse = allLLMTools
@@ -1372,7 +1423,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		virtualTools = filteredVirtualTools
 		logger.Debug("Code execution mode: Filtered virtual tools - only discover_code_files and write_code available")
 	} else if ag.UseToolSearchMode {
-		// In tool search mode, only include search_tools
+		// In tool search mode, only include search_tools and context offloading tools
+		// Context offloading tools (search_large_output, etc.) must be immediately available
+		// because they're needed to access offloaded content when large outputs occur
 		// All other tools are discovered dynamically via search
 		var filteredVirtualTools []llmtypes.Tool
 		for _, tool := range virtualTools {
@@ -1385,8 +1438,14 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 					continue
 				}
 
-				// Only include search_tools in tool search mode
-				if toolName == "search_tools" {
+				// Context offloading tools must be immediately available (pre-discovered)
+				// They're infrastructure tools needed when large outputs are offloaded
+				isContextOffloadingTool := toolName == "search_large_output" ||
+					toolName == "read_large_output" ||
+					toolName == "query_large_output"
+
+				// Only include search_tools and context offloading tools immediately
+				if toolName == "search_tools" || isContextOffloadingTool {
 					filteredVirtualTools = append(filteredVirtualTools, tool)
 				} else {
 					// Store other virtual tools in deferred tools for discovery
@@ -1394,10 +1453,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 				}
 			}
 		}
-		// Add tool search tools (search_tools)
+		// Add tool search tools (search_tools, add_tool, show_all_tools)
 		filteredVirtualTools = append(filteredVirtualTools, CreateToolSearchTools()...)
 		virtualTools = filteredVirtualTools
-		logger.Debug("Tool search mode: Only search_tools available, other virtual tools deferred",
+		logger.Debug("Tool search mode: search_tools and context offloading tools available, other virtual tools deferred",
 			loggerv2.Int("virtual_count", len(virtualTools)),
 			loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
 
@@ -3179,7 +3238,71 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	isStructuredOutputTool := toolCategory == "structured_output"
 	isHumanTool := toolCategory == "human"
 
-	if !a.UseCodeExecutionMode || isStructuredOutputTool || isHumanTool {
+	// 🔍 TOOL SEARCH MODE: Handle custom tools differently
+	// Custom tools should be added to allDeferredTools so they can be discovered via search_tools
+	// Pre-discovered tools or special categories should be immediately available
+	if a.UseToolSearchMode {
+		// Check tool filter first - if filtering is active and tool doesn't pass, skip adding to deferred
+		// Special categories (structured_output, human) bypass filtering as they're system tools
+		shouldIncludeInDeferred := isStructuredOutputTool || isHumanTool
+		if !shouldIncludeInDeferred && a.toolFilter != nil && !a.toolFilter.IsNoFilteringActive() {
+			// Apply tool filter - use category as package name for custom tools
+			shouldIncludeInDeferred = a.toolFilter.ShouldIncludeTool(toolCategory, name, true, false)
+			if !shouldIncludeInDeferred {
+				if a.Logger != nil {
+					a.Logger.Debug(fmt.Sprintf("🔍 [TOOL_SEARCH] Custom tool '%s' excluded by tool filter (category: %s)", name, toolCategory))
+				}
+				// Tool is filtered out - don't add to deferred tools
+				// But still register the execution function (in case filter changes or for other uses)
+			}
+		} else if !shouldIncludeInDeferred {
+			shouldIncludeInDeferred = true // No filtering active, include by default
+		}
+
+		// Only proceed with Tool Search registration if tool passes filter
+		if shouldIncludeInDeferred {
+			// Check if this tool is in the pre-discovered list
+			isPreDiscovered := false
+			for _, preDiscoveredName := range a.preDiscoveredTools {
+				if preDiscoveredName == name {
+					isPreDiscovered = true
+					break
+				}
+			}
+
+			// Special categories (structured_output, human) are always immediately available
+			// Pre-discovered tools are also immediately available
+			if isStructuredOutputTool || isHumanTool || isPreDiscovered {
+				// Add to discoveredTools map so it's immediately available
+				if a.discoveredTools == nil {
+					a.discoveredTools = make(map[string]llmtypes.Tool)
+				}
+				a.discoveredTools[name] = tool
+
+				// Also add to allDeferredTools so it can still be found via search
+				a.allDeferredTools = append(a.allDeferredTools, tool)
+
+				// Refresh filteredTools with tool search mode tools (includes discovered tools)
+				a.filteredTools = a.getToolsForToolSearchMode()
+
+				if a.Logger != nil {
+					if isPreDiscovered {
+						a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Pre-discovered custom tool '%s' added to discovered tools (category: %s)", name, toolCategory))
+					} else {
+						a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Special category custom tool '%s' added to discovered tools (category: %s)", name, toolCategory))
+					}
+				}
+			} else {
+				// Regular custom tool in tool search mode: add to deferred tools only
+				// Agent must use search_tools + add_tool to discover it
+				a.allDeferredTools = append(a.allDeferredTools, tool)
+
+				if a.Logger != nil {
+					a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Custom tool '%s' added to deferred tools for discovery (category: %s)", name, toolCategory))
+				}
+			}
+		}
+	} else if !a.UseCodeExecutionMode || isStructuredOutputTool || isHumanTool {
 		// Normal mode OR structured output tool OR human tool: Add to the main Tools array so the LLM can see it
 		a.Tools = append(a.Tools, tool)
 

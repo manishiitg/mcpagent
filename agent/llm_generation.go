@@ -104,7 +104,11 @@ func isThrottlingError(err error) bool {
 		strings.Contains(errStr, "status code 429") ||
 		strings.Contains(errStr, "429") ||
 		strings.Contains(errStr, "rate limit") ||
-		strings.Contains(errStr, "throttled")
+		strings.Contains(errStr, "throttled") ||
+		strings.Contains(errStr, "overloaded") ||
+		strings.Contains(errStr, "model is overloaded") ||
+		strings.Contains(errStr, "UNAVAILABLE") ||
+		(strings.Contains(errStr, "503") && strings.Contains(errStr, "overloaded"))
 }
 
 // isEmptyContentError checks if an error is due to empty content in response
@@ -415,6 +419,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry START - Messages: %d, Options: %d, Turn: %d", len(messages), len(opts), turn))
 
 	maxRetries := 5
+	maxRetriesZeroCandidates := 3 // Limit retries for zero_candidates errors to 3 before fallback
 	baseDelay := 30 * time.Second
 	maxDelay := 5 * time.Minute
 	var lastErr error
@@ -553,8 +558,33 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			lastErr = err
 
 			// Special handling for retrying SAME model (throttling/zero candidates)
-			if (errorType == "throttling_error" || errorType == "zero_candidates_error") && attempt < maxRetries-1 {
-				shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, maxRetries, baseDelay, maxDelay, turn, logger, usage)
+			// For zero_candidates errors: limit to 3 retries before fallback
+			// For throttling errors: use full 5 retries
+			shouldRetrySameModel := false
+			if errorType == "zero_candidates_error" {
+				// Zero candidates: retry up to 3 times (attempts 0, 1, 2 = 3 retries total)
+				if attempt < maxRetriesZeroCandidates-1 {
+					shouldRetrySameModel = true
+				} else {
+					logger.Info(fmt.Sprintf("🔄 [ZERO_CANDIDATES] Reached max retries (%d) for zero_candidates error, moving to fallback models", maxRetriesZeroCandidates))
+					// Break immediately - don't continue the loop
+					logger.Warn(fmt.Sprintf("❌ Model failed after %d retries: %s/%s - %v", maxRetriesZeroCandidates, model.Provider, model.ModelID, err))
+					break // Break retry loop, proceed to next model
+				}
+			} else if errorType == "throttling_error" {
+				// Throttling: retry up to 5 times (existing behavior)
+				if attempt < maxRetries-1 {
+					shouldRetrySameModel = true
+				}
+			}
+
+			if shouldRetrySameModel {
+				// Use maxRetriesZeroCandidates for zero_candidates, maxRetries for throttling
+				retryLimit := maxRetries
+				if errorType == "zero_candidates_error" {
+					retryLimit = maxRetriesZeroCandidates
+				}
+				shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, retryLimit, baseDelay, maxDelay, turn, logger, usage)
 				if retryErr != nil {
 					return nil, usage, retryErr
 				}
@@ -566,7 +596,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// If not a retryable error on same model, or max retries reached:
 			// Break inner loop to try next model in fallback list
 			logger.Warn(fmt.Sprintf("❌ Model failed: %s/%s - %v", model.Provider, model.ModelID, err))
-			
+
 			// Emit failure event for this model
 			if isFallback {
 				failureEvent := events.NewFallbackAttemptEvent(
@@ -576,7 +606,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				)
 				a.EmitTypedEvent(ctx, failureEvent)
 			}
-			
+
 			break // Break retry loop, proceed to next model
 		}
 	}

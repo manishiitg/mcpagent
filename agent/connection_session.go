@@ -17,6 +17,7 @@ import (
 
 	"mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
+	"mcpagent/mcpcache"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -169,6 +170,53 @@ func NewAgentConnectionWithSession(
 		mcpTools, err := client.ListTools(ctx)
 		if err != nil {
 			logger.Warn(fmt.Sprintf("Failed to discover tools for %s: %v", srvName, err))
+			
+			// 🔧 FALLBACK: Try to use cached tools when ListTools fails (e.g., connection closed)
+			if !wasCreated {
+				// Only try cache fallback for reused connections (new connections shouldn't have cache yet)
+				logger.Info(fmt.Sprintf("Attempting to use cached tools for %s as fallback", srvName))
+				
+				cacheManager := mcpcache.GetCacheManager(logger)
+				cacheKey := mcpcache.GenerateUnifiedCacheKey(srvName, serverConfig)
+				
+				if cachedEntry, exists := cacheManager.Get(cacheKey); exists && len(cachedEntry.Tools) > 0 {
+					logger.Info(fmt.Sprintf("✅ Using %d cached tools for %s (fallback from failed ListTools)", 
+						len(cachedEntry.Tools), srvName))
+					
+					// Use cached tools directly (they're already in llmtypes.Tool format)
+					for _, llmTool := range cachedEntry.Tools {
+						if llmTool.Function == nil {
+							continue
+						}
+						toolName := llmTool.Function.Name
+						
+						// Check ToolOwnership to skip duplicates (if available)
+						if cachedEntry.ToolOwnership != nil {
+							if ownership, exists := cachedEntry.ToolOwnership[toolName]; exists && ownership == "duplicate" {
+								logger.Debug("Skipping duplicate tool from cache",
+									loggerv2.String("tool", toolName),
+									loggerv2.String("server", srvName))
+								continue
+							}
+						}
+						
+						// Runtime duplicate check (defensive)
+						if seenTools[toolName] {
+							logger.Warn(fmt.Sprintf("Duplicate tool %s from server %s (cached), skipping", toolName, srvName))
+							continue
+						}
+						
+						seenTools[toolName] = true
+						allTools = append(allTools, llmTool)
+						toolToServer[toolName] = srvName
+					}
+					
+					// Set mcpTools to empty slice to indicate we used cache (for logging)
+					mcpTools = []mcp.Tool{}
+				} else {
+					logger.Warn(fmt.Sprintf("No cached tools available for %s, continuing with empty tool list", srvName))
+				}
+			}
 		} else {
 			// Convert MCP tools to LLM tools using batch conversion
 			llmTools, convErr := mcpclient.ToolsAsLLM(mcpTools)

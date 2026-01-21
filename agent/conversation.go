@@ -58,7 +58,7 @@ func isVirtualTool(toolName string) bool {
 		"get_prompt", "get_resource",
 		"read_large_output", "search_large_output", "query_large_output",
 		"discover_code_files", "write_code", // Code execution mode tools
-		"search_tools", "add_tool", // Tool search mode tools
+		"search_tools", "add_tool", "show_all_tools", // Tool search mode tools
 	}
 	for _, vt := range virtualTools {
 		if vt == toolName {

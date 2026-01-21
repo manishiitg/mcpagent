@@ -20,11 +20,14 @@ Tool Search Mode is an agent-level feature that enables LLMs to work with large 
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  1. Initial State                                               │
-│     ┌─────────────┐                                             │
-│     │ LLM sees:   │                                             │
-│     │ - search_tools                                            │
-│     │ - add_tool                                                │
-│     └─────────────┘                                             │
+│     ┌──────────────────────────┐                                │
+│     │ LLM sees:                │                                │
+│     │ - search_tools           │  ← discovery tools             │
+│     │ - add_tool               │                                │
+│     │ - show_all_tools         │                                │
+│     │ - search_large_output    │  ← context offloading          │
+│     │ - (pre-discovered tools) │  ← if configured               │
+│     └──────────────────────────┘                                │
 │                                                                 │
 │  2. User asks: "Get weather in Tokyo"                           │
 │                                                                 │
@@ -38,12 +41,13 @@ Tool Search Mode is an agent-level feature that enables LLMs to work with large 
 │  4. LLM calls: add_tool(tool_names: ["get_weather"])            │
 │                                                                 │
 │  5. After add_tool returns                                      │
-│     ┌─────────────────────┐                                     │
-│     │ LLM now sees:       │                                     │
-│     │ - search_tools      │                                     │
-│     │ - add_tool          │                                     │
-│     │ - get_weather       │  ← newly added                      │
-│     └─────────────────────┘                                     │
+│     ┌─────────────────────────┐                                 │
+│     │ LLM now sees:           │                                 │
+│     │ - search_tools          │                                 │
+│     │ - add_tool              │                                 │
+│     │ - search_large_output   │                                 │
+│     │ - get_weather           │  ← newly added                  │
+│     └─────────────────────────┘                                 │
 │                                                                 │
 │  6. LLM calls: get_weather(location: "Tokyo")                   │
 │                                                                 │
@@ -79,6 +83,23 @@ agent, err := mcpagent.NewAgent(ctx, llm, configPath,
 )
 ```
 
+### Pre-Discovering Workspace Tools
+
+For workflows that need workspace tools immediately available:
+
+```go
+agent, err := mcpagent.NewAgent(ctx, llm, configPath,
+    mcpagent.WithToolSearchMode(true),
+    mcpagent.WithPreDiscoveredTools([]string{
+        "read_workspace_file",   // Workspace tools immediately available
+        "list_workspace_files",
+        "write_workspace_file",
+    }),
+)
+```
+
+**Note:** Workspace tools not in the pre-discovered list can still be found via `search_tools(query: "workspace")` and added with `add_tool`.
+
 ### Configuration Options
 
 ```go
@@ -95,9 +116,10 @@ mcpagent.WithPreDiscoveredTools([]string{"tool1", "tool2"})
 
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
-| **Agent Core** | `agent/agent.go` | `WithToolSearchMode()`, `initializeToolSearch()`, `getToolsForLLM()` |
-| **Tool Definition** | `agent/virtual_tools_definitions.go` | `GetSearchToolsTool()` |
-| **Tool Handler** | `agent/virtual_tool_handlers.go` | `handleSearchTools()`, `handleAddTool()` |
+| **Agent Core** | `agent/agent.go` | `WithToolSearchMode()`, `RegisterCustomTool()`, `getToolsForToolSearchMode()` |
+| **Tool Search Handlers** | `agent/tool_search_handlers.go` | `handleSearchTools()`, `handleAddTool()`, `initializeToolSearch()` |
+| **Tool Definitions** | `agent/virtual_tools_definitions.go` | `CreateToolSearchTools()` |
+| **Virtual Tools** | `agent/virtual_tools.go` | `CreateVirtualTools()`, `executeVirtualTool()` |
 | **Conversation Loop** | `agent/conversation.go` | Tool refresh after `add_tool` |
 | **Prompt Builder** | `agent/prompt/builder.go` | `GetToolSearchInstructions()` |
 
@@ -193,14 +215,133 @@ Returns up to 5 best matches sorted by relevance score.
 
 ---
 
+## The show_all_tools Function
+
+### Definition
+
+```json
+{
+  "name": "show_all_tools",
+  "description": "List all available tool names. Returns names only - use search_tools with a tool name to get its description.",
+  "parameters": {
+    "type": "object",
+    "properties": {}
+  }
+}
+```
+
+### Response Format
+
+```json
+{
+  "total": 45,
+  "tools": [
+    "add_tool",
+    "create_issue",
+    "get_weather",
+    "list_files",
+    "read_file",
+    "search_tools",
+    "send_message"
+  ]
+}
+```
+
+### Use Cases
+
+- **Quick catalog overview**: See all available tools at a glance without loading full descriptions
+- **Tool name discovery**: Find exact tool names for use with `search_tools` or `add_tool`
+- **Debugging**: Verify which tools are available in the current session
+
+---
+
+## Immediately Available Tools
+
+When Tool Search Mode is enabled, certain tools are **always immediately available** without needing to search or add them:
+
+### Discovery Tools
+| Tool | Purpose |
+|------|---------|
+| `search_tools` | Search for tools by name or description |
+| `add_tool` | Add discovered tools to your toolkit |
+| `show_all_tools` | List all available tool names |
+
+### Context Offloading Tools
+These tools are always available because they're needed when large tool outputs are offloaded:
+
+| Tool | Purpose |
+|------|---------|
+| `search_large_output` | Unified tool for accessing offloaded files (read/search/query) |
+| `read_large_output` | Read character ranges from offloaded files |
+| `query_large_output` | Execute jq queries on offloaded JSON files |
+
+### Pre-Discovered Tools
+Tools specified in `WithPreDiscoveredTools()` are immediately available.
+
+### Special Category Tools
+Custom tools with these categories are always immediately available:
+- `structured_output` - Orchestration/control tools
+- `human` - Human feedback tools (require event bridge for UI)
+
+---
+
+## Discoverable Tools
+
+The following tool types are **deferred** and must be discovered via `search_tools` + `add_tool`:
+
+| Tool Type | Examples |
+|-----------|----------|
+| **MCP Server Tools** | `get_weather`, `list_files`, `create_issue` |
+| **Custom/Workspace Tools** | `read_workspace_file`, `list_workspace_files`, `write_workspace_file` |
+| **Virtual Tools** | `get_prompt`, `get_resource` |
+
+**Note:** Custom tools (including workspace tools) registered via `RegisterCustomTool()` are now fully discoverable via `search_tools`. If a custom tool is in the `pre_discovered_tools` list, it will be immediately available instead.
+
+---
+
+## Tool Filtering Integration
+
+Tool Search Mode **respects tool filtering** configured via `selectedTools` and `selectedServers`. When filtering is active:
+
+1. **Only filtered tools are discoverable** - Tools that don't pass the filter are excluded from `allDeferredTools`
+2. **Filtered tools cannot be discovered** - `search_tools` will not return tools that are filtered out
+3. **Special categories bypass filtering** - `structured_output` and `human` category tools are always available
+
+### Example with Filtering
+
+```go
+agent, err := mcpagent.NewAgent(ctx, llm, configPath,
+    mcpagent.WithToolSearchMode(true),
+    mcpagent.WithSelectedServers([]string{"github", "slack"}),  // Only these servers' tools
+    mcpagent.WithSelectedTools([]string{"workspace:read_workspace_file"}),  // Only this workspace tool
+)
+```
+
+In this example:
+- Only tools from `github` and `slack` servers are discoverable
+- Only `read_workspace_file` from workspace tools is discoverable
+- Other workspace tools like `write_workspace_file` are NOT discoverable
+
+### Filtering Behavior
+
+| Configuration | Behavior |
+|--------------|----------|
+| No filtering | All tools are discoverable |
+| `selectedServers` only | All tools from selected servers are discoverable |
+| `selectedTools` only | Only specific tools in the list are discoverable |
+| `selectedServers` + `selectedTools` | Tools matching either are discoverable |
+| `server:*` pattern | All tools from that server are discoverable |
+
+---
+
 ## Comparison with Other Modes
 
 | Aspect | Normal Mode | Code Execution Mode | Tool Search Mode |
 |--------|-------------|---------------------|------------------|
-| **Tools visible** | All tools | `discover_code_files`, `write_code` | `search_tools`, `add_tool` + discovered |
+| **Tools visible** | All tools | `discover_code_files`, `write_code` | Discovery tools + context offloading + pre-discovered + discovered |
 | **Tool calling** | Direct JSON | Go code | Direct JSON |
 | **Discovery method** | N/A | Via Go packages | Via regex search |
-| **Context usage** | High (all tools) | Low (2 tools) | Dynamic (grows) |
+| **Context usage** | High (all tools) | Low (2 tools) | Dynamic (grows as tools are added) |
 | **Best for** | <30 tools | Complex logic, chaining | Large tool catalogs |
 
 ---
@@ -243,40 +384,75 @@ Use the search_tools function to discover tools, and then add_tool to load them.
 type Agent struct {
     // ... existing fields
 
-    UseToolSearchMode bool                      // Enable tool search mode
-    discoveredTools   map[string]llmtypes.Tool  // Tools discovered this session
-    allDeferredTools  []llmtypes.Tool           // All available tools (hidden)
+    UseToolSearchMode  bool                      // Enable tool search mode
+    discoveredTools    map[string]llmtypes.Tool  // Tools discovered this session
+    allDeferredTools   []llmtypes.Tool           // All available tools (hidden until discovered)
+    preDiscoveredTools []string                  // Tool names always available without searching
 }
 ```
 
 ### Tool Discovery Flow
 
-1. **Initialization**: All MCP and virtual tools stored in `allDeferredTools`
-2. **Search**: `handleSearchTools()` matches query against deferred tools
-3. **Discovery**: Matching tools added to `discoveredTools`
-4. **Refresh**: `getToolsForLLM()` returns `search_tools` + all discovered tools
-5. **Execution**: LLM can now call discovered tools
+1. **Initialization**: MCP tools, virtual tools, and custom tools stored in `allDeferredTools`
+2. **Pre-Discovery**: Tools in `preDiscoveredTools` list are added to `discoveredTools`
+3. **Search**: `handleSearchTools()` matches query against `allDeferredTools`
+4. **Add**: `handleAddTool()` moves tools from deferred to `discoveredTools`
+5. **Refresh**: `getToolsForToolSearchMode()` returns discovery tools + context offloading + discovered tools
+6. **Execution**: LLM can call discovered tools (execution functions stored separately)
 
-### Deferred Tools
+### Tool Initialization
 
-When tool search mode is enabled:
+When tool search mode is enabled, tools are categorized:
 
 ```go
-func (ag *Agent) initializeToolSearch() {
-    // All MCP tools become deferred
-    for _, tools := range ag.mcpServerTools {
-        llmTools, _ := mcpclient.ToolsAsLLM(tools)
-        ag.allDeferredTools = append(ag.allDeferredTools, llmTools...)
-    }
+// During agent initialization:
 
-    // Virtual tools become deferred (except search_tools)
-    for _, tool := range ag.virtualTools {
-        if tool.Function.Name != "search_tools" {
-            ag.allDeferredTools = append(ag.allDeferredTools, tool)
-        }
+// 1. MCP tools → allDeferredTools (require discovery)
+for _, tools := range ag.mcpServerTools {
+    ag.allDeferredTools = append(ag.allDeferredTools, tools...)
+}
+
+// 2. Virtual tools (context offloading tools are immediately available)
+for _, tool := range virtualTools {
+    if isContextOffloadingTool(tool) {
+        // search_large_output, read_large_output, query_large_output
+        // Always immediately available
+        filteredVirtualTools = append(filteredVirtualTools, tool)
+    } else {
+        ag.allDeferredTools = append(ag.allDeferredTools, tool)
     }
 }
+
+// 3. Tool search tools always available
+filteredVirtualTools = append(filteredVirtualTools, CreateToolSearchTools()...)
 ```
+
+### Custom Tool Registration
+
+Custom tools (workspace, human, etc.) registered via `RegisterCustomTool()` are handled specially:
+
+```go
+func (a *Agent) RegisterCustomTool(name, description string, ...) {
+    if a.UseToolSearchMode {
+        // Check if pre-discovered or special category
+        isPreDiscovered := contains(a.preDiscoveredTools, name)
+        isSpecialCategory := category == "structured_output" || category == "human"
+
+        if isPreDiscovered || isSpecialCategory {
+            // Immediately available
+            a.discoveredTools[name] = tool
+            a.allDeferredTools = append(a.allDeferredTools, tool)
+            a.filteredTools = a.getToolsForToolSearchMode()
+        } else {
+            // Requires discovery via search_tools + add_tool
+            a.allDeferredTools = append(a.allDeferredTools, tool)
+        }
+    }
+    // ... rest of registration (execution function always stored in customTools)
+}
+```
+
+**Key Point:** The execution function is always stored in `customTools` map regardless of discovery state. The `discoveredTools` map only controls which tools the LLM can see/call.
 
 ---
 

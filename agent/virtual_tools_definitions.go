@@ -384,5 +384,19 @@ func CreateToolSearchTools() []llmtypes.Tool {
 	}
 	tools = append(tools, addToolTool)
 
+	// Add show_all_tools tool
+	showAllToolsTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "show_all_tools",
+			Description: "List all available tool names. Returns names only - use search_tools with a tool name to get its description.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			}),
+		},
+	}
+	tools = append(tools, showAllToolsTool)
+
 	return tools
 }
