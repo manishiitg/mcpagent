@@ -444,14 +444,6 @@ func WithLLMConfig(config AgentLLMConfiguration) AgentOption {
 	}
 }
 
-// WithAPIKeys sets the API keys for different providers.
-// These keys are used as fallback when per-model API keys are not set.
-func WithAPIKeys(keys *AgentAPIKeys) AgentOption {
-	return func(a *Agent) {
-		a.APIKeys = keys
-	}
-}
-
 // WithSelectedTools restricts the agent to a specific subset of tools.
 //
 // Parameters:
@@ -956,6 +948,33 @@ func extractProviderFromLLM(model llmtypes.Model) llm.Provider {
 	return ""
 }
 
+// extractAPIKeysFromLLM extracts the API keys from the LLM instance
+// Checks if the LLM implements GetAPIKeys() method (e.g., ProviderAwareLLM)
+// This allows the agent to automatically use keys passed when creating the LLM
+func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
+	// Check if model implements GetAPIKeys()
+	if p, ok := model.(interface{ GetAPIKeys() *llm.ProviderAPIKeys }); ok {
+		providerKeys := p.GetAPIKeys()
+		if providerKeys == nil {
+			return nil
+		}
+		// Convert llm.ProviderAPIKeys to AgentAPIKeys
+		agentKeys := &AgentAPIKeys{
+			OpenRouter: providerKeys.OpenRouter,
+			OpenAI:     providerKeys.OpenAI,
+			Anthropic:  providerKeys.Anthropic,
+			Vertex:     providerKeys.Vertex,
+		}
+		if providerKeys.Bedrock != nil {
+			agentKeys.Bedrock = &AgentBedrockConfig{
+				Region: providerKeys.Bedrock.Region,
+			}
+		}
+		return agentKeys
+	}
+	return nil
+}
+
 // NewAgent creates a new Agent instance with the provided configuration.
 //
 // It initializes the agent with the given context, LLM model, and MCP configuration path.
@@ -1063,6 +1082,12 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// If provider is not set, try to extract it from LLM
 	if ag.provider == "" {
 		ag.provider = extractProviderFromLLM(llm)
+	}
+
+	// Extract API keys from LLM if available
+	// This allows users to pass keys only when creating the LLM
+	if ag.APIKeys == nil {
+		ag.APIKeys = extractAPIKeysFromLLM(llm)
 	}
 
 	// Use logger from options (or default if not set)
@@ -2311,6 +2336,17 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	// Apply all options
 	for _, option := range options {
 		option(ag)
+	}
+
+	// If provider is not set, try to extract it from LLM
+	if ag.provider == "" {
+		ag.provider = extractProviderFromLLM(llm)
+	}
+
+	// Extract API keys from LLM if available
+	// This allows users to pass keys only when creating the LLM
+	if ag.APIKeys == nil {
+		ag.APIKeys = extractAPIKeysFromLLM(llm)
 	}
 
 	// Use logger from options (or default if not set)
