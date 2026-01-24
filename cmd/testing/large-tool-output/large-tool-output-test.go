@@ -113,7 +113,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 	if modelID == "" {
 		modelID = openai.ModelGPT41Mini // Default
 	}
-	model, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+	model, llmProvider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider: "",      // Empty to use viper/flags
 		ModelID:  modelID, // Use model from flag if provided
 		Logger:   log,
@@ -122,10 +122,10 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 		return fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
-	log.Info("✅ LLM initialized", loggerv2.String("model_id", modelID))
+	log.Info("✅ LLM initialized", loggerv2.String("model_id", modelID), loggerv2.String("provider", string(llmProvider)))
 
 	// Create agent
-	ag, err := testutils.CreateAgentWithTracer(ctx, model, configPath, tracer, traceID, log)
+	ag, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, traceID, log)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	mcpagent "mcpagent/agent"
+	"mcpagent/llm"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
@@ -16,6 +17,7 @@ import (
 // TestAgentConfig holds configuration for test agent creation
 type TestAgentConfig struct {
 	LLM        llmtypes.Model
+	Provider   llm.Provider // LLM provider (needed for agent configuration)
 	ServerName string
 	ConfigPath string
 	// ModelID is no longer needed - it's automatically extracted from LLM
@@ -41,6 +43,9 @@ func CreateTestAgent(ctx context.Context, cfg *TestAgentConfig) (*mcpagent.Agent
 
 	// Build options from config
 	options := cfg.Options
+	if cfg.Provider != "" {
+		options = append(options, mcpagent.WithProvider(cfg.Provider))
+	}
 	if cfg.ServerName != "" {
 		options = append(options, mcpagent.WithServerName(cfg.ServerName))
 	}
@@ -70,7 +75,7 @@ func CreateTestAgent(ctx context.Context, cfg *TestAgentConfig) (*mcpagent.Agent
 
 // CreateMinimalAgent creates a minimal test agent with empty MCP config.
 // Useful for tests that don't need MCP servers.
-func CreateMinimalAgent(ctx context.Context, llm llmtypes.Model, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) (*mcpagent.Agent, error) {
+func CreateMinimalAgent(ctx context.Context, model llmtypes.Model, provider llm.Provider, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) (*mcpagent.Agent, error) {
 	// Create temporary minimal config
 	tempConfig := "/tmp/minimal-mcp-config.json"
 	minimalConfig := `{"mcpServers": {}}`
@@ -84,7 +89,8 @@ func CreateMinimalAgent(ctx context.Context, llm llmtypes.Model, tracer observab
 	}()
 
 	cfg := &TestAgentConfig{
-		LLM:        llm,
+		LLM:        model,
+		Provider:   provider,
 		ConfigPath: tempConfig,
 		Tracer:     tracer,
 		TraceID:    traceID,
@@ -95,9 +101,10 @@ func CreateMinimalAgent(ctx context.Context, llm llmtypes.Model, tracer observab
 }
 
 // CreateAgentWithTracer creates a test agent with a specific tracer.
-func CreateAgentWithTracer(ctx context.Context, llm llmtypes.Model, configPath string, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, options ...mcpagent.AgentOption) (*mcpagent.Agent, error) {
+func CreateAgentWithTracer(ctx context.Context, model llmtypes.Model, provider llm.Provider, configPath string, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, options ...mcpagent.AgentOption) (*mcpagent.Agent, error) {
 	cfg := &TestAgentConfig{
-		LLM:        llm,
+		LLM:        model,
+		Provider:   provider,
 		ConfigPath: configPath,
 		Tracer:     tracer,
 		TraceID:    traceID,

@@ -11,6 +11,21 @@ go build -o mcpagent-test ./cmd/testing
 ./mcpagent-test mcp-agent-code-exec --log-level debug
 ```
 
+## Running with Langfuse Tracing
+
+To enable Langfuse tracing for observability:
+
+```bash
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+export LANGFUSE_HOST=https://us.cloud.langfuse.com  # Optional
+export OPENAI_API_KEY=your-key
+
+go run ./cmd/testing/... mcp-agent-code-exec --log-level debug
+```
+
+The test will output a `trace_id` that you can use to view the trace in Langfuse.
+
 ## What This Test Validates
 
 **End-to-end code execution flow:**
@@ -163,3 +178,61 @@ Calling MCP tool tool=resolve_library_id server=context7
 - `mcpagent/executor/handlers.go` - HTTP handlers being tested
 - `mcpagent/agent/code_execution_tools.go` - Code execution implementation
 - `docs/code_execution_agent.md` - Code execution documentation
+
+---
+
+## Langfuse Trace Verification
+
+When running with Langfuse enabled, verify the trace contains the expected spans:
+
+### Reading the Trace
+
+```bash
+# List recent traces
+go run ./cmd/testing/... langfuse-read --traces --limit 5
+
+# Read a specific trace (use trace_id from test output)
+go run ./cmd/testing/... langfuse-read --trace-id <trace-id>
+
+# Read trace with observations (spans)
+go run ./cmd/testing/... langfuse-read --trace-id <trace-id> --observations --limit 20
+```
+
+### Expected Trace Structure
+
+```
+Trace (test-trace-...)
+├── Agent Span (agent_<model>_<tools>)
+│   └── Conversation Span
+│       ├── GENERATION (llm_generation_turn_1_...)
+│       │   └── Tool Span (tool_context7_resolve_library_id_...)
+│       └── GENERATION (final response)
+├── MCP Connection Span (mcp_connection_context7)
+└── MCP Discovery Span (mcp_discovery_1_servers_...)
+```
+
+### Verification Checklist
+
+- [ ] **GENERATION spans** have `model`, `usage`, and `endTime` fields
+- [ ] **Tool spans** have `output` with `result` or `error`
+- [ ] **MCP Connection span** shows successful connection to context7
+- [ ] **MCP Discovery span** shows 1 server and tools discovered
+- [ ] Trace shows full code execution flow
+
+### Automated Verification
+
+```bash
+# Check GENERATION spans have model and usage
+go run ./cmd/testing/... langfuse-read --trace-id <trace-id> --observations --limit 20 2>&1 | \
+  grep -A10 '"type": "GENERATION"' | grep -E "(model|usage|endTime)"
+
+# Check for MCP connection spans
+go run ./cmd/testing/... langfuse-read --trace-id <trace-id> --observations --limit 20 2>&1 | \
+  grep -B2 -A5 'mcp_connection'
+
+# Check for tool spans
+go run ./cmd/testing/... langfuse-read --trace-id <trace-id> --observations --limit 20 2>&1 | \
+  grep -B2 -A5 '"name": "tool_'
+```
+
+See `docs/tracing.md` for more details on the tracing implementation.

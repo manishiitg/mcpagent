@@ -69,7 +69,7 @@ func summarizeConversationHistory(a *Agent, ctx context.Context, oldMessages []l
 		loggerv2.Int("conversation_text_length", len(conversationText)),
 		loggerv2.String("model_id", a.ModelID))
 
-	resp, _, err := GenerateContentWithRetry(a, ctx, summaryMessages, summaryOpts, 0, nil)
+	resp, _, err := GenerateContentWithRetry(a, ctx, summaryMessages, summaryOpts, 0)
 	if err != nil {
 		return "", 0, 0, 0, 0, 0, nil, fmt.Errorf("failed to generate conversation summary: %w", err)
 	}
@@ -183,34 +183,73 @@ func extractMessageContent(msg llmtypes.MessageContent) string {
 
 // buildSummarizationPrompt creates the prompt for the summarization LLM call
 func buildSummarizationPrompt() string {
-	return `You are an expert conversation summarizer specializing in preserving critical context for AI agents. Your task is to create a concise, comprehensive summary of the conversation history provided by the user.
+	return `You are an expert conversation summarizer specializing in preserving critical context for AI agents. Your task is to create a structured summary of the conversation history that allows the session to continue seamlessly.
+
+## OUTPUT FORMAT
+
+You MUST produce output in this exact format:
+
+---
+This session is being continued from a previous conversation that ran out of context. The conversation is summarized below:
+
+**Analysis:**
+Let me analyze the conversation chronologically:
+[Provide a chronological narrative of what happened in the conversation - what the user asked, what the assistant did, key findings, decisions made, and outcomes]
+
+**Summary:**
+
+1. **Primary Request and Intent:**
+   - [The main goal(s) the user is trying to accomplish]
+   - [Any sub-tasks or related requests]
+
+2. **Key Technical Concepts:**
+   - [Important technical terms, patterns, or concepts discussed]
+   - [Architecture decisions or design patterns mentioned]
+
+3. **Files and Code Sections:**
+   - [List all file paths mentioned with brief descriptions of what they contain or what was done to them]
+   - [Include line numbers if specific code sections were referenced]
+   - [Note any code snippets that were written or modified]
+
+4. **Errors and Fixes:**
+   - [Any errors encountered and how they were resolved]
+   - [Root causes identified]
+   - [Solutions implemented]
+
+5. **Problem Solving:**
+   - [Key insights or discoveries made during the conversation]
+   - [Approaches that worked or didn't work]
+
+6. **All User Messages:**
+   - [List all user messages/requests chronologically as direct quotes or paraphrases]
+
+7. **Pending Tasks:**
+   - [Any tasks that were mentioned but not yet completed]
+   - [TODOs or follow-up items]
+
+8. **Current Work:**
+   - [What was being worked on when the summary was created]
+   - [The state of that work (in progress, blocked, etc.)]
+
+9. **Optional Next Step:**
+   - [Suggested next action to continue the work]
+   - [Direct quote from user's most recent request if relevant]
+
+Please continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.
+---
 
 ## CRITICAL PRESERVATION REQUIREMENTS
 
-Preserve ALL of the following information:
-
-1. **Key Decisions & Conclusions**: All important decisions made, conclusions reached, and outcomes achieved
-2. **Important Constraints & Requirements**: Any constraints, requirements, preferences, or specifications mentioned
-3. **File Paths & References**: Complete file paths, tool names, function names, API endpoints, URLs, and any other references
-4. **Tool Calls & Results**: Tool/function calls made, their parameters, and key results (preserve tool call/response relationships)
-5. **Errors & Resolutions**: Any errors encountered, their causes, and how they were resolved
-6. **Open Tasks & TODOs**: Any pending tasks, TODOs, or incomplete work items
-7. **Factual Details**: Preserve specific numbers, dates, times, measurements, IDs, and other concrete values
-8. **User Preferences**: User preferences, settings, or choices that affect future behavior
-9. **Context About Offloaded Outputs**: If files were created/modified, note their paths and purposes
-
-## OUTPUT FORMAT REQUIREMENTS
-
-- Format as clear, structured text suitable for insertion into a conversation
-- Use bullet points or numbered lists for clarity
-- Maintain chronological flow when relevant
-- Be concise but comprehensive (aim for 20-30% of original length while preserving all critical information)
-- Use clear section headers if the summary is long
-- Preserve exact terminology, especially for technical terms, file paths, and tool names
+- Preserve ALL file paths, function names, tool names, and technical references exactly
+- Include specific values: numbers, IDs, dates, measurements
+- Maintain tool call/response relationships
+- Note any errors and their resolutions
+- Keep track of user preferences and constraints
+- Include context about any files created or modified
 
 ## INSTRUCTIONS
 
-Create a summary that allows an AI agent to continue the conversation with full awareness of all previous interactions, decisions, and context. The summary should be self-contained and not require reference to the original conversation.`
+Create a summary following the exact format above. The summary should be self-contained and allow an AI agent to continue the conversation with full context. Be thorough but concise - include all critical information while avoiding unnecessary verbosity.`
 }
 
 // findSafeSplitPoint finds a safe split point that doesn't break tool call/response pairs

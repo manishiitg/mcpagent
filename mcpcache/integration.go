@@ -2,6 +2,7 @@ package mcpcache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -186,6 +187,7 @@ func (e *ComprehensiveCacheEvent) GetParentID() string {
 // GetCachedOrFreshConnection attempts to get MCP connection data from cache first,
 // falling back to fresh connection if cache is unavailable or expired
 // If disableCache is true, skips cache lookup entirely and always performs fresh connections
+// runtimeOverrides allows workflow-specific modifications to server configs (e.g., output directories)
 func GetCachedOrFreshConnection(
 	ctx context.Context,
 	llm llmtypes.Model,
@@ -193,6 +195,7 @@ func GetCachedOrFreshConnection(
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
 	disableCache bool,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (*CachedConnectionResult, error) {
 
 	// Track cache operation start time
@@ -283,12 +286,17 @@ func GetCachedOrFreshConnection(
 		}
 
 		// Perform fresh connection directly (only if servers list is not empty)
+		logger.Info("🔍 [DEBUG] GetCachedOrFreshConnection: About to call performFreshConnection", loggerv2.Int("server_count", len(servers)), loggerv2.Any("servers", servers))
+		freshStartTime := time.Now()
 		logger.Info("Calling performFreshConnection", loggerv2.Int("server_count", len(servers)))
-		freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
-		logger.Info("performFreshConnection completed")
+		freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger, runtimeOverrides)
+		freshDuration := time.Since(freshStartTime)
 		if err != nil {
+			logger.Error("❌ [DEBUG] GetCachedOrFreshConnection: performFreshConnection failed", err, loggerv2.String("duration", freshDuration.String()))
 			return nil, err
 		}
+		logger.Info("✅ [DEBUG] GetCachedOrFreshConnection: performFreshConnection completed successfully", loggerv2.String("duration", freshDuration.String()), loggerv2.Int("clients_count", len(freshResult.Clients)))
+		logger.Info("performFreshConnection completed")
 
 		// Copy fresh result data
 		result.Clients = freshResult.Clients
@@ -341,14 +349,29 @@ func GetCachedOrFreshConnection(
 	} else {
 		// Handle comma-separated server names
 		requestedServers := strings.Split(serverName, ",")
+		availableServers := config.ListServers()
+		logger.Info("Validating requested servers against config",
+			loggerv2.String("server_name", serverName),
+			loggerv2.Any("requested_servers", requestedServers),
+			loggerv2.Any("available_servers", availableServers))
+
 		for _, reqServer := range requestedServers {
 			reqServer = strings.TrimSpace(reqServer)
+			found := false
 			// Check if this server exists in config
-			for _, configServer := range config.ListServers() {
+			for _, configServer := range availableServers {
 				if configServer == reqServer {
 					servers = append(servers, reqServer)
+					found = true
 					break
 				}
+			}
+			if !found {
+				err := fmt.Errorf("requested MCP server '%s' not found in config. Available servers: %v. Please add '%s' to your MCP servers config file or remove it from the workflow/step configuration", reqServer, availableServers, reqServer)
+				logger.Error("Requested server not found in config", err,
+					loggerv2.String("requested_server", reqServer),
+					loggerv2.Any("available_servers", availableServers))
+				return result, err
 			}
 		}
 	}
@@ -515,7 +538,7 @@ func GetCachedOrFreshConnection(
 			nil, // No errors at this point
 		)
 
-		return processCachedData(ctx, llm, cachedData, config, servers, configPath, tracers, logger)
+		return processCachedData(ctx, llm, cachedData, config, servers, configPath, tracers, logger, runtimeOverrides)
 	}
 
 	// SCENARIO 2 & 3: Partial cache or all missed
@@ -532,7 +555,7 @@ func GetCachedOrFreshConnection(
 		result.FreshFallback = true // Indicates hybrid mode
 
 		// Process cached data first
-		cachedResult, err := processCachedData(ctx, llm, cachedData, config, cachedServers, configPath, tracers, logger)
+		cachedResult, err := processCachedData(ctx, llm, cachedData, config, cachedServers, configPath, tracers, logger, runtimeOverrides)
 		if err != nil {
 			logger.Warn("Failed to process cached data in hybrid mode", loggerv2.Error(err))
 			// Continue to fresh connection for missed servers anyway
@@ -548,7 +571,7 @@ func GetCachedOrFreshConnection(
 
 		// Connect only to missed servers
 		missedServersStr := strings.Join(missedServers, ",")
-		freshResult, err := performFreshConnection(ctx, llm, missedServersStr, configPath, tracers, logger)
+		freshResult, err := performFreshConnection(ctx, llm, missedServersStr, configPath, tracers, logger, runtimeOverrides)
 		if err != nil {
 			logger.Error("Failed to connect to missed servers", err)
 			result.Error = err
@@ -609,7 +632,7 @@ func GetCachedOrFreshConnection(
 	result.FreshFallback = true
 
 	// Perform fresh connection (existing logic)
-	freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
+	freshResult, err := performFreshConnection(ctx, llm, serverName, configPath, tracers, logger, runtimeOverrides)
 	if err != nil {
 		result.Error = err
 		return result, err
@@ -657,6 +680,7 @@ func processCachedData(
 	configPath string,
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (*CachedConnectionResult, error) {
 
 	result := &CachedConnectionResult{
@@ -753,7 +777,7 @@ func processCachedData(
 		loggerv2.Any("servers", servers))
 
 	// Create connections using the original connection logic
-	clients, _, _, _, prompts, resources, _, err := performOriginalConnectionLogic(ctx, llm, strings.Join(servers, ","), configPath, "cached-connection", tracers, logger)
+	clients, _, _, _, prompts, resources, _, err := performOriginalConnectionLogic(ctx, llm, strings.Join(servers, ","), configPath, "cached-connection", tracers, logger, runtimeOverrides)
 	if err != nil {
 		logger.Warn("Failed to create connections, but continuing with cached data", loggerv2.Error(err))
 		// Continue with cached data even if connections fail
@@ -794,14 +818,21 @@ func performFreshConnection(
 	serverName, configPath string,
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (*CachedConnectionResult, error) {
+	logger.Info("🔍 [DEBUG] performFreshConnection: Starting", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
+	performStartTime := time.Now()
 
 	// This would call the original NewAgentConnection function
 	// For now, we'll simulate the call - in practice, this would be refactored
-	clients, toolToServer, tools, _, prompts, resources, systemPrompt, err := performOriginalConnectionLogic(ctx, llm, serverName, configPath, "fresh-connection", tracers, logger)
+	logger.Info("🔍 [DEBUG] performFreshConnection: About to call performOriginalConnectionLogic")
+	clients, toolToServer, tools, _, prompts, resources, systemPrompt, err := performOriginalConnectionLogic(ctx, llm, serverName, configPath, "fresh-connection", tracers, logger, runtimeOverrides)
+	performDuration := time.Since(performStartTime)
 	if err != nil {
+		logger.Error("❌ [DEBUG] performFreshConnection: performOriginalConnectionLogic failed", err, loggerv2.String("duration", performDuration.String()))
 		return nil, err
 	}
+	logger.Info("✅ [DEBUG] performFreshConnection: performOriginalConnectionLogic completed successfully", loggerv2.String("duration", performDuration.String()), loggerv2.Int("clients_count", len(clients)))
 
 	result := &CachedConnectionResult{
 		Clients:      clients,
@@ -824,6 +855,7 @@ func performOriginalConnectionLogic(
 	serverName, configPath, traceID string,
 	tracers []observability.Tracer,
 	logger loggerv2.Logger,
+	runtimeOverrides mcpclient.RuntimeOverrides,
 ) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Load merged MCP server configuration (base + user)
@@ -857,6 +889,17 @@ func performOriginalConnectionLogic(
 	}
 	for _, serverName := range servers {
 		if serverConfig, exists := cfg.MCPServers[serverName]; exists {
+			// Apply runtime overrides if provided for this server
+			if runtimeOverrides != nil {
+				if override, hasOverride := runtimeOverrides[serverName]; hasOverride {
+					serverConfig = serverConfig.ApplyOverride(override)
+					logger.Info("Applied runtime overrides to server config",
+						loggerv2.String("server", serverName),
+						loggerv2.Any("args_replace", override.ArgsReplace),
+						loggerv2.Any("args_append", override.ArgsAppend),
+						loggerv2.Any("env_override", override.EnvOverride))
+				}
+			}
 			filteredConfig.MCPServers[serverName] = serverConfig
 		}
 	}
@@ -870,10 +913,16 @@ func performOriginalConnectionLogic(
 		loggerv2.String("start_time", discoveryStartTime.Format(time.RFC3339)))
 
 	// Log discovery start (events handled by connection.go)
+	logger.Info("🔍 [DEBUG] performOriginalConnectionLogic: About to call DiscoverAllToolsParallel",
+		loggerv2.Int("server_count", len(servers)),
+		loggerv2.Any("servers", servers))
 
 	parallelResults := mcpclient.DiscoverAllToolsParallel(ctx, filteredConfig, logger)
 
 	discoveryDuration := time.Since(discoveryStartTime)
+	logger.Info("✅ [DEBUG] performOriginalConnectionLogic: DiscoverAllToolsParallel completed",
+		loggerv2.String("duration", discoveryDuration.String()),
+		loggerv2.Int("result_count", len(parallelResults)))
 	logger.Info("Parallel tool discovery completed",
 		loggerv2.Int("result_count", len(parallelResults)),
 		loggerv2.Any("discovery_time", discoveryDuration.String()),
@@ -881,6 +930,9 @@ func performOriginalConnectionLogic(
 
 	// Track seen tools to prevent duplicates (Gemini/Vertex rejects duplicate function declarations)
 	seenTools := make(map[string]bool)
+
+	// Collect all server errors for detailed error reporting
+	var serverErrors []string
 
 	for _, r := range parallelResults {
 		srvName := r.ServerName
@@ -890,6 +942,7 @@ func performOriginalConnectionLogic(
 			logger.Warn("Server not found in config, skipping",
 				loggerv2.String("server", srvName),
 				loggerv2.Error(err))
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: server not found in config: %v", srvName, err))
 			continue // Skip this server instead of failing everything
 		}
 
@@ -897,6 +950,8 @@ func performOriginalConnectionLogic(
 			logger.Warn("Failed to connect to server, skipping",
 				loggerv2.String("server", srvName),
 				loggerv2.Error(r.Error))
+			// Collect the raw error for this server
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: %v", srvName, r.Error))
 			continue // Skip this server instead of failing everything
 		}
 
@@ -912,6 +967,7 @@ func performOriginalConnectionLogic(
 				logger.Warn("Failed to reconnect to server, skipping",
 					loggerv2.String("server", srvName),
 					loggerv2.Error(err))
+				serverErrors = append(serverErrors, fmt.Sprintf("%s: failed to reconnect: %v", srvName, err))
 				continue // Skip this server instead of failing everything
 			}
 		}
@@ -922,6 +978,7 @@ func performOriginalConnectionLogic(
 			logger.Warn("Failed to convert tools for server, skipping",
 				loggerv2.String("server", srvName),
 				loggerv2.Error(err))
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: failed to convert tools: %v", srvName, err))
 			continue // Skip this server instead of failing everything
 		}
 
@@ -956,7 +1013,12 @@ func performOriginalConnectionLogic(
 
 	// Check if we have at least one successful connection
 	if len(clients) == 0 {
-		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("no servers could be connected - all servers failed or were skipped")
+		// Build detailed error message with all individual server errors
+		errorMsg := "no servers could be connected - all servers failed or were skipped"
+		if len(serverErrors) > 0 {
+			errorMsg += "; individual server errors: " + strings.Join(serverErrors, "; ")
+		}
+		return nil, nil, nil, nil, nil, nil, "", errors.New(errorMsg)
 	}
 
 	logger.Info("Aggregated tools",
@@ -1353,6 +1415,7 @@ func GetFreshConnection(ctx context.Context, serverName, configPath string, logg
 		nil, // No tracers needed
 		logger,
 		disableCache, // disableCache=true if invalidation timed out, false otherwise
+		nil,          // No runtime overrides needed for tool execution
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fresh connection for server %s: %w", serverName, err)

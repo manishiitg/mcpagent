@@ -104,7 +104,7 @@ func initializeAgentRegistry(ctx context.Context, log loggerv2.Logger) error {
 	log.Info("Creating agent to initialize tool registry...")
 
 	// Create LLM using testutils
-	llm, err := testutils.CreateTestLLMFromViper(log)
+	llm, llmProvider, err := testutils.CreateTestLLMFromViper(log)
 	if err != nil {
 		return fmt.Errorf("failed to create LLM: %w", err)
 	}
@@ -119,6 +119,7 @@ func initializeAgentRegistry(ctx context.Context, log loggerv2.Logger) error {
 
 	agent, err := testutils.CreateTestAgent(ctx, &testutils.TestAgentConfig{
 		LLM:        llm,
+		Provider:   llmProvider,
 		ConfigPath: configPath,
 		Tracer:     tracer,
 		TraceID:    traceID,

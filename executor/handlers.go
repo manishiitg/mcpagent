@@ -17,9 +17,10 @@ import (
 
 // MCPExecuteRequest represents a request to execute an MCP tool
 type MCPExecuteRequest struct {
-	Server string                 `json:"server"` // MCP server name (e.g., "aws", "gdrive")
-	Tool   string                 `json:"tool"`   // Tool name (e.g., "list_buckets")
-	Args   map[string]interface{} `json:"args"`   // Tool arguments
+	Server    string                 `json:"server"`               // MCP server name (e.g., "aws", "gdrive")
+	Tool      string                 `json:"tool"`                 // Tool name (e.g., "list_buckets")
+	Args      map[string]interface{} `json:"args"`                 // Tool arguments
+	SessionID string                 `json:"session_id,omitempty"` // Optional: MCP session ID for connection reuse
 }
 
 // MCPExecuteResponse represents the response from an MCP tool execution
@@ -31,8 +32,9 @@ type MCPExecuteResponse struct {
 
 // CustomExecuteRequest represents a request to execute a custom tool
 type CustomExecuteRequest struct {
-	Tool string                 `json:"tool"` // Tool name (e.g., "read_workspace_file")
-	Args map[string]interface{} `json:"args"` // Tool arguments
+	Tool      string                 `json:"tool"`                 // Tool name (e.g., "read_workspace_file")
+	Args      map[string]interface{} `json:"args"`                 // Tool arguments
+	SessionID string                 `json:"session_id,omitempty"` // Optional: Session ID for scoping custom tools (prevents cross-workflow contamination)
 }
 
 // CustomExecuteResponse represents the response from a custom tool execution
@@ -106,7 +108,8 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 
 	h.logger.Info("🔧 MCP Execute request",
 		loggerv2.String("server", req.Server),
-		loggerv2.String("tool", req.Tool))
+		loggerv2.String("tool", req.Tool),
+		loggerv2.String("session_id", req.SessionID))
 
 	// Validate request
 	if req.Server == "" {
@@ -129,19 +132,93 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 
-	// Get or create MCP client for this server
-	client, err := GetOrCreateMCPClient(ctx, req.Server, h.configPath, h.logger)
-	if err != nil {
-		h.logger.Error("Failed to get MCP client", err, loggerv2.String("server", req.Server))
-		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
-			Success: false,
-			Error:   fmt.Sprintf("Failed to connect to server %s: %v", req.Server, err),
-		})
-		return
+	// 🔧 STRATEGY: Try multiple connection sources in priority order
+	// 1. Session registry (if session_id provided) - enables Playwright browser reuse
+	// 2. Codeexec global registry - has session-aware connections from agent initialization
+	// 3. mcpcache - creates new connection as fallback
+
+	var client mcpclient.ClientInterface
+	var err error
+
+	// PRIORITY 1: If session_id is provided, try session registry first
+	// This is the primary mechanism for connection reuse (e.g., Playwright browser sharing)
+	if req.SessionID != "" {
+		registry := mcpclient.GetSessionRegistry()
+
+		// Debug: List all available sessions
+		allSessions := registry.ListSessions()
+		h.logger.Info("🔍 [SESSION DEBUG] Available sessions in registry",
+			loggerv2.String("requested_session_id", req.SessionID),
+			loggerv2.Any("all_sessions", allSessions),
+			loggerv2.Int("session_count", len(allSessions)))
+
+		sessionConns := registry.GetSessionConnections(req.SessionID)
+
+		// Debug: List all connections for this session
+		var connServers []string
+		for serverName := range sessionConns {
+			connServers = append(connServers, serverName)
+		}
+		h.logger.Info("🔍 [SESSION DEBUG] Connections for session",
+			loggerv2.String("session_id", req.SessionID),
+			loggerv2.Any("available_servers", connServers),
+			loggerv2.String("requested_server", req.Server))
+
+		if existingClient, exists := sessionConns[req.Server]; exists {
+			h.logger.Info("✅ Using session registry connection (session-aware)",
+				loggerv2.String("session_id", req.SessionID),
+				loggerv2.String("server", req.Server))
+			client = existingClient
+		} else {
+			h.logger.Info("🔄 Session registry miss, trying codeexec registry",
+				loggerv2.String("session_id", req.SessionID),
+				loggerv2.String("server", req.Server),
+				loggerv2.Any("available_servers", connServers))
+		}
+	} else {
+		h.logger.Info("⚠️ No session_id provided in request, skipping session registry")
+	}
+
+	// PRIORITY 2: Try codeexec global registry if no session connection found
+	if client == nil {
+		resultStr, callErr := codeexec.CallMCPTool(ctx, req.Tool, req.Args)
+		if callErr == nil {
+			h.logger.Info("✅ Tool executed via codeexec registry",
+				loggerv2.String("tool", req.Tool),
+				loggerv2.Int("result_length", len(resultStr)))
+			_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
+				Success: true,
+				Result:  resultStr,
+			})
+			return
+		}
+		h.logger.Info("🔄 Codeexec registry miss, falling back to mcpcache",
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("server", req.Server),
+			loggerv2.String("registry_error", callErr.Error()))
+	}
+
+	// PRIORITY 3: Fall back to mcpcache (creates new connection)
+	// ⚠️ WARNING: This creates a NEW connection which opens a NEW browser for Playwright!
+	if client == nil {
+		h.logger.Warn("⚠️ [SESSION MISS] Falling back to mcpcache - will create NEW connection (new browser for Playwright!)",
+			loggerv2.String("server", req.Server),
+			loggerv2.String("session_id", req.SessionID))
+		client, err = GetOrCreateMCPClient(ctx, req.Server, h.configPath, h.logger)
+		if err != nil {
+			h.logger.Error("Failed to get MCP client", err, loggerv2.String("server", req.Server))
+			_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
+				Success: false,
+				Error:   fmt.Sprintf("Failed to connect to server %s: %v", req.Server, err),
+			})
+			return
+		}
+		h.logger.Warn("⚠️ [SESSION MISS] Created new connection via mcpcache",
+			loggerv2.String("server", req.Server))
 	}
 
 	// Execute tool
-	h.logger.Info("🚀 Executing tool",
+	h.logger.Info("🚀 Executing tool via direct connection",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.String("server", req.Server))
 	result, err := client.CallTool(ctx, req.Tool, req.Args)
@@ -223,7 +300,9 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	h.logger.Info("🔧 Custom Execute request", loggerv2.String("tool", req.Tool))
+	h.logger.Info("🔧 Custom Execute request",
+		loggerv2.String("tool", req.Tool),
+		loggerv2.String("session_id", req.SessionID))
 
 	// Validate request
 	if req.Tool == "" {
@@ -238,9 +317,11 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 
-	// Execute custom tool using codeexec registry
-	h.logger.Info("🚀 Executing custom tool", loggerv2.String("tool", req.Tool))
-	result, err := codeexec.CallCustomTool(ctx, req.Tool, req.Args)
+	// Execute custom tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
+	h.logger.Info("🚀 Executing custom tool",
+		loggerv2.String("tool", req.Tool),
+		loggerv2.String("session_id", req.SessionID))
+	result, err := codeexec.CallCustomToolWithSession(ctx, req.SessionID, req.Tool, req.Args)
 	if err != nil {
 		h.logger.Error("Custom tool execution failed", err, loggerv2.String("tool", req.Tool))
 		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers

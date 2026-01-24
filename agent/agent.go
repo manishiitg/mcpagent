@@ -331,7 +331,10 @@ func WithCustomTools(tools []llmtypes.Tool) AgentOption {
 	}
 }
 
-// WithSmartRouting enables intelligent tool filtering (experimental).
+// WithSmartRouting enables intelligent tool filtering (DEPRECATED - will be removed in future version).
+//
+// DEPRECATED: This feature is deprecated and will be removed in a future version.
+// Only use when explicitly needed for legacy compatibility.
 //
 // When enabled, the agent attempts to filter the available tools based on the user's
 // query to reduce context usage and improve LLM focus.
@@ -343,7 +346,10 @@ func WithSmartRouting(enabled bool) AgentOption {
 	}
 }
 
-// WithSmartRoutingThresholds configures the triggers for smart routing.
+// WithSmartRoutingThresholds configures the triggers for smart routing (DEPRECATED).
+//
+// DEPRECATED: This feature is deprecated and will be removed in a future version.
+// Only use when explicitly needed for legacy compatibility.
 //
 // Smart routing will only activate if the number of tools or servers exceeds these limits.
 //
@@ -359,7 +365,10 @@ func WithSmartRoutingThresholds(maxTools, maxServers int) AgentOption {
 	}
 }
 
-// WithSmartRoutingConfig configures the internal mechanics of the smart router.
+// WithSmartRoutingConfig configures the internal mechanics of the smart router (DEPRECATED).
+//
+// DEPRECATED: This feature is deprecated and will be removed in a future version.
+// Only use when explicitly needed for legacy compatibility.
 //
 // Parameters:
 //   - temperature: LLM temperature for the routing decision.
@@ -424,6 +433,25 @@ func WithCrossProviderFallback(crossProviderFallback *CrossProviderFallback) Age
 	}
 }
 
+// WithLLMConfig sets the full LLM configuration (primary + fallbacks).
+// This replaces provider, ModelID, and CrossProviderFallback legacy fields.
+func WithLLMConfig(config AgentLLMConfiguration) AgentOption {
+	return func(a *Agent) {
+		a.LLMConfig = config
+		// Sync legacy fields for backward compatibility
+		a.ModelID = config.Primary.ModelID
+		a.provider = llm.Provider(config.Primary.Provider)
+	}
+}
+
+// WithAPIKeys sets the API keys for different providers.
+// These keys are used as fallback when per-model API keys are not set.
+func WithAPIKeys(keys *AgentAPIKeys) AgentOption {
+	return func(a *Agent) {
+		a.APIKeys = keys
+	}
+}
+
 // WithSelectedTools restricts the agent to a specific subset of tools.
 //
 // Parameters:
@@ -465,6 +493,47 @@ func WithCodeExecutionMode(enabled bool) AgentOption {
 	}
 }
 
+// WithToolSearchMode enables the Tool Search mode.
+//
+// In this mode, instead of exposing all tools upfront, only the "search_tools"
+// virtual tool is initially available. The LLM must search for tools using
+// regex patterns, and discovered tools become available for subsequent calls.
+//
+//   - Enabled: Only "search_tools" is initially exposed. LLM discovers tools via search.
+//   - Disabled: All MCP tools are exposed directly (Standard mode).
+//
+// This mode is useful when working with large tool catalogs (30+ tools) to
+// reduce context usage and improve tool selection accuracy.
+//
+// Default: false (Standard mode)
+func WithToolSearchMode(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.UseToolSearchMode = enabled
+		if enabled {
+			a.discoveredTools = make(map[string]llmtypes.Tool)
+		}
+	}
+}
+
+// WithPreDiscoveredTools sets tools that are always available without searching.
+//
+// When tool search mode is enabled, these tools will be immediately available
+// alongside the "search_tools" tool, without requiring the LLM to discover them.
+//
+// This is useful for frequently used tools that should always be accessible.
+//
+// Example:
+//
+//	agent, _ := mcpagent.NewAgent(ctx, llm, configPath,
+//	    mcpagent.WithToolSearchMode(true),
+//	    mcpagent.WithPreDiscoveredTools([]string{"get_weather", "send_message"}),
+//	)
+func WithPreDiscoveredTools(toolNames []string) AgentOption {
+	return func(a *Agent) {
+		a.preDiscoveredTools = toolNames
+	}
+}
+
 // WithDisableCache controls the MCP client connection cache.
 //
 //   - disable=true: Always establish fresh connections (slower, but safer for ephemeral tasks).
@@ -474,6 +543,27 @@ func WithCodeExecutionMode(enabled bool) AgentOption {
 func WithDisableCache(disable bool) AgentOption {
 	return func(a *Agent) {
 		a.DisableCache = disable
+	}
+}
+
+// WithRuntimeOverrides sets runtime configuration overrides for MCP servers.
+//
+// This allows workflow-specific modifications to server configs, such as:
+//   - Changing output directories per workflow run
+//   - Adding workflow-specific environment variables
+//   - Appending additional command arguments
+//
+// Example:
+//
+//	overrides := mcpclient.RuntimeOverrides{
+//	    "playwright": {
+//	        ArgsReplace: map[string]string{"--output-dir": "/path/to/workflow/downloads"},
+//	    },
+//	}
+//	agent, _ := mcpagent.NewAgent(ctx, llm, configPath, mcpagent.WithRuntimeOverrides(overrides))
+func WithRuntimeOverrides(overrides mcpclient.RuntimeOverrides) AgentOption {
+	return func(a *Agent) {
+		a.RuntimeOverrides = overrides
 	}
 }
 
@@ -513,6 +603,32 @@ func WithStreamingCallback(callback func(chunk llmtypes.StreamChunk)) AgentOptio
 func WithServerName(serverName string) AgentOption {
 	return func(a *Agent) {
 		a.serverName = serverName
+	}
+}
+
+// WithSessionID sets the session ID for connection sharing across agents.
+//
+// When set: MCP connections are managed by SessionConnectionRegistry and persist across
+// multiple agents with the same SessionID. Agent.Close() does NOT close connections.
+// Call CloseSession(sessionID) explicitly when the workflow/conversation ends.
+//
+// When empty (default): Legacy behavior - each agent creates and owns its connections,
+// which are closed when Agent.Close() is called.
+//
+// Usage:
+//
+//	// Create agents with shared session
+//	agent1, _ := NewSimpleAgent(ctx, llm, config, WithSessionID("workflow-123"))
+//	agent1.Close() // Connections preserved
+//
+//	agent2, _ := NewSimpleAgent(ctx, llm, config, WithSessionID("workflow-123"))
+//	agent2.Close() // Connections still preserved
+//
+//	// At workflow end
+//	CloseSession("workflow-123") // Now connections are closed
+func WithSessionID(sessionID string) AgentOption {
+	return func(a *Agent) {
+		a.SessionID = sessionID
 	}
 }
 
@@ -652,10 +768,29 @@ type Agent struct {
 	// When disabled (default): All MCP tools are added directly as LLM tools
 	UseCodeExecutionMode bool
 
+	// Tool search mode configuration
+	// When enabled: Only search_tools virtual tool is initially exposed to the LLM
+	// LLM must search for tools using regex patterns, discovered tools become available
+	// When disabled (default): All tools are exposed directly
+	UseToolSearchMode  bool                     // Enable tool search mode
+	discoveredTools    map[string]llmtypes.Tool // Tools discovered during this session
+	allDeferredTools   []llmtypes.Tool          // All available tools (hidden until discovered)
+	preDiscoveredTools []string                 // Tool names that are always available without searching
+
 	// Cache configuration
 	// When enabled: Skips cache lookup and always performs fresh connections
 	// When disabled (default): Uses cache to speed up connection establishment (60-85% faster)
 	DisableCache bool
+
+	// Runtime MCP configuration overrides
+	// Allows workflow-specific modifications to server configs (e.g., output directories)
+	RuntimeOverrides mcpclient.RuntimeOverrides
+
+	// Session-scoped connection management
+	// When set: Connections are stored in SessionConnectionRegistry and shared across agents with same SessionID
+	//           Agent.Close() does NOT close connections - call CloseSession(sessionID) at workflow end
+	// When empty: Legacy behavior - each agent creates/owns its connections, closed on Agent.Close()
+	SessionID string
 
 	// Streaming configuration
 	// When enabled: LLM text responses are streamed incrementally with events
@@ -701,6 +836,28 @@ type Agent struct {
 	// Context window is based on input tokens only, not output tokens.
 	currentContextWindowUsage int
 	modelContextWindow        int // Cached model context window size (0 = not cached yet)
+
+	// LLM Configuration
+	LLMConfig AgentLLMConfiguration
+}
+
+// LLMModel represents a single LLM configuration
+type LLMModel struct {
+	Provider string `json:"provider"` // "anthropic", "openai", "bedrock", etc.
+	ModelID  string `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
+
+	// Auth per model
+	APIKey *string `json:"api_key,omitempty"` // For OpenRouter, OpenAI, Anthropic, Vertex
+	Region *string `json:"region,omitempty"`  // For Bedrock
+
+	// Model-specific options
+	Temperature *float64 `json:"temperature,omitempty"` // Override default temperature (0.0-1.0)
+}
+
+// AgentLLMConfiguration holds the primary and fallback LLM configurations
+type AgentLLMConfiguration struct {
+	Primary   LLMModel   `json:"primary"`
+	Fallbacks []LLMModel `json:"fallbacks"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -789,6 +946,16 @@ func extractModelIDFromLLM(llm llmtypes.Model) string {
 	return modelID
 }
 
+// extractProviderFromLLM extracts the provider from the LLM instance
+// Checks if the LLM implements GetProvider() method
+func extractProviderFromLLM(model llmtypes.Model) llm.Provider {
+	// Check if model implements GetProvider()
+	if p, ok := model.(interface{ GetProvider() llm.Provider }); ok {
+		return p.GetProvider()
+	}
+	return ""
+}
+
 // NewAgent creates a new Agent instance with the provided configuration.
 //
 // It initializes the agent with the given context, LLM model, and MCP configuration path.
@@ -825,7 +992,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ModelID:                       modelID,
 		AgentMode:                     SimpleAgent,                      // Default to simple mode
 		TraceID:                       "",                               // Default: empty trace ID
-		provider:                      "",                               // Will be set by caller
+		provider:                      "",                               // Will be set by caller or extracted
 		EnableContextOffloading:       true,                             // Default to enabled
 		LargeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
 		ToolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
@@ -893,6 +1060,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		option(ag)
 	}
 
+	// If provider is not set, try to extract it from LLM
+	if ag.provider == "" {
+		ag.provider = extractProviderFromLLM(llm)
+	}
+
 	// Use logger from options (or default if not set)
 	logger := ag.Logger
 	if logger == nil {
@@ -911,14 +1083,20 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.TraceID = observability.TraceID(uuid.New().String())
 	}
 
+	logger.Info("🔍 [DEBUG] NewAgent: Starting initialization", loggerv2.String("config_path", configPath), loggerv2.String("server_name", serverName))
 	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
 	logger.Info("NewAgent initialization", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
 
 	// Load merged MCP servers configuration (base + user)
+	logger.Info("🔍 [DEBUG] NewAgent: About to load merged MCP config", loggerv2.String("config_path", configPath))
+	configLoadStartTime := time.Now()
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
+	configLoadDuration := time.Since(configLoadStartTime)
 	if err != nil {
+		logger.Error("❌ [DEBUG] NewAgent: Failed to load merged MCP config", err, loggerv2.String("duration", configLoadDuration.String()))
 		return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
+	logger.Info("✅ [DEBUG] NewAgent: Merged MCP config loaded successfully", loggerv2.String("duration", configLoadDuration.String()), loggerv2.Int("server_count", len(config.MCPServers)))
 
 	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
 	for name := range config.MCPServers {
@@ -944,14 +1122,35 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	setCodeGenDuration := time.Since(setCodeGenStartTime)
 	logger.Debug("Code generation enabled set", loggerv2.String("duration", setCodeGenDuration.String()))
 
-	logger.Debug("Calling NewAgentConnection", loggerv2.String("server_name", serverName))
+	logger.Info("🔍 [DEBUG] NewAgent: About to call NewAgentConnection", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.DisableCache), loggerv2.String("session_id", ag.SessionID))
 	connectionStartTime := time.Now()
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+
+	// Check if session-scoped connection management is enabled
+	var clients map[string]mcpclient.ClientInterface
+	var toolToServer map[string]string
+	var allLLMTools []llmtypes.Tool
+	var servers []string
+	var prompts map[string][]mcp.Prompt
+	var resources map[string][]mcp.Resource
+	var systemPrompt string
+
+	if ag.SessionID != "" {
+		// Use session registry - connections are shared and persist until CloseSession is called
+		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+	} else {
+		// Legacy behavior - connections are created fresh and owned by this agent
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+	}
+
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
+		logger.Error("❌ [DEBUG] NewAgent: NewAgentConnection failed", err, loggerv2.String("duration", connectionDuration.String()), loggerv2.String("server_name", serverName))
 		return nil, err
 	}
-	logger.Info("NewAgentConnection completed", loggerv2.String("duration", connectionDuration.String()))
+	logger.Info("✅ [DEBUG] NewAgent: NewAgentConnection completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)), loggerv2.String("session_id", ag.SessionID))
 
 	// Use first client for legacy compatibility
 	var firstClient mcpclient.ClientInterface
@@ -1058,6 +1257,69 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 		logger.Debug("Code execution mode: tools available (only virtual tools, MCP and custom tools excluded)",
 			loggerv2.Int("tool_count", len(toolsToUse)))
+	} else if ag.UseToolSearchMode {
+		// Tool search mode: Store filtered tools as deferred, expose only search_tools
+		logger.Debug("Tool search mode enabled - storing tools as deferred (with filtering)")
+
+		// Apply tool filtering to deferred tools
+		// Only tools that pass the filter should be discoverable via search_tools
+		if !ag.toolFilter.IsNoFilteringActive() {
+			// Build set of custom tool names for category determination
+			customToolNames := make(map[string]bool)
+			for toolName, customTool := range ag.customTools {
+				customToolNames[toolName] = true
+				if customTool.Category != "" {
+					customToolNames[customTool.Category+":"+toolName] = true
+				}
+			}
+
+			// Filter deferred tools
+			var filteredDeferredTools []llmtypes.Tool
+			for _, tool := range allLLMTools {
+				if tool.Function == nil {
+					continue
+				}
+				toolName := tool.Function.Name
+
+				// Determine the package/server name and tool type
+				serverName, isMCPTool := toolToServer[toolName]
+				isCustomTool := customToolNames[toolName]
+
+				// Determine package name
+				var packageName string
+				if isMCPTool {
+					packageName = serverName
+				} else if isCustomTool {
+					if customTool, ok := ag.customTools[toolName]; ok && customTool.Category != "" {
+						packageName = customTool.Category
+					} else {
+						packageName = "custom"
+					}
+				} else {
+					// Virtual tool - always include in deferred (will be filtered later)
+					filteredDeferredTools = append(filteredDeferredTools, tool)
+					continue
+				}
+
+				// Use unified filter to check if tool should be included
+				if ag.toolFilter.ShouldIncludeTool(packageName, toolName, isCustomTool, false) {
+					filteredDeferredTools = append(filteredDeferredTools, tool)
+				}
+			}
+			ag.allDeferredTools = filteredDeferredTools
+			logger.Debug("Tool search mode: Filtered tools deferred for discovery",
+				loggerv2.Int("deferred_count", len(ag.allDeferredTools)),
+				loggerv2.Int("total_available", len(allLLMTools)))
+		} else {
+			// No filtering - all tools available for discovery
+			ag.allDeferredTools = allLLMTools
+			logger.Debug("Tool search mode: All MCP tools deferred for discovery (no filtering)",
+				loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
+		}
+
+		// Don't add any MCP tools to the active tool list yet
+		// They will be discovered dynamically via search_tools
+		toolsToUse = []llmtypes.Tool{}
 	} else {
 		// Normal mode: Use all tools
 		toolsToUse = allLLMTools
@@ -1160,6 +1422,46 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 		virtualTools = filteredVirtualTools
 		logger.Debug("Code execution mode: Filtered virtual tools - only discover_code_files and write_code available")
+	} else if ag.UseToolSearchMode {
+		// In tool search mode, only include search_tools and context offloading tools
+		// Context offloading tools (search_large_output, etc.) must be immediately available
+		// because they're needed to access offloaded content when large outputs occur
+		// All other tools are discovered dynamically via search
+		var filteredVirtualTools []llmtypes.Tool
+		for _, tool := range virtualTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+
+				// Explicitly exclude code execution tools from discovery in tool search mode
+				// They should only be available if UseCodeExecutionMode is true (handled in the if block above)
+				if toolName == "discover_code_files" || toolName == "write_code" {
+					continue
+				}
+
+				// Context offloading tools must be immediately available (pre-discovered)
+				// They're infrastructure tools needed when large outputs are offloaded
+				isContextOffloadingTool := toolName == "search_large_output" ||
+					toolName == "read_large_output" ||
+					toolName == "query_large_output"
+
+				// Only include search_tools and context offloading tools immediately
+				if toolName == "search_tools" || isContextOffloadingTool {
+					filteredVirtualTools = append(filteredVirtualTools, tool)
+				} else {
+					// Store other virtual tools in deferred tools for discovery
+					ag.allDeferredTools = append(ag.allDeferredTools, tool)
+				}
+			}
+		}
+		// Add tool search tools (search_tools, add_tool, show_all_tools)
+		filteredVirtualTools = append(filteredVirtualTools, CreateToolSearchTools()...)
+		virtualTools = filteredVirtualTools
+		logger.Debug("Tool search mode: search_tools and context offloading tools available, other virtual tools deferred",
+			loggerv2.Int("virtual_count", len(virtualTools)),
+			loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
+
+		// Initialize tool search mode (pre-discover configured tools)
+		ag.initializeToolSearch()
 	} else {
 		// In non-code execution mode, exclude discover_code_files and write_code
 		var filteredVirtualTools []llmtypes.Tool
@@ -1196,6 +1498,14 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Initialize registry with virtual tools
 	codeexec.InitRegistryWithVirtualTools(ag.Clients, customToolExecutors, virtualToolExecutors, ag.toolToServer, logger)
 
+	// Also register session-scoped custom tools to prevent cross-workflow contamination
+	if ag.SessionID != "" {
+		codeexec.InitRegistryForSession(ag.SessionID, customToolExecutors, logger)
+		logger.Info("✅ Session-scoped custom tools registered during initialization",
+			loggerv2.String("session_id", ag.SessionID),
+			loggerv2.Int("count", len(customToolExecutors)))
+	}
+
 	// Generate Go code for virtual tools (only needed in code execution mode)
 	// In simple agent mode, virtual tools are called directly via HandleVirtualTool()
 	// The generated code is only used when LLM writes Go code that imports these packages
@@ -1228,7 +1538,14 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts
 	// In code execution mode, tool structure is automatically included
 	if !ag.hasCustomSystemPrompt {
-		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.Logger)
+		// Get tool categories for tool search mode (server/package names)
+		var toolCategories []string
+		if ag.UseToolSearchMode {
+			for serverName := range ag.Clients {
+				toolCategories = append(toolCategories, serverName)
+			}
+		}
+		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.UseToolSearchMode, toolCategories, ag.Logger)
 	}
 
 	// 🎯 SMART ROUTING INITIALIZATION - Run AFTER all tools are loaded (including virtual tools)
@@ -1239,6 +1556,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		serverCount := len(ag.Clients)
 		serverType := "active"
 
+		logger.Warn("⚠️ SMART ROUTING IS DEPRECATED - This feature will be removed in a future version")
 		logger.Info("Smart routing enabled - determining relevant tools after full initialization")
 		logger.Debug("Total tools loaded",
 			loggerv2.Int("tool_count", len(ag.Tools)),
@@ -1287,7 +1605,7 @@ func (a *Agent) SetCurrentQuery(query string) {
 // observability/tracing system. This creates the root or high-level node in the event tree.
 func (a *Agent) StartAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
-	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode)
+	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode, a.UseToolSearchMode)
 	a.EmitTypedEvent(ctx, agentStartEvent)
 }
 
@@ -1344,8 +1662,23 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	a.tokenTrackingMutex.Lock()
 	defer a.tokenTrackingMutex.Unlock()
 
-	// Use unified extraction from multi-llm-provider-go
-	cacheTokens, _, reasoningTokens := extractAllTokenTypes(resp)
+	// Use passed-in cache and reasoning tokens from usageMetrics (preferred)
+	// Fall back to extraction from resp only if passed values are 0
+	// Cache tokens: subset of prompt tokens that were cached (for pricing at lower rate)
+	// Reasoning tokens: part of output (total output = completion + reasoning)
+	cacheTokens := usageMetrics.CacheTokens
+	reasoningTokens := usageMetrics.ReasoningTokens
+
+	// If not passed in usageMetrics, extract from response as fallback
+	if cacheTokens == 0 || reasoningTokens == 0 {
+		extractedCache, _, extractedReasoning := extractAllTokenTypes(resp)
+		if cacheTokens == 0 {
+			cacheTokens = extractedCache
+		}
+		if reasoningTokens == 0 {
+			reasoningTokens = extractedReasoning
+		}
+	}
 
 	// Extract cache discount (only available in GenerationInfo)
 	var cacheDiscount float64
@@ -1357,6 +1690,10 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	}
 
 	// Accumulate tokens (only actual values from LLM response)
+	// - PromptTokens: total input tokens (includes cached portion)
+	// - CompletionTokens: output tokens (excludes reasoning tokens)
+	// - CacheTokens: subset of PromptTokens that were cached (for metrics/billing)
+	// - ReasoningTokens: additional output tokens for reasoning (total output = completion + reasoning)
 	a.cumulativePromptTokens += usageMetrics.PromptTokens
 	a.cumulativeCompletionTokens += usageMetrics.CompletionTokens
 	a.cumulativeTotalTokens += usageMetrics.TotalTokens
@@ -1581,6 +1918,9 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	totalTokenEvent.ContextWindowUsage = a.currentContextWindowUsage
 	totalTokenEvent.ModelContextWindow = a.modelContextWindow
 	totalTokenEvent.ContextUsagePercent = contextUsagePercent
+
+	// Set agent mode information
+	totalTokenEvent.SetAgentMode(string(a.AgentMode), a.UseCodeExecutionMode, a.UseToolSearchMode)
 
 	a.EmitTypedEvent(ctx, totalTokenEvent)
 
@@ -1881,6 +2221,14 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 			toolStructureJSON = toolStructure
 		}
 	}
+	// Get tool categories for tool search mode
+	var toolCategoriesFiltered []string
+	if a.UseToolSearchMode {
+		for serverName := range filteredPrompts {
+			toolCategoriesFiltered = append(toolCategoriesFiltered, serverName)
+		}
+	}
+
 	newSystemPrompt := prompt.BuildSystemPromptWithoutTools(
 		filteredPrompts,
 		filteredResources,
@@ -1889,6 +2237,8 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 		a.DiscoverPrompt,
 		a.UseCodeExecutionMode,
 		toolStructureJSON,
+		a.UseToolSearchMode,
+		toolCategoriesFiltered,
 		a.Logger,
 	)
 
@@ -1993,7 +2343,27 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		ag.TraceID = observability.TraceID(fmt.Sprintf("agent-session-%s-%d", modelID, time.Now().UnixNano()))
 	}
 
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
+	// Check if session-scoped connection management is enabled
+	var clients map[string]mcpclient.ClientInterface
+	var toolToServer map[string]string
+	var allLLMTools []llmtypes.Tool
+	var servers []string
+	var prompts map[string][]mcp.Prompt
+	var resources map[string][]mcp.Resource
+	var systemPrompt string
+	var err error
+
+	if ag.SessionID != "" {
+		// Use session registry - connections are shared and persist until CloseSession is called
+		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+	} else {
+		// Legacy behavior - connections are created fresh and owned by this agent
+		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -2295,6 +2665,17 @@ func (a *Agent) Close() {
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
 
+	// Check if using session-scoped connections
+	if a.SessionID != "" {
+		// Session-scoped mode: connections are shared and managed by session registry
+		// Do NOT close connections here - they persist until CloseSession(sessionID) is called
+		a.Logger.Info("Agent closed (session-scoped mode: connections persist in session registry)",
+			loggerv2.String("session_id", a.SessionID),
+			loggerv2.Int("client_count", len(a.Clients)))
+		return
+	}
+
+	// Legacy mode: agent owns its connections, close them on agent close
 	// Close all clients in the map
 	for serverName, client := range a.Clients {
 		if client != nil {
@@ -2857,7 +3238,71 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	isStructuredOutputTool := toolCategory == "structured_output"
 	isHumanTool := toolCategory == "human"
 
-	if !a.UseCodeExecutionMode || isStructuredOutputTool || isHumanTool {
+	// 🔍 TOOL SEARCH MODE: Handle custom tools differently
+	// Custom tools should be added to allDeferredTools so they can be discovered via search_tools
+	// Pre-discovered tools or special categories should be immediately available
+	if a.UseToolSearchMode {
+		// Check tool filter first - if filtering is active and tool doesn't pass, skip adding to deferred
+		// Special categories (structured_output, human) bypass filtering as they're system tools
+		shouldIncludeInDeferred := isStructuredOutputTool || isHumanTool
+		if !shouldIncludeInDeferred && a.toolFilter != nil && !a.toolFilter.IsNoFilteringActive() {
+			// Apply tool filter - use category as package name for custom tools
+			shouldIncludeInDeferred = a.toolFilter.ShouldIncludeTool(toolCategory, name, true, false)
+			if !shouldIncludeInDeferred {
+				if a.Logger != nil {
+					a.Logger.Debug(fmt.Sprintf("🔍 [TOOL_SEARCH] Custom tool '%s' excluded by tool filter (category: %s)", name, toolCategory))
+				}
+				// Tool is filtered out - don't add to deferred tools
+				// But still register the execution function (in case filter changes or for other uses)
+			}
+		} else if !shouldIncludeInDeferred {
+			shouldIncludeInDeferred = true // No filtering active, include by default
+		}
+
+		// Only proceed with Tool Search registration if tool passes filter
+		if shouldIncludeInDeferred {
+			// Check if this tool is in the pre-discovered list
+			isPreDiscovered := false
+			for _, preDiscoveredName := range a.preDiscoveredTools {
+				if preDiscoveredName == name {
+					isPreDiscovered = true
+					break
+				}
+			}
+
+			// Special categories (structured_output, human) are always immediately available
+			// Pre-discovered tools are also immediately available
+			if isStructuredOutputTool || isHumanTool || isPreDiscovered {
+				// Add to discoveredTools map so it's immediately available
+				if a.discoveredTools == nil {
+					a.discoveredTools = make(map[string]llmtypes.Tool)
+				}
+				a.discoveredTools[name] = tool
+
+				// Also add to allDeferredTools so it can still be found via search
+				a.allDeferredTools = append(a.allDeferredTools, tool)
+
+				// Refresh filteredTools with tool search mode tools (includes discovered tools)
+				a.filteredTools = a.getToolsForToolSearchMode()
+
+				if a.Logger != nil {
+					if isPreDiscovered {
+						a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Pre-discovered custom tool '%s' added to discovered tools (category: %s)", name, toolCategory))
+					} else {
+						a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Special category custom tool '%s' added to discovered tools (category: %s)", name, toolCategory))
+					}
+				}
+			} else {
+				// Regular custom tool in tool search mode: add to deferred tools only
+				// Agent must use search_tools + add_tool to discover it
+				a.allDeferredTools = append(a.allDeferredTools, tool)
+
+				if a.Logger != nil {
+					a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Custom tool '%s' added to deferred tools for discovery (category: %s)", name, toolCategory))
+				}
+			}
+		}
+	} else if !a.UseCodeExecutionMode || isStructuredOutputTool || isHumanTool {
 		// Normal mode OR structured output tool OR human tool: Add to the main Tools array so the LLM can see it
 		a.Tools = append(a.Tools, tool)
 
@@ -2930,6 +3375,10 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 			a.Logger.Debug("🔧 [CODE_EXECUTION] Custom tools in registry", loggerv2.Any("tools", toolNames))
 		}
 		codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
+		// Also register session-scoped tools
+		if a.SessionID != "" {
+			codeexec.InitRegistryForSession(a.SessionID, customToolExecutors, a.Logger)
+		}
 		if a.Logger != nil {
 			a.Logger.Debug("🔧 [CODE_EXECUTION] Registry updated successfully for tool", loggerv2.String("tool", name))
 		}
@@ -3025,8 +3474,19 @@ func (a *Agent) UpdateCodeExecutionRegistry() error {
 		a.Logger.Debug("🔧 [CODE_EXECUTION] Custom tools being registered", loggerv2.Any("tools", toolNames))
 	}
 
-	// Update the registry
+	// Update the global registry (for backward compatibility)
 	codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
+
+	// Also register session-scoped tools to prevent cross-workflow contamination
+	// When multiple workflows run concurrently, each gets its own scoped tools
+	if a.SessionID != "" {
+		codeexec.InitRegistryForSession(a.SessionID, customToolExecutors, a.Logger)
+		if a.Logger != nil {
+			a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped tools registered",
+				loggerv2.String("session_id", a.SessionID),
+				loggerv2.Int("count", len(customToolExecutors)))
+		}
+	}
 
 	if a.Logger != nil {
 		a.Logger.Info("✅ [CODE_EXECUTION] Registry updated successfully with custom tools", loggerv2.Int("count", len(customToolExecutors)))
@@ -3064,6 +3524,7 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 	}
 
 	// Rebuild system prompt with updated tool structure
+	// Note: This function is only called in code execution mode, so UseToolSearchMode is false
 	newSystemPrompt := prompt.BuildSystemPromptWithoutTools(
 		a.prompts,
 		a.resources,
@@ -3072,6 +3533,8 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 		a.DiscoverPrompt,
 		a.UseCodeExecutionMode,
 		toolStructure,
+		false, // UseToolSearchMode - not applicable in code execution mode
+		nil,   // toolCategories - not applicable in code execution mode
 		a.Logger,
 	)
 

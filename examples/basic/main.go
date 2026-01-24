@@ -10,8 +10,6 @@ import (
 
 	mcpagent "mcpagent/agent"
 	"mcpagent/llm"
-
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 
 func main() {
@@ -31,8 +29,8 @@ func main() {
 
 	// Step 2: Initialize OpenAI LLM (logger can be nil - will use default internally)
 	llmModel, err := llm.InitializeLLM(llm.Config{
-		Provider:    llm.ProviderOpenAI,
-		ModelID:     openai.ModelGPT41,
+		Provider:    "openai",
+		ModelID:     "gpt-4o",
 		Temperature: 0.7,
 		Logger:      nil, // nil logger - will use default logger internally
 		APIKeys: &llm.ProviderAPIKeys{

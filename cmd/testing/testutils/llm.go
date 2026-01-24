@@ -20,7 +20,8 @@ type TestLLMConfig struct {
 
 // CreateTestLLM creates a test LLM instance with the specified configuration.
 // If config is nil or empty, it uses viper to get configuration from flags.
-func CreateTestLLM(cfg *TestLLMConfig) (llmtypes.Model, error) {
+// Returns the model, the provider used, and any error.
+func CreateTestLLM(cfg *TestLLMConfig) (llmtypes.Model, llm.Provider, error) {
 	// Use viper if config is not provided
 	if cfg == nil {
 		cfg = &TestLLMConfig{}
@@ -42,7 +43,7 @@ func CreateTestLLM(cfg *TestLLMConfig) (llmtypes.Model, error) {
 	// Validate provider
 	llmProvider, err := llm.ValidateProvider(provider)
 	if err != nil {
-		return nil, fmt.Errorf("invalid LLM provider %s: %w", provider, err)
+		return nil, "", fmt.Errorf("invalid LLM provider %s: %w", provider, err)
 	}
 
 	// Get model ID
@@ -50,7 +51,7 @@ func CreateTestLLM(cfg *TestLLMConfig) (llmtypes.Model, error) {
 	if modelID == "" {
 		modelID = llm.GetDefaultModel(llmProvider)
 		if modelID == "" {
-			return nil, fmt.Errorf("no default model available for provider: %s", provider)
+			return nil, "", fmt.Errorf("no default model available for provider: %s", provider)
 		}
 	}
 
@@ -77,15 +78,16 @@ func CreateTestLLM(cfg *TestLLMConfig) (llmtypes.Model, error) {
 	// Initialize LLM
 	model, err := llm.InitializeLLM(llmConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
+		return nil, "", fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
-	return model, nil
+	return model, llmProvider, nil
 }
 
 // CreateTestLLMFromViper creates a test LLM using viper configuration.
 // This is a convenience function that calls CreateTestLLM(nil).
-func CreateTestLLMFromViper(logger loggerv2.Logger) (llmtypes.Model, error) {
+// Returns the model, the provider used, and any error.
+func CreateTestLLMFromViper(logger loggerv2.Logger) (llmtypes.Model, llm.Provider, error) {
 	return CreateTestLLM(&TestLLMConfig{
 		Logger: logger,
 	})

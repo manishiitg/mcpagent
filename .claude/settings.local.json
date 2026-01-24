@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go run:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go get:*)",
+      "Bash(tee:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.smith.langchain.com)",
+      "WebFetch(domain:docs.smith.langchain.com)",
+      "WebFetch(domain:reference.langchain.com)",
+      "Bash(source .env)",
+      "Bash(curl:*)",
+      "Bash(go doc:*)",
+      "Bash(GOOGLE_API_KEY=\"$GOOGLE_API_KEY\" VERTEX_API_KEY=\"$VERTEX_API_KEY\" go run:*)",
+      "Bash(export GOOGLE_API_KEY)",
+      "Bash(export VERTEX_API_KEY)",
+      "Bash(bash -c 'go run ./cmd/testing tool-search --verbose --config /Users/mipl/ai-work/mcpagent/examples/basic/mcp_servers.json':*)",
+      "Bash(env)",
+      "Bash(source ~/.zshrc)"
+    ]
+  }
+}

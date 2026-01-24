@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	loggerv2 "mcpagent/logger/v2"
+	"mcpagent/oauth"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -45,6 +47,7 @@ type Client struct {
 	contextCancel context.CancelFunc // Store context cancel function for SSE connections
 	context       context.Context    // Store context for SSE connections
 	mu            sync.RWMutex       // Protect access to contextCancel and context
+	oauthManager  *oauth.Manager     // OAuth manager for authentication
 }
 
 // New creates a new MCP client for the given server configuration
@@ -145,6 +148,13 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	env = make([]string, 0, len(envMap))
 	for key, value := range envMap {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	// Handle OAuth authentication if configured
+	if c.config.OAuth != nil {
+		if err := c.setupOAuthAuth(ctx); err != nil {
+			return fmt.Errorf("OAuth authentication failed: %w", err)
+		}
 	}
 
 	var mcpClient *client.Client
@@ -856,4 +866,92 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 	// For now, we log the information so it appears in the server logs
 
 	return results
+}
+
+// setupOAuthAuth handles OAuth authentication for the client
+func (c *Client) setupOAuthAuth(ctx context.Context) error {
+	// Initialize OAuth manager if not already done
+	if c.oauthManager == nil {
+		c.oauthManager = oauth.NewManager(c.config.OAuth, c.logger)
+	}
+
+	// Auto-discover endpoints if enabled
+	if c.config.OAuth.AutoDiscover && (c.config.OAuth.AuthURL == "" || c.config.OAuth.TokenURL == "") {
+		c.logger.Info("Auto-discovering OAuth endpoints...")
+		if err := c.discoverOAuthEndpoints(ctx); err != nil {
+			c.logger.Warn("OAuth auto-discovery failed", loggerv2.Error(err))
+			// Continue anyway - maybe endpoints are manually configured
+		}
+	}
+
+	// Try to get access token
+	token, err := c.oauthManager.GetAccessToken(ctx)
+	if err != nil {
+		// Token not available - need interactive auth
+		c.logger.Info("OAuth token not available, authentication required")
+		return fmt.Errorf("%w\nRun authentication flow to obtain token", err)
+	}
+
+	// Inject Bearer token into headers
+	if c.config.Headers == nil {
+		c.config.Headers = make(map[string]string)
+	}
+	c.config.Headers["Authorization"] = fmt.Sprintf("Bearer %s", token)
+
+	c.logger.Debug("OAuth token injected into request headers")
+	return nil
+}
+
+// discoverOAuthEndpoints auto-discovers OAuth endpoints from 401 response
+func (c *Client) discoverOAuthEndpoints(ctx context.Context) error {
+	// Make a test request to trigger 401 response
+	resp, err := http.Get(c.config.URL)
+	if err != nil {
+		return fmt.Errorf("failed to reach server for discovery: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		endpoints, err := oauth.DiscoverFromResponse(resp)
+		if err != nil {
+			return fmt.Errorf("failed to discover endpoints: %w", err)
+		}
+
+		// Update OAuth manager with discovered endpoints
+		c.oauthManager.UpdateEndpoints(endpoints.AuthURL, endpoints.TokenURL)
+
+		c.logger.Info("Auto-discovered OAuth endpoints",
+			loggerv2.String("auth_url", endpoints.AuthURL),
+			loggerv2.String("token_url", endpoints.TokenURL))
+
+		return nil
+	}
+
+	return fmt.Errorf("server did not return 401 for discovery (got %d)", resp.StatusCode)
+}
+
+// DiscoverOAuthEndpoints discovers OAuth endpoints from the server and returns them
+// This is the public wrapper for external use (e.g., UI)
+func (c *Client) DiscoverOAuthEndpoints(ctx context.Context) (*oauth.OAuthEndpoints, error) {
+	// Make a test request to trigger 401 response
+	resp, err := http.Get(c.config.URL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach server for discovery: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		endpoints, err := oauth.DiscoverFromResponse(resp)
+		if err != nil {
+			return nil, fmt.Errorf("failed to discover endpoints: %w", err)
+		}
+
+		c.logger.Info("Auto-discovered OAuth endpoints",
+			loggerv2.String("auth_url", endpoints.AuthURL),
+			loggerv2.String("token_url", endpoints.TokenURL))
+
+		return endpoints, nil
+	}
+
+	return nil, fmt.Errorf("server did not return 401 for discovery (got %d)", resp.StatusCode)
 }

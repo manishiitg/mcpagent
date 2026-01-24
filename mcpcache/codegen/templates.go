@@ -68,10 +68,18 @@ func isBrokenPipeInContent(content string) bool {
 // This is a common function used by all tool functions to reduce code duplication
 // Panics on API errors (network, HTTP failures) - tool execution errors are in result string
 // Includes broken pipe retry logic: retries once with 100ms delay if broken pipe detected
+// Automatically includes session_id in payload if MCP_SESSION_ID env var is set
 func callAPI(endpoint string, payload map[string]interface{}) string {
 	apiURL := os.Getenv("MCP_API_URL")
 	if apiURL == "" {
 		apiURL = "http://localhost:8000"
+	}
+
+	// Add session_id to payload for MCP connection reuse (e.g., Playwright browser sharing)
+	// When set, the executor will use session registry instead of creating new connections
+	sessionID := os.Getenv("MCP_SESSION_ID")
+	if sessionID != "" {
+		payload["session_id"] = sessionID
 	}
 
 	reqBody, err := json.Marshal(payload)

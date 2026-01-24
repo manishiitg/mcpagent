@@ -78,7 +78,7 @@ func testSmartRouting(log loggerv2.Logger) error {
 	if modelID == "" {
 		modelID = openai.ModelGPT41Mini // Default to gpt-4.1-mini
 	}
-	model, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+	model, llmProvider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider: "",
 		ModelID:  modelID,
 		Logger:   log,
@@ -86,7 +86,7 @@ func testSmartRouting(log loggerv2.Logger) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize LLM: %w", err)
 	}
-	log.Info("✅ LLM initialized", loggerv2.String("model_id", modelID))
+	log.Info("✅ LLM initialized", loggerv2.String("model_id", modelID), loggerv2.String("provider", string(llmProvider)))
 
 	// Create temporary MCP config with multiple servers to exceed thresholds
 	// We need at least max-servers-threshold + 1 servers
@@ -108,7 +108,7 @@ func testSmartRouting(log loggerv2.Logger) error {
 		},
 		"awslabs.aws-pricing-mcp-server": map[string]interface{}{
 			"command": "uvx",
-			"args":    []interface{}{"awslabs.aws-pricing-mcp-server@latest"},
+			"args":    []interface{}{"awslabs.aws-pricing-mcp-server"},
 			"env": map[string]interface{}{
 				"FASTMCP_LOG_LEVEL": "ERROR",
 				"AWS_PROFILE":       "default",
@@ -135,7 +135,7 @@ func testSmartRouting(log loggerv2.Logger) error {
 
 	// Create agent with smart routing enabled
 	tracer, _ := testutils.GetTracerWithLogger("noop", log)
-	ag, err := testutils.CreateAgentWithTracer(ctx, model, configPath, tracer, traceID, log,
+	ag, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, traceID, log,
 		mcpagent.WithSmartRouting(true), // Enable smart routing
 	)
 	if err != nil {

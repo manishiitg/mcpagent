@@ -31,13 +31,18 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// contextKey is a custom type for context keys to avoid collisions
-type contextKey string
-
+// Generic tool execution context keys
+// These are injected into context for all tool executions to provide metadata
+// Tools can extract these values if needed (e.g., workspace tools for event emission)
+// Using string keys ensures compatibility across packages
 const (
-	contextKeyWorkspaceEventEmitter contextKey = "workspace_event_emitter"
-	contextKeyTurn                  contextKey = "turn"
-	contextKeyServerName            contextKey = "server_name"
+	// ToolExecutionAgentKey is the context key for the agent executing the tool
+	// Tools can use this to emit events or access agent functionality
+	ToolExecutionAgentKey = "tool_execution_agent"
+	// ToolExecutionTurnKey is the context key for the current conversation turn
+	ToolExecutionTurnKey = "tool_execution_turn"
+	// ToolExecutionServerKey is the context key for the server name providing the tool
+	ToolExecutionServerKey = "tool_execution_server"
 )
 
 // getLogger returns the agent's logger (guaranteed to be non-nil)
@@ -52,7 +57,8 @@ func isVirtualTool(toolName string) bool {
 	virtualTools := []string{
 		"get_prompt", "get_resource",
 		"read_large_output", "search_large_output", "query_large_output",
-		"discover_code_files", "write_code", // Code execution mode tools (discover_code_structure removed)
+		"discover_code_files", "write_code", // Code execution mode tools
+		"search_tools", "add_tool", "show_all_tools", // Tool search mode tools
 	}
 	for _, vt := range virtualTools {
 		if vt == toolName {
@@ -428,6 +434,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	serverCount := len(a.Clients)
 
 	if a.EnableSmartRouting && len(a.Tools) > a.SmartRoutingThreshold.MaxTools && serverCount > a.SmartRoutingThreshold.MaxServers {
+		v2Logger.Warn("⚠️ SMART ROUTING IS DEPRECATED - This feature will be removed in a future version")
 		v2Logger.Info("Smart routing enabled - applying conversation-specific tool filtering")
 
 		// Get the full conversation history for context
@@ -744,9 +751,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		a.StartLLMGeneration(ctx)
 
 		// Use GenerateContentWithRetry for robust fallback handling
-		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
-			// Streaming callback - no ReAct reasoning tracking needed
-		})
+		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
@@ -805,9 +810,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					loggerv2.Int("turn", turn+1))
 
 				// Try fallback models by calling GenerateContentWithRetry again with fallback
-				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
-					v2Logger.Info(fmt.Sprintf("[FALLBACK] %s", msg))
-				})
+				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
 
 				if fallbackErr == nil && fallbackResp != nil && len(fallbackResp.Choices) > 0 &&
 					fallbackResp.Choices[0].Content != "" {
@@ -1112,7 +1115,14 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					messages = append(messages, userMessage)
 
 					// Emit tool call end event (for observability only)
-					toolEndEvent := events.NewToolCallEndEvent(turn+1, tc.FunctionCall.Name, "Image loaded and added to conversation", serverName, duration, "")
+					// Get current token usage information for the tool call end event
+					_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.GetTokenUsageWithPricing()
+					a.tokenTrackingMutex.RLock()
+					modelContextWindow := a.modelContextWindow
+					contextWindowUsage := a.currentContextWindowUsage
+					a.tokenTrackingMutex.RUnlock()
+
+					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, "Image loaded and added to conversation", serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
 					a.EmitTypedEvent(ctx, toolEndEvent)
 
 					// Continue to next iteration (tool call and response messages are already added)
@@ -1373,10 +1383,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 				}
 
-				// Inject event emitter, turn, and server name into context for workspace tools
-				toolCtx = context.WithValue(toolCtx, contextKeyWorkspaceEventEmitter, a)
-				toolCtx = context.WithValue(toolCtx, contextKeyTurn, turn+1)
-				toolCtx = context.WithValue(toolCtx, contextKeyServerName, serverName)
+				// Inject generic tool execution metadata into context
+				// Any tool can extract these values if needed (e.g., workspace tools for event emission)
+				// Using generic keys keeps conversation.go agnostic about specific tool implementations
+				toolCtx = context.WithValue(toolCtx, ToolExecutionAgentKey, a)
+				toolCtx = context.WithValue(toolCtx, ToolExecutionTurnKey, turn+1)
+				toolCtx = context.WithValue(toolCtx, ToolExecutionServerKey, serverName)
 
 				var result *mcp.CallToolResult
 				var toolErr error
@@ -1403,6 +1415,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						result = &mcp.CallToolResult{
 							IsError: false,
 							Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
+						}
+
+						// If this was add_tool in tool search mode, refresh the tools list
+						// to include newly discovered tools
+						if a.UseToolSearchMode && tc.FunctionCall.Name == "add_tool" {
+							a.filteredTools = a.getToolsForToolSearchMode()
+							v2Logger.Debug("🔍 [TOOL_SEARCH] Tools refreshed after add_tool",
+								loggerv2.Int("discovered_count", a.GetDiscoveredToolCount()),
+								loggerv2.Int("total_available", len(a.filteredTools)))
 						}
 					}
 				} else if a.customTools != nil {
@@ -1660,8 +1681,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Tool execution completed - emit tool call end event
 				// Only emit ToolCallEndEvent if result is not an error (errors should emit ToolCallErrorEvent)
 				if result == nil || !result.IsError {
+					// Get current token usage information for the tool call end event
+					_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.GetTokenUsageWithPricing()
+					a.tokenTrackingMutex.RLock()
+					modelContextWindow := a.modelContextWindow
+					contextWindowUsage := a.currentContextWindowUsage
+					a.tokenTrackingMutex.RUnlock()
+
 					// Emit tool call end event using typed event data (consolidated - contains all tool information)
-					toolEndEvent := events.NewToolCallEndEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "")
+					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
 					a.EmitTypedEvent(ctx, toolEndEvent)
 				} else if result.IsError {
 					// Result contains an error - emit tool call error event
@@ -1756,9 +1784,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
-	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
-		// Optional: stream the final response
-	})
+	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1)
 
 	// Log finalUsage for debugging
 	v2Logger.Info(fmt.Sprintf("🔍 [FINAL LLM CALL DEBUG] finalUsage from GenerateContentWithRetry:"))
