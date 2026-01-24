@@ -3,8 +3,8 @@ package mcpagent
 import (
 	"strings"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpclient"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // ToolFilter centralizes all tool filtering logic to ensure consistency

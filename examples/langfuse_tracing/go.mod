@@ -2,14 +2,14 @@ module langfuse-tracing-example
 
 go 1.24.4
 
-replace mcpagent => ../..
+replace github.com/manishiitg/mcpagent => ../..
 
 replace github.com/manishiitg/multi-llm-provider-go => ../../../multi-llm-provider-go
 
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/manishiitg/multi-llm-provider-go v0.2.1-0.20260111071343-fdc495291dc6
-	mcpagent v0.0.0
+	github.com/manishiitg/mcpagent v0.0.0
 )
 
 require (

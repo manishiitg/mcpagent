@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	"mcpagent/agent/codeexec"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpcache"
-	"mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/agent/codeexec"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // --- REQUEST/RESPONSE TYPES ---

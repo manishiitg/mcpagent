@@ -7,7 +7,7 @@ import (
 	"github.com/mark3labs/mcp-go/util"
 	"github.com/sirupsen/logrus"
 
-	"mcpagent/logger"
+	"github.com/manishiitg/mcpagent/logger"
 )
 
 // ToExtendedLogger adapts the new v2.Logger to the legacy ExtendedLogger interface

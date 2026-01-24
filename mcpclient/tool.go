@@ -7,7 +7,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // PrintTools displays tools in a detailed, human-readable format (Debug level only)

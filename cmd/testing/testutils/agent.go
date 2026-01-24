@@ -6,10 +6,10 @@ import (
 	"os"
 	"time"
 
-	mcpagent "mcpagent/agent"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/observability"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

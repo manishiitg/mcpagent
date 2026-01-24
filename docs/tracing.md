@@ -118,7 +118,7 @@ OPENAI_API_KEY=...  # For OpenAI
 You can use both Langfuse and LangSmith simultaneously:
 
 ```go
-import "mcpagent/observability"
+import "github.com/manishiitg/mcpagent/observability"
 
 // Get multiple tracers from comma-separated providers
 tracers := observability.GetTracers("langfuse,langsmith", logger)

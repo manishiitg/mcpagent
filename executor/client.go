@@ -7,9 +7,9 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpcache"
-	"mcpagent/mcpclient"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // GetOrCreateMCPClient gets an existing MCP client or creates a new one using the cache system.

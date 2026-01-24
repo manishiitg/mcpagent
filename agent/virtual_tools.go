@@ -9,7 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // VirtualTool represents a virtual tool that can be called by the LLM

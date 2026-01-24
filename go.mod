@@ -1,11 +1,11 @@
-module mcpagent
+module github.com/manishiitg/mcpagent
 
 go 1.24.4
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/manishiitg/multi-llm-provider-go v0.2.1-0.20260111071343-fdc495291dc6
+	github.com/manishiitg/multi-llm-provider-go v0.3.0-pre.1
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.1

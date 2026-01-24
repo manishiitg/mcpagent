@@ -2,14 +2,14 @@ module structured-output-tool-example
 
 go 1.24.4
 
-replace mcpagent => ../../..
+replace github.com/manishiitg/mcpagent => ../../..
 
 replace github.com/manishiitg/multi-llm-provider-go => ../../../../multi-llm-provider-go
 
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/manishiitg/multi-llm-provider-go v0.1.0
-	mcpagent v0.0.0
+	github.com/manishiitg/mcpagent v0.0.0
 )
 
 require (

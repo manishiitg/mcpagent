@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/events"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpcache"
-	"mcpagent/mcpclient"
-	"mcpagent/observability"
+	"github.com/manishiitg/mcpagent/events"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 

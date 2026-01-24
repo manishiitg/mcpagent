@@ -19,12 +19,12 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/events"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpcache"
-	"mcpagent/mcpclient"
-	"mcpagent/observability"
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/mark3labs/mcp-go/mcp"
 

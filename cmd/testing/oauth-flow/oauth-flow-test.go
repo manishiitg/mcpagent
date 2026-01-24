@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	testutils "mcpagent/cmd/testing/testutils"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpclient"
-	"mcpagent/oauth"
+	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/oauth"
 )
 
 var oauthFlowTestCmd = &cobra.Command{

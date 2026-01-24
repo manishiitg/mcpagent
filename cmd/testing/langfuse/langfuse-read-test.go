@@ -12,8 +12,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	testutils "mcpagent/cmd/testing/testutils"
-	loggerv2 "mcpagent/logger/v2"
+	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 var (

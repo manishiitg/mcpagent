@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // cleanQuestionForName cleans and formats a question string for use in trace/span names

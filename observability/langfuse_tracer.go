@@ -17,11 +17,11 @@ import (
 	"sync"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/joho/godotenv"
 
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // EventData interfaces for type-safe event data handling

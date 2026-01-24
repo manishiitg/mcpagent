@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"mcpagent/events"
-	"mcpagent/observability"
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/observability"
 )
 
 // StreamingTracer extends the basic tracer with streaming capabilities

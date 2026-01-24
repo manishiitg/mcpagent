@@ -14,9 +14,9 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"mcpagent/events"
-	"mcpagent/grpcserver/pb"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/grpcserver/pb"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/google/uuid"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"

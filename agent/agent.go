@@ -14,15 +14,15 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcpagent/agent/codeexec"
-	"mcpagent/agent/prompt"
-	"mcpagent/events"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpcache"
-	"mcpagent/mcpcache/codegen"
-	"mcpagent/mcpclient"
-	"mcpagent/observability"
+	"github.com/manishiitg/mcpagent/agent/codeexec"
+	"github.com/manishiitg/mcpagent/agent/prompt"
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpcache/codegen"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 )
 
 // CustomTool represents a custom tool with its definition and execution function

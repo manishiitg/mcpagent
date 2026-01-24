@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // ToolSearchResult represents a tool found during search

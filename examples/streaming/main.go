@@ -10,9 +10,9 @@ import (
 
 	"github.com/joho/godotenv"
 
-	mcpagent "mcpagent/agent"
-	"mcpagent/events"
-	"mcpagent/llm"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
 
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )

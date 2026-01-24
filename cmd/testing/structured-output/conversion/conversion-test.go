@@ -11,9 +11,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	mcpagent "mcpagent/agent"
-	testutils "mcpagent/cmd/testing/testutils"
-	loggerv2 "mcpagent/logger/v2"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -111,7 +111,7 @@ func GetStructuredOutputConversionTestCmd() *cobra.Command {
 
 func runStructuredOutputConversionTest() error {
 	// Load .env file if it exists (check multiple paths)
-	envPaths := []string{".env", "../../../.env", "mcpagent/.env"}
+	envPaths := []string{".env", "../../../.env", "github.com/manishiitg/mcpagent/.env"}
 	for _, path := range envPaths {
 		if _, err := os.Stat(path); err == nil {
 			_ = godotenv.Load(path)
