@@ -3328,32 +3328,35 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	}
 
 	// Generate Go code for ONLY the new tool (not all tools - that was causing O(n²) regeneration)
+	// Only generate code in code execution mode - simple agent mode doesn't need generated code
 	// EXCEPTION: Skip code generation for human tools - they must only be used as direct LLM tools
 	// (not via generated code) because they need event bridge access for frontend UI
-	if isHumanTool {
-		if a.Logger != nil {
-			a.Logger.Info(fmt.Sprintf("🔧 Skipping code generation for human tool %s - must be used as direct LLM tool only", name))
-		}
-	} else {
-		generatedDir := a.getGeneratedDir()
-		singleToolForCodeGen := map[string]codegen.CustomToolForCodeGen{
-			name: {
-				Definition: tool,
-				Category:   toolCategory,
-			},
-		}
-		if a.Logger != nil {
-			a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Generating code for new tool: %s (category: %s)", name, toolCategory))
-		}
-		// Use agent's ToolTimeout (same as used for normal tool calls)
-		toolTimeout := getToolExecutionTimeout(a)
-		if err := codegen.GenerateCustomToolsCode(singleToolForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
+	if a.UseCodeExecutionMode {
+		if isHumanTool {
 			if a.Logger != nil {
-				a.Logger.Warn(fmt.Sprintf("🔍 [DISCOVERY] Failed to generate Go code for tool %s: %v", name, err))
+				a.Logger.Info(fmt.Sprintf("🔧 Skipping code generation for human tool %s - must be used as direct LLM tool only", name))
 			}
-			// Don't fail tool registration if code generation fails
-		} else if a.Logger != nil {
-			a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Successfully generated code for tool: %s", name))
+		} else {
+			generatedDir := a.getGeneratedDir()
+			singleToolForCodeGen := map[string]codegen.CustomToolForCodeGen{
+				name: {
+					Definition: tool,
+					Category:   toolCategory,
+				},
+			}
+			if a.Logger != nil {
+				a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Generating code for new tool: %s (category: %s)", name, toolCategory))
+			}
+			// Use agent's ToolTimeout (same as used for normal tool calls)
+			toolTimeout := getToolExecutionTimeout(a)
+			if err := codegen.GenerateCustomToolsCode(singleToolForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
+				if a.Logger != nil {
+					a.Logger.Warn(fmt.Sprintf("🔍 [DISCOVERY] Failed to generate Go code for tool %s: %v", name, err))
+				}
+				// Don't fail tool registration if code generation fails
+			} else if a.Logger != nil {
+				a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Successfully generated code for tool: %s", name))
+			}
 		}
 	}
 
