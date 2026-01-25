@@ -253,7 +253,7 @@ type langfuseAPIClient struct {
 // newLangfuseAPIClient creates a new Langfuse API client from environment variables
 func newLangfuseAPIClient() (*langfuseAPIClient, error) {
 	// Get host
-	h := os.Getenv("LANGFUSE_HOST")
+	h := os.Getenv("LANGFUSE_BASE_URL")
 	if h == "" {
 		h = "https://cloud.langfuse.com"
 	}

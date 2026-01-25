@@ -100,7 +100,7 @@ Set these in your `.env` file:
 # Langfuse tracing
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=https://us.cloud.langfuse.com  # Optional, defaults to cloud.langfuse.com
+LANGFUSE_BASE_URL=https://us.cloud.langfuse.com  # Optional, defaults to cloud.langfuse.com
 
 # LangSmith tracing
 LANGSMITH_API_KEY=lsv2_pt_...
@@ -377,7 +377,7 @@ This allows proper span ending when the corresponding end event is received.
 ### Traces Not Appearing in Langfuse
 
 1. Check credentials are set correctly in `.env`
-2. Verify `LANGFUSE_HOST` if using self-hosted Langfuse
+2. Verify `LANGFUSE_BASE_URL` if using self-hosted Langfuse
 3. Check logs for "Langfuse: Sent batch successfully" messages
 4. Wait 5-10 seconds for Langfuse ingestion
 

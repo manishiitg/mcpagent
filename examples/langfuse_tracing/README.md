@@ -38,7 +38,7 @@ Trace (query_...)
    # Langfuse credentials (required for tracing)
    LANGFUSE_PUBLIC_KEY=pk-lf-...
    LANGFUSE_SECRET_KEY=sk-lf-...
-   LANGFUSE_HOST=https://us.cloud.langfuse.com  # Optional, defaults to cloud.langfuse.com
+   LANGFUSE_BASE_URL=https://us.cloud.langfuse.com  # Optional, defaults to cloud.langfuse.com
    ```
 
 2. Run from the example directory:
@@ -116,7 +116,7 @@ Edit `mcp_servers.json` to add/configure MCP servers. The example includes `cont
 ### Traces Not Appearing in Langfuse
 
 1. Check credentials are set correctly in `.env`
-2. Verify `LANGFUSE_HOST` if using self-hosted Langfuse
+2. Verify `LANGFUSE_BASE_URL` if using self-hosted Langfuse
 3. The example flushes the tracer before exiting - check for "Tracer flushed successfully" message
 4. Wait 5-10 seconds for Langfuse to ingest the trace
 

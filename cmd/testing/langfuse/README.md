@@ -5,7 +5,7 @@
 - Ensure `.env` file exists in the `mcpagent/` directory with:
   - `LANGFUSE_PUBLIC_KEY` - Your Langfuse public key
   - `LANGFUSE_SECRET_KEY` - Your Langfuse secret key
-  - `LANGFUSE_HOST` - Langfuse host (optional, defaults to https://cloud.langfuse.com)
+  - `LANGFUSE_BASE_URL` - Langfuse host (optional, defaults to https://cloud.langfuse.com)
   - `OPENAI_API_KEY` - OpenAI API key (required for `--provider openai`)
   - AWS credentials (required for `--provider bedrock`)
 

@@ -18,7 +18,7 @@ To enable Langfuse tracing for observability:
 ```bash
 export LANGFUSE_PUBLIC_KEY=pk-lf-...
 export LANGFUSE_SECRET_KEY=sk-lf-...
-export LANGFUSE_HOST=https://us.cloud.langfuse.com  # Optional
+export LANGFUSE_BASE_URL=https://us.cloud.langfuse.com  # Optional
 export OPENAI_API_KEY=your-key
 
 go run ./cmd/testing/... mcp-agent-code-exec --log-level debug
