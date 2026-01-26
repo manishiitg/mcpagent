@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -355,21 +356,8 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 	// Create LLM instance with model's own auth
 	apiKeys := &llm.ProviderAPIKeys{}
 
-	// Use model-specific key if available
-	if model.APIKey != nil {
-		switch model.Provider {
-		case "openrouter":
-			apiKeys.OpenRouter = model.APIKey
-		case "openai":
-			apiKeys.OpenAI = model.APIKey
-		case "anthropic":
-			apiKeys.Anthropic = model.APIKey
-		case "vertex":
-			apiKeys.Vertex = model.APIKey
-		}
-	} else if a.APIKeys != nil {
-		// Fallback to agent-level keys
-		// Create a copy to avoid modifying the agent's keys
+	// First, set up agent-level keys as base (so Azure and Bedrock configs are always available)
+	if a.APIKeys != nil {
 		apiKeys = &llm.ProviderAPIKeys{
 			OpenRouter: a.APIKeys.OpenRouter,
 			OpenAI:     a.APIKeys.OpenAI,
@@ -381,9 +369,31 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 				Region: a.APIKeys.Bedrock.Region,
 			}
 		}
+		if a.APIKeys.Azure != nil {
+			apiKeys.Azure = &llm.AzureAPIConfig{
+				Endpoint:   a.APIKeys.Azure.Endpoint,
+				APIKey:     a.APIKeys.Azure.APIKey,
+				APIVersion: a.APIKeys.Azure.APIVersion,
+				Region:     a.APIKeys.Azure.Region,
+			}
+		}
 	}
 
-	if model.Region != nil && model.Provider == "bedrock" {
+	// Override with model-specific key if available (for simple API key providers)
+	if model.APIKey != nil {
+		switch llmproviders.Provider(model.Provider) {
+		case llmproviders.ProviderOpenRouter:
+			apiKeys.OpenRouter = model.APIKey
+		case llmproviders.ProviderOpenAI:
+			apiKeys.OpenAI = model.APIKey
+		case llmproviders.ProviderAnthropic:
+			apiKeys.Anthropic = model.APIKey
+		case llmproviders.ProviderVertex:
+			apiKeys.Vertex = model.APIKey
+		}
+	}
+
+	if model.Region != nil && llmproviders.Provider(model.Provider) == llmproviders.ProviderBedrock {
 		if apiKeys.Bedrock == nil {
 			apiKeys.Bedrock = &llm.BedrockConfig{}
 		}

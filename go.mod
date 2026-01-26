@@ -84,3 +84,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260112192933-99fd39fd28a9 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/manishiitg/multi-llm-provider-go => ../multi-llm-provider-go

@@ -865,11 +865,20 @@ type AgentAPIKeys struct {
 	Anthropic  *string
 	Vertex     *string
 	Bedrock    *AgentBedrockConfig
+	Azure      *AgentAzureConfig
 }
 
 // AgentBedrockConfig holds Bedrock-specific configuration (for Agent struct)
 type AgentBedrockConfig struct {
 	Region string
+}
+
+// AgentAzureConfig holds Azure-specific configuration (for Agent struct)
+type AgentAzureConfig struct {
+	Endpoint   string
+	APIKey     string
+	APIVersion string
+	Region     string
 }
 
 // GetProvider returns the provider
@@ -968,6 +977,14 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 		if providerKeys.Bedrock != nil {
 			agentKeys.Bedrock = &AgentBedrockConfig{
 				Region: providerKeys.Bedrock.Region,
+			}
+		}
+		if providerKeys.Azure != nil {
+			agentKeys.Azure = &AgentAzureConfig{
+				Endpoint:   providerKeys.Azure.Endpoint,
+				APIKey:     providerKeys.Azure.APIKey,
+				APIVersion: providerKeys.Azure.APIVersion,
+				Region:     providerKeys.Azure.Region,
 			}
 		}
 		return agentKeys

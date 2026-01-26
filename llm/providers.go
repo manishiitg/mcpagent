@@ -23,6 +23,7 @@ const (
 	ProviderAnthropic  = llmproviders.ProviderAnthropic
 	ProviderOpenRouter = llmproviders.ProviderOpenRouter
 	ProviderVertex     = llmproviders.ProviderVertex
+	ProviderAzure      = llmproviders.ProviderAzure
 )
 
 // Config holds configuration for LLM initialization (agent_go version)
@@ -51,6 +52,15 @@ type ProviderAPIKeys struct {
 	Anthropic  *string
 	Vertex     *string
 	Bedrock    *BedrockConfig
+	Azure      *AzureAPIConfig
+}
+
+// AzureAPIConfig holds Azure-specific configuration
+type AzureAPIConfig struct {
+	Endpoint   string // Azure AI endpoint URL
+	APIKey     string // Azure API key
+	APIVersion string // API version (optional, defaults to 2024-10-21)
+	Region     string // Azure region (optional, for logging)
 }
 
 // BedrockConfig holds Bedrock-specific configuration
@@ -124,6 +134,14 @@ func convertConfig(config Config) llmproviders.Config {
 		if config.APIKeys.Bedrock != nil {
 			providerAPIKeys.Bedrock = &llmproviders.BedrockConfig{
 				Region: config.APIKeys.Bedrock.Region,
+			}
+		}
+		if config.APIKeys.Azure != nil {
+			providerAPIKeys.Azure = &llmproviders.AzureAPIConfig{
+				Endpoint:   config.APIKeys.Azure.Endpoint,
+				APIKey:     config.APIKeys.Azure.APIKey,
+				APIVersion: config.APIKeys.Azure.APIVersion,
+				Region:     config.APIKeys.Azure.Region,
 			}
 		}
 	}
