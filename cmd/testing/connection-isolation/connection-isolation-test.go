@@ -10,11 +10,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	mcpagent "mcpagent/agent"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpclient"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
 
-	testutils "mcpagent/cmd/testing/testutils"
+	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
 )
 
 var connectionIsolationTestCmd = &cobra.Command{

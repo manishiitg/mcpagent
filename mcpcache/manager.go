@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpcache/codegen"
-	"mcpagent/mcpclient"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpcache/codegen"
+	"github.com/manishiitg/mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 

@@ -3,8 +3,8 @@ package main
 import (
 	"sync"
 
-	"mcpagent/logger"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/logger"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 var (

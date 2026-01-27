@@ -1,4 +1,4 @@
-module mcpagent
+module github.com/manishiitg/mcpagent
 
 go 1.24.4
 

@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	mcpagent "mcpagent/agent"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // ManagedAgent wraps an agent with metadata for lifecycle management

@@ -15,7 +15,7 @@ import (
 	"os"
 	"strconv"
 
-	"mcpagent/observability"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

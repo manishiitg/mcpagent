@@ -11,10 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mcpagent/agent/codeexec"
-	testutils "mcpagent/cmd/testing/testutils"
-	"mcpagent/executor"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/agent/codeexec"
+	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
+	"github.com/manishiitg/mcpagent/executor"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 var executorTestCmd = &cobra.Command{

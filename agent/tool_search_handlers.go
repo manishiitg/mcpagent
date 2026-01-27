@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // ToolSearchResult represents a tool found during search
@@ -79,16 +79,37 @@ func (a *Agent) handleAddTool(ctx context.Context, args map[string]interface{}) 
 	var notFound []string
 
 	for _, toolName := range toolNames {
+		// Normalize tool name: convert PascalCase to snake_case for lookup
+		// Discovery shows PascalCase (e.g., ReadWorkspaceFile) but tools are stored as snake_case (read_workspace_file)
+		normalizedName := pascalToSnakeCase(toolName)
+
+		// Resolve any aliases (e.g., write_workspace_file -> update_workspace_file)
+		aliasedName := resolveToolAlias(normalizedName)
+
+		// Check original, normalized, and aliased names in discovered tools
 		if _, exists := a.discoveredTools[toolName]; exists {
+			alreadyAvailable = append(alreadyAvailable, toolName)
+			continue
+		}
+		if _, exists := a.discoveredTools[normalizedName]; exists {
+			alreadyAvailable = append(alreadyAvailable, toolName)
+			continue
+		}
+		if _, exists := a.discoveredTools[aliasedName]; exists {
 			alreadyAvailable = append(alreadyAvailable, toolName)
 			continue
 		}
 
 		var foundTool *llmtypes.Tool
+		var actualToolName string
 		for _, tool := range a.allDeferredTools {
-			if tool.Function != nil && tool.Function.Name == toolName {
-				foundTool = &tool
-				break
+			if tool.Function != nil {
+				// Match against original name, normalized snake_case name, or aliased name
+				if tool.Function.Name == toolName || tool.Function.Name == normalizedName || tool.Function.Name == aliasedName {
+					foundTool = &tool
+					actualToolName = tool.Function.Name
+					break
+				}
 			}
 		}
 
@@ -97,8 +118,9 @@ func (a *Agent) handleAddTool(ctx context.Context, args map[string]interface{}) 
 			continue
 		}
 
-		a.discoveredTools[toolName] = *foundTool
-		added = append(added, toolName)
+		// Store with actual tool name (snake_case) to ensure consistency
+		a.discoveredTools[actualToolName] = *foundTool
+		added = append(added, actualToolName)
 	}
 
 	// Build response message
@@ -235,4 +257,33 @@ func (a *Agent) GetDiscoveredToolCount() int {
 // GetDeferredToolCount returns the total number of deferred tools
 func (a *Agent) GetDeferredToolCount() int {
 	return len(a.allDeferredTools)
+}
+
+// pascalToSnakeCase converts PascalCase to snake_case
+// Example: "ReadWorkspaceFile" -> "read_workspace_file"
+func pascalToSnakeCase(s string) string {
+	var result strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result.WriteRune('_')
+		}
+		result.WriteRune(r)
+	}
+	return strings.ToLower(result.String())
+}
+
+// toolAliases maps common alternative tool names to actual tool names
+// This handles cases where LLMs use common conventions that differ from actual tool names
+var toolAliases = map[string]string{
+	// write is commonly used as an alias for update/create
+	"write_workspace_file": "update_workspace_file",
+	"create_workspace_file": "update_workspace_file",
+}
+
+// resolveToolAlias returns the actual tool name if an alias exists, otherwise returns the input
+func resolveToolAlias(toolName string) string {
+	if actual, exists := toolAliases[toolName]; exists {
+		return actual
+	}
+	return toolName
 }

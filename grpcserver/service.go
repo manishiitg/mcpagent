@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"mcpagent/grpcserver/pb"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/grpcserver/pb"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

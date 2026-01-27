@@ -1,7 +1,7 @@
 package mcpclient
 
 import (
-	"mcpagent/logger"
+	"github.com/manishiitg/mcpagent/logger"
 )
 
 // FileLoggerAdapter adapts our logger.ExtendedLogger to the mcp-go util.Logger interface

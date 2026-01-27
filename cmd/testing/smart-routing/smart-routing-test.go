@@ -11,9 +11,9 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 
-	mcpagent "mcpagent/agent"
-	testutils "mcpagent/cmd/testing/testutils"
-	loggerv2 "mcpagent/logger/v2"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 var smartRoutingTestCmd = &cobra.Command{

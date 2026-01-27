@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/observability"
+	"github.com/manishiitg/mcpagent/observability"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/interfaces"

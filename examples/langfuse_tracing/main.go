@@ -8,9 +8,9 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"mcpagent/agent"
-	"mcpagent/llm"
-	"mcpagent/observability"
+	"github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/mcpagent/observability"
 )
 
 func main() {

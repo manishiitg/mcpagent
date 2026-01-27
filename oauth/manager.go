@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // Manager orchestrates the OAuth 2.1 authentication flow

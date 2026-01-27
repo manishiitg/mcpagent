@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // SessionConnectionRegistry manages MCP connections scoped to session lifecycle.

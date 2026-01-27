@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/oauth"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/oauth"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"

@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"mcpagent/events"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"strings"
 	"time"
 

@@ -9,8 +9,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
-	"mcpagent/grpcserver/pb"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/grpcserver/pb"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // Server represents the gRPC server for MCPAgent

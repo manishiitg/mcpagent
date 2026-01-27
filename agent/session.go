@@ -17,7 +17,7 @@
 package mcpagent
 
 import (
-	"mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // CloseSession closes all MCP connections for the given session ID.

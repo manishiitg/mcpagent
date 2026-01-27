@@ -3,7 +3,7 @@ package observability
 import (
 	"strings"
 
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 const (

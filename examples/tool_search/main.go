@@ -9,8 +9,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 
-	mcpagent "mcpagent/agent"
-	"mcpagent/llm"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
 )
 
 func main() {

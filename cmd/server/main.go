@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"mcpagent/grpcserver"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/grpcserver"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 func main() {

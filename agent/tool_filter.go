@@ -3,8 +3,8 @@ package mcpagent
 import (
 	"strings"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpclient"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // ToolFilter centralizes all tool filtering logic to ensure consistency
@@ -58,9 +58,17 @@ func NewToolFilter(
 	}
 
 	// Initialize system categories that should always be included (like virtual tools)
-	// These are workspace_tools and human_tools - system tools that should be available
+	// These are workspace and human tools - system tools that should be available
 	// regardless of MCP tool filtering, unless explicitly excluded
-	systemCats := []string{"workspace", "human"}
+	// Workspace is segmented into: basic, advanced, git, browser
+	systemCats := []string{
+		"workspace",
+		"workspace_basic",
+		"workspace_advanced",
+		"workspace_git",
+		"workspace_browser",
+		"human",
+	}
 	for _, cat := range systemCats {
 		tf.systemCategories[cat] = true
 		tf.systemCategories[cat+"_tools"] = true

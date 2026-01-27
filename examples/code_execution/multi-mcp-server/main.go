@@ -11,10 +11,10 @@ import (
 
 	"github.com/joho/godotenv"
 
-	mcpagent "mcpagent/agent"
-	"mcpagent/executor"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/executor"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )

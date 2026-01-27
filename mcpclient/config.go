@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/oauth"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/oauth"
 )
 
 // ProtocolType defines the connection protocol
