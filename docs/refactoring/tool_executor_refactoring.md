@@ -62,7 +62,7 @@ mcpagent/executor/
    apiRouter.HandleFunc("/mcp/execute", api.handleMCPExecute)
    
    // After
-   import "mcpagent/executor"
+   import "github.com/manishiitg/mcpagent/executor"
    executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, nil)
    apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute)
    ```
@@ -76,7 +76,7 @@ mcpagent/executor/
 Library users can now wire the handlers to their own HTTP mux:
 
 ```go
-import "mcpagent/executor"
+import "github.com/manishiitg/mcpagent/executor"
 
 // Create handlers
 handlers := executor.NewExecutorHandlers(configPath, logger)

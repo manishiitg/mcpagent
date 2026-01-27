@@ -2,14 +2,14 @@ module context-offloading-example
 
 go 1.24.11
 
-replace mcpagent => ../..
+replace github.com/manishiitg/mcpagent => ../..
 
 replace github.com/manishiitg/multi-llm-provider-go => ../../../multi-llm-provider-go
 
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/manishiitg/multi-llm-provider-go v0.0.0-00010101000000-000000000000
-	mcpagent v0.0.0
+	github.com/manishiitg/mcpagent v0.0.0
 )
 
 require (

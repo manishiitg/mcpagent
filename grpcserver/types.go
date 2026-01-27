@@ -22,6 +22,30 @@ type AgentConfig struct {
 	EnableContextOffloading    bool                   `json:"enable_context_offloading,omitempty"`
 	EnableStreaming            bool                   `json:"enable_streaming,omitempty"`
 	CustomTools                []CustomToolDefinition `json:"custom_tools,omitempty"`
+	APIKeys                    *ProviderAPIKeys       `json:"api_keys,omitempty"`
+}
+
+// ProviderAPIKeys holds API keys for different providers
+type ProviderAPIKeys struct {
+	OpenAI     *string         `json:"openai,omitempty"`
+	Anthropic  *string         `json:"anthropic,omitempty"`
+	OpenRouter *string         `json:"openrouter,omitempty"`
+	Vertex     *string         `json:"vertex,omitempty"`
+	Bedrock    *BedrockConfig  `json:"bedrock,omitempty"`
+	Azure      *AzureAPIConfig `json:"azure,omitempty"`
+}
+
+// BedrockConfig holds AWS Bedrock-specific configuration
+type BedrockConfig struct {
+	Region string `json:"region,omitempty"`
+}
+
+// AzureAPIConfig holds Azure-specific configuration
+type AzureAPIConfig struct {
+	Endpoint   string `json:"endpoint"`
+	APIKey     string `json:"api_key"`
+	APIVersion string `json:"api_version,omitempty"`
+	Region     string `json:"region,omitempty"`
 }
 
 // CustomToolDefinition represents a custom tool (for gRPC, callbacks are handled via the stream)

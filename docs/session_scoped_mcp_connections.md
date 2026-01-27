@@ -702,7 +702,7 @@ agent.Close()
 ### Public API
 
 ```go
-import mcpagent "mcpagent/agent"
+import mcpagent "github.com/manishiitg/mcpagent/agent"
 
 // Create agent with session (connections shared across agents in same session)
 agent, err := mcpagent.NewAgent(ctx, llm, configPath,

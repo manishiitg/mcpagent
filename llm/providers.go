@@ -23,6 +23,7 @@ const (
 	ProviderAnthropic  = llmproviders.ProviderAnthropic
 	ProviderOpenRouter = llmproviders.ProviderOpenRouter
 	ProviderVertex     = llmproviders.ProviderVertex
+	ProviderAzure      = llmproviders.ProviderAzure
 )
 
 // Config holds configuration for LLM initialization (agent_go version)
@@ -51,6 +52,15 @@ type ProviderAPIKeys struct {
 	Anthropic  *string
 	Vertex     *string
 	Bedrock    *BedrockConfig
+	Azure      *AzureAPIConfig
+}
+
+// AzureAPIConfig holds Azure-specific configuration
+type AzureAPIConfig struct {
+	Endpoint   string // Azure AI endpoint URL
+	APIKey     string // Azure API key
+	APIVersion string // API version (optional, defaults to 2024-10-21)
+	Region     string // Azure region (optional, for logging)
 }
 
 // BedrockConfig holds Bedrock-specific configuration
@@ -126,6 +136,14 @@ func convertConfig(config Config) llmproviders.Config {
 				Region: config.APIKeys.Bedrock.Region,
 			}
 		}
+		if config.APIKeys.Azure != nil {
+			providerAPIKeys.Azure = &llmproviders.AzureAPIConfig{
+				Endpoint:   config.APIKeys.Azure.Endpoint,
+				APIKey:     config.APIKeys.Azure.APIKey,
+				APIVersion: config.APIKeys.Azure.APIVersion,
+				Region:     config.APIKeys.Azure.Region,
+			}
+		}
 	}
 
 	return llmproviders.Config{
@@ -156,12 +174,12 @@ func InitializeLLM(config Config) (llmtypes.Model, error) {
 	}
 
 	// Wrap the returned LLM to maintain backward compatibility with agent_go-specific fields
-	return wrapProviderAwareLLM(llm, config.Provider, config.ModelID, config.Tracers, config.TraceID, config.Logger), nil
+	return wrapProviderAwareLLM(llm, config.Provider, config.ModelID, config.Tracers, config.TraceID, config.Logger, config.APIKeys), nil
 }
 
 // wrapProviderAwareLLM wraps the llm-providers Model to maintain backward compatibility
 // Since both packages now use the same llmtypes, no conversion is needed
-func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) *ProviderAwareLLM {
+func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, apiKeys *ProviderAPIKeys) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
 		Model:    llm,
 		provider: provider,
@@ -169,6 +187,7 @@ func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string,
 		tracers:  tracers,
 		traceID:  traceID,
 		logger:   logger,
+		apiKeys:  apiKeys,
 	}
 }
 
@@ -181,11 +200,12 @@ type ProviderAwareLLM struct {
 	tracers  []observability.Tracer
 	traceID  observability.TraceID
 	logger   loggerv2.Logger
+	apiKeys  *ProviderAPIKeys
 }
 
 // NewProviderAwareLLM creates a new provider-aware LLM wrapper
 // This maintains backward compatibility with existing agent_go code
-func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) *ProviderAwareLLM {
+func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, apiKeys *ProviderAPIKeys) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
 		Model:    llm,
 		provider: provider,
@@ -193,6 +213,7 @@ func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, 
 		tracers:  tracers,
 		traceID:  traceID,
 		logger:   logger,
+		apiKeys:  apiKeys,
 	}
 }
 
@@ -204,6 +225,12 @@ func (p *ProviderAwareLLM) GetProvider() Provider {
 // GetModelID returns the model ID of this LLM
 func (p *ProviderAwareLLM) GetModelID() string {
 	return p.modelID
+}
+
+// GetAPIKeys returns the API keys used by this LLM
+// This allows the agent to automatically extract and reuse keys from the LLM
+func (p *ProviderAwareLLM) GetAPIKeys() *ProviderAPIKeys {
+	return p.apiKeys
 }
 
 // GenerateContent wraps the underlying LLM's GenerateContent method

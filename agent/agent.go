@@ -29,7 +29,8 @@ import (
 type CustomTool struct {
 	Definition llmtypes.Tool
 	Execution  func(ctx context.Context, args map[string]interface{}) (string, error)
-	Category   string // Tool category (e.g., "workspace", "human", "virtual", "custom", etc.)
+	Category   string        // Tool category (e.g., "workspace", "human", "virtual", "custom", etc.)
+	Timeout    time.Duration // Per-tool timeout. 0 = no timeout (tool runs indefinitely). -1 = use agent default.
 }
 
 // AgentEventListener defines the interface for event listeners
@@ -441,14 +442,6 @@ func WithLLMConfig(config AgentLLMConfiguration) AgentOption {
 		// Sync legacy fields for backward compatibility
 		a.ModelID = config.Primary.ModelID
 		a.provider = llm.Provider(config.Primary.Provider)
-	}
-}
-
-// WithAPIKeys sets the API keys for different providers.
-// These keys are used as fallback when per-model API keys are not set.
-func WithAPIKeys(keys *AgentAPIKeys) AgentOption {
-	return func(a *Agent) {
-		a.APIKeys = keys
 	}
 }
 
@@ -873,11 +866,20 @@ type AgentAPIKeys struct {
 	Anthropic  *string
 	Vertex     *string
 	Bedrock    *AgentBedrockConfig
+	Azure      *AgentAzureConfig
 }
 
 // AgentBedrockConfig holds Bedrock-specific configuration (for Agent struct)
 type AgentBedrockConfig struct {
 	Region string
+}
+
+// AgentAzureConfig holds Azure-specific configuration (for Agent struct)
+type AgentAzureConfig struct {
+	Endpoint   string
+	APIKey     string
+	APIVersion string
+	Region     string
 }
 
 // GetProvider returns the provider
@@ -954,6 +956,41 @@ func extractProviderFromLLM(model llmtypes.Model) llm.Provider {
 		return p.GetProvider()
 	}
 	return ""
+}
+
+// extractAPIKeysFromLLM extracts the API keys from the LLM instance
+// Checks if the LLM implements GetAPIKeys() method (e.g., ProviderAwareLLM)
+// This allows the agent to automatically use keys passed when creating the LLM
+func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
+	// Check if model implements GetAPIKeys()
+	if p, ok := model.(interface{ GetAPIKeys() *llm.ProviderAPIKeys }); ok {
+		providerKeys := p.GetAPIKeys()
+		if providerKeys == nil {
+			return nil
+		}
+		// Convert llm.ProviderAPIKeys to AgentAPIKeys
+		agentKeys := &AgentAPIKeys{
+			OpenRouter: providerKeys.OpenRouter,
+			OpenAI:     providerKeys.OpenAI,
+			Anthropic:  providerKeys.Anthropic,
+			Vertex:     providerKeys.Vertex,
+		}
+		if providerKeys.Bedrock != nil {
+			agentKeys.Bedrock = &AgentBedrockConfig{
+				Region: providerKeys.Bedrock.Region,
+			}
+		}
+		if providerKeys.Azure != nil {
+			agentKeys.Azure = &AgentAzureConfig{
+				Endpoint:   providerKeys.Azure.Endpoint,
+				APIKey:     providerKeys.Azure.APIKey,
+				APIVersion: providerKeys.Azure.APIVersion,
+				Region:     providerKeys.Azure.Region,
+			}
+		}
+		return agentKeys
+	}
+	return nil
 }
 
 // NewAgent creates a new Agent instance with the provided configuration.
@@ -1063,6 +1100,12 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// If provider is not set, try to extract it from LLM
 	if ag.provider == "" {
 		ag.provider = extractProviderFromLLM(llm)
+	}
+
+	// Extract API keys from LLM if available
+	// This allows users to pass keys only when creating the LLM
+	if ag.APIKeys == nil {
+		ag.APIKeys = extractAPIKeysFromLLM(llm)
 	}
 
 	// Use logger from options (or default if not set)
@@ -2313,6 +2356,17 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		option(ag)
 	}
 
+	// If provider is not set, try to extract it from LLM
+	if ag.provider == "" {
+		ag.provider = extractProviderFromLLM(llm)
+	}
+
+	// Extract API keys from LLM if available
+	// This allows users to pass keys only when creating the LLM
+	if ag.APIKeys == nil {
+		ag.APIKeys = extractAPIKeysFromLLM(llm)
+	}
+
 	// Use logger from options (or default if not set)
 	logger := ag.Logger
 	if logger == nil {
@@ -3328,32 +3382,35 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	}
 
 	// Generate Go code for ONLY the new tool (not all tools - that was causing O(n²) regeneration)
+	// Only generate code in code execution mode - simple agent mode doesn't need generated code
 	// EXCEPTION: Skip code generation for human tools - they must only be used as direct LLM tools
 	// (not via generated code) because they need event bridge access for frontend UI
-	if isHumanTool {
-		if a.Logger != nil {
-			a.Logger.Info(fmt.Sprintf("🔧 Skipping code generation for human tool %s - must be used as direct LLM tool only", name))
-		}
-	} else {
-		generatedDir := a.getGeneratedDir()
-		singleToolForCodeGen := map[string]codegen.CustomToolForCodeGen{
-			name: {
-				Definition: tool,
-				Category:   toolCategory,
-			},
-		}
-		if a.Logger != nil {
-			a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Generating code for new tool: %s (category: %s)", name, toolCategory))
-		}
-		// Use agent's ToolTimeout (same as used for normal tool calls)
-		toolTimeout := getToolExecutionTimeout(a)
-		if err := codegen.GenerateCustomToolsCode(singleToolForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
+	if a.UseCodeExecutionMode {
+		if isHumanTool {
 			if a.Logger != nil {
-				a.Logger.Warn(fmt.Sprintf("🔍 [DISCOVERY] Failed to generate Go code for tool %s: %v", name, err))
+				a.Logger.Info(fmt.Sprintf("🔧 Skipping code generation for human tool %s - must be used as direct LLM tool only", name))
 			}
-			// Don't fail tool registration if code generation fails
-		} else if a.Logger != nil {
-			a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Successfully generated code for tool: %s", name))
+		} else {
+			generatedDir := a.getGeneratedDir()
+			singleToolForCodeGen := map[string]codegen.CustomToolForCodeGen{
+				name: {
+					Definition: tool,
+					Category:   toolCategory,
+				},
+			}
+			if a.Logger != nil {
+				a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Generating code for new tool: %s (category: %s)", name, toolCategory))
+			}
+			// Use agent's ToolTimeout (same as used for normal tool calls)
+			toolTimeout := getToolExecutionTimeout(a)
+			if err := codegen.GenerateCustomToolsCode(singleToolForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
+				if a.Logger != nil {
+					a.Logger.Warn(fmt.Sprintf("🔍 [DISCOVERY] Failed to generate Go code for tool %s: %v", name, err))
+				}
+				// Don't fail tool registration if code generation fails
+			} else if a.Logger != nil {
+				a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Successfully generated code for tool: %s", name))
+			}
 		}
 	}
 
@@ -3410,6 +3467,46 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		a.Logger.Info("🔧 Total custom tools registered", loggerv2.Int("count", len(a.customTools)))
 		a.Logger.Info("🔧 Total tools in agent", loggerv2.Int("count", len(a.Tools)))
 		a.Logger.Info("🔧 Total filtered tools", loggerv2.Int("count", len(a.filteredTools)))
+	}
+
+	return nil
+}
+
+// RegisterCustomToolWithTimeout registers a dynamic custom tool with a specific per-tool timeout.
+//
+// This is an extension of RegisterCustomTool that allows specifying a custom timeout for this tool.
+// This is useful for tools that may take longer than the default timeout (e.g., sub-agent execution).
+//
+// Parameters:
+//   - name: The unique name of the tool.
+//   - description: A description of what the tool does (used by LLM).
+//   - parameters: JSON schema defining the tool's expected arguments.
+//   - executionFunc: The Go function to execute when the tool is called.
+//   - timeout: Per-tool timeout. 0 = no timeout (tool runs indefinitely). -1 = use agent default.
+//   - category: REQUIRED. The tool's category (e.g., "workspace", "human", "virtual").
+//
+// Returns:
+//   - error: An error if registration fails (e.g., missing category).
+func (a *Agent) RegisterCustomToolWithTimeout(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), timeout time.Duration, category ...string) error {
+	// First register the tool using the standard method
+	err := a.RegisterCustomTool(name, description, parameters, executionFunc, category...)
+	if err != nil {
+		return err
+	}
+
+	// Now update the timeout for this tool
+	if customTool, exists := a.customTools[name]; exists {
+		customTool.Timeout = timeout
+		a.customTools[name] = customTool
+		if a.Logger != nil {
+			if timeout == 0 {
+				a.Logger.Info("🔧 Custom tool registered with NO timeout (runs indefinitely)", loggerv2.String("tool", name))
+			} else if timeout == -1 {
+				a.Logger.Info("🔧 Custom tool registered with agent default timeout", loggerv2.String("tool", name))
+			} else {
+				a.Logger.Info("🔧 Custom tool registered with custom timeout", loggerv2.String("tool", name), loggerv2.String("timeout", timeout.String()))
+			}
+		}
 	}
 
 	return nil

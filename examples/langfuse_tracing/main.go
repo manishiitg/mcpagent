@@ -47,7 +47,7 @@ func main() {
 	// The Langfuse tracer reads credentials from environment variables:
 	// - LANGFUSE_PUBLIC_KEY
 	// - LANGFUSE_SECRET_KEY
-	// - LANGFUSE_HOST (optional, defaults to cloud.langfuse.com)
+	// - LANGFUSE_BASE_URL (optional, defaults to cloud.langfuse.com)
 	var tracer observability.Tracer
 
 	if langfusePublicKey != "" && langfuseSecretKey != "" {
@@ -122,7 +122,7 @@ func main() {
 	fmt.Printf("\n=== Langfuse Trace ===\n")
 	fmt.Printf("Trace ID: %s\n", traceID)
 	if langfusePublicKey != "" {
-		langfuseHost := os.Getenv("LANGFUSE_HOST")
+		langfuseHost := os.Getenv("LANGFUSE_BASE_URL")
 		if langfuseHost == "" {
 			langfuseHost = "https://us.cloud.langfuse.com"
 		}

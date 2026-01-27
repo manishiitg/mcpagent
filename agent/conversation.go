@@ -1347,8 +1347,35 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 
 				// Create timeout context for tool execution
+				// Check if this is a custom tool with a per-tool timeout
 				toolTimeout := getToolExecutionTimeout(a)
-				toolCtx, cancel := context.WithTimeout(ctx, toolTimeout)
+				hasNoTimeout := false
+				if isCustomTool {
+					if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists && customTool.Timeout != -1 {
+						if customTool.Timeout == 0 {
+							// No timeout - tool runs indefinitely
+							hasNoTimeout = true
+							v2Logger.Debug("🔧 [TOOL_TIMEOUT] Custom tool has NO timeout (runs indefinitely)",
+								loggerv2.String("tool_name", tc.FunctionCall.Name))
+						} else if customTool.Timeout > 0 {
+							// Custom per-tool timeout
+							toolTimeout = customTool.Timeout
+							v2Logger.Debug("🔧 [TOOL_TIMEOUT] Custom tool has per-tool timeout",
+								loggerv2.String("tool_name", tc.FunctionCall.Name),
+								loggerv2.String("timeout", customTool.Timeout.String()))
+						}
+					}
+				}
+
+				var toolCtx context.Context
+				var cancel context.CancelFunc
+				if hasNoTimeout {
+					// No timeout - use the parent context directly (will run until agent context is cancelled)
+					toolCtx = ctx
+					cancel = func() {} // No-op cancel
+				} else {
+					toolCtx, cancel = context.WithTimeout(ctx, toolTimeout)
+				}
 				defer cancel()
 
 				startTime := time.Now()
@@ -1361,6 +1388,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					toolType = "custom"
 				}
 				argsJSON, _ := json.Marshal(args)
+				timeoutStr := toolTimeout.String()
+				if hasNoTimeout {
+					timeoutStr = "none (indefinite)"
+				}
 				v2Logger.Debug("🔧 [TOOL_CALL] Tool called",
 					loggerv2.String("tool_name", tc.FunctionCall.Name),
 					loggerv2.String("tool_type", toolType),
@@ -1368,7 +1399,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					loggerv2.String("tool_call_id", tc.ID),
 					loggerv2.Int("turn", turn+1),
 					loggerv2.String("arguments", string(argsJSON)),
-					loggerv2.String("timeout", toolTimeout.String()))
+					loggerv2.String("timeout", timeoutStr))
 
 				// Add cache hit event during tool execution to show cached connection usage
 				if len(a.Tracers) > 0 && serverName != "" && serverName != "virtual-tools" {

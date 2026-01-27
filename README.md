@@ -43,8 +43,8 @@ import (
     "context"
     "time"
     
-    mcpagent "mcpagent/agent"
-    "mcpagent/llm"
+    mcpagent "github.com/manishiitg/mcpagent/agent"
+    "github.com/manishiitg/mcpagent/llm"
     "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 )
 

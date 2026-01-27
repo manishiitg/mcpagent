@@ -58,16 +58,17 @@ func NewToolFilter(
 	}
 
 	// Initialize system categories that should always be included (like virtual tools)
-	// These are workspace and human tools - system tools that should be available
+	// These are workspace_* and human_* categories - system tools that should be available
 	// regardless of MCP tool filtering, unless explicitly excluded
-	// Workspace is segmented into: basic, advanced, git, browser
+	// Note: workspace has sub-categories (workspace_basic, workspace_browser, workspace_advanced, workspace_git)
+	// and human has sub-categories (human_tools)
 	systemCats := []string{
-		"workspace",
-		"workspace_basic",
-		"workspace_advanced",
-		"workspace_git",
-		"workspace_browser",
-		"human",
+		"workspace",         // legacy/generic
+		"workspace_basic",   // read_workspace_file, update_workspace_file, etc.
+		"workspace_browser", // agent_browser
+		"workspace_advanced", // execute_shell_command
+		"workspace_git",     // git tools
+		"human",             // human_feedback, etc.
 	}
 	for _, cat := range systemCats {
 		tf.systemCategories[cat] = true

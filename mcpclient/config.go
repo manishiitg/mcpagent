@@ -201,10 +201,14 @@ type MCPConfig struct {
 
 // LoadConfig loads MCP server configuration from the specified file
 // logger is optional - if provided, debug information will be logged at debug level
+// If configPath is empty, returns an empty config (useful for pure LLM mode without MCP servers)
 func LoadConfig(configPath string, logger loggerv2.Logger) (*MCPConfig, error) {
-	// Validate config path (basic check - path comes from trusted source)
+	// If config path is empty, return an empty config for pure LLM mode
 	if configPath == "" {
-		return nil, fmt.Errorf("config path cannot be empty")
+		if logger != nil {
+			logger.Debug("Config path is empty, returning empty config for pure LLM mode")
+		}
+		return &MCPConfig{MCPServers: make(map[string]MCPServerConfig)}, nil
 	}
 
 	if logger != nil {

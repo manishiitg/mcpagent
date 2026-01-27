@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/utils"
 )
@@ -146,22 +147,22 @@ func inferProviderFromModelID(modelID string) string {
 
 	// Check for OpenAI/OpenRouter models
 	if strings.HasPrefix(modelIDLower, "gpt-") || strings.HasPrefix(modelIDLower, "o1") || strings.HasPrefix(modelIDLower, "o3") {
-		return "openai"
+		return string(llmproviders.ProviderOpenAI)
 	}
 
 	// Check for Anthropic models
 	if strings.Contains(modelIDLower, "claude") {
-		return "anthropic"
+		return string(llmproviders.ProviderAnthropic)
 	}
 
 	// Check for Google/Gemini models
 	if strings.Contains(modelIDLower, "gemini") {
-		return "google"
+		return string(llmproviders.ProviderVertex)
 	}
 
 	// Check for Bedrock models (usually have specific prefixes)
 	if strings.Contains(modelIDLower, "anthropic.claude") || strings.Contains(modelIDLower, "amazon.") {
-		return "bedrock"
+		return string(llmproviders.ProviderBedrock)
 	}
 
 	// Default fallback

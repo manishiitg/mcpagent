@@ -151,8 +151,8 @@ Executes `jq` queries on JSON files.
 package main
 
 import (
-    "mcpagent/agent"
-    "mcpagent/llm"
+    "github.com/manishiitg/mcpagent/agent"
+    "github.com/manishiitg/mcpagent/llm"
 )
 
 func main() {

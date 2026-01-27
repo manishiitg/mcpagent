@@ -30,7 +30,7 @@ All tests should use the shared test utilities from `testutils/` package. Here's
 Creates a new test logger with the specified configuration. If config is nil, it uses viper to get configuration from flags.
 
 ```go
-import testutils "mcpagent/cmd/testing/testutils"
+import testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
 
 logger := testutils.NewTestLogger(nil) // Uses viper config
 // or
@@ -179,7 +179,7 @@ traceID := testutils.GenerateTestTraceID()
 Here's a complete example using all test utilities:
 
 ```go
-import testutils "mcpagent/cmd/testing/testutils"
+import testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
 
 // Initialize logger
 logger := testutils.NewTestLoggerFromViper()
@@ -664,8 +664,8 @@ package yourfeature
 import (
     "fmt"
     "github.com/spf13/cobra"
-    loggerv2 "mcpagent/logger/v2"
-    testutils "mcpagent/cmd/testing/testutils"
+    loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+    testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
 )
 
 var yourFeatureTestCmd = &cobra.Command{

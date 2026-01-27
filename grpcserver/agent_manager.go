@@ -187,17 +187,19 @@ func (m *AgentManager) GetCapabilities(agentID string) (*Capabilities, error) {
 func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (llmtypes.Model, error) {
 	// Determine provider
 	provider := llm.ProviderOpenAI // default
-	switch config.Provider {
-	case "bedrock":
+	switch llm.Provider(config.Provider) {
+	case llm.ProviderBedrock:
 		provider = llm.ProviderBedrock
-	case "openai":
+	case llm.ProviderOpenAI:
 		provider = llm.ProviderOpenAI
-	case "anthropic":
+	case llm.ProviderAnthropic:
 		provider = llm.ProviderAnthropic
-	case "openrouter":
+	case llm.ProviderOpenRouter:
 		provider = llm.ProviderOpenRouter
-	case "vertex":
+	case llm.ProviderVertex:
 		provider = llm.ProviderVertex
+	case llm.ProviderAzure:
+		provider = llm.ProviderAzure
 	}
 
 	// Default model IDs per provider
@@ -210,6 +212,8 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 			modelID = "anthropic.claude-sonnet-4-20250514-v1:0"
 		case llm.ProviderAnthropic:
 			modelID = "claude-sonnet-4-20250514"
+		case llm.ProviderAzure:
+			modelID = "gpt-4o"
 		default:
 			modelID = "gpt-4o"
 		}
@@ -220,12 +224,37 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 		temperature = *config.Temperature
 	}
 
+	// Build API keys config
+	var apiKeys *llm.ProviderAPIKeys
+	if config.APIKeys != nil {
+		apiKeys = &llm.ProviderAPIKeys{
+			OpenAI:     config.APIKeys.OpenAI,
+			Anthropic:  config.APIKeys.Anthropic,
+			OpenRouter: config.APIKeys.OpenRouter,
+			Vertex:     config.APIKeys.Vertex,
+		}
+		if config.APIKeys.Bedrock != nil {
+			apiKeys.Bedrock = &llm.BedrockConfig{
+				Region: config.APIKeys.Bedrock.Region,
+			}
+		}
+		if config.APIKeys.Azure != nil {
+			apiKeys.Azure = &llm.AzureAPIConfig{
+				Endpoint:   config.APIKeys.Azure.Endpoint,
+				APIKey:     config.APIKeys.Azure.APIKey,
+				APIVersion: config.APIKeys.Azure.APIVersion,
+				Region:     config.APIKeys.Azure.Region,
+			}
+		}
+	}
+
 	llmConfig := llm.Config{
 		Provider:    provider,
 		ModelID:     modelID,
 		Temperature: temperature,
 		Logger:      m.logger,
 		Context:     ctx,
+		APIKeys:     apiKeys,
 	}
 
 	return llm.InitializeLLM(llmConfig)
@@ -235,17 +264,19 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 func (m *AgentManager) buildAgentOptions(config AgentConfig, sessionID string) []mcpagent.AgentOption {
 	// Determine provider
 	provider := llm.ProviderOpenAI // default
-	switch config.Provider {
-	case "bedrock":
+	switch llm.Provider(config.Provider) {
+	case llm.ProviderBedrock:
 		provider = llm.ProviderBedrock
-	case "openai":
+	case llm.ProviderOpenAI:
 		provider = llm.ProviderOpenAI
-	case "anthropic":
+	case llm.ProviderAnthropic:
 		provider = llm.ProviderAnthropic
-	case "openrouter":
+	case llm.ProviderOpenRouter:
 		provider = llm.ProviderOpenRouter
-	case "vertex":
+	case llm.ProviderVertex:
 		provider = llm.ProviderVertex
+	case llm.ProviderAzure:
+		provider = llm.ProviderAzure
 	}
 
 	options := []mcpagent.AgentOption{

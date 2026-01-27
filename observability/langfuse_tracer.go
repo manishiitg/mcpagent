@@ -271,7 +271,7 @@ func initializeSharedLangfuseClientWithLogger(logger loggerv2.Logger) error {
 	// Load credentials from environment
 	publicKey := os.Getenv("LANGFUSE_PUBLIC_KEY")
 	secretKey := os.Getenv("LANGFUSE_SECRET_KEY")
-	host := os.Getenv("LANGFUSE_HOST")
+	host := os.Getenv("LANGFUSE_BASE_URL")
 
 	if host == "" {
 		host = "https://cloud.langfuse.com"
@@ -281,7 +281,7 @@ func initializeSharedLangfuseClientWithLogger(logger loggerv2.Logger) error {
 		return fmt.Errorf("langfuse credentials missing. Required environment variables:\n"+
 			"- LANGFUSE_PUBLIC_KEY\n"+
 			"- LANGFUSE_SECRET_KEY\n"+
-			"- LANGFUSE_HOST (optional, default: %s)", host)
+			"- LANGFUSE_BASE_URL (optional, default: %s)", host)
 	}
 
 	// Always enable debug for comprehensive observability (similar to Python)
