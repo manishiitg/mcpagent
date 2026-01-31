@@ -97,21 +97,44 @@ func (m *Manager) GenerateAuthURL() (state string, authURL string, err error) {
 
 // ExchangeCodeForToken exchanges an authorization code for an access token
 func (m *Manager) ExchangeCodeForToken(ctx context.Context, code string) (*oauth2.Token, error) {
+	m.logger.Info("ExchangeCodeForToken starting",
+		loggerv2.String("token_url", m.oauth2Config.Endpoint.TokenURL),
+		loggerv2.String("redirect_uri", m.oauth2Config.RedirectURL),
+		loggerv2.String("client_id", m.oauth2Config.ClientID),
+		loggerv2.String("use_pkce", fmt.Sprintf("%v", m.config.UsePKCE)),
+		loggerv2.String("code_length", fmt.Sprintf("%d", len(code))))
+
 	// Exchange authorization code for token
 	tokenOptions := []oauth2.AuthCodeOption{}
 	if m.config.UsePKCE {
 		tokenOptions = append(tokenOptions, oauth2.SetAuthURLParam("code_verifier", m.verifier))
+		m.logger.Info("Using PKCE code_verifier",
+			loggerv2.String("verifier_length", fmt.Sprintf("%d", len(m.verifier))))
 	}
 
 	token, err := m.oauth2Config.Exchange(ctx, code, tokenOptions...)
 	if err != nil {
+		m.logger.Error("Token exchange HTTP request failed", err,
+			loggerv2.String("token_url", m.oauth2Config.Endpoint.TokenURL))
 		return nil, fmt.Errorf("failed to exchange authorization code: %w", err)
 	}
 
+	m.logger.Info("Token exchange successful",
+		loggerv2.String("token_type", token.TokenType),
+		loggerv2.String("expiry", token.Expiry.String()),
+		loggerv2.String("has_refresh", fmt.Sprintf("%v", token.RefreshToken != "")))
+
 	// Save token to disk
+	m.logger.Info("Saving token to disk",
+		loggerv2.String("file_path", m.tokenStore.GetFilePath()))
 	if err := m.tokenStore.Save(token); err != nil {
-		m.logger.Warn("Failed to save token to disk", loggerv2.Error(err))
+		m.logger.Warn("Failed to save token to disk",
+			loggerv2.Error(err),
+			loggerv2.String("file_path", m.tokenStore.GetFilePath()))
 		// Don't fail the whole flow if we can't save - token is still valid
+	} else {
+		m.logger.Info("Token saved to disk successfully",
+			loggerv2.String("file_path", m.tokenStore.GetFilePath()))
 	}
 
 	return token, nil
@@ -277,6 +300,16 @@ func (m *Manager) Logout() error {
 
 	m.logger.Info("Token removed successfully")
 	return nil
+}
+
+// GetRedirectURI returns the configured redirect URI (for debugging)
+func (m *Manager) GetRedirectURI() string {
+	return m.oauth2Config.RedirectURL
+}
+
+// GetTokenURL returns the configured token endpoint URL (for debugging)
+func (m *Manager) GetTokenURL() string {
+	return m.oauth2Config.Endpoint.TokenURL
 }
 
 // GetTokenStatus returns information about the cached token
