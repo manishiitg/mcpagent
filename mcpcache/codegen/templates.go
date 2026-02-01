@@ -258,11 +258,11 @@ func GenerateFunctionWithParams(toolName string, goStruct *GoStruct, actualToolN
 	builder.WriteString("\t// Convert params struct to map for API call\n")
 	builder.WriteString("\tparamsBytes, err := json.Marshal(params)\n")
 	builder.WriteString("\tif err != nil {\n")
-	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %%v\", err))\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %v\", err))\n")
 	builder.WriteString("\t}\n")
 	builder.WriteString("\tvar paramsMap map[string]interface{}\n")
 	builder.WriteString("\tif err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {\n")
-	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %%v\", err))\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %v\", err))\n")
 	builder.WriteString("\t}\n\n")
 
 	// Build request payload and call common API client
@@ -333,11 +333,11 @@ func GenerateCustomToolFunction(toolName string, goStruct *GoStruct, actualToolN
 	builder.WriteString("\t// Convert params struct to map for API call\n")
 	builder.WriteString("\tparamsBytes, err := json.Marshal(params)\n")
 	builder.WriteString("\tif err != nil {\n")
-	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %%v\", err))\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %v\", err))\n")
 	builder.WriteString("\t}\n")
 	builder.WriteString("\tvar paramsMap map[string]interface{}\n")
 	builder.WriteString("\tif err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {\n")
-	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %%v\", err))\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %v\", err))\n")
 	builder.WriteString("\t}\n\n")
 
 	// Build request payload and call common API client
@@ -407,11 +407,11 @@ func GenerateVirtualToolFunction(toolName string, goStruct *GoStruct, actualTool
 	builder.WriteString("\t// Convert params struct to map for API call\n")
 	builder.WriteString("\tparamsBytes, err := json.Marshal(params)\n")
 	builder.WriteString("\tif err != nil {\n")
-	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %%v\", err))\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %v\", err))\n")
 	builder.WriteString("\t}\n")
 	builder.WriteString("\tvar paramsMap map[string]interface{}\n")
 	builder.WriteString("\tif err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {\n")
-	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %%v\", err))\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %v\", err))\n")
 	builder.WriteString("\t}\n\n")
 
 	// Build request payload and call common API client
