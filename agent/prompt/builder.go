@@ -216,7 +216,7 @@ Functions return only string (no error). Follow this pattern for EVERY tool call
 // toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
 // useToolSearchMode enables tool search mode instructions when true
 // toolCategories is optional list of tool categories for tool search mode
-func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, useToolSearchMode bool, toolCategories []string, logger loggerv2.Logger) string {
+func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, useToolSearchMode bool, toolCategories []string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
 	// Build prompts section with previews (only if discoverPrompt is true and NOT in code execution mode)
 	// In code execution mode, prompts/resources are not accessible via get_prompt/get_resource
 	var promptsSection string
@@ -324,12 +324,20 @@ When answering questions:
 ` + toolSearchInstructions + `
 </tool_search>`
 	} else {
+		var parallelToolHint string
+		if enableParallelToolExecution {
+			parallelToolHint = `
+
+**Parallel Execution:**
+- You can call multiple tools in a single response — they will execute concurrently
+- Use this to speed up independent operations (e.g., reading multiple files, querying multiple APIs)
+- Only parallelize independent calls — if one tool's output is needed as input for another, call them sequentially`
+		}
 		toolUsageSection = `<tool_usage>
 **Guidelines:**
 - Use tools when they can help answer the question
-- Execute tools one at a time, waiting for results
 - Use virtual tools for detailed prompts/resources when relevant
-- Provide clear responses based on tool results
+- Provide clear responses based on tool results` + parallelToolHint + `
 
 **Best Practices:**
 - Use virtual tools to access detailed knowledge when relevant

@@ -274,6 +274,19 @@ func WithSummarizationCooldown(turns int) AgentOption {
 	}
 }
 
+// WithParallelToolExecution enables concurrent execution of multiple tool calls.
+//
+// When the LLM returns multiple tool calls in a single response, they will be
+// executed concurrently using goroutines (fork-join pattern). Results are collected
+// in deterministic order matching the original tool call order.
+//
+// Default: false (Sequential execution)
+func WithParallelToolExecution(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.EnableParallelToolExecution = enabled
+	}
+}
+
 // WithContextEditing enables dynamic context reduction.
 //
 // Unlike summarization (which compresses history), context editing targets specific
@@ -703,6 +716,21 @@ type Agent struct {
 	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
 	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 1000)
 	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 10)
+
+	// Parallel tool execution configuration
+	// When enabled and LLM returns multiple tool calls in a single response,
+	// tool calls execute concurrently using goroutines (fork-join pattern).
+	// Results are collected in deterministic order matching the original tool call order.
+	// When disabled (default): tool calls execute sequentially as before.
+	EnableParallelToolExecution bool
+
+	// Mutex for concurrent access to Clients map during parallel tool execution
+	// Used by broken pipe recovery to safely read/write the Clients map
+	clientsMu sync.RWMutex
+
+	// Mutex for concurrent access to event hierarchy state during parallel tool execution
+	// Protects currentParentEventID and currentHierarchyLevel in EmitTypedEvent
+	eventMu sync.Mutex
 
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
@@ -1588,7 +1616,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 				toolCategories = append(toolCategories, serverName)
 			}
 		}
-		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.UseToolSearchMode, toolCategories, ag.Logger)
+		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.UseToolSearchMode, toolCategories, ag.Logger, ag.EnableParallelToolExecution)
 	}
 
 	// 🎯 SMART ROUTING INITIALIZATION - Run AFTER all tools are loaded (including virtual tools)
@@ -2283,6 +2311,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 		a.UseToolSearchMode,
 		toolCategoriesFiltered,
 		a.Logger,
+		a.EnableParallelToolExecution,
 	)
 
 	// Update the agent's system prompt
@@ -2564,8 +2593,13 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 	a.currentParentEventID = ""
 }
 
-// EmitTypedEvent sends a typed event to all tracers AND all listeners
+// EmitTypedEvent sends a typed event to all tracers AND all listeners.
+// Thread-safe: uses eventMu to protect hierarchy state (currentParentEventID, currentHierarchyLevel)
+// which can be mutated concurrently during parallel tool execution.
 func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) {
+
+	// Lock eventMu to protect hierarchy state reads and writes
+	a.eventMu.Lock()
 
 	// ✅ SET HIERARCHY FIELDS ON EVENT DATA FIRST (SINGLE SOURCE OF TRUTH)
 	// Use interface-based approach - works for ALL event types that embed BaseEventData
@@ -2616,6 +2650,9 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 		// FIX: Don't decrement level immediately - let the next start event handle it
 		// This allows token_usage and tool_call_start to be siblings of llm_generation_end
 	}
+
+	// Done with hierarchy state - unlock before I/O operations
+	a.eventMu.Unlock()
 
 	// Add correlation ID for start/end event pairs
 	if isStartOrEndEvent(events.EventType(eventData.GetEventType())) {
@@ -3633,6 +3670,7 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 		false, // UseToolSearchMode - not applicable in code execution mode
 		nil,   // toolCategories - not applicable in code execution mode
 		a.Logger,
+		a.EnableParallelToolExecution,
 	)
 
 	// Update the agent's system prompt

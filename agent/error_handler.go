@@ -62,11 +62,14 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	h.emitBrokenPipeEvent(ctx, toolCall, serverName, originalErr)
 
 	// Close the old broken connection if it exists
+	// Use clientsMu to safely access the Clients map (may be called concurrently during parallel tool execution)
+	h.agent.clientsMu.Lock()
 	if oldClient, exists := h.agent.Clients[serverName]; exists && oldClient != nil {
 		h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Closing old broken connection for server: %s", serverName),
 			loggerv2.String("server", serverName))
 		_ = oldClient.Close() // Ignore errors during cleanup
 	}
+	h.agent.clientsMu.Unlock()
 
 	// Create a fresh connection immediately using shared function
 	freshClient, freshErr := mcpcache.GetFreshConnection(ctx, serverName, h.agent.configPath, h.logger)
@@ -77,7 +80,10 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 
 	// Update the agent's client map with the new connection
 	// This ensures future tool calls use the new connection
+	// Use clientsMu to safely write to the Clients map
+	h.agent.clientsMu.Lock()
 	h.agent.Clients[serverName] = freshClient
+	h.agent.clientsMu.Unlock()
 	h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Updated agent's client map with fresh connection for server: %s", serverName),
 		loggerv2.String("server", serverName))
 

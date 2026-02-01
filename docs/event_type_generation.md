@@ -56,6 +56,7 @@ type ToolCallStartEvent struct {
     ToolName   string     `json:"tool_name"`
     ToolParams ToolParams `json:"tool_params"`
     ServerName string     `json:"server_name"`
+    IsParallel bool       `json:"is_parallel"`
 }
 ```
 
@@ -66,6 +67,7 @@ type ToolCallStartEvent struct {
   "properties": {
     "turn": { "type": "integer" },
     "tool_name": { "type": "string" },
+    "is_parallel": { "type": "boolean" },
     ...
   },
   "required": ["turn", "tool_name"]
@@ -81,6 +83,7 @@ export interface ToolCallStartEvent {
   tool_name: string;
   tool_params: ToolParams;
   server_name: string;
+  is_parallel: boolean;
   [k: string]: unknown;
 }
 ```

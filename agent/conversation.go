@@ -916,6 +916,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			}
 
 			// 2. For each tool call, execute and append the tool result as a new message
+			// Use parallel execution when enabled and there are multiple tool calls
+			if a.EnableParallelToolExecution && len(choice.ToolCalls) > 1 {
+				var parallelErr error
+				messages, parallelErr = executeToolCallsParallel(ctx, a, choice.ToolCalls, messages, turn, traceID, conversationStartTime, lastUserMessage, loopDetector, agentCtx)
+				if parallelErr != nil {
+					return "", messages, parallelErr
+				}
+				// After parallel execution, continue to next turn
+				continue
+			}
+
+			// Sequential execution (default path, or single tool call)
 			for i, tc := range choice.ToolCalls {
 				if tc.FunctionCall == nil {
 					v2Logger.Warn("Tool call has nil FunctionCall", loggerv2.Int("tool_call_index", i+1))

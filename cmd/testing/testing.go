@@ -17,6 +17,7 @@ import (
 	largetooloutput "github.com/manishiitg/mcpagent/cmd/testing/large-tool-output"
 	mcpagentcodeexec "github.com/manishiitg/mcpagent/cmd/testing/mcp-agent-code-exec"
 	oauthflow "github.com/manishiitg/mcpagent/cmd/testing/oauth-flow"
+	paralleltoolexec "github.com/manishiitg/mcpagent/cmd/testing/parallel-tool-exec"
 	smartrouting "github.com/manishiitg/mcpagent/cmd/testing/smart-routing"
 	"github.com/manishiitg/mcpagent/cmd/testing/structured-output/conversion"
 	"github.com/manishiitg/mcpagent/cmd/testing/structured-output/tool"
@@ -109,6 +110,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(tool.GetStructuredOutputToolTestCmd())
 	TestingCmd.AddCommand(tokentracking.GetTokenTrackingTestCmd())
 	TestingCmd.AddCommand(toolsearch.GetToolSearchTestCmd())
+	TestingCmd.AddCommand(paralleltoolexec.GetParallelToolExecTestCmd())
 }
 
 func main() {

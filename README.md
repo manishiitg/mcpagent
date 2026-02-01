@@ -11,7 +11,7 @@ MCP Agent is a Go library that provides a complete framework for building AI age
 
 - **Multi-Server MCP Connections**: Connect to multiple MCP servers simultaneously (HTTP, SSE, stdio protocols)
 - **LLM Integration**: Works with OpenAI, AWS Bedrock, Google Vertex AI, and other LLM providers
-- **Tool Execution**: Automatic tool discovery, execution, and result handling
+- **Tool Execution**: Automatic tool discovery, execution, and result handling (with optional parallel execution)
 - **Code Execution Mode**: Execute Go code instead of JSON tool calls for complex workflows
 - **Tool Search Mode**: Dynamic tool discovery for large tool catalogs - LLM searches and loads tools on-demand
 - **Smart Routing** (DEPRECATED): Dynamically filter tools based on conversation context
@@ -544,7 +544,26 @@ err := agent.RegisterCustomTool(
 
 See [examples/custom_tools/](examples/custom_tools/) for standard mode examples and [examples/code_execution/custom_tools/](examples/code_execution/custom_tools/) for code execution mode examples.
 
-### 10. **Observability**
+### 10. **Parallel Tool Execution**
+
+When the LLM returns multiple tool calls in a single response, they can be executed concurrently using goroutines (fork-join pattern) instead of sequentially:
+
+```go
+agent, err := mcpagent.NewAgent(
+    ctx, llmModel, "config.json",
+    mcpagent.WithParallelToolExecution(true),
+)
+```
+
+**How it works:**
+1. LLM returns N tool calls in one response
+2. All tool calls are prepared sequentially (argument parsing, client resolution)
+3. Tool calls execute concurrently via goroutines
+4. Results are collected in deterministic order matching the original tool call order
+
+**Observability:** `ToolCallStartEvent` includes an `IsParallel` field (`true` when the tool call is part of a parallel batch, `false` for sequential execution) so event listeners and tracers can distinguish between parallel and sequential tool calls.
+
+### 11. **Observability**
 
 Built-in tracing with Langfuse support:
 
@@ -574,6 +593,7 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 - **[Folder Guard](docs/folder_guard.md)** - Fine-grained file access control
 - **[LLM Resilience](docs/llm_resilience.md)** - Error handling and fallbacks
 - **[Event System](docs/event_type_generation.md)** - Event architecture
+- **[Parallel Tool Execution](docs/parallel_tool_execution.md)** - Concurrent tool call execution
 - **[Token Tracking](docs/token-usage-tracking.md)** - Usage monitoring
 
 ## 📝 Examples
@@ -705,6 +725,9 @@ agent, err := mcpagent.NewAgent(
     mcpagent.WithSmartRouting(true), // DEPRECATED
     mcpagent.WithSmartRoutingThresholds(20, 3), // DEPRECATED
     
+    // Parallel tool execution (concurrent goroutines for multiple tool calls)
+    mcpagent.WithParallelToolExecution(true),
+
     // Context offloading (offload large tool outputs to filesystem)
     mcpagent.WithContextOffloading(true),
     mcpagent.WithLargeOutputThreshold(10000),
@@ -738,6 +761,7 @@ go test ./...
 go run testing.go agent-mcp --log-file logs/test.log
 go run testing.go code-exec --log-file logs/test.log
 go run testing.go smart-routing --log-file logs/test.log
+go run testing.go parallel-tool-exec --provider vertex --model gemini-3-flash-preview
 ```
 
 See [cmd/testing/README.md](cmd/testing/README.md) for details.

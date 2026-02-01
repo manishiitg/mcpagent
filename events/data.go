@@ -384,6 +384,7 @@ type ToolCallStartEvent struct {
 	ToolName   string     `json:"tool_name"`
 	ToolParams ToolParams `json:"tool_params"`
 	ServerName string     `json:"server_name"`
+	IsParallel bool       `json:"is_parallel"`
 }
 
 func (e *ToolCallStartEvent) GetEventType() EventType {

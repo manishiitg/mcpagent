@@ -343,6 +343,7 @@ echo "✅ All tracing checks passed"
 1. **Agent emits events** via `EmitTypedEvent()`:
    - `LLMGenerationStartEvent` / `LLMGenerationEndEvent`
    - `ToolCallStartEvent` / `ToolCallEndEvent` / `ToolCallErrorEvent`
+     - `ToolCallStartEvent.IsParallel` is `true` when the tool call is part of a parallel execution batch (multiple tool calls running concurrently via goroutines), `false` for sequential execution
    - `MCPServerConnectionStartEvent` / `MCPServerConnectionEndEvent`
    - `MCPServerDiscoveryEvent`
 
