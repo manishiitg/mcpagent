@@ -385,6 +385,7 @@ type ToolCallStartEvent struct {
 	ToolParams ToolParams `json:"tool_params"`
 	ServerName string     `json:"server_name"`
 	IsParallel bool       `json:"is_parallel"`
+	ToolCallID string     `json:"tool_call_id,omitempty"` // Unique ID from the LLM response, used to correlate start/end/error events
 }
 
 func (e *ToolCallStartEvent) GetEventType() EventType {
@@ -404,6 +405,7 @@ type ToolCallEndEvent struct {
 	Result     string        `json:"result"`
 	Duration   time.Duration `json:"duration"`
 	ServerName string        `json:"server_name"`
+	ToolCallID string        `json:"tool_call_id,omitempty"` // Unique ID from the LLM response, used to correlate start/end/error events
 	// Token usage information (optional)
 	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"`
 	ModelContextWindow  int     `json:"model_context_window,omitempty"`
@@ -553,6 +555,7 @@ type ToolCallErrorEvent struct {
 	Error      string        `json:"error"`
 	ServerName string        `json:"server_name"`
 	Duration   time.Duration `json:"duration"`
+	ToolCallID string        `json:"tool_call_id,omitempty"` // Unique ID from the LLM response, used to correlate start/end/error events
 }
 
 func (e *ToolCallErrorEvent) GetEventType() EventType {

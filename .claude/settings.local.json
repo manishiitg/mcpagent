@@ -20,7 +20,12 @@
       "Bash(export VERTEX_API_KEY)",
       "Bash(bash -c 'go run ./cmd/testing tool-search --verbose --config /Users/mipl/ai-work/mcpagent/examples/basic/mcp_servers.json':*)",
       "Bash(env)",
-      "Bash(source ~/.zshrc)"
+      "Bash(source ~/.zshrc)",
+      "Bash(pre-commit run:*)",
+      "Bash(golangci-lint run:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix golangci-lint errors across codebase\n\n- Fix errorlint: use errors.Is\\(err, io.EOF\\) instead of == comparison\n- Fix gosec G104: explicitly ignore errors from resp.Body.Close\\(\\) and os.Remove\\(\\)\n- Fix gosec G115: add safeIntToInt32\\(\\) helper for safe int to int32 conversion\n- Remove unused code: runsQueryRequest, getLangSmithUUID, mapToStruct, toGRPCError, contains, containsAt\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push)"
     ]
   }
 }

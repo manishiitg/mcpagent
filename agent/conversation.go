@@ -951,6 +951,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					toolStartEvent := events.NewToolCallStartEventWithCorrelation(turn+1, tc.FunctionCall.Name, events.ToolParams{
 						Arguments: tc.FunctionCall.Arguments,
 					}, serverName, traceID, traceID)
+					toolStartEvent.ToolCallID = tc.ID
 					a.EmitTypedEvent(ctx, toolStartEvent)
 
 					// Parse arguments
@@ -959,6 +960,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						v2Logger.Error(fmt.Sprintf("🖼️ [DEBUG] Failed to parse read_image arguments: %v", err), err)
 						// Emit error event
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse arguments: %v", err), serverName, 0)
+						toolErrorEvent.ToolCallID = tc.ID
 						a.EmitTypedEvent(ctx, toolErrorEvent)
 						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
 						messages = append(messages, llmtypes.MessageContent{
@@ -999,6 +1001,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						v2Logger.Error("read_image tool execution failed", toolErr)
 						// Emit tool call error event (for observability only)
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
+						toolErrorEvent.ToolCallID = tc.ID
 						a.EmitTypedEvent(ctx, toolErrorEvent)
 						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
 						messages = append(messages, llmtypes.MessageContent{
@@ -1135,6 +1138,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					a.tokenTrackingMutex.RUnlock()
 
 					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, "Image loaded and added to conversation", serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
+					toolEndEvent.ToolCallID = tc.ID
 					a.EmitTypedEvent(ctx, toolEndEvent)
 
 					// Continue to next iteration (tool call and response messages are already added)
@@ -1172,6 +1176,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				toolStartEvent := events.NewToolCallStartEventWithCorrelation(turn+1, tc.FunctionCall.Name, events.ToolParams{
 					Arguments: tc.FunctionCall.Arguments,
 				}, serverName, traceID, traceID) // Using traceID for both traceID and parentID correlation
+				toolStartEvent.ToolCallID = tc.ID
 
 				a.EmitTypedEvent(ctx, toolStartEvent)
 
@@ -1196,6 +1201,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Emit tool call error event for observability (after tool start event)
 					toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", "empty tool name", "", time.Since(conversationStartTime))
+					toolNameErrorEvent.ToolCallID = tc.ID
 					a.EmitTypedEvent(ctx, toolNameErrorEvent)
 
 					// Add feedback to conversation so LLM can correct itself
@@ -1219,6 +1225,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Emit tool call error event for observability
 					toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
+					toolArgsParsingErrorEvent.ToolCallID = tc.ID
 					a.EmitTypedEvent(ctx, toolArgsParsingErrorEvent)
 
 					// Add feedback to conversation so LLM can correct itself
@@ -1304,6 +1311,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 							// Emit tool call error event for observability
 							toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
+							toolNotFoundEvent.ToolCallID = tc.ID
 							a.EmitTypedEvent(ctx, toolNotFoundEvent)
 
 							// Add feedback to conversation so LLM can correct itself
@@ -1578,6 +1586,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 						// Emit tool call error event using typed event data
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
+						toolErrorEvent.ToolCallID = tc.ID
 						a.EmitTypedEvent(ctx, toolErrorEvent)
 
 						// Instead of failing the entire conversation, provide feedback to the LLM
@@ -1733,11 +1742,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Emit tool call end event using typed event data (consolidated - contains all tool information)
 					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
+					toolEndEvent.ToolCallID = tc.ID
 					a.EmitTypedEvent(ctx, toolEndEvent)
 				} else if result.IsError {
 					// Result contains an error - emit tool call error event
 					// This handles the case where tool execution succeeded but the tool returned an error result
 					toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration)
+					toolErrorEvent.ToolCallID = tc.ID
 					a.EmitTypedEvent(ctx, toolErrorEvent)
 				}
 

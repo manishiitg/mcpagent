@@ -1420,7 +1420,11 @@ func (l *LangfuseTracer) handleToolCallStart(event AgentEvent) error {
 	// Store tool span ID for later completion by handleToolCallEnd
 	var toolKey string
 	if startEvent, ok := event.GetData().(*events.ToolCallStartEvent); ok {
-		toolKey = fmt.Sprintf("%s_%d_%s", traceID, startEvent.Turn, startEvent.ToolName)
+		if startEvent.ToolCallID != "" {
+			toolKey = fmt.Sprintf("%s_%s", traceID, startEvent.ToolCallID)
+		} else {
+			toolKey = fmt.Sprintf("%s_%d_%s", traceID, startEvent.Turn, startEvent.ToolName)
+		}
 		l.mu.Lock()
 		l.toolCallSpans[toolKey] = string(toolID)
 		l.mu.Unlock()
@@ -1442,7 +1446,12 @@ func (l *LangfuseTracer) handleToolCallEnd(event AgentEvent) error {
 
 	// Find the existing tool span to end
 	if endEvent, ok := event.GetData().(*events.ToolCallEndEvent); ok {
-		toolKey := fmt.Sprintf("%s_%d_%s", traceID, endEvent.Turn, endEvent.ToolName)
+		var toolKey string
+		if endEvent.ToolCallID != "" {
+			toolKey = fmt.Sprintf("%s_%s", traceID, endEvent.ToolCallID)
+		} else {
+			toolKey = fmt.Sprintf("%s_%d_%s", traceID, endEvent.Turn, endEvent.ToolName)
+		}
 		l.mu.RLock()
 		toolSpanID := l.toolCallSpans[toolKey]
 		// Also log all available keys for debugging
@@ -1506,7 +1515,12 @@ func (l *LangfuseTracer) handleToolCallError(event AgentEvent) error {
 
 	// Find the existing tool span to end with error
 	if errorEvent, ok := event.GetData().(*events.ToolCallErrorEvent); ok {
-		toolKey := fmt.Sprintf("%s_%d_%s", traceID, errorEvent.Turn, errorEvent.ToolName)
+		var toolKey string
+		if errorEvent.ToolCallID != "" {
+			toolKey = fmt.Sprintf("%s_%s", traceID, errorEvent.ToolCallID)
+		} else {
+			toolKey = fmt.Sprintf("%s_%d_%s", traceID, errorEvent.Turn, errorEvent.ToolName)
+		}
 		l.mu.RLock()
 		toolSpanID := l.toolCallSpans[toolKey]
 		l.mu.RUnlock()

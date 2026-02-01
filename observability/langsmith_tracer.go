@@ -1359,8 +1359,18 @@ func (l *LangsmithTracer) handleToolCallStart(event AgentEvent) error {
 		"params":      toolParams,
 	})
 
-	// Store with compound key
-	key := fmt.Sprintf("%s_%d_%s", traceID, turn, toolName)
+	// Store with compound key — use ToolCallID when available to avoid collisions
+	// with parallel calls to the same tool in the same turn
+	var toolCallID string
+	if startEvent, ok := event.GetData().(*events.ToolCallStartEvent); ok {
+		toolCallID = startEvent.ToolCallID
+	}
+	var key string
+	if toolCallID != "" {
+		key = fmt.Sprintf("%s_%s", traceID, toolCallID)
+	} else {
+		key = fmt.Sprintf("%s_%d_%s", traceID, turn, toolName)
+	}
 	l.mu.Lock()
 	l.toolCallRuns[key] = string(toolRunID)
 	l.mu.Unlock()
@@ -1376,16 +1386,22 @@ func (l *LangsmithTracer) handleToolCallEnd(event AgentEvent) error {
 	traceID := event.GetTraceID()
 
 	var turn int
-	var toolName, result string
+	var toolName, result, toolCallID string
 
 	switch data := event.GetData().(type) {
 	case *events.ToolCallEndEvent:
 		turn = data.Turn
 		toolName = data.ToolName
 		result = data.Result
+		toolCallID = data.ToolCallID
 	}
 
-	key := fmt.Sprintf("%s_%d_%s", traceID, turn, toolName)
+	var key string
+	if toolCallID != "" {
+		key = fmt.Sprintf("%s_%s", traceID, toolCallID)
+	} else {
+		key = fmt.Sprintf("%s_%d_%s", traceID, turn, toolName)
+	}
 
 	l.mu.RLock()
 	toolRunID := l.toolCallRuns[key]
@@ -1409,16 +1425,22 @@ func (l *LangsmithTracer) handleToolCallError(event AgentEvent) error {
 	traceID := event.GetTraceID()
 
 	var turn int
-	var toolName, errMsg string
+	var toolName, errMsg, toolCallID string
 
 	switch data := event.GetData().(type) {
 	case *events.ToolCallErrorEvent:
 		turn = data.Turn
 		toolName = data.ToolName
 		errMsg = data.Error
+		toolCallID = data.ToolCallID
 	}
 
-	key := fmt.Sprintf("%s_%d_%s", traceID, turn, toolName)
+	var key string
+	if toolCallID != "" {
+		key = fmt.Sprintf("%s_%s", traceID, toolCallID)
+	} else {
+		key = fmt.Sprintf("%s_%d_%s", traceID, turn, toolName)
+	}
 
 	l.mu.RLock()
 	toolRunID := l.toolCallRuns[key]

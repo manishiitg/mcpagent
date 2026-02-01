@@ -99,6 +99,7 @@ func executeToolCallsParallel(
 				Arguments: tc.FunctionCall.Arguments,
 			}, plan.serverName, traceID, traceID)
 			toolStartEvent.IsParallel = true
+			toolStartEvent.ToolCallID = tc.ID
 			a.EmitTypedEvent(ctx, toolStartEvent)
 		}
 	}
@@ -168,6 +169,7 @@ func executeToolCallsParallel(
 		if res.toolErr != nil {
 			// Tool execution error — emit error event
 			toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, res.toolErr.Error(), plan.serverName, res.duration)
+			toolErrorEvent.ToolCallID = tc.ID
 			a.EmitTypedEvent(ctx, toolErrorEvent)
 		} else if res.result == nil || !res.result.IsError {
 			// Success — emit tool call end event
@@ -178,10 +180,12 @@ func executeToolCallsParallel(
 			a.tokenTrackingMutex.RUnlock()
 
 			toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, res.resultText, plan.serverName, res.duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
+			toolEndEvent.ToolCallID = tc.ID
 			a.EmitTypedEvent(ctx, toolEndEvent)
 		} else if res.result != nil && res.result.IsError {
 			// Tool returned error in result
 			toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, res.resultText, plan.serverName, res.duration)
+			toolErrorEvent.ToolCallID = tc.ID
 			a.EmitTypedEvent(ctx, toolErrorEvent)
 		}
 
@@ -281,6 +285,7 @@ func prepareToolExecution(
 
 		feedbackMessage := generateEmptyToolNameFeedback(tc.FunctionCall.Arguments)
 		toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", "empty tool name", "", time.Since(conversationStartTime))
+		toolNameErrorEvent.ToolCallID = tc.ID
 		a.EmitTypedEvent(ctx, toolNameErrorEvent)
 
 		msg := llmtypes.MessageContent{
@@ -298,6 +303,7 @@ func prepareToolExecution(
 		v2Logger.Error("Tool args parsing error", err)
 		feedbackMessage := generateToolArgsParsingFeedback(tc.FunctionCall.Name, tc.FunctionCall.Arguments, err)
 		toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
+		toolArgsParsingErrorEvent.ToolCallID = tc.ID
 		a.EmitTypedEvent(ctx, toolArgsParsingErrorEvent)
 
 		msg := llmtypes.MessageContent{
@@ -344,6 +350,7 @@ func prepareToolExecution(
 				feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- read_large_output, search_large_output, query_large_output (file tools)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
 
 				toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
+				toolNotFoundEvent.ToolCallID = tc.ID
 				a.EmitTypedEvent(ctx, toolNotFoundEvent)
 
 				msg := llmtypes.MessageContent{
