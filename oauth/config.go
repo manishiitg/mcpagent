@@ -13,6 +13,9 @@ type OAuthConfig struct {
 	RedirectURL  string   `json:"redirect_url,omitempty"` // Default: http://localhost:8080/callback
 	Scopes       []string `json:"scopes,omitempty"`
 
+	// RFC 8707 Resource Indicator
+	Resource string `json:"resource,omitempty"` // Resource URI for token audience restriction
+
 	// Security & Storage
 	UsePKCE   bool   `json:"use_pkce,omitempty"`   // Default: true (recommended)
 	TokenFile string `json:"token_file,omitempty"` // Path to cache tokens
@@ -51,8 +54,10 @@ func (c *OAuthConfig) Validate() error {
 
 // OAuthEndpoints contains discovered OAuth endpoint URLs
 type OAuthEndpoints struct {
-	AuthURL              string // Authorization endpoint
-	TokenURL             string // Token endpoint
-	Issuer               string // Issuer URL (optional)
-	RegistrationEndpoint string // Dynamic Client Registration endpoint (optional)
+	AuthURL              string   // Authorization endpoint
+	TokenURL             string   // Token endpoint
+	Issuer               string   // Issuer URL (optional)
+	RegistrationEndpoint string   // Dynamic Client Registration endpoint (optional)
+	Resource             string   // RFC 8707 resource indicator (from Protected Resource Metadata)
+	ScopesSupported      []string // Scopes supported (from Protected Resource Metadata)
 }

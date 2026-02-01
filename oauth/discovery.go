@@ -52,6 +52,9 @@ func DiscoverFromResponse(resp *http.Response) (*OAuthEndpoints, error) {
 			// Discover endpoints from the authorization server
 			discoveredEndpoints, _, err := DiscoverFromAuthorizationServer(authServerURL)
 			if err == nil && discoveredEndpoints != nil {
+				// Propagate resource and scopes from Protected Resource Metadata
+				discoveredEndpoints.Resource = resourceMetadata.Resource
+				discoveredEndpoints.ScopesSupported = resourceMetadata.ScopesSupported
 				return discoveredEndpoints, nil
 			}
 		}
@@ -281,7 +284,19 @@ func DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *Au
 		}, metadata, nil
 	}
 
-	// If well-known discovery fails, try to construct endpoints from the auth server URL directly
+	// Try OpenID Connect Discovery fallback
+	oidcURL := baseURL + "/.well-known/openid-configuration"
+	metadata, err = fetchAuthServerMetadataFromURL(oidcURL)
+	if err == nil {
+		return &OAuthEndpoints{
+			Issuer:               metadata.Issuer,
+			AuthURL:              metadata.AuthorizationEndpoint,
+			TokenURL:             metadata.TokenEndpoint,
+			RegistrationEndpoint: metadata.RegistrationEndpoint,
+		}, metadata, nil
+	}
+
+	// If all well-known discovery fails, try to construct endpoints from the auth server URL directly
 	// Some auth servers (like Smithery) use the auth server URL as the authorize endpoint directly
 	return &OAuthEndpoints{
 		Issuer:   authServerURL,

@@ -89,6 +89,11 @@ func (m *Manager) GenerateAuthURL() (state string, authURL string, err error) {
 		)
 	}
 
+	// Add RFC 8707 resource parameter if set
+	if m.config.Resource != "" {
+		authOptions = append(authOptions, oauth2.SetAuthURLParam("resource", m.config.Resource))
+	}
+
 	// Build authorization URL
 	authURL = m.oauth2Config.AuthCodeURL(m.state, authOptions...)
 
@@ -110,6 +115,11 @@ func (m *Manager) ExchangeCodeForToken(ctx context.Context, code string) (*oauth
 		tokenOptions = append(tokenOptions, oauth2.SetAuthURLParam("code_verifier", m.verifier))
 		m.logger.Info("Using PKCE code_verifier",
 			loggerv2.String("verifier_length", fmt.Sprintf("%d", len(m.verifier))))
+	}
+
+	// Add RFC 8707 resource parameter if set
+	if m.config.Resource != "" {
+		tokenOptions = append(tokenOptions, oauth2.SetAuthURLParam("resource", m.config.Resource))
 	}
 
 	token, err := m.oauth2Config.Exchange(ctx, code, tokenOptions...)
@@ -204,6 +214,11 @@ func (m *Manager) StartAuthFlow(ctx context.Context) (*oauth2.Token, error) {
 		m.logger.Debug("Generated PKCE challenge")
 	}
 
+	// Add RFC 8707 resource parameter if set
+	if m.config.Resource != "" {
+		authOptions = append(authOptions, oauth2.SetAuthURLParam("resource", m.config.Resource))
+	}
+
 	// Extract port from redirect URL, default to 3333 if not specified
 	port := 3333
 	if m.config.RedirectURL != "" {
@@ -252,6 +267,11 @@ func (m *Manager) StartAuthFlow(ctx context.Context) (*oauth2.Token, error) {
 		tokenOptions = append(tokenOptions,
 			oauth2.SetAuthURLParam("code_verifier", m.verifier),
 		)
+	}
+
+	// Add RFC 8707 resource parameter if set
+	if m.config.Resource != "" {
+		tokenOptions = append(tokenOptions, oauth2.SetAuthURLParam("resource", m.config.Resource))
 	}
 
 	token, err := m.oauth2Config.Exchange(ctx, code, tokenOptions...)
