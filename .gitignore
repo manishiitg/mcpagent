@@ -15,6 +15,12 @@ logs/
 
 # Build artifacts
 bin/
+**/bin/
+
+# Node dependencies (do not commit)
+node_modules/
+**/node_modules/
+
 *.exe
 *.bin
 *.test
