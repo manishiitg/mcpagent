@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
-	"strings"
-	"time"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -29,7 +32,8 @@ func isContextCanceledError(err error) bool {
 // retryOriginalModel handles retry logic for throttling and zero_candidates errors
 // Returns: shouldRetry (bool), delay (time.Duration), error
 func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt, maxRetries int, baseDelay, maxDelay time.Duration, turn int, logger loggerv2.Logger, usage observability.UsageMetrics) (bool, time.Duration, error) {
-	delay := time.Duration(float64(baseDelay) * (1.5 + float64(attempt)*0.5))
+	// Exponential backoff: 10s, 20s, 40s, 80s, 160s...
+	delay := baseDelay * time.Duration(1<<attempt)
 	if delay > maxDelay {
 		delay = maxDelay
 	}
@@ -429,9 +433,29 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry START - Messages: %d, Options: %d, Turn: %d", len(messages), len(opts), turn))
 
 	maxRetries := 5
+	if env := os.Getenv("LLM_MAX_RETRIES"); env != "" {
+		if val, err := strconv.Atoi(env); err == nil && val > 0 {
+			maxRetries = val
+		}
+	}
+
 	maxRetriesZeroCandidates := 3 // Limit retries for zero_candidates errors to 3 before fallback
-	baseDelay := 30 * time.Second
-	maxDelay := 5 * time.Minute
+
+	baseDelaySeconds := 10
+	if env := os.Getenv("LLM_RETRY_BASE_DELAY_SECONDS"); env != "" {
+		if val, err := strconv.Atoi(env); err == nil && val > 0 {
+			baseDelaySeconds = val
+		}
+	}
+	baseDelay := time.Duration(baseDelaySeconds) * time.Second
+
+	maxDelaySeconds := 300 // 5 minutes
+	if env := os.Getenv("LLM_RETRY_MAX_DELAY_SECONDS"); env != "" {
+		if val, err := strconv.Atoi(env); err == nil && val > 0 {
+			maxDelaySeconds = val
+		}
+	}
+	maxDelay := time.Duration(maxDelaySeconds) * time.Second
 	var lastErr error
 	var usage observability.UsageMetrics
 
