@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
@@ -29,6 +30,9 @@ const (
 	// DefaultToolOutputCleanupInterval is the default interval for periodic cleanup of old tool output files
 	DefaultToolOutputCleanupInterval = 1 * time.Hour // 1 hour
 )
+
+// fileCounter is an atomic counter to ensure unique filenames during parallel tool execution
+var fileCounter uint64
 
 // ToolOutputHandler implements context offloading by writing large tool outputs to files
 // This follows the "offload context" pattern where tool results are stored externally
@@ -204,9 +208,12 @@ func (h *ToolOutputHandler) WriteToolOutputToFile(content, toolName string) (str
 	return filePath, nil
 }
 
-// generateToolOutputFilename creates a unique filename for tool output
+// generateToolOutputFilename creates a unique filename for tool output.
+// Uses nanosecond precision and an atomic counter to prevent collisions during parallel tool execution.
 func (h *ToolOutputHandler) generateToolOutputFilename(toolName string, content string) string {
-	timestamp := time.Now().Format("20060102_150405")
+	now := time.Now()
+	counter := atomic.AddUint64(&fileCounter, 1)
+	timestamp := fmt.Sprintf("%s_%09d_%d", now.Format("20060102_150405"), now.Nanosecond(), counter)
 	// Sanitize tool name for filename
 	sanitizedName := sanitizeFilename(toolName)
 	return fmt.Sprintf("tool_%s_%s%s", timestamp, sanitizedName, h.getFileExtension(content))

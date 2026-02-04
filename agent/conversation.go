@@ -427,7 +427,25 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// 🎯 SMART ROUTING APPLICATION - Apply smart routing with conversation context
 	// Reset filtered tools at the start of each conversation to ensure fresh evaluation
-	a.filteredTools = a.Tools // Start with all tools, then filter based on conversation context
+	// In tool search mode, use getToolsForToolSearchMode() to include discovered tools
+	if a.UseToolSearchMode {
+		a.filteredTools = a.getToolsForToolSearchMode()
+		v2Logger.Debug("🔍 Tool search mode: using getToolsForToolSearchMode()",
+			loggerv2.Int("filtered_count", len(a.filteredTools)))
+	} else {
+		a.filteredTools = a.Tools // Start with all tools, then filter based on conversation context
+		v2Logger.Debug("🔧 Normal/Code execution mode: using a.Tools",
+			loggerv2.Int("tools_count", len(a.Tools)),
+			loggerv2.Int("filtered_count", len(a.filteredTools)))
+		// Log tool names for debugging
+		toolNames := make([]string, 0, len(a.Tools))
+		for _, t := range a.Tools {
+			if t.Function != nil {
+				toolNames = append(toolNames, t.Function.Name)
+			}
+		}
+		v2Logger.Debug("🔧 Available tools", loggerv2.Any("tools", toolNames))
+	}
 
 	// Only run smart routing if it was enabled during initialization
 	// Use active clients count

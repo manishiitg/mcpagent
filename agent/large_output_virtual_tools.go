@@ -390,6 +390,11 @@ func (a *Agent) BuildLargeOutputFilePath(filename string) string {
 
 // searchWithRipgrep searches for patterns in a file using ripgrep
 func (a *Agent) searchWithRipgrep(filePath, pattern string, maxResults int, caseSensitive, wholeWord bool) (string, error) {
+	// Verify file exists before invoking ripgrep to give a clear error
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("tool output file not found: %s (file may have been cleaned up or the filename may be incorrect)", filePath)
+	}
+
 	// Build ripgrep command
 	args := []string{"rg"}
 
