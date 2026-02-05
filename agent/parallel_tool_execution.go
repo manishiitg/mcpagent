@@ -594,7 +594,7 @@ func executeToolCall(
 		}
 
 		// Context offloading
-		if a.toolOutputHandler != nil {
+		if a.EnableContextOffloading && a.toolOutputHandler != nil {
 			if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
 				detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
 				detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()

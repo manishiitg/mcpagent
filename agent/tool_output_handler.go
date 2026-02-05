@@ -29,6 +29,11 @@ const (
 
 	// DefaultToolOutputCleanupInterval is the default interval for periodic cleanup of old tool output files
 	DefaultToolOutputCleanupInterval = 1 * time.Hour // 1 hour
+
+	// DefaultMaxToolOutputTokenLimit is the absolute maximum token limit for tool outputs
+	// This applies even when context offloading is disabled to prevent API errors
+	// Set to 100k tokens to leave room for system prompt and conversation history
+	DefaultMaxToolOutputTokenLimit = 100000
 )
 
 // fileCounter is an atomic counter to ensure unique filenames during parallel tool execution
@@ -38,36 +43,39 @@ var fileCounter uint64
 // This follows the "offload context" pattern where tool results are stored externally
 // and accessed on-demand to prevent context window overflow
 type ToolOutputHandler struct {
-	Threshold       int
-	OutputFolder    string
-	SessionID       string // Session ID for organizing files by conversation
-	Enabled         bool
-	ServerAvailable bool                // Whether context offloading virtual tools are available
-	LLM             llmtypes.Model      // Optional LLM model for provider-aware token counting
-	tokenCounter    *utils.TokenCounter // Cached token counter instance
+	Threshold            int
+	OutputFolder         string
+	SessionID            string              // Session ID for organizing files by conversation
+	Enabled              bool
+	ServerAvailable      bool                // Whether context offloading virtual tools are available
+	LLM                  llmtypes.Model      // Optional LLM model for provider-aware token counting
+	tokenCounter         *utils.TokenCounter // Cached token counter instance
+	MaxToolOutputTokens  int                 // Absolute maximum token limit (applies even when offloading is disabled)
 }
 
 // NewToolOutputHandler creates a new tool output handler with default settings
 func NewToolOutputHandler() *ToolOutputHandler {
 	return &ToolOutputHandler{
-		Threshold:       DefaultLargeToolOutputThreshold,
-		OutputFolder:    DefaultToolOutputFolder,
-		SessionID:       "",
-		Enabled:         true,
-		ServerAvailable: false, // Will be set by agent
-		tokenCounter:    utils.NewTokenCounter(),
+		Threshold:           DefaultLargeToolOutputThreshold,
+		OutputFolder:        DefaultToolOutputFolder,
+		SessionID:           "",
+		Enabled:             true,
+		ServerAvailable:     false, // Will be set by agent
+		tokenCounter:        utils.NewTokenCounter(),
+		MaxToolOutputTokens: DefaultMaxToolOutputTokenLimit,
 	}
 }
 
 // NewToolOutputHandlerWithConfig creates a new tool output handler with custom settings
 func NewToolOutputHandlerWithConfig(threshold int, outputFolder string, sessionID string, enabled bool, serverAvailable bool) *ToolOutputHandler {
 	return &ToolOutputHandler{
-		Threshold:       threshold,
-		OutputFolder:    outputFolder,
-		SessionID:       sessionID,
-		Enabled:         enabled,
-		ServerAvailable: serverAvailable,
-		tokenCounter:    utils.NewTokenCounter(),
+		Threshold:           threshold,
+		OutputFolder:        outputFolder,
+		SessionID:           sessionID,
+		Enabled:             enabled,
+		ServerAvailable:     serverAvailable,
+		tokenCounter:        utils.NewTokenCounter(),
+		MaxToolOutputTokens: DefaultMaxToolOutputTokenLimit,
 	}
 }
 
@@ -481,4 +489,79 @@ func (h *ToolOutputHandler) getFileExtension(content string) string {
 		return ".json"
 	}
 	return ".txt"
+}
+
+// ExceedsMaxTokenLimit checks if content exceeds the absolute max token limit
+// This check applies regardless of whether context offloading is enabled
+func (h *ToolOutputHandler) ExceedsMaxTokenLimit(content string, model string) bool {
+	tokenCount := h.CountTokensForModel(content, model)
+	return tokenCount > h.MaxToolOutputTokens
+}
+
+// TruncateToMaxTokenLimit returns an error message when content exceeds the max token limit
+// Instead of truncating (which could lead to incorrect results), it returns a clear error
+// Returns the error message and true if the limit was exceeded
+func (h *ToolOutputHandler) TruncateToMaxTokenLimit(content string, model string, toolName string) (string, bool) {
+	tokenCount := h.CountTokensForModel(content, model)
+	if tokenCount <= h.MaxToolOutputTokens {
+		return content, false
+	}
+
+	// Return error message instead of truncated content
+	errorMessage := fmt.Sprintf(`[ERROR: TOOL OUTPUT TOO LARGE]
+
+The tool '%s' returned %d tokens which exceeds the maximum limit of %d tokens.
+The output was NOT included to prevent API errors.
+
+To fix this, you need to make more targeted queries:
+1. Use filters to narrow down the results (e.g., specific folder paths, file patterns)
+2. Request specific fields or ranges instead of full data dumps
+3. Break the request into smaller chunks
+4. Use pagination if the tool supports it
+5. Query for specific items by ID/name instead of listing everything
+
+Example: Instead of listing all files recursively, list files in a specific subfolder.
+`, toolName, tokenCount, h.MaxToolOutputTokens)
+
+	return errorMessage, true
+}
+
+// SetMaxToolOutputTokens sets the maximum token limit for tool outputs
+func (h *ToolOutputHandler) SetMaxToolOutputTokens(limit int) {
+	h.MaxToolOutputTokens = limit
+}
+
+// GetMaxToolOutputTokens returns the current max token limit
+func (h *ToolOutputHandler) GetMaxToolOutputTokens() int {
+	return h.MaxToolOutputTokens
+}
+
+// DefaultMaxContextTokenLimit is the maximum allowed tokens before sending to LLM API
+// This prevents "prompt is too long" errors from cumulative tool results
+// Set to 100k to be conservative and leave room for system prompt, response, etc.
+const DefaultMaxContextTokenLimit = 100000
+
+// EstimateMessagesTokenCount estimates total tokens across all messages
+// This is used for pre-flight checks before calling the LLM API
+func (h *ToolOutputHandler) EstimateMessagesTokenCount(messages []llmtypes.MessageContent, modelID string) int {
+	totalTokens := 0
+	for _, msg := range messages {
+		for _, part := range msg.Parts {
+			switch p := part.(type) {
+			case llmtypes.TextContent:
+				totalTokens += h.CountTokensForModel(p.Text, modelID)
+			case llmtypes.ToolCallResponse:
+				totalTokens += h.CountTokensForModel(p.Content, modelID)
+			case string:
+				totalTokens += h.CountTokensForModel(p, modelID)
+			}
+		}
+	}
+	return totalTokens
+}
+
+// ExceedsContextLimit checks if messages would exceed the safe context limit
+func (h *ToolOutputHandler) ExceedsContextLimit(messages []llmtypes.MessageContent, modelID string, limit int) (bool, int) {
+	totalTokens := h.EstimateMessagesTokenCount(messages, modelID)
+	return totalTokens > limit, totalTokens
 }

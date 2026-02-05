@@ -761,6 +761,30 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			loggerv2.Int("total_messages", len(llmMessages)),
 			loggerv2.Int("compacted_messages_found", compactedInLLMMessages))
 
+		// PRE-FLIGHT CHECK: Verify total context doesn't exceed API limits
+		// This prevents "prompt is too long" errors from cumulative tool results
+		if a.toolOutputHandler != nil {
+			exceeds, totalTokens := a.toolOutputHandler.ExceedsContextLimit(llmMessages, a.ModelID, DefaultMaxContextTokenLimit)
+			if exceeds {
+				v2Logger.Error("Context exceeds maximum token limit", fmt.Errorf("context overflow: %d tokens > %d limit", totalTokens, DefaultMaxContextTokenLimit),
+					loggerv2.Int("total_tokens", totalTokens),
+					loggerv2.Int("max_tokens", DefaultMaxContextTokenLimit),
+					loggerv2.Int("turn", turn+1),
+					loggerv2.Int("message_count", len(llmMessages)))
+
+				contextErrorEvent := events.NewConversationErrorEvent(
+					lastUserMessage,
+					fmt.Sprintf("context overflow: %d tokens exceeds %d limit", totalTokens, DefaultMaxContextTokenLimit),
+					turn+1,
+					"context_overflow",
+					time.Since(conversationStartTime),
+				)
+				a.EmitTypedEvent(ctx, contextErrorEvent)
+
+				return "", messages, fmt.Errorf("context overflow: total messages contain %d tokens which exceeds the maximum limit of %d tokens. The cumulative tool results are too large. Consider using more targeted queries, pagination, or breaking the task into smaller steps", totalTokens, DefaultMaxContextTokenLimit)
+			}
+		}
+
 		tools := events.ConvertToolsToToolInfo(a.filteredTools, a.toolToServer)
 		conversationTurnEvent := events.NewConversationTurnEvent(turn+1, lastMessage, len(llmMessages), false, 0, tools, llmMessages)
 		a.EmitTypedEvent(ctx, conversationTurnEvent)
@@ -1679,7 +1703,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					}
 
 					// Context offloading: Check if tool output should be offloaded to filesystem
-					if a.toolOutputHandler != nil {
+					if a.EnableContextOffloading && a.toolOutputHandler != nil {
 						// Check if output exceeds threshold for context offloading
 						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
 
@@ -1709,6 +1733,20 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 								fileErrorEvent := events.NewLargeToolOutputFileWriteErrorEvent(tc.FunctionCall.Name, writeErr.Error(), len(resultText))
 								a.EmitTypedEvent(ctx, fileErrorEvent)
 							}
+						}
+					}
+
+					// Safety check: Apply max token limit truncation regardless of context offloading setting
+					// This prevents API errors from prompts exceeding model context limits
+					if a.toolOutputHandler != nil && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
+						truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.ModelID, tc.FunctionCall.Name)
+						if wasTruncated {
+							v2Logger.Warn("Tool output exceeded max token limit, truncated",
+								loggerv2.String("tool", tc.FunctionCall.Name),
+								loggerv2.Int("original_length", len(resultText)),
+								loggerv2.Int("truncated_length", len(truncatedResult)),
+								loggerv2.Int("max_tokens", a.toolOutputHandler.GetMaxToolOutputTokens()))
+							resultText = truncatedResult
 						}
 					}
 				} else {
