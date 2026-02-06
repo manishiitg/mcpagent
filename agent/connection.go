@@ -29,7 +29,8 @@ import (
 // Always connects to servers even when using cached data.
 // If disableCache is true, skips cache lookup and always performs fresh connections.
 // runtimeOverrides allows workflow-specific modifications to server configs (e.g., output directories)
-func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger loggerv2.Logger, disableCache bool, runtimeOverrides mcpclient.RuntimeOverrides) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+// userID is accepted for API compatibility but per-user OAuth isolation requires the session-based path (use NewAgentConnectionWithSession)
+func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger loggerv2.Logger, disableCache bool, runtimeOverrides mcpclient.RuntimeOverrides, userID string) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Start timing the entire connection process
 	connectionStartTime := time.Now()
@@ -58,6 +59,14 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 	if disableCache {
 		cacheStatus = "cache disabled"
 	}
+
+	// Note: Per-user OAuth isolation (userID) is not supported in the legacy cache-based path
+	// Use NewAgentConnectionWithSession for per-user OAuth token isolation
+	if userID != "" {
+		logger.Warn("userID set but legacy connection path does not support per-user OAuth isolation. Use session-based connections for per-user OAuth.",
+			loggerv2.String("user_id", userID))
+	}
+
 	logger.Info("NewAgentConnection starting", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", disableCache))
 	logger.Info("NewAgentConnection started ("+cacheStatus+")",
 		loggerv2.String("server_name", serverName),

@@ -45,6 +45,7 @@ import (
 //   - tracers: Tracers for event emission
 //   - logger: Logger for logging
 //   - disableCache: If true, skip cache lookup for tool metadata (connections still reused via registry)
+//   - userID: User ID for per-user OAuth token isolation (empty = use default from config)
 //
 // Returns:
 //   - clients: Map of server name to client interface
@@ -65,6 +66,7 @@ func NewAgentConnectionWithSession(
 	logger loggerv2.Logger,
 	disableCache bool,
 	runtimeOverrides mcpclient.RuntimeOverrides,
+	userID string,
 ) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	connectionStartTime := time.Now()
@@ -153,6 +155,16 @@ func NewAgentConnectionWithSession(
 					loggerv2.Any("args_append", override.ArgsAppend),
 					loggerv2.Any("env_override", override.EnvOverride))
 			}
+		}
+
+		// Override OAuth token file path for per-user isolation
+		if userID != "" && serverConfig.OAuth != nil {
+			userTokenFile := fmt.Sprintf("~/.config/mcpagent/tokens/%s/%s.json", userID, srvName)
+			serverConfig.OAuth.TokenFile = userTokenFile
+			logger.Info("Using per-user OAuth token path",
+				loggerv2.String("server", srvName),
+				loggerv2.String("user_id", userID),
+				loggerv2.String("token_file", userTokenFile))
 		}
 
 		// Get or create connection via registry

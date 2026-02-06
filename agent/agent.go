@@ -638,6 +638,22 @@ func WithSessionID(sessionID string) AgentOption {
 	}
 }
 
+// WithUserID sets the user ID for per-user OAuth token isolation.
+//
+// When set, OAuth tokens for MCP servers are stored at user-specific paths:
+// ~/.config/mcpagent/tokens/{userID}/{serverName}.json
+//
+// This enables multi-user deployments where each user's OAuth credentials
+// are isolated from other users.
+//
+// When empty (default): OAuth tokens use the path from MCP server configuration
+// (typically a shared default path).
+func WithUserID(userID string) AgentOption {
+	return func(a *Agent) {
+		a.UserID = userID
+	}
+}
+
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
 // It is the central component that orchestrates interactions between the Large Language Model (LLM),
 // Model Context Protocol (MCP) servers, and various tools.
@@ -812,6 +828,11 @@ type Agent struct {
 	//           Agent.Close() does NOT close connections - call CloseSession(sessionID) at workflow end
 	// When empty: Legacy behavior - each agent creates/owns its connections, closed on Agent.Close()
 	SessionID string
+
+	// User ID for per-user OAuth token isolation
+	// When set: OAuth tokens are stored per-user at ~/.config/mcpagent/tokens/{UserID}/{serverName}.json
+	// When empty: OAuth tokens use the default path from MCP config
+	UserID string
 
 	// Streaming configuration
 	// When enabled: LLM text responses are streamed incrementally with events
@@ -1209,11 +1230,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		// Use session registry - connections are shared and persist until CloseSession is called
 		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
 		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
 	} else {
 		// Legacy behavior - connections are created fresh and owned by this agent
 		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
 	}
 
 	connectionDuration := time.Since(connectionStartTime)
@@ -2440,11 +2461,11 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		// Use session registry - connections are shared and persist until CloseSession is called
 		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
 		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
 	} else {
 		// Legacy behavior - connections are created fresh and owned by this agent
 		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides)
+			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
 	}
 
 	if err != nil {
