@@ -2627,7 +2627,13 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	if baseEventData, ok := eventData.(interface {
 		SetHierarchyFields(string, int, string, string)
 	}); ok {
-		baseEventData.SetHierarchyFields(a.currentParentEventID, a.currentHierarchyLevel, string(a.TraceID), events.GetComponentFromEventType(eventData.GetEventType()))
+		// Use SessionID for event storage (links events to chat sessions)
+		// Fall back to TraceID if SessionID is not set (legacy behavior)
+		sessionIDForEvents := a.SessionID
+		if sessionIDForEvents == "" {
+			sessionIDForEvents = string(a.TraceID)
+		}
+		baseEventData.SetHierarchyFields(a.currentParentEventID, a.currentHierarchyLevel, sessionIDForEvents, events.GetComponentFromEventType(eventData.GetEventType()))
 	}
 
 	// Create event with correlation ID for start/end event pairs
