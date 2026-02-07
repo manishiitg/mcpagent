@@ -613,6 +613,20 @@ func executeToolCall(
 				}
 			}
 		}
+
+		// Safety check: Apply max token limit truncation regardless of context offloading setting
+		// This prevents API errors from prompts exceeding model context limits
+		if a.toolOutputHandler != nil && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
+			truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.ModelID, tc.FunctionCall.Name)
+			if wasTruncated {
+				v2Logger.Warn("Tool output exceeded max token limit, truncated",
+					loggerv2.String("tool", tc.FunctionCall.Name),
+					loggerv2.Int("original_length", len(resultText)),
+					loggerv2.Int("truncated_length", len(truncatedResult)),
+					loggerv2.Int("max_tokens", a.toolOutputHandler.GetMaxToolOutputTokens()))
+				resultText = truncatedResult
+			}
+		}
 	} else {
 		resultText = "Tool execution completed but no result returned"
 	}
