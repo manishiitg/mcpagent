@@ -10,12 +10,13 @@ import (
 )
 
 // SessionConnectionRegistry manages MCP connections scoped to session lifecycle.
-// Uses sync.Map for lock-free concurrent access.
 //
 // Design principles:
 // - Connections are created once per (sessionID, serverName) pair
 // - Multiple agents in same session share connections
 // - Connections persist until CloseSession() is explicitly called
+// - Per-key mutexes prevent duplicate subprocess spawns when concurrent goroutines
+//   request the same server connection simultaneously
 //
 // Usage:
 //
@@ -26,6 +27,10 @@ import (
 type SessionConnectionRegistry struct {
 	// sessionID -> *sessionConnections
 	sessions sync.Map
+	// Per-key mutexes to serialize connection creation for the same (session, server) pair.
+	// Prevents N goroutines from spawning N subprocesses for the same server.
+	connLocks   map[string]*sync.Mutex
+	connLocksMu sync.Mutex
 }
 
 // sessionConnections holds all connections for a single session
@@ -37,15 +42,30 @@ type sessionConnections struct {
 }
 
 // Global singleton registry
-var globalSessionRegistry = &SessionConnectionRegistry{}
+var globalSessionRegistry = &SessionConnectionRegistry{
+	connLocks: make(map[string]*sync.Mutex),
+}
 
 // GetSessionRegistry returns the global session connection registry
 func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry
 }
 
+// getConnLock returns a mutex for the given (session, server) key, creating one if needed.
+func (r *SessionConnectionRegistry) getConnLock(key string) *sync.Mutex {
+	r.connLocksMu.Lock()
+	defer r.connLocksMu.Unlock()
+	if mu, ok := r.connLocks[key]; ok {
+		return mu
+	}
+	mu := &sync.Mutex{}
+	r.connLocks[key] = mu
+	return mu
+}
+
 // GetOrCreateConnection returns existing connection or creates new one.
-// Thread-safe via sync.Map.LoadOrStore pattern.
+// Uses per-key mutex to ensure only one goroutine connects per (session, server) pair;
+// concurrent callers block until the first connection attempt completes.
 //
 // Parameters:
 //   - ctx: context for connection timeout
@@ -72,29 +92,33 @@ func (r *SessionConnectionRegistry) GetOrCreateConnection(
 	})
 	sessionConns := sessionConnsRaw.(*sessionConnections)
 
-	// Check if connection already exists for this server
+	// Fast path (lock-free): connection already exists
 	if existing, ok := sessionConns.clients.Load(serverName); ok {
 		logger.Info(fmt.Sprintf("Reusing existing connection for session=%s server=%s", sessionID, serverName))
 		return existing.(ClientInterface), false, nil
 	}
 
-	// Create new connection
+	// Serialize connection creation per (session, server) key.
+	// Only one goroutine will proceed to connect; others wait here and get the result.
+	lockKey := sessionID + "|" + serverName
+	mu := r.getConnLock(lockKey)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Double-check after acquiring lock: another goroutine may have connected while we waited
+	if existing, ok := sessionConns.clients.Load(serverName); ok {
+		logger.Info(fmt.Sprintf("Reusing existing connection (post-lock) for session=%s server=%s", sessionID, serverName))
+		return existing.(ClientInterface), false, nil
+	}
+
+	// Create new connection — only one goroutine reaches here per key
 	logger.Info(fmt.Sprintf("Creating new connection for session=%s server=%s", sessionID, serverName))
 	client := New(config, logger)
 	if err := client.ConnectWithRetry(ctx); err != nil {
 		return nil, false, fmt.Errorf("failed to connect to %s: %w", serverName, err)
 	}
 
-	// Store using LoadOrStore to handle race condition
-	// If another goroutine created it first, use theirs
-	actual, loaded := sessionConns.clients.LoadOrStore(serverName, client)
-	if loaded {
-		// Another goroutine created it first, close ours and use theirs
-		logger.Info(fmt.Sprintf("Race condition: closing duplicate connection for session=%s server=%s", sessionID, serverName))
-		_ = client.Close()
-		return actual.(ClientInterface), false, nil
-	}
-
+	sessionConns.clients.Store(serverName, client)
 	logger.Info(fmt.Sprintf("New connection established for session=%s server=%s", sessionID, serverName))
 	return client, true, nil
 }

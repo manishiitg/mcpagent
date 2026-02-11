@@ -167,8 +167,15 @@ func NewAgentConnectionWithSession(
 				loggerv2.String("token_file", userTokenFile))
 		}
 
+		// Use global shared session for stateless MCP servers.
+		// Only stateful servers (e.g., playwright with browser state) need per-session connections.
+		connSessionID := sessionID
+		if srvName != "playwright" && srvName != "agent-browser" {
+			connSessionID = "global"
+		}
+
 		// Get or create connection via registry
-		client, wasCreated, err := registry.GetOrCreateConnection(ctx, sessionID, srvName, serverConfig, logger)
+		client, wasCreated, err := registry.GetOrCreateConnection(ctx, connSessionID, srvName, serverConfig, logger)
 		if err != nil {
 			logger.Error(fmt.Sprintf("Failed to get/create connection for %s", srvName), err,
 				loggerv2.String("session_id", sessionID))

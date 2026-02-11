@@ -1226,16 +1226,17 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	var resources map[string][]mcp.Resource
 	var systemPrompt string
 
-	if ag.SessionID != "" {
-		// Use session registry - connections are shared and persist until CloseSession is called
-		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
-		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
-	} else {
-		// Legacy behavior - connections are created fresh and owned by this agent
-		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
+	// SessionID is mandatory for connection management via the session registry.
+	// Default to "global" if not set, so all agents share connections and we never
+	// fall into the legacy path that spawns fresh subprocesses on every call.
+	if ag.SessionID == "" {
+		ag.SessionID = "global"
+		logger.Warn("SessionID not set — defaulting to 'global' for shared connection management")
 	}
+
+	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
 
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
@@ -2457,16 +2458,17 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	var systemPrompt string
 	var err error
 
-	if ag.SessionID != "" {
-		// Use session registry - connections are shared and persist until CloseSession is called
-		logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
-		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
-	} else {
-		// Legacy behavior - connections are created fresh and owned by this agent
-		clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-			NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
+	// SessionID is mandatory for connection management via the session registry.
+	// Default to "global" if not set, so all agents share connections and we never
+	// fall into the legacy path that spawns fresh subprocesses on every call.
+	if ag.SessionID == "" {
+		ag.SessionID = "global"
+		logger.Warn("SessionID not set — defaulting to 'global' for shared connection management")
 	}
+
+	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
 
 	if err != nil {
 		return nil, err
