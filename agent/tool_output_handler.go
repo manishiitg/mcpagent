@@ -536,10 +536,21 @@ func (h *ToolOutputHandler) GetMaxToolOutputTokens() int {
 	return h.MaxToolOutputTokens
 }
 
-// DefaultMaxContextTokenLimit is the maximum allowed tokens before sending to LLM API
-// This prevents "prompt is too long" errors from cumulative tool results
-// Set to 100k to be conservative and leave room for system prompt, response, etc.
-const DefaultMaxContextTokenLimit = 100000
+// DefaultMaxContextTokenLimit is the fallback maximum allowed tokens before sending to LLM API
+// when model context window information is not available.
+// This prevents "prompt is too long" errors from cumulative tool results.
+const DefaultMaxContextTokenLimit = 800000
+
+// GetMaxContextTokenLimit returns the max context token limit based on the model's context window.
+// Uses 80% of the model's context window to leave room for system prompt and response.
+// Falls back to DefaultMaxContextTokenLimit (800k) if model context window is unknown.
+func GetMaxContextTokenLimit(modelContextWindow int) int {
+	if modelContextWindow > 0 {
+		limit := int(float64(modelContextWindow) * 0.8)
+		return limit
+	}
+	return DefaultMaxContextTokenLimit
+}
 
 // EstimateMessagesTokenCount estimates total tokens across all messages
 // This is used for pre-flight checks before calling the LLM API
