@@ -92,10 +92,21 @@ func (r *SessionConnectionRegistry) GetOrCreateConnection(
 	})
 	sessionConns := sessionConnsRaw.(*sessionConnections)
 
-	// Fast path (lock-free): connection already exists
+	// Fast path (lock-free): connection already exists — verify it's alive
 	if existing, ok := sessionConns.clients.Load(serverName); ok {
-		logger.Info(fmt.Sprintf("Reusing existing connection for session=%s server=%s", sessionID, serverName))
-		return existing.(ClientInterface), false, nil
+		client := existing.(ClientInterface)
+		pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+		pingErr := client.Ping(pingCtx)
+		pingCancel()
+		if pingErr == nil {
+			logger.Info(fmt.Sprintf("Reusing existing connection for session=%s server=%s", sessionID, serverName))
+			return client, false, nil
+		}
+		// Connection is dead — close it and fall through to create a new one
+		logger.Warn(fmt.Sprintf("Connection dead for session=%s server=%s, will recreate", sessionID, serverName),
+			loggerv2.Error(pingErr))
+		_ = client.Close()
+		sessionConns.clients.Delete(serverName)
 	}
 
 	// Serialize connection creation per (session, server) key.
@@ -107,8 +118,19 @@ func (r *SessionConnectionRegistry) GetOrCreateConnection(
 
 	// Double-check after acquiring lock: another goroutine may have connected while we waited
 	if existing, ok := sessionConns.clients.Load(serverName); ok {
-		logger.Info(fmt.Sprintf("Reusing existing connection (post-lock) for session=%s server=%s", sessionID, serverName))
-		return existing.(ClientInterface), false, nil
+		client := existing.(ClientInterface)
+		pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+		pingErr := client.Ping(pingCtx)
+		pingCancel()
+		if pingErr == nil {
+			logger.Info(fmt.Sprintf("Reusing existing connection (post-lock) for session=%s server=%s", sessionID, serverName))
+			return client, false, nil
+		}
+		// Connection is dead — close it and fall through to create a new one
+		logger.Warn(fmt.Sprintf("Connection dead (post-lock) for session=%s server=%s, will recreate", sessionID, serverName),
+			loggerv2.Error(pingErr))
+		_ = client.Close()
+		sessionConns.clients.Delete(serverName)
 	}
 
 	// Create new connection — only one goroutine reaches here per key

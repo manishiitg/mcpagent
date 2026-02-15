@@ -42,6 +42,9 @@ type ClientInterface interface {
 	// GetPrompt gets a specific prompt by name
 	GetPrompt(ctx context.Context, name string) (*mcp.GetPromptResult, error)
 
+	// Ping checks if the connection is still alive
+	Ping(ctx context.Context) error
+
 	// SetContextCancel stores the context cancel function for later cleanup (used for SSE connections)
 	SetContextCancel(cancel context.CancelFunc)
 

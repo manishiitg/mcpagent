@@ -125,6 +125,13 @@ func (c *Client) Connect(ctx context.Context) error {
 
 // connectOnce performs a single connection attempt
 func (c *Client) connectOnce(ctx context.Context) error {
+	// Close existing client before reconnect to prevent subprocess leaks
+	if c.mcpClient != nil {
+		c.logger.Debug("Closing existing mcpClient before reconnect")
+		_ = c.mcpClient.Close()
+		c.mcpClient = nil
+	}
+
 	// Prepare environment variables
 	// Start with the current process environment, then override with config env vars
 	env := os.Environ()
@@ -323,6 +330,14 @@ func (c *Client) Close() error {
 		return c.mcpClient.Close()
 	}
 	return nil
+}
+
+// Ping checks if the connection is still alive by sending a ping to the MCP server.
+func (c *Client) Ping(ctx context.Context) error {
+	if c.mcpClient == nil {
+		return fmt.Errorf("client not connected")
+	}
+	return c.mcpClient.Ping(ctx)
 }
 
 // GetServerInfo returns information about the connected server
@@ -668,6 +683,8 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 				logger.Warn("Parent context cancelled before tool listing, aborting",
 					loggerv2.String("server", name),
 					loggerv2.Error(ctx.Err()))
+				// Close the client to prevent subprocess leak
+				_ = client.Close()
 				if cancel != nil {
 					cancel() // Clean up context
 				}

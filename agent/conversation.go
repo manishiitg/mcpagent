@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -273,6 +274,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Track conversation start time for duration calculation
 	conversationStartTime := time.Now()
+	log.Printf("[LATENCY_DEBUG] AskWithHistory started | messages=%d provider=%s model=%s",
+		len(messages), a.provider, a.ModelID)
 
 	// ✅ CONTEXT-AWARE HIERARCHY: Initialize based on calling context
 	// This ensures hierarchy reflects the actual calling context
@@ -390,6 +393,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		loggerv2.Int("content_length", len(userMessageForEvent)))
 
 	serverList := strings.Join(a.servers, ",")
+	log.Printf("[LATENCY_DEBUG] T+%dms | Pre-conversation setup done (cache validation, system prompt, user message) | servers=%s",
+		time.Since(conversationStartTime).Milliseconds(), serverList)
 
 	// Events are now emitted directly to tracers (no event dispatcher)
 
@@ -710,6 +715,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Track start time for duration calculation
 		llmStartTime := time.Now()
+		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Preparing LLM call | messages=%d tools=%d",
+			turn+1, time.Since(conversationStartTime).Milliseconds(), len(llmMessages), len(a.filteredTools))
 
 		opts := []llmtypes.CallOption{}
 		if !llm.IsO3O4Model(a.ModelID) {
@@ -796,7 +803,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		a.StartLLMGeneration(ctx)
 
 		// Use GenerateContentWithRetry for robust fallback handling
+		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Sending to LLM API | provider=%s model=%s",
+			turn+1, time.Since(conversationStartTime).Milliseconds(), a.provider, a.ModelID)
 		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
+		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | LLM API responded | llm_duration=%dms err=%v",
+			turn+1, time.Since(conversationStartTime).Milliseconds(), time.Since(llmStartTime).Milliseconds(), genErr)
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
@@ -1576,6 +1587,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 
 				duration := time.Since(startTime)
+				log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Tool executed: %s | tool_duration=%dms err=%v",
+					turn+1, time.Since(conversationStartTime).Milliseconds(), tc.FunctionCall.Name, duration.Milliseconds(), toolErr)
 
 				// Check for timeout
 				if toolCtx.Err() == context.DeadlineExceeded {

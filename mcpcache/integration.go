@@ -937,12 +937,15 @@ func performOriginalConnectionLogic(
 	for _, r := range parallelResults {
 		srvName := r.ServerName
 
-		srvCfg, err := cfg.GetServer(srvName)
+		_, err := cfg.GetServer(srvName)
 		if err != nil {
 			logger.Warn("Server not found in config, skipping",
 				loggerv2.String("server", srvName),
 				loggerv2.Error(err))
 			serverErrors = append(serverErrors, fmt.Sprintf("%s: server not found in config: %v", srvName, err))
+			if r.Client != nil {
+				_ = r.Client.Close()
+			}
 			continue // Skip this server instead of failing everything
 		}
 
@@ -952,25 +955,15 @@ func performOriginalConnectionLogic(
 				loggerv2.Error(r.Error))
 			// Collect the raw error for this server
 			serverErrors = append(serverErrors, fmt.Sprintf("%s: %v", srvName, r.Error))
+			if r.Client != nil {
+				_ = r.Client.Close()
+			}
 			continue // Skip this server instead of failing everything
 		}
 
 		// Use the client from parallel tool discovery instead of creating a new one
-		// This ensures we reuse the working SSE connection
+		// This ensures we reuse the working connection (already connected and listed tools successfully)
 		c := r.Client
-
-		// For SSE connections, we already have a working connection from parallel discovery
-		// For other protocols, we may need to reconnect
-		if srvCfg.Protocol != mcpclient.ProtocolSSE {
-			// Only reconnect for non-SSE protocols
-			if err := c.ConnectWithRetry(ctx); err != nil {
-				logger.Warn("Failed to reconnect to server, skipping",
-					loggerv2.String("server", srvName),
-					loggerv2.Error(err))
-				serverErrors = append(serverErrors, fmt.Sprintf("%s: failed to reconnect: %v", srvName, err))
-				continue // Skip this server instead of failing everything
-			}
-		}
 
 		srvTools := r.Tools
 		llmTools, err := mcpclient.ToolsAsLLM(srvTools)
@@ -979,6 +972,9 @@ func performOriginalConnectionLogic(
 				loggerv2.String("server", srvName),
 				loggerv2.Error(err))
 			serverErrors = append(serverErrors, fmt.Sprintf("%s: failed to convert tools: %v", srvName, err))
+			if r.Client != nil {
+				_ = r.Client.Close()
+			}
 			continue // Skip this server instead of failing everything
 		}
 
