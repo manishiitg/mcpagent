@@ -5,7 +5,7 @@ go 1.24.4
 require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/manishiitg/multi-llm-provider-go v0.3.0
+	github.com/manishiitg/multi-llm-provider-go v0.3.3
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.1
