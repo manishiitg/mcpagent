@@ -1710,13 +1710,13 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Langfuse tracing is handled by the tracer itself
 
 	// 🔧 CLAUDE CODE INTEGRATION: Auto-disable incompatible features
-	logger.Info("Checking provider for auto-disable",
+	logger.Debug("Checking provider for auto-disable",
 		loggerv2.String("current_provider", string(ag.provider)),
 		loggerv2.String("claude_code_provider", string(llmproviders.ProviderClaudeCode)),
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		logger.Info("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
+		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
 
 		// Disable Tool Search
 		if ag.UseToolSearchMode {
@@ -2595,13 +2595,13 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	// Tracing is handled by the tracer itself based on TRACING_PROVIDER
 
 	// 🔧 CLAUDE CODE INTEGRATION: Auto-disable incompatible features
-	logger.Info("Checking provider for auto-disable",
+	logger.Debug("Checking provider for auto-disable",
 		loggerv2.String("current_provider", string(ag.provider)),
 		loggerv2.String("claude_code_provider", string(llmproviders.ProviderClaudeCode)),
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		logger.Info("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
+		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
 
 		// Disable Tool Search
 		if ag.UseToolSearchMode {
