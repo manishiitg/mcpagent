@@ -84,7 +84,7 @@ func callAPI(endpoint string, payload map[string]interface{}) string {
 
 		// Read response body
 		bodyBytes, readErr := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+		resp.Body.Close()
 		cancel()
 
 		if readErr != nil {

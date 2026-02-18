@@ -15,16 +15,14 @@ type WriteCodeParams struct {
 // Write Go code to workspace. Code can import generated tool packages from 'generated/' directory. Filename is automatically generated. Optional CLI arguments can be passed to the program via os.Args.
 //
 // Usage: Import package and call with typed struct
-//
-//	Panics on API errors - check output string for tool execution errors
-//
-//	Example: output := WriteCode(WriteCodeParams{
-//	    Args: "value",
-//	    // ... other parameters
-//	})
-//
+//       Panics on API errors - check output string for tool execution errors
+// Example: output := WriteCode(WriteCodeParams{
+//     Args: "value",
+//     // ... other parameters
+// })
 // // Check output for errors (e.g., strings.HasPrefix(output, "Error:"))
 // // Handle tool execution error if detected
+//
 func WriteCode(params WriteCodeParams) string {
 	// Convert params struct to map for API call
 	paramsBytes, err := json.Marshal(params)
@@ -43,3 +41,4 @@ func WriteCode(params WriteCodeParams) string {
 	}
 	return callAPI("/api/virtual/execute", payload)
 }
+
