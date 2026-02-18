@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -2553,6 +2554,41 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	// No more event listeners - events go directly to tracer
 	// Tracing is handled by the tracer itself based on TRACING_PROVIDER
 
+	// 🔧 CLAUDE CODE INTEGRATION: Auto-disable incompatible features
+	if ag.provider == llmproviders.ProviderClaudeCode {
+		logger.Info("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
+
+		// Disable Tool Search
+		if ag.UseToolSearchMode {
+			ag.UseToolSearchMode = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled by CLI)")
+		}
+
+		// Disable Code Execution Mode
+		if ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Code Execution Mode (not supported)")
+		}
+
+		// Disable Context Editing
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Editing (CLI handles context)")
+		}
+
+		// Disable Context Offloading
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Offloading (CLI handles context)")
+		}
+
+		// Disable Context Summarization
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Summarization (CLI handles context)")
+		}
+	}
+
 	// Agent initialization complete
 
 	return ag, nil
@@ -3788,4 +3824,43 @@ func (a *Agent) getGeneratedDir() string {
 	}
 
 	return path
+}
+
+// GetMCPConfigJSON returns the MCP configuration as a JSON string
+// This is used for the Claude Code adapter to pass the configuration to the CLI
+func (a *Agent) GetMCPConfigJSON() (string, error) {
+	// If no config path, return empty object
+	if a.configPath == "" {
+		return "{\"mcpServers\":{}}", nil
+	}
+
+	// Load the raw config
+	config, err := mcpclient.LoadMergedConfig(a.configPath, a.Logger)
+	if err != nil {
+		return "", fmt.Errorf("failed to load MCP config: %w", err)
+	}
+
+	// Filter servers if necessary (e.g. if a.serverName is set and not "all")
+	// For now, we'll pass all servers in the config, as the CLI can handle them.
+	// However, if we want to respect a.serverName, we should filter here.
+	if a.serverName != "" && a.serverName != mcpclient.AllServers {
+		filteredServers := make(map[string]mcpclient.MCPServerConfig)
+		// Handle comma-separated list
+		targetServers := strings.Split(a.serverName, ",")
+		for _, target := range targetServers {
+			target = strings.TrimSpace(target)
+			if server, exists := config.MCPServers[target]; exists {
+				filteredServers[target] = server
+			}
+		}
+		config.MCPServers = filteredServers
+	}
+
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal MCP config: %w", err)
+	}
+
+	return string(jsonBytes), nil
 }

@@ -24,6 +24,13 @@ const (
 	ProviderOpenRouter = llmproviders.ProviderOpenRouter
 	ProviderVertex     = llmproviders.ProviderVertex
 	ProviderAzure      = llmproviders.ProviderAzure
+	ProviderClaudeCode = llmproviders.ProviderClaudeCode
+)
+
+const (
+	MetadataKeyMCPConfig                 = "mcp_config"
+	MetadataKeyDangerouslySkipPermissions = "dangerously_skip_permissions"
+	MetadataKeyTools                     = "claude_code_tools"
 )
 
 // Config holds configuration for LLM initialization (agent_go version)
@@ -264,6 +271,11 @@ func WithOpenRouterUsage() CallOption {
 			}
 		}
 	}
+}
+
+// WithMCPConfig sets the MCP configuration JSON string for the Claude Code adapter session.
+func WithMCPConfig(config string) CallOption {
+	return llmproviders.WithMCPConfig(config)
 }
 
 // Re-export helper functions from llm-providers

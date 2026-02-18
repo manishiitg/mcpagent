@@ -424,6 +424,17 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
+	// 🔧 CLAUDE CODE INTEGRATION: Inject MCP Config
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderClaudeCode {
+		mcpConfigJSON, err := a.GetMCPConfigJSON()
+		if err != nil {
+			a.Logger.Warn("Failed to get MCP config for Claude Code adapter", loggerv2.Error(err))
+		} else {
+			opts = append(opts, llm.WithMCPConfig(mcpConfigJSON))
+			a.Logger.Info("Injected MCP config for Claude Code adapter")
+		}
+	}
+
 	return llmInstance.GenerateContent(ctx, messages, opts...)
 }
 
