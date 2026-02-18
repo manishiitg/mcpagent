@@ -1709,6 +1709,46 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// No more event listeners - events go directly to tracer
 	// Langfuse tracing is handled by the tracer itself
 
+	// 🔧 CLAUDE CODE INTEGRATION: Auto-disable incompatible features
+	logger.Info("Checking provider for auto-disable",
+		loggerv2.String("current_provider", string(ag.provider)),
+		loggerv2.String("claude_code_provider", string(llmproviders.ProviderClaudeCode)),
+		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
+
+	if ag.provider == llmproviders.ProviderClaudeCode {
+		logger.Info("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
+
+		// Disable Tool Search
+		if ag.UseToolSearchMode {
+			ag.UseToolSearchMode = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled by CLI)")
+		}
+
+		// Disable Code Execution Mode
+		if ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Code Execution Mode (not supported)")
+		}
+
+		// Disable Context Editing
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Editing (handled by CLI)")
+		}
+
+		// Disable Context Offloading
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Offloading (handled by CLI)")
+		}
+
+		// Disable Context Summarization
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Summarization (handled by CLI)")
+		}
+	}
+
 	// Agent initialization complete
 
 	return ag, nil
@@ -2555,6 +2595,11 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	// Tracing is handled by the tracer itself based on TRACING_PROVIDER
 
 	// 🔧 CLAUDE CODE INTEGRATION: Auto-disable incompatible features
+	logger.Info("Checking provider for auto-disable",
+		loggerv2.String("current_provider", string(ag.provider)),
+		loggerv2.String("claude_code_provider", string(llmproviders.ProviderClaudeCode)),
+		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
+
 	if ag.provider == llmproviders.ProviderClaudeCode {
 		logger.Info("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
 
