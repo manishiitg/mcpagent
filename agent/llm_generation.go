@@ -430,8 +430,8 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		if err != nil {
 			a.Logger.Warn("Failed to get MCP config for Claude Code adapter", loggerv2.Error(err))
 		} else {
-			opts = append(opts, llm.WithMCPConfig(mcpConfigJSON))
-			a.Logger.Info("Injected MCP config for Claude Code adapter")
+			opts = append(opts, llm.WithMCPConfig(mcpConfigJSON), llm.WithDangerouslySkipPermissions())
+			a.Logger.Info("Injected MCP config and skipped permissions for Claude Code adapter")
 		}
 	}
 

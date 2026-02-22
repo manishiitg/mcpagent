@@ -11,6 +11,7 @@ import (
 	agentmcp "github.com/manishiitg/mcpagent/cmd/testing/agent-mcp"
 	connectionisolation "github.com/manishiitg/mcpagent/cmd/testing/connection-isolation"
 	executortest "github.com/manishiitg/mcpagent/cmd/testing/executor"
+	hello "github.com/manishiitg/mcpagent/cmd/testing/hello"
 	humanfeedbackcodeexec "github.com/manishiitg/mcpagent/cmd/testing/human-feedback-code-exec"
 	langfuse "github.com/manishiitg/mcpagent/cmd/testing/langfuse"
 	langsmith "github.com/manishiitg/mcpagent/cmd/testing/langsmith"
@@ -96,6 +97,7 @@ func init() {
 // initTestingCommands initializes all testing subcommands
 func initTestingCommands() {
 	TestingCmd.AddCommand(toolfilter.GetToolFilterTestCmd())
+	TestingCmd.AddCommand(hello.GetHelloTestCmd())
 	TestingCmd.AddCommand(agentmcp.GetAgentMCPTestCmd())
 	TestingCmd.AddCommand(connectionisolation.GetConnectionIsolationTestCmd())
 	TestingCmd.AddCommand(executortest.GetExecutorTestCmd())

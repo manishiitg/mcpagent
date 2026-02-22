@@ -278,6 +278,12 @@ func WithMCPConfig(config string) CallOption {
 	return llmproviders.WithMCPConfig(config)
 }
 
+// WithDangerouslySkipPermissions enables the --dangerously-skip-permissions flag for the Claude Code CLI.
+// CAUTION: This allows the agent to execute any tool without user confirmation.
+func WithDangerouslySkipPermissions() CallOption {
+	return llmproviders.WithDangerouslySkipPermissions()
+}
+
 // Re-export helper functions from llm-providers
 
 // GetDefaultModel returns the default model for each provider from environment variables
