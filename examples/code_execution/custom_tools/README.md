@@ -1,12 +1,12 @@
 # Code Execution Mode with Custom Tools
 
-This example demonstrates how to use **custom tools** in **code execution mode**. In this mode, the agent generates and executes Go code instead of making direct JSON tool calls. Custom tools are accessible via generated Go code through the HTTP API.
+This example demonstrates how to use **custom tools** in **code execution mode**. In this mode, the agent writes and executes Python code to call tools via HTTP API instead of making direct JSON tool calls. Custom tools are accessible via per-tool HTTP endpoints.
 
 ## Key Features
 
-1. **Code Execution Mode**: The agent writes and executes Go code automatically
-2. **Custom Tools**: Register custom Go functions as tools that can be called via generated code
-3. **HTTP Server**: Local HTTP server handles API calls from generated Go code
+1. **Code Execution Mode**: The agent writes and executes Python code automatically
+2. **Custom Tools**: Register custom Go functions as tools callable via HTTP API
+3. **HTTP Server**: Local HTTP server handles API calls from Python code
 4. **Multi-Turn Conversations**: Uses `AskWithHistory` for maintaining conversation context
 
 ## How It Works
@@ -14,19 +14,19 @@ This example demonstrates how to use **custom tools** in **code execution mode**
 ### Code Execution Mode
 
 When code execution mode is enabled:
-- The agent only sees virtual tools: `discover_code_files` and `write_code`
+- The agent sees virtual tools: `get_api_spec` and `execute_shell_command`
 - MCP tools and custom tools are **NOT** directly exposed to the LLM
-- The agent generates Go code that calls tools via HTTP API
-- Generated code is executed in an isolated environment
+- The agent writes Python code that calls tools via per-tool HTTP endpoints
+- Python code uses bearer token auth via `MCP_API_TOKEN` environment variable
 
 ### Custom Tools in Code Execution Mode
 
-Custom tools work differently in code execution mode:
+Custom tools work in code execution mode via HTTP API:
 
 1. **Registration**: Custom tools are registered using `agent.RegisterCustomTool()`
-2. **Code Generation**: Go code is automatically generated for custom tools
-3. **Execution**: Generated code calls custom tools via `/api/custom/execute` HTTP endpoint
-4. **Access**: Custom tools are accessible through generated Go functions, not direct LLM tool calls
+2. **Discovery**: LLM can discover custom tools via `get_api_spec`
+3. **Execution**: Python code calls custom tools via `POST /tools/custom/{tool}` HTTP endpoint
+4. **Access**: Custom tools are accessible through Python HTTP requests, not direct LLM tool calls
 
 ### Example Custom Tools
 
@@ -78,7 +78,7 @@ The example will:
 1. Start an HTTP server on port 8000 (or the port specified in `MCP_API_URL`)
 2. Register custom tools
 3. Process example questions that trigger code execution
-4. Generate and execute Go code that uses custom tools
+4. Generate and execute Python code that uses custom tools via HTTP API
 
 ### Example Questions
 
@@ -88,9 +88,9 @@ The example includes questions like:
 - "Calculate the square root of 144, then format 'The answer is' followed by the result in title case"
 
 These questions will cause the agent to:
-1. Generate Go code that calls custom tools
-2. Execute the code via HTTP API
-3. Return the results
+1. Call `get_api_spec` to discover the custom tool endpoints
+2. Write Python code that calls custom tools via HTTP API
+3. Execute the code and return the results
 
 ## How Custom Tools Work in Code Execution Mode
 
@@ -106,40 +106,41 @@ agent.RegisterCustomTool(
 )
 ```
 
-### Generated Code
+### LLM-Generated Python Code
 
-The agent generates Go code like:
+The agent generates Python code like:
 
-```go
-// Generated function for calculator tool
-func calculator(params CalculatorParams) string {
-    payload := map[string]interface{}{
-        "server": "custom",
-        "tool":   "calculator",
-        "args":   params,
-    }
-    return callAPI("/api/custom/execute", payload)
+```python
+import requests, os, json
+
+url = os.environ["MCP_API_URL"] + "/tools/custom/calculator"
+headers = {
+    "Authorization": f"Bearer {os.environ['MCP_API_TOKEN']}",
+    "Content-Type": "application/json"
 }
+resp = requests.post(url, json={"operation": "multiply", "a": 15, "b": 23}, headers=headers)
+data = resp.json()
+print(data["result"] if data.get("success") else f"Error: {data.get('error')}")
 ```
 
 ### Execution Flow
 
 1. Agent receives question
-2. Agent generates Go code using `write_code` tool
-3. Generated code calls custom tools via HTTP API
-4. HTTP server routes to `/api/custom/execute`
-5. Custom tool execution function is called
-6. Result is returned to generated code
-7. Generated code returns final result
+2. Agent calls `get_api_spec` to discover custom tool endpoints
+3. Agent writes Python code using `execute_shell_command`
+4. Python code calls custom tools via `POST /tools/custom/{tool}`
+5. HTTP server routes to custom tool execution function
+6. Result is returned to Python code
+7. Python code returns final result
 
 ## Differences from Normal Mode
 
 | Feature | Normal Mode | Code Execution Mode |
 |---------|-------------|---------------------|
-| Custom Tools | Directly exposed to LLM | Accessible via generated Go code |
-| Tool Calls | JSON tool calls | Go code execution |
-| Execution | Synchronous | Via HTTP API |
-| Code Generation | Not required | Required for all tools |
+| Custom Tools | Directly exposed to LLM | Accessible via Python HTTP requests |
+| Tool Calls | JSON tool calls | Python code execution |
+| Execution | Synchronous tool calls | Via per-tool HTTP endpoints |
+| Discovery | Tools in LLM context | Via `get_api_spec` OpenAPI specs |
 
 ## Logging
 
@@ -166,7 +167,7 @@ Ensure custom tools are registered **before** calling `agent.Ask()` or `agent.As
 Check the agent log file for detailed error messages. Common issues:
 - HTTP server not running
 - Invalid tool parameters
-- Network connectivity issues
+- Missing bearer token (`MCP_API_TOKEN` not set)
 
 ## Next Steps
 
@@ -174,4 +175,3 @@ Check the agent log file for detailed error messages. Common issues:
 - Combine custom tools with MCP server tools
 - Use custom tools for domain-specific operations
 - Implement complex workflows using multiple custom tools
-

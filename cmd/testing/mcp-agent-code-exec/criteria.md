@@ -29,22 +29,22 @@ The test will output a `trace_id` that you can use to view the trace in Langfuse
 ## What This Test Validates
 
 **End-to-end code execution flow:**
-Agent → Generates Go code → Executes code → Calls executor HTTP endpoint → Uses context7 MCP tool → Returns result
+Agent → Calls `get_api_spec` → Writes Python code → Executes via `execute_shell_command` → Python calls per-tool HTTP endpoint → Uses context7 MCP tool → Returns result
 
 ## Critical Success Criteria
 
-### ✅ 1. Executor Server Started
+### 1. Executor Server Started
 
 **Must see:**
 ```
 ✅ Executor server started url=http://127.0.0.1:8000
 ```
 
-**Why it matters:** Generated code calls `http://localhost:8000` by default
+**Why it matters:** Python code calls per-tool endpoints on this server
 
 ---
 
-### ✅ 2. Code Execution Agent Created
+### 2. Code Execution Agent Created
 
 **Must see:**
 ```
@@ -52,11 +52,11 @@ Agent → Generates Go code → Executes code → Calls executor HTTP endpoint �
 MCP server configured: context7
 ```
 
-**Why it matters:** Confirms agent can generate code and has context7 available
+**Why it matters:** Confirms agent has `get_api_spec` + `execute_shell_command` and context7 available
 
 ---
 
-### ✅ 3. Context7 Tool Called Successfully
+### 3. Context7 Tool Called Successfully
 
 **Must see in response:**
 - Response contains "react" or library information
@@ -69,20 +69,20 @@ MCP server configured: context7
 ✅ Response indicates context7 tool was called successfully
 ```
 
-**Why it matters:** Proves the full flow worked - code was generated, executed, and called context7
+**Why it matters:** Proves the full flow worked - Python code was generated, executed, and called context7 via HTTP API
 
 ---
 
-### ✅ 4. Full Flow Confirmation
+### 4. Full Flow Confirmation
 
 **Must see:**
 ```
 ✅ Agent successfully executed code with MCP tool
 This confirms:
-  1. Agent generated Go code
-  2. Code was executed via write_code virtual tool
-  3. Generated code called executor HTTP endpoint
-  4. Executor handler called context7 MCP tool
+  1. Agent discovered tool via get_api_spec
+  2. Agent wrote Python code using execute_shell_command
+  3. Python code called per-tool HTTP endpoint with bearer token
+  4. Per-tool endpoint called context7 MCP tool
   5. Full code execution flow works end-to-end
 ```
 
@@ -117,19 +117,19 @@ Sending query to agent query=Use the context7 server to resolve...
 
 With `--log-level debug`, verify these appear:
 
-### Code Generation
+### Tool Discovery
 ```
-🔧 Executing virtual tool write_code
+🔧 Executing virtual tool get_api_spec
 ```
 
 ### Code Execution
 ```
-🔧 Executing Go code using 'go run' command
+🔧 Executing shell command (Python code)
 ```
 
-### HTTP Call to Executor
+### HTTP Call to Per-Tool Endpoint
 ```
-Making request url=http://localhost:8000/api/mcp/execute
+Making request url=http://localhost:8000/tools/mcp/context7/resolve_library_id
 Response status=200
 ```
 
@@ -142,17 +142,21 @@ Calling MCP tool tool=resolve_library_id server=context7
 
 ## Common Failures
 
-### ❌ "OPENAI_API_KEY is required"
+### "OPENAI_API_KEY is required"
 **Fix:** `export OPENAI_API_KEY=your-key`
 
-### ❌ "bind: address already in use" (port 8000)
+### "bind: address already in use" (port 8000)
 **Fix:** `lsof -ti:8000 | xargs kill`
 
-### ❌ Response doesn't mention "react"
+### Response doesn't mention "react"
 **Problem:** Context7 tool wasn't called
 **Check:** Look for "tool not found" or "server not configured" in logs
 
-### ❌ "empty response from agent"
+### "401 Unauthorized"
+**Problem:** Bearer token mismatch
+**Check:** Verify `MCP_API_TOKEN` env var matches generated token
+
+### "empty response from agent"
 **Problem:** Agent didn't complete the task
 **Check:** Agent logs for errors, verify LLM is working
 
@@ -167,15 +171,16 @@ Calling MCP tool tool=resolve_library_id server=context7
 - [ ] Response received (not empty)
 - [ ] Response mentions "react" or library info
 - [ ] No errors in logs
-- [ ] All 5 confirmation points logged
+- [ ] All confirmation points logged
 
-**If all checked:** ✅ Test passed!
+**If all checked:** Test passed!
 
 ---
 
 ## Related Files
 
-- `mcpagent/executor/handlers.go` - HTTP handlers being tested
+- `mcpagent/executor/per_tool_handler.go` - Per-tool HTTP handlers
+- `mcpagent/executor/security.go` - Bearer token auth
 - `mcpagent/agent/code_execution_tools.go` - Code execution implementation
 - `docs/code_execution_agent.md` - Code execution documentation
 
@@ -218,21 +223,5 @@ Trace (test-trace-...)
 - [ ] **MCP Connection span** shows successful connection to context7
 - [ ] **MCP Discovery span** shows 1 server and tools discovered
 - [ ] Trace shows full code execution flow
-
-### Automated Verification
-
-```bash
-# Check GENERATION spans have model and usage
-go run ./cmd/testing/... langfuse-read --trace-id <trace-id> --observations --limit 20 2>&1 | \
-  grep -A10 '"type": "GENERATION"' | grep -E "(model|usage|endTime)"
-
-# Check for MCP connection spans
-go run ./cmd/testing/... langfuse-read --trace-id <trace-id> --observations --limit 20 2>&1 | \
-  grep -B2 -A5 'mcp_connection'
-
-# Check for tool spans
-go run ./cmd/testing/... langfuse-read --trace-id <trace-id> --observations --limit 20 2>&1 | \
-  grep -B2 -A5 '"name": "tool_'
-```
 
 See `docs/tracing.md` for more details on the tracing implementation.

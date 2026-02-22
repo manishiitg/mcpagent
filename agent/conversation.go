@@ -62,7 +62,7 @@ func isVirtualTool(toolName string) bool {
 	virtualTools := []string{
 		"get_prompt", "get_resource",
 		"read_large_output", "search_large_output", "query_large_output",
-		"discover_code_files", "write_code", // Code execution mode tools
+		"get_api_spec", // Code execution mode tools
 		"search_tools", "add_tool", "show_all_tools", // Tool search mode tools
 	}
 	for _, vt := range virtualTools {
@@ -996,25 +996,20 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Determine server name for tool call events
 				serverName := a.toolToServer[tc.FunctionCall.Name]
 				if isVirtualTool(tc.FunctionCall.Name) {
-					// 🔧 FIX: For discover_code_files, extract the actual server_name from arguments
-					// Previously, all virtual tools (including discover_code_files) always used "virtual-tools"
-					// as the server name in error events. This caused confusing error messages like:
-					// "Server: virtual-tools" when the actual server being discovered was "workspace".
-					// Now we parse the tool arguments to extract the real server_name (e.g., "workspace", "google_sheets")
-					// so error events show the correct server being discovered, making debugging much easier.
-					if tc.FunctionCall.Name == "discover_code_files" && tc.FunctionCall.Arguments != "" {
+					// For get_api_spec, extract the actual server_name from arguments
+					// so error events show the correct server, making debugging easier.
+					if tc.FunctionCall.Name == "get_api_spec" && tc.FunctionCall.Arguments != "" {
 						var args map[string]interface{}
 						if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
 							if srvName, ok := args["server_name"].(string); ok && srvName != "" {
-								serverName = srvName // Use the actual server being discovered
+								serverName = srvName
 							} else {
-								serverName = "virtual-tools" // Fallback if server_name not found
+								serverName = "virtual-tools"
 							}
 						} else {
-							serverName = "virtual-tools" // Fallback if JSON parsing fails
+							serverName = "virtual-tools"
 						}
 					} else {
-						// Other virtual tools (get_prompt, get_resource, write_code, etc.) still use "virtual-tools"
 						serverName = "virtual-tools"
 					}
 				}

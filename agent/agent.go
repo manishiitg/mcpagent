@@ -20,7 +20,6 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpcache"
-	"github.com/manishiitg/mcpagent/mcpcache/codegen"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
 )
@@ -484,12 +483,13 @@ func WithSelectedServers(servers []string) AgentOption {
 	}
 }
 
-// WithCodeExecutionMode enables the Code Execution (Code Act) mode.
+// WithCodeExecutionMode enables the Code Execution mode.
 //
-// In this mode, instead of calling tools directly via JSON-RPC, the LLM is instructed
-// to write Go code that imports and calls the tool functions.
+// In this mode, both MCP server tools and custom tools are accessed via HTTP endpoints documented in an OpenAPI spec.
+// The LLM uses get_api_spec to discover endpoints, then writes code in any language
+// (Python, bash, curl, etc.) to call them.
 //
-//   - Enabled: Only "discover_code_files" and "write_code" tools are exposed.
+//   - Enabled: get_api_spec only. MCP and custom tools via HTTP API.
 //   - Disabled: All MCP tools are exposed directly (Standard mode).
 //
 // Default: false (Standard mode)
@@ -635,6 +635,17 @@ func WithServerName(serverName string) AgentOption {
 func WithSessionID(sessionID string) AgentOption {
 	return func(a *Agent) {
 		a.SessionID = sessionID
+	}
+}
+
+// WithAPIConfig sets the executor API base URL and bearer token for code execution mode.
+// Code execution subprocesses receive these as MCP_API_URL and MCP_API_TOKEN environment variables.
+// The consumer application is responsible for starting the HTTP server and generating the token
+// (see executor.GenerateAPIToken and executor.AuthMiddleware).
+func WithAPIConfig(baseURL, token string) AgentOption {
+	return func(a *Agent) {
+		a.APIBaseURL = baseURL
+		a.APIToken = token
 	}
 }
 
@@ -800,8 +811,8 @@ type Agent struct {
 	DiscoverPrompt bool // If true, include prompt details in system prompt (default: true)
 
 	// Code execution mode configuration
-	// When enabled: Only virtual tools (discover_code_files, write_code) are exposed to the LLM
-	// MCP tools and custom tools are NOT added directly - LLM must use generated Go code via write_code
+	// When enabled: Custom tools + get_api_spec virtual tool are exposed to the LLM
+	// MCP server tools are accessed via HTTP API (documented in OpenAPI specs from get_api_spec)
 	// When disabled (default): All MCP tools are added directly as LLM tools
 	UseCodeExecutionMode bool
 
@@ -828,6 +839,19 @@ type Agent struct {
 	//           Agent.Close() does NOT close connections - call CloseSession(sessionID) at workflow end
 	// When empty: Legacy behavior - each agent creates/owns its connections, closed on Agent.Close()
 	SessionID string
+
+	// API configuration for code execution mode
+	// When set, code execution subprocesses receive these as MCP_API_URL and MCP_API_TOKEN env vars
+	APIBaseURL string
+	APIToken   string
+
+	// Cached OpenAPI specs per server (generated on-demand by get_api_spec)
+	openAPISpecCache map[string][]byte
+
+	// All MCP tool definitions (stored in code execution mode for OpenAPI spec generation)
+	// In code execution mode, MCP tools are excluded from a.Tools (accessed via HTTP API),
+	// but their definitions are needed by handleGetAPISpec to generate OpenAPI specs.
+	allMCPToolDefs []llmtypes.Tool
 
 	// User ID for per-user OAuth token isolation
 	// When set: OAuth tokens are stored per-user at ~/.config/mcpagent/tokens/{UserID}/{serverName}.json
@@ -1313,12 +1337,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Start periodic cleanup routine for tool output files
 	ag.startCleanupRoutine()
 
-	// 🔧 Ensure generated code exists for all connected MCP servers
-	// This handles cases where cache exists but generated code was deleted
+	// In code execution mode, OpenAPI specs are generated on-demand per server
+	// when the LLM calls get_api_spec(server_name=...) — no upfront code generation needed
 	if ag.UseCodeExecutionMode {
-		// Use agent's ToolTimeout (same as used for normal tool calls)
-		toolTimeout := getToolExecutionTimeout(ag)
-		cacheManager.EnsureGeneratedCodeForServers(servers, config, toolTimeout, logger)
+		ag.openAPISpecCache = make(map[string][]byte)
+		logger.Debug("Code execution mode: OpenAPI specs will be generated on-demand via get_api_spec")
 	}
 
 	// Set selectedServers based on serverName parameter if not already set via options
@@ -1348,34 +1371,41 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		logger,
 	)
 
-	// Handle code execution mode: filter out MCP tools and custom tools if enabled
+	// Handle code execution mode: filter out MCP and custom tools (both accessed via HTTP API)
 	var toolsToUse []llmtypes.Tool
 	if ag.UseCodeExecutionMode {
-		// Code execution mode: Only include virtual tools (discover_code_files, write_code)
-		// Exclude all MCP server tools and custom tools (they'll be accessed via generated code)
-		logger.Debug("Code execution mode enabled - excluding MCP tools and custom tools from LLM (will use generated code)")
-
-		// Build set of custom tool names for filtering
-		customToolNames := make(map[string]bool)
-		for toolName := range ag.customTools {
-			customToolNames[toolName] = true
-		}
+		// Code execution mode: Only virtual tools as direct LLM calls
+		// Exclude both MCP server tools and custom tools (they're accessed via HTTP endpoints documented in OpenAPI spec)
+		logger.Debug("Code execution mode enabled - excluding MCP and custom tools from LLM (accessed via HTTP API)")
 
 		for _, tool := range allLLMTools {
-			// Check if this tool is an MCP tool (exists in toolToServer)
-			_, isMCPTool := toolToServer[tool.Function.Name]
-			// Check if this tool is a custom tool
-			isCustomTool := customToolNames[tool.Function.Name]
-
-			// In code execution mode, exclude both MCP tools and custom tools
-			// Only include virtual tools (which will be filtered later to only discover_code_files and write_code)
-			if !isMCPTool && !isCustomTool {
-				// Not an MCP tool or custom tool - include it (virtual tools only)
-				toolsToUse = append(toolsToUse, tool)
+			if tool.Function == nil {
+				continue
 			}
+			// Check if this tool is an MCP tool (exists in toolToServer and NOT custom)
+			serverName, isMCPTool := toolToServer[tool.Function.Name]
+
+			// In code execution mode, exclude both MCP server tools and custom tools
+			// They're all accessed via HTTP API endpoints documented in OpenAPI spec
+			// Keep only virtual tools (get_api_spec will be filtered in later)
+			if isMCPTool && serverName != "custom" {
+				// Store MCP tool definitions for OpenAPI spec generation
+				ag.allMCPToolDefs = append(ag.allMCPToolDefs, tool)
+				continue // Skip MCP server tools — they're behind the HTTP API
+			}
+			if isMCPTool && serverName == "custom" {
+				// System-category custom tools (execute_shell_command, workspace tools) stay as direct LLM calls
+				// Non-system custom tools (e.g. get_weather) go through HTTP API
+				if ct, exists := ag.customTools[tool.Function.Name]; exists && ag.toolFilter.IsSystemCategory(ct.Category) {
+					toolsToUse = append(toolsToUse, tool)
+				}
+				continue
+			}
+			toolsToUse = append(toolsToUse, tool)
 		}
-		logger.Debug("Code execution mode: tools available (only virtual tools, MCP and custom tools excluded)",
-			loggerv2.Int("tool_count", len(toolsToUse)))
+		logger.Debug("Code execution mode: tools available (virtual only, MCP + custom excluded)",
+			loggerv2.Int("tool_count", len(toolsToUse)),
+			loggerv2.Int("mcp_tool_defs_stored", len(ag.allMCPToolDefs)))
 	} else if ag.UseToolSearchMode {
 		// Tool search mode: Store filtered tools as deferred, expose only search_tools
 		logger.Debug("Tool search mode enabled - storing tools as deferred (with filtering)")
@@ -1526,75 +1556,64 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Add virtual tools to the LLM tools list
 	virtualTools := ag.CreateVirtualTools()
 
-	// Filter virtual tools based on code execution mode
+	// Filter virtual tools based on mode
 	if ag.UseCodeExecutionMode {
-		// In code execution mode, only include discover_code_files and write_code
+		// In code execution mode, only include get_api_spec
 		var filteredVirtualTools []llmtypes.Tool
 		for _, tool := range virtualTools {
 			if tool.Function != nil {
 				toolName := tool.Function.Name
-				// Only include code execution tools in code execution mode
-				if toolName == "discover_code_files" || toolName == "write_code" {
+				if toolName == "get_api_spec" {
 					filteredVirtualTools = append(filteredVirtualTools, tool)
 				}
 			}
 		}
 		virtualTools = filteredVirtualTools
-		logger.Debug("Code execution mode: Filtered virtual tools - only discover_code_files and write_code available")
+		logger.Debug("Code execution mode: Filtered virtual tools - only get_api_spec available")
 	} else if ag.UseToolSearchMode {
 		// In tool search mode, only include search_tools and context offloading tools
-		// Context offloading tools (search_large_output, etc.) must be immediately available
-		// because they're needed to access offloaded content when large outputs occur
-		// All other tools are discovered dynamically via search
 		var filteredVirtualTools []llmtypes.Tool
 		for _, tool := range virtualTools {
 			if tool.Function != nil {
 				toolName := tool.Function.Name
 
-				// Explicitly exclude code execution tools from discovery in tool search mode
-				// They should only be available if UseCodeExecutionMode is true (handled in the if block above)
-				if toolName == "discover_code_files" || toolName == "write_code" {
+				// Exclude code execution tools from discovery in tool search mode
+				if toolName == "get_api_spec" {
 					continue
 				}
 
-				// Context offloading tools must be immediately available (pre-discovered)
-				// They're infrastructure tools needed when large outputs are offloaded
+				// Context offloading tools must be immediately available
 				isContextOffloadingTool := toolName == "search_large_output" ||
 					toolName == "read_large_output" ||
 					toolName == "query_large_output"
 
-				// Only include search_tools and context offloading tools immediately
 				if toolName == "search_tools" || isContextOffloadingTool {
 					filteredVirtualTools = append(filteredVirtualTools, tool)
 				} else {
-					// Store other virtual tools in deferred tools for discovery
 					ag.allDeferredTools = append(ag.allDeferredTools, tool)
 				}
 			}
 		}
-		// Add tool search tools (search_tools, add_tool, show_all_tools)
 		filteredVirtualTools = append(filteredVirtualTools, CreateToolSearchTools()...)
 		virtualTools = filteredVirtualTools
 		logger.Debug("Tool search mode: search_tools and context offloading tools available, other virtual tools deferred",
 			loggerv2.Int("virtual_count", len(virtualTools)),
 			loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
 
-		// Initialize tool search mode (pre-discover configured tools)
 		ag.initializeToolSearch()
 	} else {
-		// In non-code execution mode, exclude discover_code_files and write_code
+		// In non-code execution mode, exclude get_api_spec
 		var filteredVirtualTools []llmtypes.Tool
 		for _, tool := range virtualTools {
 			if tool.Function != nil {
 				toolName := tool.Function.Name
-				// Exclude code execution tools in non-code execution mode
-				if toolName != "discover_code_files" && toolName != "write_code" {
+				if toolName != "get_api_spec" {
 					filteredVirtualTools = append(filteredVirtualTools, tool)
 				}
 			}
 		}
 		virtualTools = filteredVirtualTools
-		logger.Debug("Non-code execution mode: Excluded discover_code_files and write_code from virtual tools")
+		logger.Debug("Non-code execution mode: Excluded get_api_spec from virtual tools")
 	}
 
 	ag.Tools = append(ag.Tools, virtualTools...)
@@ -1625,29 +1644,14 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			loggerv2.Int("count", len(customToolExecutors)))
 	}
 
-	// Generate Go code for virtual tools (only needed in code execution mode)
-	// In simple agent mode, virtual tools are called directly via HandleVirtualTool()
-	// The generated code is only used when LLM writes Go code that imports these packages
-	var generatedDir string
-	if ag.UseCodeExecutionMode {
-		generatedDir = ag.getGeneratedDir()
-		// Use agent's ToolTimeout (same as used for normal tool calls)
-		toolTimeout := getToolExecutionTimeout(ag)
-		if err := codegen.GenerateVirtualToolsCode(virtualTools, generatedDir, logger, toolTimeout); err != nil {
-			logger.Warn("Failed to generate Go code for virtual tools", loggerv2.Error(err))
-			// Don't fail agent initialization if code generation fails
-		}
-		logger.Debug("MCP server code generation handled by cache manager (no regeneration needed)")
-	}
+	// No Go code generation needed — OpenAPI specs are generated on-demand via get_api_spec
 
-	// In code execution mode, discover tool structure and include it in system prompt
+	// In code execution mode, build tool index from agent internal state
 	var toolStructureJSON string
 	if ag.UseCodeExecutionMode {
-		// Discover all available tools and include structure in system prompt
-		toolStructure, err := ag.discoverAllServersAndTools(generatedDir)
+		toolStructure, err := ag.buildToolIndex()
 		if err != nil {
-			logger.Warn("Failed to discover tool structure for system prompt", loggerv2.Error(err))
-			// Continue without tool structure if discovery fails
+			logger.Warn("Failed to build tool index for system prompt", loggerv2.Error(err))
 		} else {
 			toolStructureJSON = toolStructure
 		}
@@ -2327,14 +2331,12 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 	}
 
 	// Rebuild system prompt with filtered data
-	// In code execution mode, rediscover tool structure after filtering
 	var toolStructureJSON string
 	if a.UseCodeExecutionMode {
-		generatedDir := a.getGeneratedDir()
-		toolStructure, err := a.discoverAllServersAndTools(generatedDir)
+		toolStructure, err := a.buildToolIndex()
 		if err != nil {
 			if a.Logger != nil {
-				a.Logger.Warn("Failed to rediscover tool structure after filtering", loggerv2.Error(err))
+				a.Logger.Warn("Failed to rebuild tool index after filtering", loggerv2.Error(err))
 			}
 		} else {
 			toolStructureJSON = toolStructure
@@ -3212,36 +3214,21 @@ func (a *Agent) IsCancelled() bool {
 // Always overwrites the existing system prompt (removed prepending behavior for code execution mode)
 // In code execution mode, if the prompt contains {{TOOL_STRUCTURE}} placeholder, it will be replaced with actual tool structure JSON
 func (a *Agent) SetSystemPrompt(systemPrompt string) {
-	// Always overwrite the system prompt (removed prepending behavior)
 	// In code execution mode, replace {{TOOL_STRUCTURE}} placeholder if present
 	if a.UseCodeExecutionMode && strings.Contains(systemPrompt, prompt.ToolStructurePlaceholder) {
-		// Get tool structure and replace placeholder
-		generatedDir := a.getGeneratedDir()
-		toolStructure, err := a.discoverAllServersAndTools(generatedDir)
+		toolStructure, err := a.buildToolIndex()
 		if err != nil {
 			if a.Logger != nil {
-				a.Logger.Warn("⚠️ [CODE_EXECUTION] Failed to discover tool structure for placeholder replacement", loggerv2.Error(err))
+				a.Logger.Warn("Failed to build tool index for placeholder replacement", loggerv2.Error(err))
 			}
-			// Remove placeholder if discovery fails
 			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
 		} else {
-			// Replace placeholder with tool structure section
-			toolStructureSection := "\n\n<available_code>\n" +
-				"**AVAILABLE CODE FILES AND FUNCTIONS:**\n\n" +
-				"The following code files and functions are available for use in your Go code. This structure shows all servers, custom tools, and their functions:\n\n" +
-				"```json\n" +
-				toolStructure + "\n" +
-				"```\n\n" +
-				"**How to use:**\n" +
-				"- The JSON structure shows package names as keys (e.g., \"google_sheets\", \"workspace\")\n" +
-				"- Each package contains a \"tools\" array with available function names (e.g., \"GetDocument\", \"ListSpreadsheets\")\n" +
-				"- Use the package name as \"server_name\" in discover_code_files (e.g., discover_code_files(server_name=\"google_sheets\", tool_names=[\"GetDocument\"]))\n" +
-				"- Import the package and call the function in your Go code (e.g., import \"google_sheets\")\n" +
-				"</available_code>\n"
+			toolStructureSection := "\n\n<available_tools>\n" +
+				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
+				"```json\n" + toolStructure + "\n```\n\n" +
+				"Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n" +
+				"</available_tools>\n"
 			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
-			if a.Logger != nil {
-				a.Logger.Info("🔧 [CODE_EXECUTION] Replaced {{TOOL_STRUCTURE}} placeholder with tool structure", loggerv2.Int("bytes", len(toolStructure)))
-			}
 		}
 	}
 
@@ -3344,6 +3331,13 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		}
 	}
 	a.toolToServer[name] = "custom"
+
+	// Ensure the tool filter recognises this category for get_api_spec lookups.
+	// Custom tools registered after NewAgent would otherwise be invisible to IsCategoryDirectory.
+	if a.toolFilter != nil && toolCategory != "" {
+		a.toolFilter.AddCustomCategory(toolCategory)
+	}
+
 	if a.Logger != nil {
 		a.Logger.Debug(fmt.Sprintf("🔧 [TOOL_REGISTRATION] Added custom tool '%s' to toolToServer mapping (category: %s)", name, toolCategory))
 	}
@@ -3375,12 +3369,8 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		a.filteredTools = cleanFiltered
 	}
 
-	// In code execution mode, do NOT add custom tools to LLM tools list
-	// They should only be accessible via generated Go code
-	// EXCEPTION: Structured output tools (category "structured_output") must always be available
-	// because they're orchestration/control tools, not regular MCP tools
-	// EXCEPTION: Human tools (category "human") must always be available
-	// because they require event bridge access for frontend UI and cannot work via generated code
+	// Determine tool category flags for special handling
+	// Structured output tools and human tools are always added regardless of mode
 	isStructuredOutputTool := toolCategory == "structured_output"
 	isHumanTool := toolCategory == "human"
 
@@ -3448,62 +3438,32 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 				}
 			}
 		}
-	} else if !a.UseCodeExecutionMode || isStructuredOutputTool || isHumanTool {
-		// Normal mode OR structured output tool OR human tool: Add to the main Tools array so the LLM can see it
-		a.Tools = append(a.Tools, tool)
-
-		// 🔧 CRITICAL FIX: Also add to filteredTools if smart routing is active
-		// This ensures custom tools are available even when smart routing is enabled
-		a.filteredTools = append(a.filteredTools, tool)
-
-		if a.UseCodeExecutionMode && isStructuredOutputTool {
+	} else if a.UseCodeExecutionMode {
+		if a.toolFilter.IsSystemCategory(toolCategory) {
+			// System tools (execute_shell_command, workspace tools) stay as direct LLM calls
+			a.Tools = append(a.Tools, tool)
+			a.filteredTools = append(a.filteredTools, tool)
 			if a.Logger != nil {
-				a.Logger.Debug("🔧 Code execution mode: Structured output tool added to LLM tools (required for orchestration)", loggerv2.String("tool", name))
+				a.Logger.Debug(fmt.Sprintf("🔧 [CODE_EXECUTION] System-category custom tool '%s' added as direct LLM call (category: %s)", name, toolCategory))
 			}
-		}
-		if a.UseCodeExecutionMode && isHumanTool {
+		} else {
+			// Non-system custom tools go through HTTP API (already in a.customTools)
 			if a.Logger != nil {
-				a.Logger.Info(fmt.Sprintf("🔧 Code execution mode: Human tool %s added to LLM tools (requires event bridge for frontend UI) - total tools now: %d", name, len(a.Tools)))
+				a.Logger.Debug(fmt.Sprintf("🔧 [CODE_EXECUTION] Custom tool '%s' registered for HTTP API access only (category: %s)", name, toolCategory))
 			}
 		}
 	} else {
-		// Code execution mode: Don't add to LLM tools, but still generate code and update registry
-		if a.Logger != nil {
-			a.Logger.Debug("🔧 Code execution mode: Custom tool registered but not added to LLM tools (will use generated code)", loggerv2.String("tool", name))
-		}
+		// Normal mode: Add to the main Tools array so the LLM can see it
+		a.Tools = append(a.Tools, tool)
+
+		// Also add to filteredTools so custom tools are available even when smart routing is enabled
+		a.filteredTools = append(a.filteredTools, tool)
 	}
 
-	// Generate Go code for ONLY the new tool (not all tools - that was causing O(n²) regeneration)
-	// Only generate code in code execution mode - simple agent mode doesn't need generated code
-	// EXCEPTION: Skip code generation for human tools - they must only be used as direct LLM tools
-	// (not via generated code) because they need event bridge access for frontend UI
-	if a.UseCodeExecutionMode {
-		if isHumanTool {
-			if a.Logger != nil {
-				a.Logger.Info(fmt.Sprintf("🔧 Skipping code generation for human tool %s - must be used as direct LLM tool only", name))
-			}
-		} else {
-			generatedDir := a.getGeneratedDir()
-			singleToolForCodeGen := map[string]codegen.CustomToolForCodeGen{
-				name: {
-					Definition: tool,
-					Category:   toolCategory,
-				},
-			}
-			if a.Logger != nil {
-				a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Generating code for new tool: %s (category: %s)", name, toolCategory))
-			}
-			// Use agent's ToolTimeout (same as used for normal tool calls)
-			toolTimeout := getToolExecutionTimeout(a)
-			if err := codegen.GenerateCustomToolsCode(singleToolForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
-				if a.Logger != nil {
-					a.Logger.Warn(fmt.Sprintf("🔍 [DISCOVERY] Failed to generate Go code for tool %s: %v", name, err))
-				}
-				// Don't fail tool registration if code generation fails
-			} else if a.Logger != nil {
-				a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Successfully generated code for tool: %s", name))
-			}
-		}
+	// In code execution mode, invalidate cached OpenAPI spec for this tool's category
+	// so it gets regenerated on next get_api_spec call
+	if a.UseCodeExecutionMode && a.openAPISpecCache != nil {
+		delete(a.openAPISpecCache, toolCategory)
 	}
 
 	// Update registry with new custom tool
@@ -3539,7 +3499,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 
 	// 🔧 CRITICAL: Rebuild system prompt with updated tool structure in code execution mode
 	// This ensures custom tools appear in the system prompt's tool structure JSON
-	// so the LLM knows they exist and can use them via generated Go code
+	// so the LLM knows they exist and can use them via HTTP API
 	if a.UseCodeExecutionMode {
 		if err := a.rebuildSystemPromptWithUpdatedToolStructure(); err != nil {
 			if a.Logger != nil {
@@ -3706,10 +3666,9 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 		return nil // Only needed in code execution mode
 	}
 
-	generatedDir := a.getGeneratedDir()
-	toolStructure, err := a.discoverAllServersAndTools(generatedDir)
+	toolStructure, err := a.buildToolIndex()
 	if err != nil {
-		return fmt.Errorf("failed to discover tool structure: %w", err)
+		return fmt.Errorf("failed to build tool index: %w", err)
 	}
 
 	// Rebuild system prompt with updated tool structure

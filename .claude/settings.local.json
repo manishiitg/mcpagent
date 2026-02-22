@@ -25,7 +25,15 @@
       "Bash(golangci-lint run:*)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nFix golangci-lint errors across codebase\n\n- Fix errorlint: use errors.Is\\(err, io.EOF\\) instead of == comparison\n- Fix gosec G104: explicitly ignore errors from resp.Body.Close\\(\\) and os.Remove\\(\\)\n- Fix gosec G115: add safeIntToInt32\\(\\) helper for safe int to int32 conversion\n- Remove unused code: runsQueryRequest, getLangSmithUUID, mapToStruct, toGRPCError, contains, containsAt\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(git push)"
+      "Bash(git push)",
+      "Bash(tail:*)",
+      "Bash(go test:*)",
+      "Bash(head:*)",
+      "Bash(find:*)",
+      "Bash(cd /Users/mipl/ai-work/mcp-agent-builder-go && go work sync 2>&1)",
+      "Bash(grep:*)",
+      "Bash(echo:*)",
+      "Bash(docker exec:*)"
     ]
   }
 }

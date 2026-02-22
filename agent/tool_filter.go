@@ -456,6 +456,17 @@ func (tf *ToolFilter) IsSystemCategory(packageName string) bool {
 	return tf.systemCategories[normalized] || tf.systemCategories[packageName]
 }
 
+// AddCustomCategory registers a new custom tool category so that
+// IsCategoryDirectory recognises it for get_api_spec lookups.
+// Safe to call after NewToolFilter (e.g. from RegisterCustomTool).
+func (tf *ToolFilter) AddCustomCategory(category string) {
+	if category == "" {
+		return
+	}
+	tf.customToolCategories[category] = true
+	tf.customToolCategories[category+"_tools"] = true
+}
+
 // getMapKeys is a helper function to extract keys from a map for logging
 func getMapKeys(m map[string]bool) []string {
 	keys := make([]string, 0, len(m))

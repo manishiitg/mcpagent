@@ -25,7 +25,7 @@ This test:
 3. Registers a regular custom tool (should be excluded in code exec mode)
 4. Verifies human_feedback is available in Tools array
 5. Verifies regular custom tools are NOT in Tools array (only virtual tools)
-6. Verifies only discover_code_files and write_code virtual tools are available
+6. Verifies only get_api_spec and execute_shell_command virtual tools are available
 
 Note: This test doesn't use traditional asserts. Logs are analyzed (manually or by LLM) to verify success.
 See criteria.md in the human-feedback-code-exec folder for detailed log analysis criteria.
@@ -118,28 +118,28 @@ func testHumanFeedbackInCodeExecMode(log loggerv2.Logger) error {
 	}
 	log.Info("Initial tool names", loggerv2.Any("tools", initialToolNames))
 
-	// Verify only virtual tools are present initially (discover_code_files, write_code)
+	// Verify only virtual tools are present initially (get_api_spec, execute_shell_command)
 	expectedVirtualTools := map[string]bool{
-		"discover_code_files": false,
-		"write_code":          false,
+		"get_api_spec":          false,
+		"execute_shell_command": false,
 	}
 	for _, tool := range initialTools {
 		if tool.Function != nil {
-			if tool.Function.Name == "discover_code_files" {
-				expectedVirtualTools["discover_code_files"] = true
+			if tool.Function.Name == "get_api_spec" {
+				expectedVirtualTools["get_api_spec"] = true
 			}
-			if tool.Function.Name == "write_code" {
-				expectedVirtualTools["write_code"] = true
+			if tool.Function.Name == "execute_shell_command" {
+				expectedVirtualTools["execute_shell_command"] = true
 			}
 		}
 	}
 
-	if expectedVirtualTools["discover_code_files"] && expectedVirtualTools["write_code"] {
+	if expectedVirtualTools["get_api_spec"] && expectedVirtualTools["execute_shell_command"] {
 		log.Info("✅ Initial tools verified - only code execution virtual tools present")
 	} else {
 		log.Warn("⚠️  Initial tools may not match expected - check tool list",
-			loggerv2.Any("has_discover_code_files", expectedVirtualTools["discover_code_files"]),
-			loggerv2.Any("has_write_code", expectedVirtualTools["write_code"]))
+			loggerv2.Any("has_get_api_spec", expectedVirtualTools["get_api_spec"]),
+			loggerv2.Any("has_execute_shell_command", expectedVirtualTools["execute_shell_command"]))
 	}
 
 	// Step 2: Register a regular custom tool (should be excluded in code exec mode)
@@ -264,7 +264,7 @@ func testHumanFeedbackInCodeExecMode(log loggerv2.Logger) error {
 	for _, tool := range finalTools {
 		if tool.Function != nil {
 			toolName := tool.Function.Name
-			if toolName == "discover_code_files" || toolName == "write_code" {
+			if toolName == "get_api_spec" || toolName == "execute_shell_command" {
 				codeExecToolsCount++
 			} else if toolName == "human_feedback" {
 				humanToolsCount++
@@ -281,7 +281,7 @@ func testHumanFeedbackInCodeExecMode(log loggerv2.Logger) error {
 		loggerv2.Int("other_tools", otherToolsCount),
 		loggerv2.Int("total", len(finalTools)))
 
-	// Expected: 2 code exec tools (discover_code_files, write_code) + 1 human tool (human_feedback)
+	// Expected: 2 code exec tools (get_api_spec, execute_shell_command) + 1 human tool (human_feedback)
 	expectedTotal := 3
 	if len(finalTools) == expectedTotal {
 		log.Info("✅ Tool count matches expected",

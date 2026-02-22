@@ -1,432 +1,350 @@
 # Code Execution Agent Architecture
 
-## 📋 Overview
+## Overview
 
-The **Code Execution Agent** allows LLMs to write and execute Go code instead of making JSON-based tool calls. The LLM generates Go programs that import and utilize MCP tools as native functions.
+The **Code Execution Agent** allows LLMs to write and execute code in **any language** (Python, bash, curl, Go, etc.) to interact with MCP tools via HTTP API endpoints. Instead of JSON-based tool calls, the LLM discovers tool endpoints through an OpenAPI spec and writes code that makes HTTP requests.
 
 **Key Benefits:**
-- **Type Safety**: Go compiler enforces correct types
+- **Language Agnostic**: Write code in Python, bash, curl, Go, or any language
+- **OpenAPI-Based**: Standard REST API spec for tool discovery
 - **Complex Logic**: Native loops, conditionals, data transformations
 - **Tool Chaining**: Multiple tool calls in single execution
-- **Error Handling**: Functions return strings with error indicators (no error return value)
+- **Bearer Token Auth**: Secure API access with auto-generated tokens
 
 ---
 
-## 📁 Key Files & Locations
+## Key Files & Locations
 
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
-| **Agent Core** | [`mcpagent/agent/agent.go`](../agent/agent.go) | `NewAgent()`, `WithCodeExecutionMode()`, `SetFolderGuardPaths()` |
-| **Code Execution Tools** | [`mcpagent/agent/code_execution_tools.go`](../agent/code_execution_tools.go) | `handleDiscoverCodeFiles()`, `handleWriteCode()`, `validateCodeForForbiddenFileIO()` |
-| **Code Validation** | [`mcpagent/agent/code_execution_tools.go`](../agent/code_execution_tools.go) | `validateCodeForForbiddenFileIO()`, `validateWorkspaceToolPaths()` |
-| **Code Generator** | [`mcpagent/mcpcache/codegen/generator.go`](../mcpcache/codegen/generator.go) | `GenerateServerToolsCode()`, `GenerateFunctionWithParams()` |
-| **Code Templates** | [`mcpagent/mcpcache/codegen/templates.go`](../mcpcache/codegen/templates.go) | `GenerateStruct()`, `GenerateAPIClient()`, `GeneratePackageHeader()` |
-| **Prompt Builder** | [`mcpagent/agent/prompt/builder.go`](../agent/prompt/builder.go) | `GetCodeExecutionInstructions()`, `BuildSystemPromptWithoutTools()` |
-
-**Generated Code Locations:**
-- `generated/<server>_tools/` - Auto-generated Go packages for each MCP server
-- `generated/agents/<agent-id>/workspace_tools/` - Agent-specific workspace tools with folder guards
+| **Agent Core** | [`agent/agent.go`](../agent/agent.go) | `NewAgent()`, `WithCodeExecutionMode()`, `WithAPIConfig()` |
+| **Virtual Tools** | [`agent/virtual_tools.go`](../agent/virtual_tools.go) | `get_api_spec` tool definition |
+| **Code Execution Tools** | [`agent/code_execution_tools.go`](../agent/code_execution_tools.go) | `handleGetAPISpec()` |
+| **OpenAPI Generator** | [`mcpcache/openapi/generator.go`](../mcpcache/openapi/generator.go) | `GenerateServerOpenAPISpec()` |
+| **OpenAPI Schema** | [`mcpcache/openapi/schema.go`](../mcpcache/openapi/schema.go) | `JSONSchemaToOpenAPISchema()`, naming utilities |
+| **Executor Handlers** | [`executor/handlers.go`](../executor/handlers.go) | `HandleMCPExecute()`, `HandleCustomExecute()` |
+| **Per-Tool Handlers** | [`executor/per_tool_handler.go`](../executor/per_tool_handler.go) | `HandlePerToolMCPRequest()` |
+| **Auth Middleware** | [`executor/security.go`](../executor/security.go) | `GenerateAPIToken()`, `AuthMiddleware()` |
+| **Prompt Builder** | [`agent/prompt/builder.go`](../agent/prompt/builder.go) | `GetCodeExecutionInstructions()` |
 
 ---
 
-## 🔄 System Lifecycle
+## System Lifecycle
 
 ### 1. Initialization
+
 ```go
-agent := mcpagent.NewAgent(llmClient, mcpagent.WithCodeExecutionMode(true))
-agent.SetFolderGuardPaths([]string{"/app/workspace"}, []string{"/app/workspace"})
-```
-- Standard tool registration is **disabled**
-- Only code execution tools (`discover_code_files`, `write_code`) are registered
-
-### 2. MCP Server Connection → Code Generation
-When an MCP server connects, wrapper code is auto-generated:
-
-```
-generated/google_sheets_tools/
-├── create_spreadsheet.go
-├── read_spreadsheet.go
-└── api_client.go          # Shared HTTP client with callAPI()
+agent, err := mcpagent.NewAgent(
+    ctx, llmModel, "", "config.json", "model-id",
+    nil, "", nil,
+    mcpagent.WithCodeExecutionMode(true),
+    mcpagent.WithAPIConfig("http://127.0.0.1:8000", apiToken),
+)
 ```
 
-### 3. LLM Discovery
-LLM calls `discover_code_files` → receives JSON with available packages/functions:
-```json
-{
-  "servers": [{
-    "name": "google-sheets",
-    "package": "google_sheets_tools",
-    "tools": ["CreateSpreadsheet", "ReadSpreadsheet"]
-  }],
-  "workspace_tools": {
-    "package": "workspace_tools",
-    "tools": ["ReadWorkspaceFile", "UpdateWorkspaceFile"]
-  }
-}
+- In code execution mode, MCP tools are **excluded** from direct tool calls
+- MCP tools are accessed via HTTP API endpoints instead
+- Custom tools (e.g., `execute_shell_command`, workspace tools) remain as direct tool calls
+- Virtual tool `get_api_spec` is registered for OpenAPI spec discovery
+
+### 2. HTTP Server Setup (Consumer-Owned)
+
+The consuming application owns the HTTP server and registers executor handlers:
+
+```go
+// Generate API token for bearer auth
+apiToken := executor.GenerateAPIToken()
+
+// Create executor handlers
+handlers := executor.NewExecutorHandlers(configPath, logger)
+
+// Create HTTP mux with per-tool endpoints
+mux := http.NewServeMux()
+
+// Batch endpoints (legacy)
+mux.HandleFunc("/api/mcp/execute", handlers.HandleMCPExecute)
+mux.HandleFunc("/api/custom/execute", handlers.HandleCustomExecute)
+
+// Per-tool wildcard endpoints (used by OpenAPI spec)
+mux.HandleFunc("/tools/mcp/", func(w http.ResponseWriter, r *http.Request) {
+    path := strings.TrimPrefix(r.URL.Path, "/tools/mcp/")
+    parts := strings.SplitN(path, "/", 2)
+    if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+        http.Error(w, `{"success":false,"error":"invalid path"}`, http.StatusBadRequest)
+        return
+    }
+    server, tool := parts[0], parts[1]
+    server = strings.ReplaceAll(server, "_", "-")
+    tool = strings.ReplaceAll(tool, "_", "-")
+    handlers.HandlePerToolMCPRequest(w, r, server, tool)
+})
+
+// Wrap with bearer token auth
+authedHandler := executor.AuthMiddleware(apiToken)(mux)
+
+server := &http.Server{Addr: "127.0.0.1:8000", Handler: authedHandler}
+go server.ListenAndServe()
+```
+
+### 3. LLM Discovery via `get_api_spec`
+
+The LLM calls `get_api_spec(server_name)` to retrieve the OpenAPI spec for a specific MCP server:
+
+```
+LLM: get_api_spec(server_name="google_sheets")
+→ Returns OpenAPI 3.0 YAML with endpoints, schemas, and auth requirements
 ```
 
 ### 4. Code Execution Flow
-1. LLM calls `write_code(go_source, args?)` (args is optional)
-2. Code validated via AST analysis
-3. Temporary workspace created: `workspace/code_<timestamp>/`
-4. Code + `go.work` written
-5. Executed: `go run main.go [args...]` (with timeout)
-6. Output captured, workspace cleaned up
-7. Result returned to LLM
+
+1. LLM sees available servers and tool names in system prompt
+2. LLM calls `get_api_spec("server_name")` → gets OpenAPI spec
+3. LLM calls `execute_shell_command` to write and run code in any language
+4. Code makes HTTP POST requests to per-tool endpoints documented in the spec
+5. `MCP_API_URL` and `MCP_API_TOKEN` env vars are available in the execution environment
 
 ---
 
-## 🏗️ Architecture Diagram
+## Architecture Diagram
 
 ```mermaid
 graph TD
-    LLM[LLM] -->|1. discover_code_files| CT[Code Execution Tools]
-    CT -->|2. Available packages| LLM
-    LLM -->|3. write_code| VAL[AST Validator]
-    VAL -->|4. Validated| EXEC[Executor]
-    EXEC -->|5. go run| GEN[Generated Tools]
-    GEN -->|6. HTTP API call| API[MCP API Server]
-    API -->|7. Execute| MCP[MCP Client]
+    LLM[LLM] -->|1. get_api_spec| VT[Virtual Tools]
+    VT -->|2. OpenAPI YAML spec| LLM
+    LLM -->|3. execute_shell_command| EXEC[Shell Executor]
+    EXEC -->|4. HTTP POST| API[Per-Tool Endpoints]
+    API -->|5. Bearer Auth| MW[Auth Middleware]
+    MW -->|6. Execute| HANDLER[Executor Handlers]
+    HANDLER -->|7. MCP Protocol| MCP[MCP Server]
     MCP -->|8. Result| LLM
 ```
 
 ---
 
-## 🧩 Generated Code Example
+## OpenAPI Spec Generation
 
-**Input:** Google Sheets tool `create_spreadsheet`
+When `get_api_spec(server_name)` is called, an OpenAPI 3.0 YAML spec is generated on-demand from the MCP tool definitions:
 
-**Output:** `generated/google_sheets_tools/create_spreadsheet.go`
+**Example generated spec for `context7` server:**
 
-```go
-package google_sheets_tools
-
-type CreateSpreadsheetParams struct {
-	Title  string   `json:"title"`
-	Sheets []string `json:"sheets,omitempty"`
-}
-
-func CreateSpreadsheet(params CreateSpreadsheetParams) string {
-	payload := map[string]interface{}{
-		"server": "google-sheets",
-		"tool":   "create_spreadsheet",
-		"args":   paramsToMap(params),
-	}
-	return callAPI("/api/mcp/execute", payload)
-}
+```yaml
+openapi: 3.0.3
+info:
+  title: context7 Tools API
+  version: "1.0"
+servers:
+  - url: http://127.0.0.1:8000
+security:
+  - bearerAuth: []
+paths:
+  /tools/mcp/context7/resolve_library_id:
+    post:
+      operationId: context7__resolve_library_id
+      summary: "Resolves a package/product name to a Context7-compatible library ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveLibraryIdRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/ToolResponse'
+  /tools/mcp/context7/query_docs:
+    post:
+      operationId: context7__query_docs
+      summary: "Searches documentation for a library"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryDocsRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/ToolResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ResolveLibraryIdRequest:
+      type: object
+      properties:
+        libraryName:
+          type: string
+          description: "Library name to resolve"
+      required:
+        - libraryName
+    QueryDocsRequest:
+      type: object
+      properties:
+        libraryId:
+          type: string
+        query:
+          type: string
+      required:
+        - libraryId
+        - query
+  responses:
+    ToolResponse:
+      description: Tool execution result
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+              result:
+                type: string
+              error:
+                type: string
 ```
 
-**LLM Usage:**
-```go
-package main
-
-import (
-	"fmt"
-	"strings"
-	"google_sheets_tools"
-)
-
-func main() {
-	// Call tool function
-	output := google_sheets_tools.CreateSpreadsheet(
-		google_sheets_tools.CreateSpreadsheetParams{
-			Title: "My Spreadsheet",
-		},
-	)
-	
-	// Print output to see results
-	fmt.Printf("Tool output: %s\n", output)
-	
-	// Check output for errors - examine the output string to detect error indicators
-	if strings.HasPrefix(output, "Error:") {
-		fmt.Printf("❌ Error detected: %s\n", output)
-		return
-	}
-	
-	fmt.Printf("✅ Success! Result: %s\n", output)
-}
-```
+The spec is generated in-memory and cached on the agent after first generation. MCP tool `Function.Parameters` JSON Schema maps directly to OpenAPI request body schemas.
 
 ---
 
-## 🔒 Security & Validation
+## Security
 
-### AST-Based Validation
+### Bearer Token Authentication
 
-**File:** [`mcpagent/agent/code_execution_tools.go`](../agent/code_execution_tools.go)
+All API endpoints are secured with bearer token auth:
 
-| Check | Forbidden | Allowed |
-|-------|-----------|---------|
-| **Imports** | `io/ioutil`, `os/exec` | `fmt`, `strings`, `encoding/json`, generated packages |
-| **OS Functions** | `os.ReadFile`, `os.WriteFile`, `os.Create` | None - use `workspace_tools` |
-| **Paths** | Absolute paths, `..` traversal | Relative paths within workspace |
-
-**Example:**
 ```go
-// ❌ BLOCKED
-file, _ := os.Open("/etc/passwd")
+// Generate a cryptographically random token
+apiToken := executor.GenerateAPIToken() // 32-byte hex string
 
-// ✅ ALLOWED
-output := workspace_tools.ReadWorkspaceFile(
-	workspace_tools.ReadWorkspaceFileParams{Filepath: "config.json"},
-)
-// Check output for errors
-if strings.HasPrefix(output, "Error:") {
-	// Handle error
-}
+// Wrap HTTP handler with auth middleware
+authedHandler := executor.AuthMiddleware(apiToken)(mux)
 ```
 
-### Error Handling Pattern
-
-**Functions return only `string` (no error):**
-- **API Errors** (network, HTTP): Functions **panic** - exceptional cases
-- **Tool Execution Errors**: Returned in result string with "Error:" prefix
-- **Always print output first**, then examine it to detect errors
-
-### Folder Guard
-```go
-agent.SetFolderGuardPaths(
-	[]string{"/app/workspace"},  // Read paths
-	[]string{"/app/workspace"},  // Write paths
-)
-```
+- Token is passed to the agent via `WithAPIConfig(baseURL, token)`
+- Agent makes it available to code execution via `MCP_API_TOKEN` env var
+- Missing or invalid tokens return HTTP 401
 
 ### Execution Isolation
-- Fresh temporary directory per execution
-- 30-second timeout (configurable)
-- Process isolation via `go run`
-- Automatic cleanup
+
+- Code runs via `execute_shell_command` custom tool
+- `MCP_API_URL` and `MCP_API_TOKEN` env vars available in execution environment
+- Agent does not have direct access to MCP tool execution — only via HTTP API
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 ### Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MCP_API_URL` | `http://localhost:8000` | API endpoint for generated code |
-| `WORKSPACE_DIR` | `./workspace` | Workspace root directory |
-| `CODE_EXECUTION_TIMEOUT` | `30s` | Max execution time |
-| `GENERATED_CODE_DIR` | `./generated` | Generated packages location |
+| `MCP_API_URL` | Set via `WithAPIConfig()` | API endpoint for HTTP tool calls |
+| `MCP_API_TOKEN` | Set via `WithAPIConfig()` | Bearer token for API auth |
 
 ### Agent Options
 
 ```go
-agent := mcpagent.NewAgent(
-	llmClient,
-	mcpagent.WithCodeExecutionMode(true),
-	mcpagent.WithTimeout(60 * time.Second),
-	mcpagent.WithLogger(logger),
+agent, err := mcpagent.NewAgent(
+    ctx, llmModel, "", "config.json", "model-id",
+    nil, "", nil,
+    mcpagent.WithCodeExecutionMode(true),
+    mcpagent.WithAPIConfig("http://127.0.0.1:8000", apiToken),
+    mcpagent.WithLogger(logger),
 )
 ```
 
 ---
 
-## 🛠️ Common Issues & Solutions
+## Common Issues & Solutions
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| `package not found` | Generated code missing | Check `generated/` exists, restart agent |
-| `forbidden import` | Used `io/ioutil` or `os` | Use `workspace_tools` package instead |
-| `path outside boundary` | Absolute path or `..` | Use relative paths within workspace |
-| `validation failed` | Blocked OS function | Error message shows correct alternative |
-| `not enough return values` | Old generated code | Clear `generated/` folder and restart |
+| `no tools found for server` | Server name mismatch | Use the exact server name from the tools index (underscores not hyphens) |
+| `401 Unauthorized` | Missing/wrong bearer token | Ensure `WithAPIConfig()` token matches `AuthMiddleware()` token |
+| `invalid path` on per-tool endpoint | Malformed URL path | URL should be `/tools/mcp/{server}/{tool}` |
+| Empty OpenAPI spec | MCP server not connected | Ensure MCP server is connected and tools are discovered |
+| `execute_shell_command` not found | Custom tool not registered | Register workspace tools in your application before creating the agent |
 
 ---
 
-## 🔍 For LLMs: Quick Reference
+## For LLMs: Quick Reference
 
 ### Workflow
-1. Call `discover_code_files` → get available packages
-2. Write Go code importing discovered packages
-3. Call `write_code(your_go_code, args?)` → execute (args is optional)
-4. Print output and check for errors in result string
 
-### CLI Parameters
-The `write_code` tool accepts an optional `args` parameter (array of strings) that are passed as command-line arguments to your Go program:
+1. See available servers and tools in the system prompt index
+2. Call `get_api_spec(server_name="...")` → get OpenAPI spec with endpoints + schemas
+3. Use `execute_shell_command` to write and run code in any language
+4. `MCP_API_URL` and `MCP_API_TOKEN` env vars are available in your execution environment
+5. MCP tools are accessed via HTTP POST to per-tool endpoints documented in the OpenAPI spec
 
-```json
-{
-  "code": "package main\nimport (\"fmt\" \"os\")\nfunc main() {\n  if len(os.Args) > 1 {\n    fmt.Println(\"First arg:\", os.Args[1])\n  }\n}",
-  "args": ["hello", "world"]
-}
+### Example: Python
+
+```python
+import requests
+import os
+
+url = os.environ["MCP_API_URL"]
+token = os.environ["MCP_API_TOKEN"]
+
+# Call resolve_library_id on context7 server
+resp = requests.post(
+    f"{url}/tools/mcp/context7/resolve_library_id",
+    json={"libraryName": "react"},
+    headers={"Authorization": f"Bearer {token}"}
+)
+print(resp.json())
 ```
 
-**Accessing CLI Arguments:**
-- `os.Args[0]` = program name (automatically set)
-- `os.Args[1]` = first CLI argument
-- `os.Args[2]` = second CLI argument
-- etc.
+### Example: curl
 
-**Use Cases:**
-- Parameterized scripts (e.g., `--account-id`, `--region`)
-- Dynamic configuration values
-- Input data that changes per execution
-
-### Error Handling Pattern
-```go
-// 1. Call tool function
-output := toolName(params)
-
-// 2. Print output (ALWAYS do this first)
-fmt.Printf("Tool output: %s\n", output)
-
-// 3. Check output for errors
-if strings.HasPrefix(output, "Error:") {
-	fmt.Printf("❌ Error detected: %s\n", output)
-	return
-}
-
-// 4. Use result if successful
-fmt.Printf("✅ Success! Result: %s\n", output)
+```bash
+curl -X POST "$MCP_API_URL/tools/mcp/context7/resolve_library_id" \
+  -H "Authorization: Bearer $MCP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"libraryName": "react"}'
 ```
 
-### Code Constraints
-✅ **Allowed:**
-- Relative paths: `data/file.txt`
-- Imports from `generated/*_tools/`
-- Standard Go packages: `fmt`, `strings`, `encoding/json`, `os` (for `os.Args`, `os.Getenv`, `os.Exit` only)
-- Error checking via string examination
-- CLI arguments via `os.Args` (when using `args` parameter in `write_code`)
+### Example: Go
 
-❌ **Forbidden:**
-- Direct `os` file operations (use `workspace_tools` instead)
-- Absolute paths: `/etc/passwd`
-- Directory traversal: `../../../file`
-- Imports: `io/ioutil`, `os/exec`
-- Checking `err != nil` (functions don't return errors)
-
-### Example Template
-
-**Basic Example (No CLI Args):**
 ```go
 package main
 
 import (
-	"fmt"
-	"strings"
-	"workspace_tools"
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "os"
 )
 
 func main() {
-	// Call tool function
-	output := workspace_tools.ReadWorkspaceFile(
-		workspace_tools.ReadWorkspaceFileParams{
-			Filepath: "data/config.json",
-		},
-	)
-	
-	// Print output first
-	fmt.Printf("Tool output: %s\n", output)
-	
-	// Check output for errors
-	if strings.HasPrefix(output, "Error:") {
-		fmt.Printf("❌ Error detected: %s\n", output)
-		return
-	}
-	
-	// Use result
-	fmt.Printf("✅ Success! Content: %s\n", output)
-}
-```
+    apiURL := os.Getenv("MCP_API_URL")
+    apiToken := os.Getenv("MCP_API_TOKEN")
 
-**Example with CLI Parameters:**
-```go
-package main
+    body, _ := json.Marshal(map[string]string{"libraryName": "react"})
+    req, _ := http.NewRequest("POST", apiURL+"/tools/mcp/context7/resolve_library_id", bytes.NewReader(body))
+    req.Header.Set("Authorization", "Bearer "+apiToken)
+    req.Header.Set("Content-Type", "application/json")
 
-import (
-	"fmt"
-	"os"
-	"strings"
-	"workspace_tools"
-)
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+    defer resp.Body.Close()
 
-func main() {
-	// Access CLI arguments (passed via write_code args parameter)
-	// os.Args[0] = program name
-	// os.Args[1] = first argument
-	// os.Args[2] = second argument, etc.
-	
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: program <filepath>")
-		return
-	}
-	
-	filepath := os.Args[1]
-	
-	// Call tool function with dynamic filepath
-	output := workspace_tools.ReadWorkspaceFile(
-		workspace_tools.ReadWorkspaceFileParams{
-			Filepath: filepath,
-		},
-	)
-	
-	// Print output first
-	fmt.Printf("Tool output: %s\n", output)
-	
-	// Check output for errors
-	if strings.HasPrefix(output, "Error:") {
-		fmt.Printf("❌ Error detected: %s\n", output)
-		return
-	}
-	
-	// Use result
-	fmt.Printf("✅ Success! Content: %s\n", output)
-}
-```
-
-**Usage with CLI Args:**
-```json
-{
-  "code": "... (Go code above) ...",
-  "args": ["data/config.json"]
+    var result map[string]interface{}
+    json.NewDecoder(resp.Body).Decode(&result)
+    fmt.Println(result)
 }
 ```
 
 ---
 
-## 📚 Advanced Topics
-
-### Schema → Go Type Mapping
-
-| JSON Schema | Go Type | Example |
-|-------------|---------|---------|
-| `string` | `string` | `Title string` |
-| `integer` | `int` | `Count int` |
-| `number` | `float64` | `Price float64` |
-| `boolean` | `bool` | `Active bool` |
-| `array` | `[]T` | `Tags []string` |
-| `object` | `map[string]interface{}` | `Data map[string]interface{}` |
-
-### Function Signature Pattern
-
-All generated tool functions follow this pattern:
-```go
-func ToolName(params ToolNameParams) string {
-	// Build payload
-	// Call callAPI()
-	// Return result string (no error)
-}
-```
-
-The `callAPI()` function:
-- Panics on API errors (network, HTTP failures)
-- Returns result string with tool execution errors embedded (check for "Error:" prefix)
-
-### Performance
-- Code generation: ~100ms per server
-- Code execution: 200-500ms average
-  - Validation: 50-100ms
-  - `go run`: 100-300ms
-  - Cleanup: 10-20ms
-
-**Optimization:** Batch multiple tool calls in one `write_code` execution
-
----
-
-## 📖 Related Documentation
+## Related Documentation
 
 - [`docs/mcp_cache_system.md`](./mcp_cache_system.md) - MCP server caching
+- [`docs/folder_guard.md`](./folder_guard.md) - Fine-grained file access control
 - [`docs/llm_resilience.md`](./llm_resilience.md) - Error handling
-- [`mcpagent/agent/prompt/builder.go`](../agent/prompt/builder.go) - Code execution prompt instructions
+- [`agent/prompt/builder.go`](../agent/prompt/builder.go) - Code execution prompt instructions

@@ -51,164 +51,54 @@ Use the **search_tools** function to discover tools, and then **add_tool** to lo
 - Check tool descriptions to understand parameters`
 }
 
-// GetCodeExecutionInstructions returns the code execution mode instructions section
-// This can be reused by agents that need to include code execution guidance in their prompts
-// workspacePath: the actual workspace path to substitute in examples (e.g., "Workflow/runs/iteration-1/execution")
-// If workspacePath is empty (chat mode), workspace-related instructions are excluded
+// GetCodeExecutionInstructions returns the code execution mode instructions section.
+// workspacePath: the actual workspace path to substitute in examples.
+// If workspacePath is empty (chat mode), workspace-related instructions are excluded.
 func GetCodeExecutionInstructions(workspacePath string) string {
-	// Base instructions (always included)
-	baseInstructions := `**CODE EXECUTION MODE - Access MCP Servers via Go Code:**
+	return `**CODE EXECUTION MODE — Access MCP Tools via HTTP API:**
 
 {{TOOL_STRUCTURE}}
 
-**📋 Workflow:**
-1. Use discover_code_files to get exact function signatures before writing code
-2. Write Go code using write_code that calls generated tool functions
-3. Execute and get results
-4. Recognize completion: If output shows completion, move to next step or provide final answer
+**Workflow:**
+1. See available servers and tools in the index above
+2. Call get_api_spec(server_name="...", tool_name="...") to get the spec for the specific tool you need
+   - Prefer fetching per-tool specs — they are smaller and faster
+   - Only omit tool_name if you need to browse all tools on a server
+3. Use execute_shell_command to write and run code — prefer Python for reliability and readability
+4. MCP_API_URL and MCP_API_TOKEN env vars are available in the execution environment
+5. MCP and custom tools are accessed via HTTP POST to per-tool endpoints documented in the OpenAPI spec
 
-**⚠️ CRITICAL Requirements:**
-- ✅ **MUST have package main declaration**
-- ✅ **Use fmt.Println()/fmt.Printf() to output results**
-- ✅ **Import generated packages** (e.g., import "workspace_tools", import "aws") - go.work is set up automatically
-- ✅ **ALWAYS use discover_code_files FIRST** to see exact function signatures and parameter names`
+**How to call tools from code:**
+- MCP tools: POST /tools/mcp/{server}/{tool}
+- Custom tools: POST /tools/custom/{tool}
+- Send tool arguments as JSON body
+- Include Authorization: Bearer $MCP_API_TOKEN header
+- Response: {"success": true/false, "result": "...", "error": "..."}
 
-	// Workspace-specific instructions (only for workflow mode with workspace path)
-	workspaceInstructions := `
-- ❌ **NEVER use Go standard file I/O** (os.WriteFile, os.ReadFile, etc.) - files go to wrong directory
-- ✅ **ALWAYS use workspace_tools package** for file operations (ReadWorkspaceFile, UpdateWorkspaceFile)
-- ✅ **ALWAYS pass WorkspacePath as first arg**: write_code args=["` + workspacePath + `"] → access via os.Args[1] in Go
-- ✅ **ALWAYS use filepath.Join()**: Never hardcode paths. Use filepath.Join(os.Args[1], "step-N/file.json")`
+**Example (Python):**
+` + "```" + `python
+import requests, os
+url = os.environ["MCP_API_URL"] + "/tools/mcp/google_sheets/get_document"
+headers = {"Authorization": f"Bearer {os.environ.get('MCP_API_TOKEN', '')}", "Content-Type": "application/json"}
+resp = requests.post(url, json={"spreadsheet_id": "abc123"}, headers=headers)
+print(resp.json())
+` + "```" + `
 
-	// Error handling (always included)
-	errorHandling := `
+**Example (curl):**
+` + "```" + `bash
+curl -X POST "$MCP_API_URL/tools/mcp/google_sheets/get_document" \
+  -H "Authorization: Bearer $MCP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"spreadsheet_id": "abc123"}'
+` + "```" + `
 
-**⚠️ Error Handling Pattern:**
-Functions return only string (no error). Follow this pattern for EVERY tool call:
-1. Call: output := toolName(params)
-2. Print: fmt.Printf("Tool output: %%s\n", output)
-3. Check: Examine output string for error indicators (e.g., strings.HasPrefix(output, "Error:"))
-4. Use: Process result if successful
-
-- **API Errors** (network, HTTP): Functions panic - exceptional cases
-- **Tool Errors**: Returned in result string - examine output to detect errors
-- **✅ ALWAYS print output BEFORE checking errors** - helps discover error patterns`
-
-	// Workspace-specific error note
-	workspaceErrorNote := `
-- **⚠️ ReadWorkspaceFile PANICS if file missing** - Use ListWorkspaceFiles to verify existence first`
-
-	// Best practices (always included)
-	bestPractices := `
-
-**🔧 Best Practices:**
-- **Debugging**: Use fmt.Printf() liberally to trace execution and print variable values
-- **Complex problems**: Break down into steps, test each tool individually, build incrementally
-- **Multiple tools**: Test tools separately first, then combine once you understand their response patterns
-- **Error recovery**: Use discover_code_files to verify parameter names, check imports/types for build errors`
-
-	// Workspace example (only for workflow mode)
-	workspaceExample := `
-
-**Example - Tool Call with WorkspacePath (CRITICAL):**
-  package main
-  import ("fmt"; "os"; "path/filepath"; "strings"; "workspace_tools")
-
-  func main() {
-      // ✅ CRITICAL: Get workspace path from CLI args (passed via write_code args parameter)
-      if len(os.Args) < 2 {
-          fmt.Println("❌ Error: WorkspacePath required as first argument")
-          os.Exit(1)
-      }
-      basePath := os.Args[1]  // e.g., "` + workspacePath + `"
-
-      // ✅ CORRECT: Use filepath.Join for all paths (NEVER hardcode full paths)
-      inputPath := filepath.Join(basePath, "step-1/credentials.json")
-
-      // Use discover_code_files to see exact struct definition first!
-      output := workspace_tools.ReadWorkspaceFile(workspace_tools.ReadWorkspaceFileParams{
-          Filepath: inputPath,
-      })
-      fmt.Printf("Tool output: %%s\n", output)
-      if strings.HasPrefix(output, "Error:") {
-          fmt.Printf("❌ Error: %%s\n", output)
-          return
-      }
-      fmt.Printf("✅ Success!\n")
-  }
-
-  // ⚠️ Call this with: write_code(code="...", args=["` + workspacePath + `"])
-
-**Example - File Operations (CRITICAL):**
-  package main
-  import ("fmt"; "os"; "path/filepath"; "strings"; "workspace_tools")
-
-  func main() {
-      basePath := os.Args[1]  // ✅ ALWAYS get from CLI args
-      outputPath := filepath.Join(basePath, "step-2/results.json")  // ✅ ALWAYS use filepath.Join
-
-      result := workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{
-          Filepath: outputPath,
-          Content:  "{\"status\": \"success\"}",
-      })
-      fmt.Printf("Tool output: %%s\n", result)
-      if strings.HasPrefix(result, "Error:") {
-          fmt.Printf("❌ Error: %%s\n", result)
-          return
-      }
-
-      // ❌ WRONG: NEVER hardcode paths like "` + workspacePath + `/step-2/file.json"
-      // ❌ WRONG: NEVER use os.WriteFile, os.ReadFile - files go to wrong directory!
-  }`
-
-	// Simple example for chat mode (no workspace)
-	simpleExample := `
-
-**Example - Basic Tool Call:**
-  package main
-  import ("fmt"; "strings"; "your_server_tools")
-
-  func main() {
-      // Use discover_code_files to see exact struct definition first!
-      output := your_server_tools.YourToolFunction(your_server_tools.YourToolParams{
-          ParamName: "value",
-      })
-      fmt.Printf("Tool output: %%s\n", output)
-      if strings.HasPrefix(output, "Error:") {
-          fmt.Printf("❌ Error: %%s\n", output)
-          return
-      }
-      fmt.Printf("✅ Success!\n")
-  }`
-
-	// Common mistakes base (always included)
-	commonMistakesBase := `
-
-**🚨 Common Mistakes:**
-- ❌ Checking err != nil (functions return string, no error)
-- ❌ Not printing output before checking errors
-- ❌ Using wrong parameter names - always use discover_code_files first
-- ❌ Writing placeholder code - always implement actual logic
-- ❌ Looping on completion messages - recognize completion and move on
-- ❌ Wrong imports - use "workspace_tools" NOT "generated/workspace_tools"`
-
-	// Workspace-specific mistakes
-	workspaceMistakes := `
-- ❌ Using standard Go file I/O - must use workspace_tools package
-- ❌ Missing args in write_code - MUST pass args=["` + workspacePath + `"]
-- ❌ Hardcoding paths - NEVER use "Workflow/runs/iteration-X/..." in Go code`
-
-	// Build instructions based on mode
-	var instructions string
-	if workspacePath != "" {
-		// Workflow mode with workspace path
-		instructions = baseInstructions + workspaceInstructions + errorHandling + workspaceErrorNote + bestPractices + workspaceExample + commonMistakesBase + workspaceMistakes
-	} else {
-		// Chat mode without workspace path
-		instructions = baseInstructions + errorHandling + bestPractices + simpleExample + commonMistakesBase
-	}
-
-	return instructions
+**Best Practices:**
+- Call get_api_spec(server_name="...", tool_name="...") to get the spec for the specific tool you need
+- Only fetch the full server spec (without tool_name) when you need to browse all available endpoints
+- Prefer Python for writing code — it handles JSON, HTTP requests, and error handling cleanly
+- Break complex tasks into steps, test each tool call individually
+- Always check the "success" field in responses
+- MCP_API_URL and MCP_API_TOKEN are pre-set in the shell environment`
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
@@ -277,40 +167,26 @@ When answering questions:
 	// Build tool usage section based on mode
 	var toolUsageSection string
 	if useCodeExecutionMode {
-		// Get code execution instructions and replace {{TOOL_STRUCTURE}} placeholder
-		// Note: workspace path is passed as empty here - it will be substituted by workflow agents
-		// that have access to the actual workspace path in their template processing
 		codeExecutionInstructions := GetCodeExecutionInstructions("")
 
-		// Replace {{TOOL_STRUCTURE}} placeholder with actual tool structure
+		// Replace {{TOOL_STRUCTURE}} placeholder with the tool index
 		if toolStructureJSON != "" {
-			toolStructureSection := "\n\n<available_code>\n" +
-				"**AVAILABLE CODE FILES AND FUNCTIONS:**\n\n" +
-				"The following code files and functions are available for use in your Go code. This structure shows all servers, custom tools, and their functions:\n\n" +
+			toolStructureSection := "\n\n<available_tools>\n" +
+				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
+				"The following MCP servers and their tools are accessible via HTTP API.\n" +
+				"Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n\n" +
 				"```json\n" +
 				toolStructureJSON + "\n" +
 				"```\n\n" +
-				"**How to use:**\n" +
-				"- The JSON structure shows package names as keys (e.g., \"google_sheets_tools\", \"workspace_tools\")\n" +
-				"- Each package contains a \"tools\" array with available function names (e.g., \"GetDocument\", \"ListSpreadsheets\")\n" +
-				"- Use the package name as \"server_name\" in discover_code_files (e.g., discover_code_files(server_name=\"google_sheets_tools\", tool_names=[\"GetDocument\"]))\n" +
-				"- Import the package and call the function in your Go code (e.g., import \"google_sheets_tools\")\n" +
-				"- Use 'discover_code_files' tool to get exact function signatures before writing code\n" +
-				"</available_code>\n"
+				"Domain tools (MCP and custom) are accessible via HTTP API endpoints documented in the OpenAPI spec.\n" +
+				"System tools (e.g. execute_shell_command) are available as direct LLM calls.\n" +
+				"</available_tools>\n"
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
 		} else {
-			// Provide helpful message when tool structure is not available
-			toolStructureSection := "\n\n<available_code>\n" +
-				"**AVAILABLE CODE FILES AND FUNCTIONS:**\n\n" +
-				"Tool structure discovery is in progress or unavailable. Use the 'discover_code_files' tool to explore available code:\n\n" +
-				"- **discover_code_files(server_name, tool_name)**: Get exact function signatures for any tool\n" +
-				"- Example: discover_code_files(server_name=\"aws\", tool_name=\"GetDocument\")\n" +
-				"- This will show you the exact Go function signature, parameters, and usage\n\n" +
-				"**How to discover tools:**\n" +
-				"1. Use discover_code_files to find available servers and tools\n" +
-				"2. Get the exact function signature for the tool you want to use\n" +
-				"3. Import the package (e.g., import \"aws\") and call the function in your Go code\n" +
-				"</available_code>\n"
+			toolStructureSection := "\n\n<available_tools>\n" +
+				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
+				"Tool index is being built. Use get_api_spec(server_name=\"...\", tool_name=\"...\") to discover endpoints.\n" +
+				"</available_tools>\n"
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
 		}
 
@@ -508,16 +384,18 @@ func buildResourcesSection(resources map[string][]mcp.Resource) string {
 // Only mentions tools that are actually available (prompts/resources must exist)
 func buildVirtualToolsSection(useCodeExecutionMode bool, useToolSearchMode bool, prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource) string {
 	if useCodeExecutionMode {
-		// Code execution mode: Show simplified virtual tools section
-		return `🔧 AVAILABLE FUNCTIONS:
+		return `AVAILABLE FUNCTIONS:
 
-- **discover_code_files** - Get Go source code for a specific function
-  Usage: discover_code_files(server_name="aws", tool_name="GetDocument")
+- **get_api_spec** - Get OpenAPI spec for a specific tool (or all tools on a server)
+  Usage: get_api_spec(server_name="google_sheets", tool_name="get_document")
+  Prefer specifying tool_name for smaller, targeted specs.
+  Omit tool_name only when you need to browse all tools on a server.
+  Returns YAML with endpoint paths, request schemas, and auth requirements.
 
-- **write_code** - Write and execute Go code
-  Code runs as separate process via 'go run'
-  Use fmt.Println() to output results
-  Optional 'args' parameter: Array of strings passed as CLI arguments (accessible via os.Args[1], os.Args[2], etc.)`
+Domain tools (MCP and custom) are accessed via HTTP endpoints documented in the OpenAPI spec.
+System tools (e.g. execute_shell_command) are available as direct LLM function calls.
+Custom domain tools use: POST /tools/custom/{tool}
+MCP tools use: POST /tools/mcp/{server}/{tool}`
 	}
 
 	if useToolSearchMode {

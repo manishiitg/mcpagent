@@ -224,9 +224,9 @@ func testCustomExecuteEndpoint(serverURL string, logger loggerv2.Logger, t *test
 func testVirtualExecuteEndpoint(serverURL string, logger loggerv2.Logger, t *testing.T) {
 	t.Log("Testing POST /api/virtual/execute...")
 
-	// Prepare request - try to call discover_code_files
+	// Prepare request - try to call get_api_spec
 	reqBody := map[string]interface{}{
-		"tool": "discover_code_files",
+		"tool": "get_api_spec",
 		"args": map[string]interface{}{},
 	}
 
