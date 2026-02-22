@@ -43,6 +43,15 @@ Integrate the Claude Code CLI adapter into the MCP Agent system (`mcpagent`), en
     4.  Verify that `NewAgent` automatically disables these features (assert `UseToolSearchMode == false`).
     5.  Verify `GetMCPConfigJSON` returns valid JSON matching the mock config.
 
+## Known Limitations
+
+### HTTP/SSE MCP Servers
+Currently, the `claude` CLI cannot dynamically bootstrap remote HTTP/SSE based MCP servers via the `--mcp-config` JSON string argument when running in headless/non-interactive mode (`-p`). 
+
+*   **Behavior**: Injecting an HTTP configuration (e.g. `{"type": "http", "url": "..."}`) into `--mcp-config` causes the non-interactive CLI to hang indefinitely and eventually time out.
+*   **Root Cause**: The CLI's internal MCP engine is optimized for spawning local `stdio` command sub-processes (like `npx`). While the CLI supports HTTP MCPs natively, it currently expects them to be configured interactively via the standard interactive prompt (e.g. `claude mcp add --transport http ...`).
+*   **Workaround**: Tests and automated usage of the `ProviderClaudeCode` integration must utilize `stdio` based local servers (such as `@modelcontextprotocol/server-memory`) rather than remote HTTP servers.
+
 ## Current Status & Issues
 
 ### Issue: Test Failure (Resolved)
