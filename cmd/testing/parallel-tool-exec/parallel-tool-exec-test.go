@@ -158,11 +158,11 @@ func (l *toolTimingListener) getSequentialCount() int {
 func testParallelToolExecution(log loggerv2.Logger, modelFlag string) error {
 	log.Info("--- Test: Parallel Tool Execution ---")
 
-	// Use context7 (HTTP-based, no npx needed) — a reliable remote MCP server
+	// Use memory (stdio-based) — Claude CLI supports stdio bootstrapping via --mcp-config
 	mcpServers := map[string]interface{}{
-		"context7": map[string]interface{}{
-			"url":      "https://mcp.context7.com/mcp",
-			"protocol": "http",
+		"memory": map[string]interface{}{
+			"command": "npx",
+			"args":    []string{"-y", "@modelcontextprotocol/server-memory"},
 		},
 	}
 
@@ -231,14 +231,14 @@ func testParallelToolExecution(log loggerv2.Logger, modelFlag string) error {
 	parallelListener := newToolTimingListener()
 	parallelAgent.AddEventListener(parallelListener)
 
-	// Ask a question that should trigger the LLM to call context7 multiple times
-	// The prompt explicitly asks for multiple lookups to encourage parallel tool calls
-	question := `I need documentation for these 3 libraries. For EACH one, use the resolve_library_id tool to find it, and then use the get_library_docs tool to fetch its docs. Do all 3 library lookups concurrently if possible:
-1. React
-2. Express.js
-3. Next.js
+	// Ask a question that should trigger the LLM to call memory tools multiple times
+	// The prompt explicitly asks for multiple operations to encourage parallel tool calls
+	question := `Use the memory tool to concurrently save these 3 facts:
+1. The sky is blue
+2. Grass is green
+3. Fire is hot
 
-For each library, give me a 1-sentence summary of what you found.`
+Confirm when all 3 are saved.`
 
 	log.Info("Running parallel agent...",
 		loggerv2.String("question_preview", question[:80]+"..."))
@@ -329,13 +329,13 @@ For each library, give me a 1-sentence summary of what you found.`
 			loggerv2.Int("length", len(sequentialResponse)))
 	}
 
-	// Check that both responses mention the libraries
-	for _, lib := range []string{"React", "Express", "Next"} {
-		if !strings.Contains(strings.ToLower(parallelResponse), strings.ToLower(lib)) {
-			log.Warn(fmt.Sprintf("Parallel response may be missing info about %s", lib))
+	// Check that both responses mention the facts
+	for _, fact := range []string{"blue", "green", "hot"} {
+		if !strings.Contains(strings.ToLower(parallelResponse), strings.ToLower(fact)) {
+			log.Warn(fmt.Sprintf("Parallel response may be missing info about %s", fact))
 		}
-		if !strings.Contains(strings.ToLower(sequentialResponse), strings.ToLower(lib)) {
-			log.Warn(fmt.Sprintf("Sequential response may be missing info about %s", lib))
+		if !strings.Contains(strings.ToLower(sequentialResponse), strings.ToLower(fact)) {
+			log.Warn(fmt.Sprintf("Sequential response may be missing info about %s", fact))
 		}
 	}
 

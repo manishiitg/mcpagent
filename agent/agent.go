@@ -3055,6 +3055,12 @@ func AskStructured[T any](a *Agent, ctx context.Context, question string, schema
 //   - []llmtypes.MessageContent: The updated conversation history.
 //   - error: An error if processing or conversion fails.
 func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error) {
+	// 🔧 CLAUDE CODE INTEGRATION: Structured output is not supported via CLI wrapper
+	if a.provider == llm.ProviderClaudeCode {
+		var zero T
+		return zero, messages, fmt.Errorf("structured output is not supported with the claude-code provider")
+	}
+
 	// First, get the text response using the existing method
 	textResponse, updatedMessages, err := a.AskWithHistory(ctx, messages)
 	if err != nil {
@@ -3097,6 +3103,12 @@ func AskWithHistoryStructuredViaTool[T any](
 	toolDescription string,
 	schema string,
 ) (StructuredOutputResult[T], error) {
+	// 🔧 CLAUDE CODE INTEGRATION: Structured output is not supported via CLI wrapper
+	if a.provider == llm.ProviderClaudeCode {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("structured output is not supported with the claude-code provider")
+	}
+
 	// Parse schema string to get tool parameters
 	toolParams, err := parseSchemaForToolParameters(schema)
 	if err != nil {
