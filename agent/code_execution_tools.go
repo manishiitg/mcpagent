@@ -38,11 +38,14 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	}
 
 	// Check cache
+	a.openAPISpecCacheMu.RLock()
 	if a.openAPISpecCache != nil {
 		if cached, exists := a.openAPISpecCache[cacheKey]; exists {
+			a.openAPISpecCacheMu.RUnlock()
 			return string(cached), nil
 		}
 	}
+	a.openAPISpecCacheMu.RUnlock()
 
 	// Determine the API base URL
 	baseURL := a.APIBaseURL
@@ -86,10 +89,12 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 		}
 
 		// Cache
+		a.openAPISpecCacheMu.Lock()
 		if a.openAPISpecCache == nil {
 			a.openAPISpecCache = make(map[string][]byte)
 		}
 		a.openAPISpecCache[cacheKey] = specBytes
+		a.openAPISpecCacheMu.Unlock()
 		return string(specBytes), nil
 	}
 
@@ -144,10 +149,12 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	}
 
 	// Cache
+	a.openAPISpecCacheMu.Lock()
 	if a.openAPISpecCache == nil {
 		a.openAPISpecCache = make(map[string][]byte)
 	}
 	a.openAPISpecCache[cacheKey] = specBytes
+	a.openAPISpecCacheMu.Unlock()
 
 	if a.Logger != nil {
 		a.Logger.Info("Generated OpenAPI spec",

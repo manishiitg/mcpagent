@@ -92,6 +92,7 @@ github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
 github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0=
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/manishiitg/multi-llm-provider-go v0.3.7 h1:0zQWO5f5MsDu6uhcwBXcJy9ISC6zoXCNyFyJmUoRemI=
+github.com/manishiitg/multi-llm-provider-go v0.3.7/go.mod h1:0XyRemC61xgmKygHJzOFaIr8jOiD9hHTH3i581rEuSc=
 github.com/mark3labs/mcp-go v0.44.0-beta.1 h1:96+eeCyywh4gpaJCaXKfkO5BkSNUThGbLgo3yQqvGHg=
 github.com/mark3labs/mcp-go v0.44.0-beta.1/go.mod h1:YnJfOL382MIWDx1kMY+2zsRHU/q78dBg9aFb8W6Thdw=
 github.com/openai/openai-go/v3 v3.16.0 h1:VdqS+GFZgAvEOBcWNyvLVwPlYEIboW5xwiUCcLrVf8c=

@@ -226,21 +226,24 @@ func main() {
 	}
 
 	// Register execute_shell_command (system tool — stays as direct LLM call)
+	// Build a safe, controlled environment for child processes
+	shellEnv := append(mcpagent.BuildSafeEnvironment(),
+		fmt.Sprintf("MCP_API_URL=%s", apiBaseURL),
+		fmt.Sprintf("MCP_API_TOKEN=%s", apiToken),
+	)
 	err = agent.RegisterCustomTool(
 		"execute_shell_command",
 		codeexec.ShellCommandDescription,
 		codeexec.ShellCommandParams,
-		codeexec.ExecuteShellCommand,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
+		},
 		"workspace_advanced",
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to register execute_shell_command tool: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Set env vars so subprocesses can use them
-	os.Setenv("MCP_API_URL", apiBaseURL)
-	os.Setenv("MCP_API_TOKEN", apiToken)
 
 	fmt.Printf("✓ Code execution mode enabled\n")
 	fmt.Printf("✓ execute_shell_command registered (direct LLM call)\n")

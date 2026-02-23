@@ -223,29 +223,31 @@ func callToolWithTimeoutWrapper(
 
 // ensureSystemPrompt ensures that the system prompt is included in the messages
 func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes.MessageContent {
-	// Check if the first message is already a system message
-	if len(messages) > 0 && messages[0].Role == llmtypes.ChatMessageTypeSystem {
-		return messages
-	}
-
-	// Check if there's already a system message anywhere in the conversation
-	for _, msg := range messages {
-		if msg.Role == llmtypes.ChatMessageTypeSystem {
-			// System message already exists, don't add another one
-			return messages
-		}
-	}
-
-	// Use the agent's existing system prompt (which should already be correct for the mode)
+	// Always use the agent's current system prompt — it reflects the latest mode
+	// (code execution, tool search, etc.) which may differ from a stale system
+	// message carried over in conversation history from a previous turn.
 	systemPrompt := a.SystemPrompt
 
-	// Create system message
 	systemMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeSystem,
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}},
 	}
 
-	// Prepend system message to the beginning
+	// If the first message is already a system message, replace it
+	if len(messages) > 0 && messages[0].Role == llmtypes.ChatMessageTypeSystem {
+		messages[0] = systemMessage
+		return messages
+	}
+
+	// If a system message exists elsewhere in the conversation, replace it
+	for i, msg := range messages {
+		if msg.Role == llmtypes.ChatMessageTypeSystem {
+			messages[i] = systemMessage
+			return messages
+		}
+	}
+
+	// No system message found — prepend one
 	return append([]llmtypes.MessageContent{systemMessage}, messages...)
 }
 

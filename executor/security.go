@@ -2,6 +2,7 @@ package executor
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"strings"
@@ -43,7 +44,7 @@ func AuthMiddleware(token string) func(http.Handler) http.Handler {
 			}
 
 			providedToken := strings.TrimPrefix(authHeader, "Bearer ")
-			if providedToken != token {
+			if subtle.ConstantTimeCompare([]byte(providedToken), []byte(token)) != 1 {
 				http.Error(w, `{"success":false,"error":"invalid API token"}`, http.StatusUnauthorized)
 				return
 			}

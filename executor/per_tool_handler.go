@@ -4,48 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
-
-// RegisterPerToolEndpoints registers per-tool HTTP endpoints that route to existing execution logic.
-// This provides clean REST-style URLs that code can call directly:
-//   - POST /tools/mcp/{server}/{tool}  -> delegates to HandleMCPExecute logic
-//   - POST /tools/custom/{tool}        -> delegates to HandleCustomExecute logic
-//
-// These endpoints accept the tool arguments directly in the request body (no server/tool wrapper).
-func (h *ExecutorHandlers) RegisterPerToolEndpoints(
-	mux *http.ServeMux,
-	mcpServers map[string][]string, // server name -> tool names
-	customToolNames []string,
-) {
-	// Register MCP server tool endpoints
-	for serverName, toolNames := range mcpServers {
-		for _, toolName := range toolNames {
-			// Capture loop variables for closure
-			sn := serverName
-			tn := toolName
-			pattern := fmt.Sprintf("POST /tools/mcp/%s/%s", sanitizeURLSegment(sn), sanitizeURLSegment(tn))
-			mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-				h.handlePerToolMCP(w, r, sn, tn)
-			})
-		}
-	}
-
-	// Register custom tool endpoints
-	for _, toolName := range customToolNames {
-		tn := toolName
-		pattern := fmt.Sprintf("POST /tools/custom/%s", sanitizeURLSegment(tn))
-		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			h.handlePerToolCustom(w, r, tn)
-		})
-	}
-
-	h.logger.Info("Registered per-tool endpoints",
-		loggerv2.Int("mcp_servers", len(mcpServers)),
-		loggerv2.Int("custom_tools", len(customToolNames)))
-}
 
 // HandlePerToolMCPRequest is the public entry point for per-tool MCP requests.
 // It handles requests to /tools/mcp/{server}/{tool}, extracting args from the body
@@ -103,8 +66,9 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 		loggerv2.String("tool", tool),
 		loggerv2.String("session_id", sessionID))
 
-	// Build the standard MCPExecuteRequest and reuse the full handler logic
-	// We rewrite the request to use the standard HandleMCPExecute
+	// Build the standard MCPExecuteRequest and reuse the full handler logic.
+	// URL path segments are sanitized (hyphens→underscores via SanitizePathSegment).
+	// The original server/tool names may have hyphens, so we try both forms.
 	wrappedBody := MCPExecuteRequest{
 		Server:    server,
 		Tool:      tool,
@@ -132,8 +96,49 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 	}
 	newReq.Header.Set("Content-Type", "application/json")
 
-	// Delegate to existing handler
-	h.HandleMCPExecute(w, newReq)
+	// Try the sanitized name first. If it fails with a server connection error
+	// and the name contains underscores, retry with hyphens (reverse of sanitization).
+	desanitizedServer := strings.ReplaceAll(server, "_", "-")
+	if desanitizedServer == server {
+		// No underscores to desanitize — just delegate directly
+		h.HandleMCPExecute(w, newReq)
+		return
+	}
+
+	// Name has underscores that might be sanitized hyphens — try with recorder first
+	rec := httptest.NewRecorder()
+	h.HandleMCPExecute(rec, newReq)
+
+	// Check if the response indicates a server-not-found error
+	var resp MCPExecuteResponse
+	shouldRetry := false
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
+		if !resp.Success && strings.Contains(resp.Error, "Failed to connect to server") {
+			shouldRetry = true
+		}
+	}
+
+	if shouldRetry {
+		h.logger.Info("Retrying per-tool MCP request with desanitized server name",
+			loggerv2.String("original", server),
+			loggerv2.String("desanitized", desanitizedServer))
+
+		wrappedBody.Server = desanitizedServer
+		retryBytes, _ := json.Marshal(wrappedBody)
+		retryReq, retryErr := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(retryBytes)))
+		if retryErr == nil {
+			retryReq.Header.Set("Content-Type", "application/json")
+			h.HandleMCPExecute(w, retryReq)
+			return
+		}
+	}
+
+	// Write the original (first attempt) response
+	for k, v := range rec.Header() {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(rec.Code)
+	_, _ = w.Write(rec.Body.Bytes()) //nolint:gosec
 }
 
 // handlePerToolCustom handles requests to /tools/custom/{tool}.
@@ -203,11 +208,4 @@ func (h *ExecutorHandlers) handlePerToolCustom(w http.ResponseWriter, r *http.Re
 	newReq.Header.Set("Content-Type", "application/json")
 
 	h.HandleCustomExecute(w, newReq)
-}
-
-// sanitizeURLSegment makes a name safe for use in URL paths.
-// Replaces hyphens with underscores and lowercases.
-func sanitizeURLSegment(name string) string {
-	result := strings.ReplaceAll(name, "-", "_")
-	return strings.ToLower(result)
 }

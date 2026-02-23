@@ -251,11 +251,18 @@ func main() {
 	fmt.Println("✓ Registered get_weather tool (category: data)")
 
 	// Shell command executor - workspace_advanced category (system tool, stays as direct LLM call)
+	// Build a safe, controlled environment for child processes
+	shellEnv := append(mcpagent.BuildSafeEnvironment(),
+		fmt.Sprintf("MCP_API_URL=%s", apiBaseURL),
+		fmt.Sprintf("MCP_API_TOKEN=%s", apiToken),
+	)
 	err = agent.RegisterCustomTool(
 		"execute_shell_command",
 		codeexec.ShellCommandDescription,
 		codeexec.ShellCommandParams,
-		codeexec.ExecuteShellCommand,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
+		},
 		"workspace_advanced",
 	)
 	if err != nil {
@@ -263,10 +270,6 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("✓ Registered execute_shell_command tool (category: workspace_advanced)")
-
-	// Set MCP_API_URL and MCP_API_TOKEN env vars so subprocesses (curl, scripts) can use them
-	os.Setenv("MCP_API_URL", apiBaseURL)
-	os.Setenv("MCP_API_TOKEN", apiToken)
 
 	fmt.Println()
 	fmt.Println("=== Code Execution Mode with Custom Tool ===")

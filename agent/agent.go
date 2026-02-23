@@ -846,7 +846,8 @@ type Agent struct {
 	APIToken   string
 
 	// Cached OpenAPI specs per server (generated on-demand by get_api_spec)
-	openAPISpecCache map[string][]byte
+	openAPISpecCache   map[string][]byte
+	openAPISpecCacheMu sync.RWMutex
 
 	// All MCP tool definitions (stored in code execution mode for OpenAPI spec generation)
 	// In code execution mode, MCP tools are excluded from a.Tools (accessed via HTTP API),
@@ -3462,8 +3463,10 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 
 	// In code execution mode, invalidate cached OpenAPI spec for this tool's category
 	// so it gets regenerated on next get_api_spec call
-	if a.UseCodeExecutionMode && a.openAPISpecCache != nil {
+	if a.UseCodeExecutionMode {
+		a.openAPISpecCacheMu.Lock()
 		delete(a.openAPISpecCache, toolCategory)
+		a.openAPISpecCacheMu.Unlock()
 	}
 
 	// Update registry with new custom tool
