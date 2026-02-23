@@ -122,13 +122,12 @@ go build -o mcpagent-test ./cmd/testing
 
 **Location**: `mcpagent/cmd/testing/mcp-agent-code-exec/`
 
-Tests the **full code execution flow** with context7 MCP server:
-1. Starts executor HTTP server on port 8000
+Tests the **OpenAPI-based code execution flow** with context7 MCP server:
+1. Starts executor HTTP server on port 8000 with bearer token auth and per-tool endpoints
 2. Creates agent in code execution mode with context7
-3. Agent generates Go code to call context7's `resolve_library_id` tool
-4. Code executes and calls executor HTTP endpoint
-5. Executor handler calls context7 MCP tool
-6. Validates response contains "react" (confirms tool was called)
+3. Agent calls `get_api_spec` virtual tool to retrieve OpenAPI spec for context7
+4. Agent describes the available endpoints and parameters from the spec
+5. Validates response contains endpoint/schema information
 
 **Run**:
 ```bash
@@ -139,11 +138,11 @@ go build -o mcpagent-test ./cmd/testing
 ```
 
 **Success Criteria**:
-- ✅ Server starts on port 8000
-- ✅ Agent created with code execution mode
+- ✅ Server starts on port 8000 with bearer auth + per-tool endpoints
+- ✅ Agent created with code execution mode and `WithAPIConfig()`
 - ✅ Context7 configured
-- ✅ Response received and contains "react"
-- ✅ All 5 confirmation points logged
+- ✅ `get_api_spec` returns valid OpenAPI YAML spec
+- ✅ Response describes endpoints and request schemas
 
 **Criteria**: See `mcpagent/cmd/testing/mcp-agent-code-exec/criteria.md`
 

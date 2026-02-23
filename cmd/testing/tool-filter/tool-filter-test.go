@@ -230,8 +230,8 @@ func TestComprehensiveFilterScenarios(log loggerv2.Logger) error {
 		testCases := []ToolFilterTestCase{
 			{"virtual tool", "virtual_tools", "get_prompt", false, true, true, "virtual tools always included"},
 			{"virtual tool", "virtual_tools", "get_resource", false, true, true, "virtual tools always included"},
-			{"virtual tool", "virtual_tools", "discover_code_files", false, true, true, "virtual tools always included"},
-			{"virtual tool", "virtual_tools", "write_code", false, true, true, "virtual tools always included"},
+			{"virtual tool", "virtual_tools", "get_api_spec", false, true, true, "virtual tools always included"},
+			{"virtual tool", "virtual_tools", "execute_shell_command", false, true, true, "virtual tools always included"},
 		}
 
 		for _, tc := range testCases {
@@ -461,7 +461,7 @@ func TestDiscoverySimulation(log loggerv2.Logger) error {
 
 		// Virtual tools
 		{"virtual_tools", "virtual", true, true, "get_prompt", "virtual_tools", true},
-		{"virtual_tools", "virtual", true, true, "write_code", "virtual_tools", true},
+		{"virtual_tools", "virtual", true, true, "execute_shell_command", "virtual_tools", true},
 	}
 
 	log.Info("  Simulating discovery behavior:")
@@ -716,30 +716,30 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, log loggerv2.
 	}
 	defer agentInstance.Close()
 
-	// In code execution mode, agent should only have virtual tools (discover_code_files, write_code)
+	// In code execution mode, agent should only have virtual tools (get_api_spec, execute_shell_command)
 	tools := agentInstance.Tools
 	log.Info("Code execution mode: Agent has LLM tools (should be virtual tools only)", loggerv2.Int("count", len(tools)))
 
 	// Verify: Should have virtual tools
-	hasDiscoverCodeFiles := false
-	hasWriteCode := false
+	hasGetAPISpec := false
+	hasExecuteShellCommand := false
 	for _, tool := range tools {
 		if tool.Function != nil {
 			log.Info("  - Tool", loggerv2.String("name", tool.Function.Name))
-			if tool.Function.Name == "discover_code_files" {
-				hasDiscoverCodeFiles = true
+			if tool.Function.Name == "get_api_spec" {
+				hasGetAPISpec = true
 			}
-			if tool.Function.Name == "write_code" {
-				hasWriteCode = true
+			if tool.Function.Name == "execute_shell_command" {
+				hasExecuteShellCommand = true
 			}
 		}
 	}
 
-	if !hasDiscoverCodeFiles {
-		return fmt.Errorf("code execution mode: expected discover_code_files tool")
+	if !hasGetAPISpec {
+		return fmt.Errorf("code execution mode: expected get_api_spec tool")
 	}
-	if !hasWriteCode {
-		return fmt.Errorf("code execution mode: expected write_code tool")
+	if !hasExecuteShellCommand {
+		return fmt.Errorf("code execution mode: expected execute_shell_command tool")
 	}
 
 	// Test discover_code_structure to verify filtering works in discovery
@@ -852,7 +852,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 			// Count non-virtual tools
 			name := tool.Function.Name
 			if name != "get_prompt" && name != "get_resource" && name != "discover_code_structure" &&
-				name != "discover_code_files" && name != "write_code" {
+				name != "get_api_spec" && name != "execute_shell_command" {
 				normalMCPToolCount++
 			}
 		}

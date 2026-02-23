@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +16,7 @@ import (
 	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcpagent/mcpcache/codegen"
+	"github.com/manishiitg/mcpagent/mcpcache/openapi"
 	"github.com/manishiitg/mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -311,7 +310,7 @@ func (cm *CacheManager) Invalidate(cacheKey string) error {
 	var packageDir string
 	if serverName != "" {
 		generatedDir = cm.getGeneratedDir()
-		packageName := codegen.GetPackageName(serverName)
+		packageName := openapi.GetPackageName(serverName)
 		packageDir = filepath.Join(generatedDir, packageName)
 	}
 
@@ -341,40 +340,31 @@ func (cm *CacheManager) Invalidate(cacheKey string) error {
 			loggerv2.String("key", cacheKey))
 	}
 
-	// Remove generated Go files for this server
+	// Remove generated files for this server
 	if serverName != "" {
-		cm.logger.Info("🔧 [INVALIDATE] Removing generated Go files (outside lock)",
+		cm.logger.Info("🔧 [INVALIDATE] Removing generated files (outside lock)",
 			loggerv2.String("key", cacheKey),
 			loggerv2.String("server", serverName),
 			loggerv2.String("package_dir", packageDir))
 		removeStart := time.Now()
 		if err := os.RemoveAll(packageDir); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warn("🔧 [INVALIDATE] Failed to remove generated Go files for server",
+			cm.logger.Warn("🔧 [INVALIDATE] Failed to remove generated files for server",
 				loggerv2.Error(err),
 				loggerv2.String("server", serverName),
 				loggerv2.String("package_dir", packageDir))
 		} else {
 			removeDuration := time.Since(removeStart)
-			cm.logger.Debug("🔧 [INVALIDATE] Successfully removed generated Go files for server",
+			cm.logger.Debug("🔧 [INVALIDATE] Successfully removed generated files for server",
 				loggerv2.String("server", serverName),
 				loggerv2.String("package_dir", packageDir),
 				loggerv2.String("duration", removeDuration.String()))
 		}
 
-		// Regenerate index file
-		cm.logger.Info("🔧 [INVALIDATE] Regenerating index file (outside lock)",
-			loggerv2.String("key", cacheKey),
-			loggerv2.String("server", serverName),
-			loggerv2.String("generated_dir", generatedDir))
-		indexStart := time.Now()
-		if err := codegen.GenerateIndexFile(generatedDir, cm.logger); err != nil {
-			cm.logger.Warn("🔧 [INVALIDATE] Failed to regenerate index file",
-				loggerv2.Error(err),
-				loggerv2.String("server", serverName),
-				loggerv2.String("generated_dir", generatedDir))
-		} else {
-			indexDuration := time.Since(indexStart)
-			cm.logger.Debug("🔧 [INVALIDATE] Successfully regenerated index file",
+		// Index file regeneration removed — Go codegen no longer used
+		{
+			indexDuration := time.Duration(0)
+			_ = indexDuration
+			cm.logger.Debug("🔧 [INVALIDATE] Skipping index file regeneration (Go codegen removed)",
 				loggerv2.String("server", serverName),
 				loggerv2.String("generated_dir", generatedDir),
 				loggerv2.String("duration", indexDuration.String()))
@@ -446,7 +436,7 @@ func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, confi
 	var packageDir string
 	if len(keysToRemove) > 0 {
 		generatedDir = cm.getGeneratedDir()
-		packageName := codegen.GetPackageName(serverName)
+		packageName := openapi.GetPackageName(serverName)
 		packageDir = filepath.Join(generatedDir, packageName)
 	}
 
@@ -514,8 +504,8 @@ func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, confi
 	default:
 	}
 
-	// Remove generated Go files for this server
-	cm.logger.Info("🔧 [INVALIDATE] Removing generated Go files (outside lock)",
+	// Remove generated files for this server
+	cm.logger.Info("🔧 [INVALIDATE] Removing generated files (outside lock)",
 		loggerv2.String("server", serverName),
 		loggerv2.String("package_dir", packageDir))
 	removeStart := time.Now()
@@ -537,12 +527,12 @@ func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, confi
 	case err := <-removeDone:
 		removeDuration := time.Since(removeStart)
 		if err != nil && !os.IsNotExist(err) {
-			cm.logger.Warn("🔧 [INVALIDATE] Failed to remove generated Go files for server",
+			cm.logger.Warn("🔧 [INVALIDATE] Failed to remove generated files for server",
 				loggerv2.Error(err),
 				loggerv2.String("server", serverName),
 				loggerv2.String("package_dir", packageDir))
 		} else {
-			cm.logger.Info("🔧 [INVALIDATE] Successfully removed generated Go files for server",
+			cm.logger.Info("🔧 [INVALIDATE] Successfully removed generated files for server",
 				loggerv2.String("server", serverName),
 				loggerv2.String("package_dir", packageDir),
 				loggerv2.String("duration", removeDuration.String()))
@@ -559,32 +549,9 @@ func (cm *CacheManager) InvalidateByServerWithContext(ctx context.Context, confi
 	default:
 	}
 
-	// Regenerate index file
-	cm.logger.Info("🔧 [INVALIDATE] Regenerating index file (outside lock)",
-		loggerv2.String("server", serverName),
-		loggerv2.String("generated_dir", generatedDir))
-	indexStart := time.Now()
-	if err := codegen.GenerateIndexFileWithContext(ctx, generatedDir, cm.logger); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			cm.logger.Warn("🔧 [INVALIDATE] Index regeneration cancelled or timed out",
-				loggerv2.Error(err),
-				loggerv2.String("server", serverName),
-				loggerv2.String("generated_dir", generatedDir))
-			return err
-		}
-		cm.logger.Warn("🔧 [INVALIDATE] Failed to regenerate index file",
-			loggerv2.Error(err),
-			loggerv2.String("server", serverName),
-			loggerv2.String("generated_dir", generatedDir))
-	} else {
-		indexDuration := time.Since(indexStart)
-		cm.logger.Info("🔧 [INVALIDATE] Successfully regenerated index file",
-			loggerv2.String("server", serverName),
-			loggerv2.String("generated_dir", generatedDir),
-			loggerv2.String("duration", indexDuration.String()))
-	}
+	// Index file regeneration removed — Go codegen no longer used
 
-	cm.logger.Info("✅ [INVALIDATE] Successfully invalidated cache entries for server",
+	cm.logger.Info("Successfully invalidated cache entries for server",
 		loggerv2.Int("count", len(keysToRemove)),
 		loggerv2.String("server", serverName))
 	return nil
@@ -788,35 +755,8 @@ func (cm *CacheManager) loadExistingCache() {
 				// Use atomic read (lock-free)
 				shouldGenerateCode := atomic.LoadInt32(&cm.enableCodeGeneration) == 1
 
-				if shouldGenerateCode && entry.IsValid && len(entry.Tools) > 0 {
-					generatedDir := cm.getGeneratedDir()
-					packageName := codegen.GetPackageName(entry.ServerName)
-					packageDir := filepath.Join(generatedDir, packageName)
-
-					// Check if code already exists
-					if _, err := os.Stat(packageDir); os.IsNotExist(err) {
-						// Code doesn't exist - generate it
-						if cm.logger != nil {
-							cm.logger.Debug("Code missing for cached server, generating", loggerv2.String("server", entry.ServerName))
-						}
-						entryForCodeGen := &codegen.CacheEntryForCodeGen{
-							ServerName: entry.ServerName,
-							Tools:      entry.Tools,
-						}
-						// Use default 5-minute timeout for cache manager (same as agent default)
-						defaultTimeout := 5 * time.Minute
-						if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger, defaultTimeout); err != nil {
-							if cm.logger != nil {
-								cm.logger.Warn("Failed to generate code for cached server",
-									loggerv2.Error(err),
-									loggerv2.String("server", entry.ServerName))
-							}
-							// Don't fail cache load if code generation fails
-						} else if cm.logger != nil {
-							cm.logger.Debug("Generated code for cached server", loggerv2.String("server", entry.ServerName))
-						}
-					}
-				}
+				// Go code generation removed — OpenAPI specs are generated on-demand
+			_ = shouldGenerateCode // no longer used for code generation
 			}
 		}
 	}
@@ -861,30 +801,8 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 			loggerv2.Int("file_size", int(stat.Size())))
 	}
 
-	// Generate Go code for tools (only if code generation is enabled)
-	// Code generation is only needed in code execution mode
-	// Note: shouldGenerateCode is passed as parameter to avoid deadlock (no need to acquire lock here)
-	cm.logger.Debug("Checking code generation", loggerv2.String("server", entry.ServerName), loggerv2.String("enabled", fmt.Sprintf("%v", shouldGenerateCode)))
-
-	if shouldGenerateCode {
-		cm.logger.Debug("Code generation enabled, generating code", loggerv2.String("server", entry.ServerName))
-		generatedDir := cm.getGeneratedDir()
-		entryForCodeGen := &codegen.CacheEntryForCodeGen{
-			ServerName: entry.ServerName,
-			Tools:      entry.Tools,
-		}
-		// Use default 5-minute timeout for cache manager (same as agent default)
-		defaultTimeout := 5 * time.Minute
-		if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger, defaultTimeout); err != nil {
-			cm.logger.Warn("Failed to generate Go code for server",
-				loggerv2.Error(err),
-				loggerv2.String("server", entry.ServerName))
-			// Don't fail cache save if code generation fails
-		}
-		cm.logger.Debug("Code generation completed", loggerv2.String("server", entry.ServerName))
-	} else {
-		cm.logger.Debug("Code generation disabled, skipping", loggerv2.String("server", entry.ServerName))
-	}
+	// Go code generation removed — OpenAPI specs are generated on-demand by the agent
+	_ = shouldGenerateCode
 
 	cm.logger.Debug("saveToFile completed", loggerv2.String("server", entry.ServerName))
 	return nil
@@ -1041,7 +959,7 @@ func (cm *CacheManager) EnsureGeneratedCodeForServer(serverName string, config m
 
 	// Check if generated code directory exists and has Go files
 	generatedDir := cm.getGeneratedDir()
-	packageName := codegen.GetPackageName(serverName)
+	packageName := openapi.GetPackageName(serverName)
 	packageDir := filepath.Join(generatedDir, packageName)
 
 	// Check if directory exists
@@ -1085,24 +1003,9 @@ func (cm *CacheManager) EnsureGeneratedCodeForServer(serverName string, config m
 	return false
 }
 
-// regenerateCodeForServer regenerates code for a server from its cache entry
-func (cm *CacheManager) regenerateCodeForServer(serverName string, cacheEntry *CacheEntry, generatedDir string, timeout time.Duration) bool {
-	entryForCodeGen := &codegen.CacheEntryForCodeGen{
-		ServerName: serverName,
-		Tools:      cacheEntry.Tools,
-	}
-	if err := codegen.GenerateServerToolsCode(entryForCodeGen, serverName, generatedDir, cm.logger, timeout); err != nil {
-		if cm.logger != nil {
-			cm.logger.Warn("Failed to regenerate code for server",
-				loggerv2.Error(err),
-				loggerv2.String("server", serverName))
-		}
-		return false
-	}
-	if cm.logger != nil {
-		cm.logger.Info("✅ Successfully regenerated code for server", loggerv2.String("server", serverName))
-	}
-	return true
+// regenerateCodeForServer is a no-op — Go code generation has been replaced by on-demand OpenAPI specs.
+func (cm *CacheManager) regenerateCodeForServer(_ string, _ *CacheEntry, _ string, _ time.Duration) bool {
+	return false
 }
 
 // EnsureGeneratedCodeForServers checks if generated code exists for multiple servers and regenerates if missing

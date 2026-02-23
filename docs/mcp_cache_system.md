@@ -73,13 +73,12 @@ type CacheEntry struct {
 - `cacheFreshConnectionData()` - Saves fresh connection results to cache (async)
 - `EmitComprehensiveCacheEvent()` - Emits observability events
 
-#### 3. `mcpagent/mcpcache/codegen/` (directory)
-**Purpose**: Generates Go wrapper code for tools when in Code Execution Mode.
+#### 3. `mcpagent/mcpcache/openapi/` (directory)
+**Purpose**: Generates OpenAPI 3.0 YAML specs for tools when in Code Execution Mode.
 
 **Files**:
-- `generator.go` - Generates Go structs and functions for each tool
-- `index_generator.go` - Generates `index.go` with imports for all servers
-- `template.go` - Go code templates
+- `generator.go` - Generates per-server OpenAPI specs from MCP tool definitions
+- `schema.go` - JSON Schema to OpenAPI schema conversion and naming utilities
 
 ### Cache Storage Files
 
@@ -132,37 +131,15 @@ agent_go/cache/
 }
 ```
 
-### Generated Code Files (Code Execution Mode)
+### OpenAPI Specs (Code Execution Mode)
 
-When a server is cached, Go wrapper code is generated:
+In code execution mode, OpenAPI 3.0 YAML specs are generated on-demand when the LLM calls `get_api_spec(server_name)`. Specs are generated in-memory from cached MCP tool definitions and cached on the agent after first generation. No files are written to disk.
 
-```
-agent_go/generated/
-├── index.go                         # Imports all server packages
-├── aws/
-│   ├── tools.go                    # Tool struct definitions
-│   └── executor.go                 # Tool execution functions
-├── github/
-│   ├── tools.go
-│   └── executor.go
-└── kubernetes/
-    ├── tools.go
-    └── executor.go
-```
-
-**Example**: `agent_go/generated/aws/tools.go`
-```go
-package aws
-
-type AwsListInstancesInput struct {
-    Region string `json:"region"`
-}
-
-func AwsListInstances(params AwsListInstancesInput) (string, error) {
-    // Generated code to call the MCP server tool
-    return callMCPTool("aws", "aws_list_instances", params)
-}
-```
+The OpenAPI spec includes:
+- Per-tool REST endpoints (`POST /tools/mcp/{server}/{tool}`)
+- Request body schemas derived from MCP tool parameter JSON Schemas
+- Bearer token authentication scheme
+- Standard response format
 
 ---
 
@@ -519,8 +496,8 @@ export MCP_CACHE_DIR="/custom/cache/path"
 # Cache TTL in minutes (default: 10080 = 7 days)
 export MCP_CACHE_TTL_MINUTES=1440  # 1 day
 
-# Generated code directory (default: ./generated)
-export MCP_GENERATED_DIR="/custom/generated/path"
+# Generated code directory (no longer used - OpenAPI specs are in-memory)
+# export MCP_GENERATED_DIR="/custom/generated/path"
 ```
 
 ### Programmatic API

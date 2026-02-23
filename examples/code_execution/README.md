@@ -1,6 +1,6 @@
 # Code Execution Mode Examples
 
-This directory contains multiple examples demonstrating **Code Execution Mode**, where the LLM writes and executes Go code instead of making JSON-based tool calls.
+This directory contains multiple examples demonstrating **Code Execution Mode**, where the LLM writes and executes Python/bash code to call MCP tools via HTTP API instead of making JSON-based tool calls.
 
 ## Available Examples
 
@@ -11,13 +11,13 @@ The simplest code execution example without folder guards or additional security
 **Features:**
 - Basic code execution mode setup
 - Multiple MCP servers (playwright, sequential-thinking, context7, etc.)
-- Simple Go code generation and execution
-- No folder guards
+- Python code generation and execution via `execute_shell_command`
+- OpenAPI spec discovery via `get_api_spec`
 
 **Use this when:**
 - You want to understand the basics of code execution mode
 - You don't need file system restrictions
-- You want to see how MCP tools become Go functions
+- You want to see how MCP tools become HTTP API endpoints
 
 ### 2. **[browser-automation/](browser-automation/)** - Code Execution with Browser Automation
 
@@ -26,14 +26,14 @@ Code execution mode combined with browser automation using Playwright MCP server
 **Features:**
 - Code execution mode with browser automation
 - Playwright MCP server for web browsing
-- Automatic Go code generation for web tasks
+- Automatic Python code generation for web tasks
 - Multi-turn conversations with `AskWithHistory`
 - Default task: IPO analysis from Indian financial websites
 
 **Use this when:**
 - You want to combine code execution with web automation
 - You need to perform complex web research tasks
-- You want to see how browser tools work as Go functions
+- You want to see how browser tools work via Python HTTP calls
 - You're building web scraping or research automation
 
 ### 3. **[multi-mcp-server/](multi-mcp-server/)** - Code Execution with Tool Filtering
@@ -62,7 +62,7 @@ Code execution mode with custom Go functions registered as tools.
 **Features:**
 - Code execution mode with custom tools
 - Register custom Go functions as tools
-- Custom tools accessible via generated Go code
+- Custom tools accessible via per-tool HTTP endpoints
 - HTTP API for custom tool execution
 - Example custom tools: calculator, text formatter, weather simulator, text counter
 - Multi-turn conversations with `AskWithHistory`
@@ -73,80 +73,60 @@ Code execution mode with custom Go functions registered as tools.
 - You want to see how custom tools work in code execution mode
 - You're building applications with specialized tool requirements
 
-### 5. **[with_folder_guards/](with_folder_guards/)** - Code Execution with Security
-
-Code execution with folder guards for secure file operations.
-
-**Features:**
-- Code execution mode with folder guards
-- Restricted file operations to workspace directory
-- Security boundaries for read/write operations
-- AST validation for code safety
-
-**Use this when:**
-- You need to restrict file system access
-- You want to ensure code only accesses specific directories
-- You're building production applications
-
 ## What is Code Execution Mode?
 
 Code Execution Mode allows the LLM to:
-- **Write Go code** instead of making individual tool calls
-- **Use MCP tools as Go functions** - tools are auto-generated as Go packages
-- **Execute complex logic** - loops, conditionals, data transformations
-- **Chain multiple operations** - multiple tool calls in a single execution
-- **Type safety** - Go compiler enforces correct types
+- **Write Python code** instead of making individual tool calls
+- **Discover tools via OpenAPI specs** using `get_api_spec`
+- **Execute complex logic** - loops, conditionals, data transformations in Python
+- **Chain multiple operations** - multiple tool calls in a single script execution
+- **Call MCP tools via HTTP** - per-tool endpoints at `/tools/mcp/{server}/{tool}`
 
 ## How It Works
 
-1. **Code Generation**: When MCP servers connect, Go wrapper code is auto-generated in `generated/<server>_tools/`
-2. **Discovery**: LLM calls `discover_code_files` to see available packages and functions
-3. **Code Writing**: LLM writes Go code importing the generated packages
-4. **Execution**: LLM calls `write_code(go_source, args?)` to execute the code
-5. **Validation**: Code is validated via AST analysis for security
-6. **Isolation**: Code runs in a temporary workspace (with optional folder guards)
+1. **Tool Index**: A JSON index of available servers and tools is embedded in the system prompt
+2. **Discovery**: LLM calls `get_api_spec(server_name, tool_name)` to get OpenAPI YAML spec for a tool
+3. **Code Writing**: LLM writes Python code using `requests` to call per-tool HTTP endpoints
+4. **Execution**: LLM calls `execute_shell_command` to run the Python code
+5. **Authentication**: Python code uses `MCP_API_TOKEN` env var for bearer token auth
+6. **Results**: Per-tool endpoint executes the MCP tool and returns JSON results
 
 ## Key Features
 
-### Auto-Generated Go Packages
+### Per-Tool HTTP Endpoints
 
-MCP tools are automatically converted to Go packages:
+MCP tools are exposed as individual HTTP endpoints:
 
 ```
-generated/context7_tools/
-├── get_library_docs.go
-└── api_client.go
-
-generated/sequential_thinking_tools/
-├── think.go
-└── api_client.go
+POST /tools/mcp/context7/resolve_library_id
+POST /tools/mcp/google_sheets/create_spreadsheet
+POST /tools/custom/calculator
 ```
 
 ### Virtual Tools
 
-In code execution mode, only these tools are available to the LLM:
-- `discover_code_files` - Discover available packages and functions
-- `write_code` - Execute Go code
+In code execution mode, only these tools are directly available to the LLM:
+- `get_api_spec` - Discover tool endpoints via OpenAPI specs
+- `execute_shell_command` - Execute Python/bash code
 
-Regular MCP tools and custom tools are NOT directly available - they must be used via generated Go code.
+MCP tools are accessed via Python HTTP requests to per-tool endpoints (not direct tool calls).
 
 ### Security Features
 
-- **AST Validation**: Code is analyzed to block dangerous operations
-- **Folder Guards** (optional): File operations restricted to specified directories
-- **Isolated Execution**: Each code execution runs in a temporary workspace
+- **Bearer Token Auth**: Per-tool endpoints require `Authorization: Bearer <token>` header
+- **Environment Variables**: `MCP_API_URL` and `MCP_API_TOKEN` injected into shell environment
 - **Timeout Protection**: Code execution has a timeout (default 30s)
 
 ## Quick Start
 
-1. Choose an example directory (e.g., `simple/`, `custom_tools/`, or `with_folder_guards/`)
+1. Choose an example directory (e.g., `simple/`, `custom_tools/`)
 2. Create `.env` file with your OpenAI API key:
    ```
    OPENAI_API_KEY=your-api-key-here
    ```
 3. Install dependencies:
    ```bash
-   cd simple  # or custom_tools, with_folder_guards, etc.
+   cd simple  # or custom_tools, etc.
    go mod tidy
    ```
 4. Run the example:
@@ -154,42 +134,22 @@ Regular MCP tools and custom tools are NOT directly available - they must be use
    go run main.go
    ```
 
-## Example Code Pattern
+## Example Code Pattern (LLM-Generated Python)
 
-```go
-package main
+```python
+import requests, os, json
 
-import (
-    "fmt"
-    "strings"
-    "context7_tools"
-    "workspace_tools"
-)
-
-func main() {
-    // Use MCP tool as Go function
-    result := context7_tools.GetLibraryDocs(
-        context7_tools.GetLibraryDocsParams{
-            Library: "react",
-        },
-    )
-    
-    // Check for errors (functions return strings)
-    if strings.HasPrefix(result, "Error:") {
-        fmt.Printf("Error: %s\n", result)
-        return
-    }
-    
-    // Save to workspace
-    output := workspace_tools.UpdateWorkspaceFile(
-        workspace_tools.UpdateWorkspaceFileParams{
-            Filepath: "react_docs.md",
-            Content:  result,
-        },
-    )
-    
-    fmt.Printf("Saved: %s\n", output)
+url = os.environ["MCP_API_URL"] + "/tools/mcp/context7/resolve_library_id"
+headers = {
+    "Authorization": f"Bearer {os.environ['MCP_API_TOKEN']}",
+    "Content-Type": "application/json"
 }
+resp = requests.post(url, json={"library_name": "react"}, headers=headers)
+data = resp.json()
+if data.get("success"):
+    print("Result:", data["result"])
+else:
+    print("Error:", data.get("error"))
 ```
 
 ## Documentation
@@ -200,9 +160,6 @@ For more details, see:
 
 ## Next Steps
 
-- Explore the `generated/` directory to see auto-generated code
-- Check `workspace/` for code execution workspaces
 - Review logs for detailed execution traces
-- Try writing more complex Go programs
-- Combine multiple MCP servers in a single program
-
+- Try writing more complex Python programs that chain multiple MCP tools
+- Combine multiple MCP servers in a single Python script

@@ -244,7 +244,7 @@ func prepareToolExecution(
 	plan.isVirtual = isVirtualTool(tc.FunctionCall.Name)
 
 	if plan.isVirtual {
-		if tc.FunctionCall.Name == "discover_code_files" && tc.FunctionCall.Arguments != "" {
+		if tc.FunctionCall.Name == "get_api_spec" && tc.FunctionCall.Arguments != "" {
 			var args map[string]interface{}
 			if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
 				if srvName, ok := args["server_name"].(string); ok && srvName != "" {

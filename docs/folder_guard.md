@@ -40,12 +40,11 @@ The folder guard system is a **fine-grained access control mechanism** that rest
    - LLM receives explicit directory restrictions in tool descriptions
 
 3. **Tool Setup Phase (Code Execution Mode)**
-   - **CRITICAL:** Folder guard paths must be set on MCP agent BEFORE calling `UpdateCodeExecutionRegistry()`
-   - The registry generation uses these paths to create the path validation code
-   - Agent-specific `workspace_tools` package generated with embedded folder guards
-   - Generated code includes `validatePath()` and `isPathAllowed()` functions
-   - Folder guard paths compiled into Go code as `folderGuardReadPaths` and `folderGuardWritePaths` variables
-   - AST validation prevents forbidden file I/O operations (os.WriteFile, etc.)
+   - In code execution mode, MCP tools are accessed via HTTP API (per-tool endpoints)
+   - Custom tools like `execute_shell_command` and workspace tools remain as direct tool calls
+   - Folder guard validation applies to custom workspace tools at runtime
+   - The LLM writes code in any language (Python, bash, etc.) that calls HTTP endpoints
+   - Path validation for workspace operations is handled by the custom tool executors
 
 4. **Runtime Validation (Simple Mode)**
    - Before tool execution, wrapper validates all path parameters
@@ -54,11 +53,10 @@ The folder guard system is a **fine-grained access control mechanism** that rest
    - Write operations: allowed only in `writePaths`
    - Paths normalized to workspace-relative format
 
-5. **Runtime Validation (Code Execution Mode)**  
-   - Generated workspace tool functions call `validatePath(path, isWrite)` before API calls
-   - AST parser prevents direct file I/O (blocks os.WriteFile, os.Open, etc.)
-   - Validation embedded in generated Go code (no runtime wrapper needed)
-   - LLM must use `workspace_tools.UpdateWorkspaceFile()` instead of `os.WriteFile()`
+5. **Runtime Validation (Code Execution Mode)**
+   - Custom workspace tools (e.g., `execute_shell_command`, `update_workspace_file`) validate paths at runtime
+   - Folder guard paths are enforced by the custom tool executor before executing operations
+   - The LLM accesses workspace tools as direct tool calls (not via HTTP API)
 
 6. **Execution**
    - Validated paths passed to original tool executor
@@ -119,71 +117,13 @@ hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 **File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go)
 
 ```go
-// CRITICAL: Set folder guard paths BEFORE updating code execution registry
-// The registry generation uses these paths to create the path validation code
+// Set folder guard paths on the agent
 readPaths, writePaths := hcpo.GetFolderGuardPaths()
 mcpAgent.SetFolderGuardPaths(readPaths, writePaths)
-hcpo.GetLogger().Infof("🔒 [CODE_EXECUTION] Folder guard paths set - Read: %v, Write: %v", readPaths, writePaths)
-
-// Now update the code execution registry (generates workspace_tools with embedded paths)
-if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
-    return fmt.Errorf("failed to update code execution registry: %w", err)
-}
-
-// Logs: 
-// 🔒 [CODE_EXECUTION] Folder guard paths set - Read: [/workspace/learnings], Write: [/workspace/execution]
-// ✅ [CODE_EXECUTION] Registry updated for agent - folder guard enabled
+hcpo.GetLogger().Infof("Folder guard paths set - Read: %v, Write: %v", readPaths, writePaths)
 ```
 
-### Generated Code Example (Code Execution Mode)
-
-**File:** Generated `workspace_tools/path_validation.go`
-
-```go
-package workspace_tools
-
-// Folder guard paths embedded at code generation time
-var folderGuardReadPaths = []string{"/workspace/learnings", "/workspace/planning"}
-var folderGuardWritePaths = []string{"/workspace/execution"}
-
-// validatePath validates a path against folder guard restrictions
-func validatePath(path string, isWrite bool) error {
-    var allowedPaths []string
-    if isWrite {
-        allowedPaths = folderGuardWritePaths
-    } else {
-        // Read operations can use both read and write paths
-        allowedPaths = append(folderGuardReadPaths, folderGuardWritePaths...)
-    }
-
-    if !isPathAllowed(path, allowedPaths) {
-        opType := "read"
-        if isWrite {
-            opType = "write"
-        }
-        return fmt.Errorf("path %q is outside allowed %s boundaries (allowed: %v)", path, opType, allowedPaths)
-    }
-
-    return nil
-}
-```
-
-**File:** Generated `workspace_tools/update_workspace_file.go`
-
-```go
-func UpdateWorkspaceFile(params UpdateWorkspaceFileParams) (string, error) {
-    // Validate filepath path (BEFORE converting to map)
-    if params.Filepath != "" {
-        if err := validatePath(params.Filepath, true); err != nil {
-            return "", err
-        }
-    }
-
-    // Convert params struct to map for API call
-    paramsBytes, err := json.Marshal(params)
-    // ... rest of API call logic
-}
-```
+In code execution mode, folder guard validation is enforced by the custom tool executors (e.g., `execute_shell_command`, `update_workspace_file`) at runtime, the same way as simple mode. The LLM accesses MCP tools via HTTP API endpoints (discovered through `get_api_spec`), while workspace tools remain as direct tool calls with folder guard enforcement.
 
 ### Runtime Validation Flow
 
@@ -288,7 +228,7 @@ orchestrator.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 | `path is not within any of the allowed paths: [only_readPaths]` (code execution mode) | Folder guard paths set AFTER `UpdateCodeExecutionRegistry()` | **CRITICAL:** Call `SetFolderGuardPaths()` BEFORE `UpdateCodeExecutionRegistry()` so generated code includes both readPaths and writePaths |
 | Write tool missing from LLM | `folderGuardWritePaths` is empty | Add write paths via `SetWorkspacePathForFolderGuard(readPaths, writePaths)` |
 | Folder guard not enforcing | Empty arrays passed | Pass non-empty arrays to enable: `SetWorkspacePathForFolderGuard(readPaths, writePaths)` |
-| Code execution validation error | LLM using `os.WriteFile` directly | Update system prompt to emphasize `workspace_tools` usage; AST validation blocks forbidden file I/O |
+| Code execution validation error | LLM bypassing workspace tools | Update system prompt to emphasize workspace tool usage for file operations |
 | Path normalized incorrectly | Relative path ambiguity | Use absolute paths in `SetWorkspacePathForFolderGuard()` |
 | Downloads folder rejected | Directory traversal attempt (../Downloads) | Remove `../` from path; use `Downloads/` directly |
 
@@ -338,35 +278,13 @@ Use ONLY these directories (or Downloads/) when calling this tool.
 
 ### Example Pattern (Code Execution Mode)
 
-**LLM writes code using generated tools:**
-```go
-import "workspace_tools"
+In code execution mode, the LLM uses `execute_shell_command` and workspace custom tools directly. MCP tools are accessed via HTTP endpoints (discovered through `get_api_spec`). Folder guard validation applies to workspace tool calls:
 
-func main() {
-    // ✅ CORRECT: Uses workspace_tools (path validated before API call)
-    params := workspace_tools.UpdateWorkspaceFileParams{
-        Filepath: "execution/results.json",
-        Content:  `{"status": "success"}`,
-    }
-    result, err := workspace_tools.UpdateWorkspaceFile(params)
-    
-    // ❌ FORBIDDEN: Direct file I/O blocked by AST validation
-    // os.WriteFile("execution/results.json", data, 0644)
-}
 ```
-
-**Validation happens before API call:**
-```go
-// Inside generated UpdateWorkspaceFile function
-func UpdateWorkspaceFile(params UpdateWorkspaceFileParams) (string, error) {
-    // Validate filepath path (embedded validation logic)
-    if params.Filepath != "" {
-        if err := validatePath(params.Filepath, true); err != nil {
-            return "", err // ❌ Rejected BEFORE API call if outside boundaries
-        }
-    }
-    // ... API call proceeds only if validation passed
-}
+LLM calls: update_workspace_file(filepath="execution/results.json", content="...")
+→ Custom tool executor validates path against folder guard paths
+→ ✅ Path is within writePaths → operation proceeds
+→ ❌ Path outside writePaths → rejected with error
 ```
 
 ---
@@ -458,10 +376,9 @@ codeexec.CleanupSession(sessionID)
 
 ### Defense in Depth
 
-**Layer 1: LLM Instruction** - Tool descriptions warn LLM about restrictions  
-**Layer 2: Runtime Validation (Simple Mode)** - Wrapper functions validate paths before execution  
-**Layer 3: AST Validation (Code Execution)** - Parser blocks forbidden file I/O at code compilation  
-**Layer 4: Generated Code Validation (Code Execution)** - validatePath() embedded in generated functions  
+**Layer 1: LLM Instruction** - Tool descriptions warn LLM about restrictions
+**Layer 2: Runtime Validation** - Custom tool executors validate paths before execution (both simple and code execution modes)
+**Layer 3: Bearer Token Auth (Code Execution)** - HTTP API endpoints secured with bearer token authentication  
 
 ### Path Resolution Rules
 
@@ -503,27 +420,11 @@ func validatePathInAllowedPaths(allowedPaths []string, inputPath string) error {
 
 **Solution:** `readPaths` for read-only access, `writePaths` for read+write access.
 
-### Why AST Validation in Code Execution Mode?
+### Why Runtime Validation in Code Execution Mode?
 
-**Problem:** Generated Go code could bypass workspace_tools and use os.WriteFile directly.
+**Problem:** LLM-written code could attempt file operations outside allowed directories.
 
-**Example:** LLM generates `os.WriteFile("results.json", data, 0644)` which saves to wrong directory.
-
-**Solution:** AST parser blocks forbidden imports/calls before code execution; forces workspace_tools usage.
-
-### Why Embed Validation in Generated Code?
-
-**Problem:** Runtime wrappers don't work for code execution mode (code calls tools directly).
-
-**Solution:** Generate workspace_tools with built-in validatePath() called before every API request.
-
-### Why Must Paths Be Set Before Registry Update?
-
-**Problem:** If `SetFolderGuardPaths()` is called after `UpdateCodeExecutionRegistry()`, the generated code uses empty or stale paths, causing validation failures.
-
-**Example:** Execution agent tries to read from `execution/` folder but generated code only has `learnings` in allowed paths.
-
-**Solution:** Always call `SetFolderGuardPaths()` BEFORE `UpdateCodeExecutionRegistry()` so the generated path validation code includes both readPaths and writePaths.
+**Solution:** Custom workspace tools (e.g., `update_workspace_file`, `execute_shell_command`) validate paths at runtime before executing operations, same as simple mode. MCP tools are accessed via HTTP API and don't involve direct file operations.
 
 ---
 

@@ -338,9 +338,9 @@ In this example:
 
 | Aspect | Normal Mode | Code Execution Mode | Tool Search Mode |
 |--------|-------------|---------------------|------------------|
-| **Tools visible** | All tools | `discover_code_files`, `write_code` | Discovery tools + context offloading + pre-discovered + discovered |
-| **Tool calling** | Direct JSON | Go code | Direct JSON |
-| **Discovery method** | N/A | Via Go packages | Via regex search |
+| **Tools visible** | All tools | `get_api_spec`, `execute_shell_command` | Discovery tools + context offloading + pre-discovered + discovered |
+| **Tool calling** | Direct JSON | Python code via HTTP API | Direct JSON |
+| **Discovery method** | N/A | Via OpenAPI specs | Via regex search |
 | **Context usage** | High (all tools) | Low (2 tools) | Dynamic (grows as tools are added) |
 | **Best for** | <30 tools | Complex logic, chaining | Large tool catalogs |
 

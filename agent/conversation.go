@@ -62,7 +62,7 @@ func isVirtualTool(toolName string) bool {
 	virtualTools := []string{
 		"get_prompt", "get_resource",
 		"read_large_output", "search_large_output", "query_large_output",
-		"discover_code_files", "write_code", // Code execution mode tools
+		"get_api_spec", // Code execution mode tools
 		"search_tools", "add_tool", "show_all_tools", // Tool search mode tools
 	}
 	for _, vt := range virtualTools {
@@ -223,29 +223,31 @@ func callToolWithTimeoutWrapper(
 
 // ensureSystemPrompt ensures that the system prompt is included in the messages
 func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes.MessageContent {
-	// Check if the first message is already a system message
-	if len(messages) > 0 && messages[0].Role == llmtypes.ChatMessageTypeSystem {
-		return messages
-	}
-
-	// Check if there's already a system message anywhere in the conversation
-	for _, msg := range messages {
-		if msg.Role == llmtypes.ChatMessageTypeSystem {
-			// System message already exists, don't add another one
-			return messages
-		}
-	}
-
-	// Use the agent's existing system prompt (which should already be correct for the mode)
+	// Always use the agent's current system prompt — it reflects the latest mode
+	// (code execution, tool search, etc.) which may differ from a stale system
+	// message carried over in conversation history from a previous turn.
 	systemPrompt := a.SystemPrompt
 
-	// Create system message
 	systemMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeSystem,
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}},
 	}
 
-	// Prepend system message to the beginning
+	// If the first message is already a system message, replace it
+	if len(messages) > 0 && messages[0].Role == llmtypes.ChatMessageTypeSystem {
+		messages[0] = systemMessage
+		return messages
+	}
+
+	// If a system message exists elsewhere in the conversation, replace it
+	for i, msg := range messages {
+		if msg.Role == llmtypes.ChatMessageTypeSystem {
+			messages[i] = systemMessage
+			return messages
+		}
+	}
+
+	// No system message found — prepend one
 	return append([]llmtypes.MessageContent{systemMessage}, messages...)
 }
 
@@ -996,25 +998,20 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Determine server name for tool call events
 				serverName := a.toolToServer[tc.FunctionCall.Name]
 				if isVirtualTool(tc.FunctionCall.Name) {
-					// 🔧 FIX: For discover_code_files, extract the actual server_name from arguments
-					// Previously, all virtual tools (including discover_code_files) always used "virtual-tools"
-					// as the server name in error events. This caused confusing error messages like:
-					// "Server: virtual-tools" when the actual server being discovered was "workspace".
-					// Now we parse the tool arguments to extract the real server_name (e.g., "workspace", "google_sheets")
-					// so error events show the correct server being discovered, making debugging much easier.
-					if tc.FunctionCall.Name == "discover_code_files" && tc.FunctionCall.Arguments != "" {
+					// For get_api_spec, extract the actual server_name from arguments
+					// so error events show the correct server, making debugging easier.
+					if tc.FunctionCall.Name == "get_api_spec" && tc.FunctionCall.Arguments != "" {
 						var args map[string]interface{}
 						if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
 							if srvName, ok := args["server_name"].(string); ok && srvName != "" {
-								serverName = srvName // Use the actual server being discovered
+								serverName = srvName
 							} else {
-								serverName = "virtual-tools" // Fallback if server_name not found
+								serverName = "virtual-tools"
 							}
 						} else {
-							serverName = "virtual-tools" // Fallback if JSON parsing fails
+							serverName = "virtual-tools"
 						}
 					} else {
-						// Other virtual tools (get_prompt, get_resource, write_code, etc.) still use "virtual-tools"
 						serverName = "virtual-tools"
 					}
 				}

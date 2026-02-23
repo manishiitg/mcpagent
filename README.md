@@ -250,17 +250,28 @@ See [docs/tool_search_mode.md](docs/tool_search_mode.md) for details.
 
 ### 3. **Code Execution Mode**
 
-Execute Go code instead of JSON tool calls for complex logic:
+Execute code in **any language** (Python, bash, curl, Go, etc.) instead of JSON tool calls. The LLM discovers MCP tool endpoints via an OpenAPI spec and writes code that makes HTTP requests:
 
 ```go
-// Start HTTP server for tool execution (required)
+// Generate API token for bearer auth
+apiToken := executor.GenerateAPIToken()
+
+// Start HTTP server with per-tool endpoints and auth
 handlers := executor.NewExecutorHandlers(configPath, logger)
 mux := http.NewServeMux()
 mux.HandleFunc("/api/mcp/execute", handlers.HandleMCPExecute)
 mux.HandleFunc("/api/custom/execute", handlers.HandleCustomExecute)
-mux.HandleFunc("/api/virtual/execute", handlers.HandleVirtualExecute)
+// Per-tool wildcard endpoints (used by OpenAPI spec)
+mux.HandleFunc("/tools/mcp/", func(w http.ResponseWriter, r *http.Request) {
+    // Route /tools/mcp/{server}/{tool} to handler
+    path := strings.TrimPrefix(r.URL.Path, "/tools/mcp/")
+    parts := strings.SplitN(path, "/", 2)
+    server, tool := parts[0], parts[1]
+    handlers.HandlePerToolMCPRequest(w, r, server, tool)
+})
+authedHandler := executor.AuthMiddleware(apiToken)(mux)
 
-server := &http.Server{Addr: "127.0.0.1:8000", Handler: mux}
+server := &http.Server{Addr: "127.0.0.1:8000", Handler: authedHandler}
 go server.ListenAndServe()
 defer server.Shutdown(ctx)
 
@@ -269,13 +280,13 @@ agent, err := mcpagent.NewAgent(
     ctx, llmModel, "", "config.json", "model-id",
     nil, "", nil,
     mcpagent.WithCodeExecutionMode(true),
-    mcpagent.SetFolderGuardPaths([]string{"/workspace"}, []string{"/workspace"}),
+    mcpagent.WithAPIConfig("http://127.0.0.1:8000", apiToken),
 )
 ```
 
-The LLM can write Go programs that import and use MCP tools and custom tools as native functions. Custom tools are automatically generated as Go packages and accessible via HTTP API.
+The LLM calls `get_api_spec(server_name)` to discover per-tool HTTP endpoints, then uses `execute_shell_command` to write and run code that calls those endpoints. Custom tools (workspace tools, shell execution) remain as direct tool calls.
 
-**Note**: Code execution mode requires an HTTP server running (default port 8000, configurable via `MCP_API_URL` environment variable).
+**Note**: Code execution mode requires an HTTP server with bearer token auth running (configurable via `WithAPIConfig()`).
 
 ### 4. **Smart Routing (DEPRECATED)**
 
@@ -518,12 +529,12 @@ func calculatorFunction(ctx context.Context, args map[string]interface{}) (strin
 }
 ```
 
-**Code Execution Mode** (via generated Go code):
+**Code Execution Mode** (direct tool calls + HTTP API):
 ```go
-// In code execution mode, custom tools are automatically:
-// 1. Generated as Go packages (e.g., data_tools, utility_tools)
-// 2. Accessible via HTTP API endpoint (/api/custom/execute)
-// 3. Included in tool structure JSON for LLM discovery
+// In code execution mode, custom tools are:
+// 1. Exposed as direct LLM tool calls (e.g., execute_shell_command, workspace tools)
+// 2. MCP server tools are accessed via HTTP API endpoints (discovered via get_api_spec)
+// 3. Custom tools can also be accessed via /api/custom/execute endpoint
 
 // Register custom tool (same API)
 err := agent.RegisterCustomTool(
@@ -534,12 +545,8 @@ err := agent.RegisterCustomTool(
     "data", // category
 )
 
-// LLM can use it in generated Go code:
-// import "data_tools"
-// result := data_tools.GetWeather(data_tools.GetWeatherParams{
-//     Location: "San Francisco",
-//     Unit: "fahrenheit",
-// })
+// LLM can call custom tools directly as tool calls,
+// or use get_api_spec to discover HTTP endpoints for MCP tools
 ```
 
 See [examples/custom_tools/](examples/custom_tools/) for standard mode examples and [examples/code_execution/custom_tools/](examples/code_execution/custom_tools/) for code execution mode examples.
@@ -580,7 +587,7 @@ agent, err := mcpagent.NewAgent(
 Comprehensive documentation is available in the [docs/](docs/) directory:
 
 - **[OAuth Authentication](docs/oauth.md)** - OAuth 2.0 authentication for MCP servers
-- **[Code Execution Agent](docs/code_execution_agent.md)** - Execute Go code with MCP tools
+- **[Code Execution Agent](docs/code_execution_agent.md)** - Execute code in any language via OpenAPI spec
 - **[Tool Search Mode](docs/tool_search_mode.md)** - Dynamic tool discovery for large tool catalogs
 - **[Tool-Use Agent](docs/tool_use_agent.md)** - Standard tool calling mode
 - **[Context Summarization](docs/context_summarization.md)** - Automatic history summarization
@@ -642,13 +649,12 @@ Complete working examples are available in the [examples/](examples/) directory:
 
 ### Code Execution Examples
 - **[code_execution/simple/](examples/code_execution/simple/)** - Basic code execution mode
-  - LLM writes and executes Go code instead of JSON tool calls
-  - MCP tools are auto-generated as Go packages
-  - Supports complex logic: loops, conditionals, data transformations
-  - Security features: AST validation, isolated execution
-  - Examples: discover code files, use multiple MCP servers together
+  - LLM discovers MCP tools via OpenAPI spec (`get_api_spec`)
+  - Writes and executes code in any language (Python, bash, curl, etc.)
+  - Bearer token auth secures API endpoints
+  - Per-tool HTTP endpoints for MCP tool access
   - No folder guards (simplest example)
-  - HTTP server required (default port 8000)
+  - HTTP server with auth required
 
 - **[code_execution/browser-automation/](examples/code_execution/browser-automation/)** - Code execution with browser automation
   - Combines code execution mode with Playwright MCP server
@@ -662,9 +668,9 @@ Complete working examples are available in the [examples/](examples/) directory:
 
 - **[code_execution/custom_tools/](examples/code_execution/custom_tools/)** - Custom tools in code execution mode
   - Register custom tools that work in code execution mode
-  - Custom tools are auto-generated as Go packages
-  - Accessible via HTTP API endpoint (`/api/custom/execute`)
-  - Example: Weather tool accessible via generated Go code
+  - Custom tools exposed as direct LLM tool calls
+  - MCP tools accessed via HTTP API with bearer auth
+  - Example: Weather tool accessible alongside MCP tools
 
 Each example includes:
 - Complete working code
@@ -787,7 +793,7 @@ mcpagent/
 │   └── http_manager.go # HTTP protocol
 ├── mcpcache/          # Caching system
 │   ├── manager.go     # Cache manager
-│   └── codegen/       # Code generation for tools
+│   └── openapi/       # OpenAPI spec generation for code execution mode
 ├── llm/               # LLM provider integration
 │   ├── providers.go   # Provider implementations
 │   └── types.go       # LLM types

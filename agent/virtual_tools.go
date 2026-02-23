@@ -113,63 +113,36 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 	}
 
 	// Add context offloading virtual tools if enabled
-	// In code execution mode, we don't support context offloading tools (they don't work in subprocess)
-	// We handle large outputs via truncation in write_code instead
+	// In code execution mode, context offloading tools are not needed
+	// (the LLM writes code that calls HTTP endpoints directly)
 	if !a.UseCodeExecutionMode {
 		largeOutputTools := a.CreateLargeOutputVirtualTools()
 		virtualTools = append(virtualTools, largeOutputTools...)
 	}
 
-	// Add discover_code_files tool (requires server_name and either tool_name or tool_names - returns actual Go code)
-	// Note: discover_code_structure has been removed - tool structure is now automatically included in system prompt
-	discoverCodeFilesTool := llmtypes.Tool{
+	// Add get_api_spec tool — returns OpenAPI YAML spec for a server's tools (or a single tool)
+	getAPISpecTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
-			Name:        "discover_code_files",
-			Description: "Get Go source code for one or more tools from a specific server. Requires server_name and tool_names (array). For a single tool, pass an array with one element.",
+			Name:        "get_api_spec",
+			Description: "Get the OpenAPI specification for tools. When tool_name is provided, returns the spec for just that single tool (preferred — smaller, faster). When only server_name is given, returns the full spec for all tools on that server.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"server_name": map[string]interface{}{
 						"type":        "string",
-						"description": "Package name from the JSON structure (e.g., 'google_sheets', 'workspace', 'virtual_tools'). Use the exact package name as shown in the JSON structure, not the MCP server name.",
+						"description": "Server name from the available tools index (e.g., 'google_sheets', 'playwright'). Use the exact name as shown in the tool index.",
 					},
-					"tool_names": map[string]interface{}{
-						"type":        "array",
-						"items":       map[string]interface{}{"type": "string"},
-						"description": "Array of tool names to discover (e.g., ['GetDocument'] for single tool, or ['GetDocument', 'ListDocuments'] for multiple tools). The tool names will be converted to snake_case filenames.",
-					},
-				},
-				"required": []string{"server_name", "tool_names"},
-			}),
-		},
-	}
-	virtualTools = append(virtualTools, discoverCodeFilesTool)
-
-	// Add write_code tool
-	writeCodeTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "write_code",
-			Description: "Write Go code to workspace. Code can import generated tool packages from 'generated/' directory. Filename is automatically generated. Optional CLI arguments can be passed to the program via os.Args.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"code": map[string]interface{}{
+					"tool_name": map[string]interface{}{
 						"type":        "string",
-						"description": "Go source code to write",
-					},
-					"args": map[string]interface{}{
-						"type":        "array",
-						"items":       map[string]interface{}{"type": "string"},
-						"description": "Optional array of command-line arguments to pass to the Go program. Accessible via os.Args[1], os.Args[2], etc. (os.Args[0] is the program name).",
+						"description": "Optional. Specific tool name to get the spec for (e.g., 'search_issues'). When provided, returns only this tool's endpoint and schema instead of the full server spec. Preferred for targeted lookups.",
 					},
 				},
-				"required": []string{"code"},
+				"required": []string{"server_name"},
 			}),
 		},
 	}
-	virtualTools = append(virtualTools, writeCodeTool)
+	virtualTools = append(virtualTools, getAPISpecTool)
 
 	return virtualTools
 }
@@ -181,10 +154,8 @@ func (a *Agent) HandleVirtualTool(ctx context.Context, toolName string, args map
 		return a.handleGetPrompt(ctx, args)
 	case "get_resource":
 		return a.handleGetResource(ctx, args)
-	case "discover_code_files":
-		return a.handleDiscoverCodeFiles(ctx, args)
-	case "write_code":
-		return a.handleWriteCode(ctx, args)
+	case "get_api_spec":
+		return a.handleGetAPISpec(ctx, args)
 	case "search_tools":
 		return a.handleSearchTools(ctx, args)
 	case "add_tool":

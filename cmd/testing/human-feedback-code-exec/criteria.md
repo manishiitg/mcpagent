@@ -14,7 +14,7 @@ mcpagent-test test human-feedback-code-exec --model gpt-4.1 --log-file logs/huma
 
 ## What This Test Does
 
-1. **Creates agent in code execution mode**: Verifies initial state with only code execution virtual tools (`discover_code_files`, `write_code`)
+1. **Creates agent in code execution mode**: Verifies initial state with code execution virtual tools (`get_api_spec`, `execute_shell_command`)
 2. **Registers regular custom tool**: Tests that regular custom tools are excluded in code exec mode
 3. **Registers human_feedback tool**: Tests that human tools (category "human") are available in code exec mode
 4. **Verifies tool availability**: Checks that human_feedback is in Tools array while regular tools are not
@@ -22,7 +22,7 @@ mcpagent-test test human-feedback-code-exec --model gpt-4.1 --log-file logs/huma
 
 ## Background
 
-In code execution mode, most tools are excluded from direct LLM access. However, tools with category "human" (like `human_feedback`) are an exception and remain available because they require event bridge access for frontend UI and cannot work via generated code.
+In code execution mode, most tools are excluded from direct LLM access. However, tools with category "human" (like `human_feedback`) are an exception and remain available because they require event bridge access for frontend UI and cannot work via Python code execution.
 
 ## Log Analysis Criteria
 
@@ -30,7 +30,7 @@ In code execution mode, most tools are excluded from direct LLM access. However,
 
 - `=== Human Feedback Code Execution Test ===`
 - `✅ Agent created in code execution mode`
-- `Initial tools in code execution mode count=2` (should be 2: `discover_code_files`, `write_code`)
+- `Initial tools in code execution mode count=2` (should be 2: `get_api_spec`, `execute_shell_command`)
 - `✅ Regular custom tool correctly excluded from Tools array in code exec mode`
 - `✅ Human feedback tool registered with category 'human'`
 - `✅ Human feedback tool found in Tools array - correctly available in code exec mode!`
@@ -53,7 +53,7 @@ In code execution mode, most tools are excluded from direct LLM access. However,
 
 ## Expected Behavior
 
-1. **Initial state**: Only 2 code execution virtual tools (`discover_code_files`, `write_code`)
+1. **Initial state**: Only 2 code execution virtual tools (`get_api_spec`, `execute_shell_command`)
 2. **After regular tool registration**: Still 2 tools (regular tool excluded)
 3. **After human tool registration**: 3 tools total (2 code exec + 1 human tool)
 4. **Final verification**: `human_feedback` available, regular tool excluded

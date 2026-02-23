@@ -512,7 +512,7 @@ Tests that the `human_feedback` tool is available as a normal tool in code execu
 
 1. **Initial State Check** (`TestInitialState`)
    - Verifies only code execution virtual tools are present initially
-   - Checks for `discover_code_files` and `write_code`
+   - Checks for `get_api_spec` and `execute_shell_command`
 
 2. **Regular Tool Exclusion** (`TestRegularToolExclusion`)
    - Registers a regular custom tool (category "custom")
