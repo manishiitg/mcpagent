@@ -248,10 +248,11 @@ type streamingManager struct {
 	contentChunkIndex int
 	totalChunks       int
 	startTime         time.Time
+	turn              int // conversation turn for event emission
 }
 
 // startStreaming initializes streaming if enabled and on the first attempt
-func (a *Agent) startStreaming(ctx context.Context, attempt int, opts *[]llmtypes.CallOption) *streamingManager {
+func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts *[]llmtypes.CallOption) *streamingManager {
 	if !a.EnableStreaming || attempt != 0 {
 		return nil
 	}
@@ -260,6 +261,7 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, opts *[]llmtype
 		streamChan:    make(chan llmtypes.StreamChunk, 100),
 		streamingDone: make(chan bool, 1),
 		startTime:     time.Now(),
+		turn:          turn,
 	}
 
 	*opts = append(*opts, llmtypes.WithStreamingChan(sm.streamChan))
@@ -281,20 +283,48 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 	}()
 
 	for chunk := range sm.streamChan {
-		if chunk.Type == llmtypes.StreamChunkTypeContent && chunk.Content != "" {
-			sm.contentChunkIndex++
-			sm.totalChunks++
+		switch chunk.Type {
+		case llmtypes.StreamChunkTypeContent:
+			if chunk.Content != "" {
+				sm.contentChunkIndex++
+				sm.totalChunks++
 
-			a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
-				BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-				Content:       chunk.Content,
-				ChunkIndex:    sm.contentChunkIndex,
-				IsToolCall:    false,
-			})
+				a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+					BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+					Content:       chunk.Content,
+					ChunkIndex:    sm.contentChunkIndex,
+					IsToolCall:    false,
+				})
 
-			if a.StreamingCallback != nil {
-				a.StreamingCallback(chunk)
+				if a.StreamingCallback != nil {
+					a.StreamingCallback(chunk)
+				}
 			}
+
+		case llmtypes.StreamChunkTypeToolCallStart:
+			toolStartEvent := events.NewToolCallStartEventWithCorrelation(
+				sm.turn,
+				chunk.ToolName,
+				events.ToolParams{Arguments: chunk.ToolArgs},
+				"claude-code",
+				string(a.TraceID), string(a.TraceID),
+			)
+			toolStartEvent.ToolCallID = chunk.ToolCallID
+			a.EmitTypedEvent(ctx, toolStartEvent)
+
+		case llmtypes.StreamChunkTypeToolCallEnd:
+			toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(
+				sm.turn,
+				chunk.ToolName,
+				chunk.ToolResult,   // tool execution result from CLI
+				"claude-code",      // serverName
+				chunk.ToolDuration, // duration from start to tool_result
+				"",                 // spanID
+				0, 0, 0,            // context usage metrics (not available)
+				a.ModelID,
+			)
+			toolEndEvent.ToolCallID = chunk.ToolCallID
+			a.EmitTypedEvent(ctx, toolEndEvent)
 		}
 	}
 }
@@ -424,14 +454,33 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
-	// 🔧 CLAUDE CODE INTEGRATION: Inject MCP Config
+	// 🔧 CLAUDE CODE INTEGRATION: Inject MCP Config via bridge
+	// Claude Code always uses code execution mode — tools are accessed via the
+	// mcpbridge stdio binary which forwards calls to the HTTP API endpoints.
 	if llmproviders.Provider(model.Provider) == llmproviders.ProviderClaudeCode {
-		mcpConfigJSON, err := a.GetMCPConfigJSON()
+		// Use restricted permissions instead of skipping them entirely
+		// Allow our bridge tools and WebSearch to run without prompts
+		opts = append(opts, llm.WithAllowedTools("mcp__api-bridge__*,WebSearch"))
+
+		// Force Claude to use our custom tools by disabling its own internal ones
+		// We explicitly allow only WebSearch (if desired) and disable all others (Bash, Read, Edit, etc.)
+		opts = append(opts, llm.WithClaudeCodeTools("WebSearch"))
+
+		bridgeConfig, err := a.BuildBridgeMCPConfig()
 		if err != nil {
-			a.Logger.Warn("Failed to get MCP config for Claude Code adapter", loggerv2.Error(err))
+			a.Logger.Warn("Failed to build bridge MCP config, falling back to raw config", loggerv2.Error(err))
+			// Fallback to raw MCP config (e.g., if bridge binary not found)
+			if mcpConfig, err := a.GetMCPConfigJSON(); err == nil {
+				opts = append(opts, llm.WithMCPConfig(mcpConfig))
+			}
 		} else {
-			opts = append(opts, llm.WithMCPConfig(mcpConfigJSON), llm.WithDangerouslySkipPermissions())
-			a.Logger.Info("Injected MCP config and skipped permissions for Claude Code adapter")
+			opts = append(opts, llm.WithMCPConfig(bridgeConfig))
+			a.Logger.Info("🌉 Using MCP bridge for Claude Code tool access via HTTP API")
+		}
+
+		// Pass max turns to Claude Code CLI
+		if a.MaxTurns > 0 {
+			opts = append(opts, llm.WithMaxTurns(a.MaxTurns))
 		}
 	}
 
@@ -535,7 +584,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// Let's stick to that for safety: only stream on primary model (modelIndex == 0).
 			var sm *streamingManager
 			if modelIndex == 0 {
-				sm = a.startStreaming(ctx, attempt, &currentOpts)
+				sm = a.startStreaming(ctx, attempt, turn, &currentOpts)
 			}
 
 			// Execute LLM

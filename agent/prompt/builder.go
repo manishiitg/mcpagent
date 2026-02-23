@@ -61,9 +61,8 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 
 **Workflow:**
 1. See available servers and tools in the index above
-2. Call get_api_spec(server_name="...", tool_name="...") to get the spec for the specific tool you need
-   - Prefer fetching per-tool specs — they are smaller and faster
-   - Only omit tool_name if you need to browse all tools on a server
+2. Call get_api_spec(server_name="...", tool_name="...") to get the full API spec for the tool(s) you need
+   - tool_name accepts a single string or an array of strings for multiple tools
 3. Use execute_shell_command to write and run code — prefer Python for reliability and readability
 4. MCP_API_URL and MCP_API_TOKEN env vars are available in the execution environment
 5. MCP and custom tools are accessed via HTTP POST to per-tool endpoints documented in the OpenAPI spec
@@ -93,8 +92,7 @@ curl -X POST "$MCP_API_URL/tools/mcp/google_sheets/get_document" \
 ` + "```" + `
 
 **Best Practices:**
-- Call get_api_spec(server_name="...", tool_name="...") to get the spec for the specific tool you need
-- Only fetch the full server spec (without tool_name) when you need to browse all available endpoints
+- Use get_api_spec(server_name="...", tool_name="...") to get specs before calling any tool
 - Prefer Python for writing code — it handles JSON, HTTP requests, and error handling cleanly
 - Break complex tasks into steps, test each tool call individually
 - Always check the "success" field in responses
@@ -174,7 +172,7 @@ When answering questions:
 			toolStructureSection := "\n\n<available_tools>\n" +
 				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
 				"The following MCP servers and their tools are accessible via HTTP API.\n" +
-				"Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n\n" +
+				"Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the full API spec for specific tools.\n\n" +
 				"```json\n" +
 				toolStructureJSON + "\n" +
 				"```\n\n" +
@@ -386,11 +384,10 @@ func buildVirtualToolsSection(useCodeExecutionMode bool, useToolSearchMode bool,
 	if useCodeExecutionMode {
 		return `AVAILABLE FUNCTIONS:
 
-- **get_api_spec** - Get OpenAPI spec for a specific tool (or all tools on a server)
+- **get_api_spec** - Get the full OpenAPI spec for specific tool(s)
   Usage: get_api_spec(server_name="google_sheets", tool_name="get_document")
-  Prefer specifying tool_name for smaller, targeted specs.
-  Omit tool_name only when you need to browse all tools on a server.
-  Returns YAML with endpoint paths, request schemas, and auth requirements.
+  Multiple tools: get_api_spec(server_name="google_sheets", tool_name=["create_spreadsheet", "update_values"])
+  All servers and tool names are listed in the tool index above — use get_api_spec to get endpoint details and request schemas.
 
 Domain tools (MCP and custom) are accessed via HTTP endpoints documented in the OpenAPI spec.
 System tools (e.g. execute_shell_command) are available as direct LLM function calls.

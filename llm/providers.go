@@ -284,6 +284,30 @@ func WithDangerouslySkipPermissions() CallOption {
 	return llmproviders.WithDangerouslySkipPermissions()
 }
 
+// WithClaudeCodeSettings sets the --settings flag for the Claude Code CLI.
+// It accepts either a JSON string or a file path.
+func WithClaudeCodeSettings(settings string) CallOption {
+	return llmproviders.WithClaudeCodeSettings(settings)
+}
+
+// WithClaudeCodeTools sets the --tools flag for the Claude Code CLI.
+// Use "" to disable all built-in tools.
+func WithClaudeCodeTools(tools string) CallOption {
+	return llmproviders.WithClaudeCodeTools(tools)
+}
+
+// WithAllowedTools sets the --allowed-tools flag for the Claude Code CLI.
+// Example: "mcp__api-bridge__*" to allow all tools from the bridge.
+func WithAllowedTools(tools string) CallOption {
+	return llmproviders.WithAllowedTools(tools)
+}
+
+// WithMaxTurns sets the --max-turns flag for the Claude Code CLI.
+// Limits the number of agentic turns. Claude Code exits with an error when the limit is reached.
+func WithMaxTurns(maxTurns int) CallOption {
+	return llmproviders.WithMaxTurns(maxTurns)
+}
+
 // Re-export helper functions from llm-providers
 
 // GetDefaultModel returns the default model for each provider from environment variables

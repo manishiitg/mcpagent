@@ -16,26 +16,43 @@ import (
 )
 
 // handleGetAPISpec handles the get_api_spec virtual tool.
-// Returns an OpenAPI 3.0 YAML spec for a specific server's tools, or a single tool.
-// When tool_name is provided, returns only that tool's spec (smaller, faster).
-// Specs are generated on-demand and cached on the agent.
+// Returns the full OpenAPI spec for the requested tool(s) on a server.
+// tool_name is required — accepts a single string or an array of strings.
+// The system prompt already lists all servers and tool names, so no "list only" mode is needed.
 func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{}) (string, error) {
 	serverName, ok := args["server_name"].(string)
 	if !ok || serverName == "" {
 		return "", fmt.Errorf("server_name parameter is required")
 	}
 
-	// Optional: specific tool name for single-tool spec
-	toolNameFilter, _ := args["tool_name"].(string)
+	// Parse tool_name: accepts string or []string (JSON array)
+	var toolNames []string
+	if raw, exists := args["tool_name"]; exists && raw != nil {
+		switch v := raw.(type) {
+		case string:
+			if v != "" {
+				toolNames = append(toolNames, v)
+			}
+		case []interface{}:
+			for _, item := range v {
+				if s, ok := item.(string); ok && s != "" {
+					toolNames = append(toolNames, s)
+				}
+			}
+		}
+	}
+	if len(toolNames) == 0 {
+		return "", fmt.Errorf("tool_name parameter is required (string or array of strings)")
+	}
 
 	// Normalize: hyphens to underscores
 	serverName = strings.ReplaceAll(serverName, "-", "_")
 
-	// Cache key: "server" for full spec, "server:tool" for single-tool spec
-	cacheKey := serverName
-	if toolNameFilter != "" {
-		cacheKey = serverName + ":" + toolNameFilter
-	}
+	// Build cache key from sorted tool names
+	sortedNames := make([]string, len(toolNames))
+	copy(sortedNames, toolNames)
+	sort.Strings(sortedNames)
+	cacheKey := serverName + ":" + strings.Join(sortedNames, ",")
 
 	// Check cache
 	a.openAPISpecCacheMu.RLock()
@@ -56,77 +73,54 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 		baseURL = "http://localhost:8000"
 	}
 
+	// Build a set for fast lookup
+	wantTools := make(map[string]bool, len(toolNames))
+	for _, n := range toolNames {
+		wantTools[n] = true
+	}
+
 	// Check if this is a custom tool category
 	isCustomCategory := a.toolFilter.IsCategoryDirectory(serverName) ||
 		a.toolFilter.IsCategoryDirectory(serverName+"_tools")
 
 	if isCustomCategory {
-		// Build custom tools map for this category
 		customToolsForSpec := make(map[string]openapi.CustomToolForOpenAPI)
 		for toolName, ct := range a.customTools {
 			if ct.Category == serverName || openapi.GetPackageName(ct.Category) == serverName+"_tools" {
-				// If tool_name filter is set, only include that tool
-				if toolNameFilter != "" && toolName != toolNameFilter {
-					continue
-				}
-				customToolsForSpec[toolName] = openapi.CustomToolForOpenAPI{
-					Definition: ct.Definition,
-					Category:   ct.Category,
+				if wantTools[toolName] {
+					customToolsForSpec[toolName] = openapi.CustomToolForOpenAPI{
+						Definition: ct.Definition,
+						Category:   ct.Category,
+					}
 				}
 			}
 		}
-
 		if len(customToolsForSpec) == 0 {
-			if toolNameFilter != "" {
-				return "", fmt.Errorf("tool %q not found in category %s", toolNameFilter, serverName)
-			}
-			return "", fmt.Errorf("no custom tools found for category: %s", serverName)
+			return "", fmt.Errorf("tool(s) %v not found in category %s", toolNames, serverName)
 		}
 
 		specBytes, err := openapi.GenerateCustomToolsOpenAPISpec(serverName, customToolsForSpec, baseURL)
 		if err != nil {
 			return "", fmt.Errorf("failed to generate OpenAPI spec for %s: %w", serverName, err)
 		}
-
-		// Cache
-		a.openAPISpecCacheMu.Lock()
-		if a.openAPISpecCache == nil {
-			a.openAPISpecCache = make(map[string][]byte)
-		}
-		a.openAPISpecCache[cacheKey] = specBytes
-		a.openAPISpecCacheMu.Unlock()
+		a.cacheSpec(cacheKey, specBytes)
 		return string(specBytes), nil
 	}
 
-	// MCP server — collect tools for this server
-	var serverTools []llmtypes.Tool
-
-	// Check if server should be included
-	shouldInclude := a.toolFilter.ShouldIncludeServer(serverName)
-	if !shouldInclude {
-		// Try hyphen format
-		serverNameWithHyphen := strings.ReplaceAll(serverName, "_", "-")
-		shouldInclude = a.toolFilter.ShouldIncludeServer(serverNameWithHyphen)
-	}
-	if !shouldInclude {
+	// MCP server
+	if !a.serverIsAvailable(serverName) {
 		return "", fmt.Errorf("server %s is not available or filtered out", serverName)
 	}
 
-	// Collect tools that belong to this server
-	// In code execution mode, MCP tools are excluded from a.Tools but stored in allMCPToolDefs
 	toolSource := a.Tools
 	if a.UseCodeExecutionMode && len(a.allMCPToolDefs) > 0 {
 		toolSource = a.allMCPToolDefs
 	}
 
+	var serverTools []llmtypes.Tool
 	for toolName, srvName := range a.toolToServer {
 		normalizedSrv := strings.ReplaceAll(srvName, "-", "_")
-		if normalizedSrv == serverName && srvName != "custom" {
-			// If tool_name filter is set, only include that tool
-			if toolNameFilter != "" && toolName != toolNameFilter {
-				continue
-			}
-			// Find the tool definition
+		if normalizedSrv == serverName && srvName != "custom" && wantTools[toolName] {
 			for _, t := range toolSource {
 				if t.Function != nil && t.Function.Name == toolName {
 					serverTools = append(serverTools, t)
@@ -137,34 +131,43 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	}
 
 	if len(serverTools) == 0 {
-		if toolNameFilter != "" {
-			return "", fmt.Errorf("tool %q not found on server %s", toolNameFilter, serverName)
-		}
-		return "", fmt.Errorf("no tools found for server: %s", serverName)
+		return "", fmt.Errorf("tool(s) %v not found on server %s", toolNames, serverName)
 	}
 
 	specBytes, err := openapi.GenerateServerOpenAPISpec(serverName, serverTools, baseURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OpenAPI spec for %s: %w", serverName, err)
 	}
-
-	// Cache
-	a.openAPISpecCacheMu.Lock()
-	if a.openAPISpecCache == nil {
-		a.openAPISpecCache = make(map[string][]byte)
-	}
-	a.openAPISpecCache[cacheKey] = specBytes
-	a.openAPISpecCacheMu.Unlock()
+	a.cacheSpec(cacheKey, specBytes)
 
 	if a.Logger != nil {
 		a.Logger.Info("Generated OpenAPI spec",
 			loggerv2.String("server", serverName),
-			loggerv2.String("tool_filter", toolNameFilter),
-			loggerv2.Int("tools_count", len(serverTools)),
+			loggerv2.Int("tools_requested", len(toolNames)),
+			loggerv2.Int("tools_found", len(serverTools)),
 			loggerv2.Int("spec_bytes", len(specBytes)))
 	}
 
 	return string(specBytes), nil
+}
+
+// serverIsAvailable checks if a server passes the tool filter.
+func (a *Agent) serverIsAvailable(serverName string) bool {
+	if a.toolFilter.ShouldIncludeServer(serverName) {
+		return true
+	}
+	serverNameWithHyphen := strings.ReplaceAll(serverName, "_", "-")
+	return a.toolFilter.ShouldIncludeServer(serverNameWithHyphen)
+}
+
+// cacheSpec stores a generated spec in the cache.
+func (a *Agent) cacheSpec(key string, specBytes []byte) {
+	a.openAPISpecCacheMu.Lock()
+	if a.openAPISpecCache == nil {
+		a.openAPISpecCache = make(map[string][]byte)
+	}
+	a.openAPISpecCache[key] = specBytes
+	a.openAPISpecCacheMu.Unlock()
 }
 
 // buildToolIndex returns a JSON index of available servers and their tool names.

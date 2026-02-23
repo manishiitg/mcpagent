@@ -120,25 +120,24 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		virtualTools = append(virtualTools, largeOutputTools...)
 	}
 
-	// Add get_api_spec tool — returns OpenAPI YAML spec for a server's tools (or a single tool)
+	// Add get_api_spec tool — returns OpenAPI spec for specific tool(s)
 	getAPISpecTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_api_spec",
-			Description: "Get the OpenAPI specification for tools. When tool_name is provided, returns the spec for just that single tool (preferred — smaller, faster). When only server_name is given, returns the full spec for all tools on that server.",
+			Description: "Get the OpenAPI specification for specific tool(s) on a server. The system prompt lists all available servers and tool names — use this to get the full API spec (endpoint, request schema, auth) for the tools you want to call.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"server_name": map[string]interface{}{
 						"type":        "string",
-						"description": "Server name from the available tools index (e.g., 'google_sheets', 'playwright'). Use the exact name as shown in the tool index.",
+						"description": "Server name from the available tools index (e.g., 'google_sheets', 'playwright').",
 					},
 					"tool_name": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional. Specific tool name to get the spec for (e.g., 'search_issues'). When provided, returns only this tool's endpoint and schema instead of the full server spec. Preferred for targeted lookups.",
+						"description": "Tool name(s) to get the API spec for. Pass a single string (e.g., 'search_issues') or an array of strings (e.g., ['create_spreadsheet', 'update_values']).",
 					},
 				},
-				"required": []string{"server_name"},
+				"required": []string{"server_name", "tool_name"},
 			}),
 		},
 	}
