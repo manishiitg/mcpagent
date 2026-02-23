@@ -1716,36 +1716,38 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
+		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
-		// Disable Tool Search
 		if ag.UseToolSearchMode {
 			ag.UseToolSearchMode = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled by CLI)")
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled natively by CLI)")
 		}
 
-		// Disable Code Execution Mode
 		if ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Code Execution Mode (not supported)")
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Code Execution Mode (not supported)")
 		}
 
-		// Disable Context Editing
 		if ag.EnableContextEditing {
 			ag.EnableContextEditing = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Editing (handled by CLI)")
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Editing (handled natively by CLI)")
 		}
 
-		// Disable Context Offloading
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Offloading (handled by CLI)")
-		}
-
-		// Disable Context Summarization
 		if ag.EnableContextSummarization {
 			ag.EnableContextSummarization = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Summarization (handled by CLI)")
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		// Auto-enable streaming — required for tool call observability events
+		// (ToolCallStart/ToolCallEnd) since the CLI manages its own agentic loop
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [CLAUDE_CODE] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 
@@ -2601,36 +2603,38 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - auto-disabling incompatible features")
+		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
-		// Disable Tool Search
 		if ag.UseToolSearchMode {
 			ag.UseToolSearchMode = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled by CLI)")
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled natively by CLI)")
 		}
 
-		// Disable Code Execution Mode
 		if ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Code Execution Mode (not supported)")
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Code Execution Mode (not supported)")
 		}
 
-		// Disable Context Editing
 		if ag.EnableContextEditing {
 			ag.EnableContextEditing = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Editing (CLI handles context)")
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Editing (handled natively by CLI)")
 		}
 
-		// Disable Context Offloading
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Offloading (CLI handles context)")
-		}
-
-		// Disable Context Summarization
 		if ag.EnableContextSummarization {
 			ag.EnableContextSummarization = false
-			logger.Info("🔧 [CLAUDE_CODE] Disabled Context Summarization (CLI handles context)")
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		// Auto-enable streaming — required for tool call observability events
+		// (ToolCallStart/ToolCallEnd) since the CLI manages its own agentic loop
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [CLAUDE_CODE] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 
