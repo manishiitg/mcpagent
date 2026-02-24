@@ -59,6 +59,7 @@ type ProviderAPIKeys struct {
 	OpenAI     *string
 	Anthropic  *string
 	Vertex     *string
+	GeminiCLI  *string
 	Bedrock    *BedrockConfig
 	Azure      *AzureAPIConfig
 }
@@ -138,6 +139,7 @@ func convertConfig(config Config) llmproviders.Config {
 			OpenAI:     config.APIKeys.OpenAI,
 			Anthropic:  config.APIKeys.Anthropic,
 			Vertex:     config.APIKeys.Vertex,
+			GeminiCLI:  config.APIKeys.GeminiCLI,
 		}
 		if config.APIKeys.Bedrock != nil {
 			providerAPIKeys.Bedrock = &llmproviders.BedrockConfig{
