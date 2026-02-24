@@ -1932,12 +1932,37 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 		}
 	}
 
+	// Check if the provider reported a direct cost (e.g. Claude Code CLI's total_cost_usd).
+	// If so, use that instead of per-token calculations (which would be 0 for providers
+	// that don't define per-token pricing in metadata).
+	var providerReportedCost float64
+	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		if additional := resp.Choices[0].GenerationInfo.Additional; additional != nil {
+			if costVal, ok := additional["cost_usd"]; ok {
+				switch c := costVal.(type) {
+				case float64:
+					providerReportedCost = c
+				case json.Number:
+					if v, err := c.Float64(); err == nil {
+						providerReportedCost = v
+					}
+				}
+			}
+		}
+	}
+
 	// Accumulate costs
 	a.cumulativeInputCost += inputCost
 	a.cumulativeOutputCost += outputCost
 	a.cumulativeReasoningCost += reasoningCost
 	a.cumulativeCacheCost += cacheCost
-	a.cumulativeTotalCost += inputCost + outputCost + reasoningCost + cacheCost
+
+	// Use provider-reported cost if available and calculated cost is zero
+	turnCost := inputCost + outputCost + reasoningCost + cacheCost
+	if turnCost == 0 && providerReportedCost > 0 {
+		turnCost = providerReportedCost
+	}
+	a.cumulativeTotalCost += turnCost
 
 	// Update context window usage (current input tokens in conversation)
 	// Set currentContextWindowUsage to the actual prompt tokens from this LLM call.
@@ -3798,6 +3823,14 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 
 	// Update the agent's system prompt
 	a.SystemPrompt = newSystemPrompt
+
+	// Re-append any prompts that were added via AppendSystemPrompt()
+	// (e.g. CRITICAL INSTRUCTION for Claude Code, delegation guidance)
+	if a.HasAppendedPrompts && len(a.AppendedSystemPrompts) > 0 {
+		for _, p := range a.AppendedSystemPrompts {
+			a.SystemPrompt += "\n\n" + p
+		}
+	}
 
 	if a.Logger != nil {
 		a.Logger.Debug("🔧 [CODE_EXECUTION] System prompt rebuilt",

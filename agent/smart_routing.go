@@ -1,3 +1,4 @@
+// Deprecated: smart_routing.go is no longer actively used. Kept for reference.
 package mcpagent
 
 import (

@@ -82,3 +82,5 @@ require (
 	google.golang.org/genai v1.41.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260112192933-99fd39fd28a9 // indirect
 )
+
+replace github.com/manishiitg/multi-llm-provider-go => ../multi-llm-provider-go
