@@ -46,7 +46,16 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		var err error
 		bridgePath, err = exec.LookPath("mcpbridge")
 		if err != nil {
-			return "", fmt.Errorf("mcpbridge binary not found in PATH (set MCP_BRIDGE_BINARY env var): %w", err)
+			// Fallback: check ~/go/bin/mcpbridge (common Go install location)
+			if home, hErr := os.UserHomeDir(); hErr == nil {
+				candidate := home + "/go/bin/mcpbridge"
+				if _, sErr := os.Stat(candidate); sErr == nil {
+					bridgePath = candidate
+				}
+			}
+			if bridgePath == "" {
+				return "", fmt.Errorf("mcpbridge binary not found in PATH or ~/go/bin/ (set MCP_BRIDGE_BINARY env var): %w", err)
+			}
 		}
 	}
 

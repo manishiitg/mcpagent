@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -14,21 +15,25 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // StdioManager provides stdio connection management with direct connection creation
 // Each agent owns its connections directly - no global pool
 type StdioManager struct {
-	command   string
-	args      []string
-	env       []string
-	logger    loggerv2.Logger
-	serverKey string
+	command    string
+	args       []string
+	env        []string
+	workingDir string
+	logger     loggerv2.Logger
+	serverKey  string
 }
 
-// NewStdioManager creates a new stdio manager
-func NewStdioManager(command string, args []string, env []string, logger loggerv2.Logger) *StdioManager {
+// NewStdioManager creates a new stdio manager.
+// workingDir is optional; when set, the MCP subprocess is started with this as its current
+// working directory so relative paths (e.g. Playwright custom filenames) resolve there.
+func NewStdioManager(command string, args []string, env []string, workingDir string, logger loggerv2.Logger) *StdioManager {
 	logger.Debug("Creating StdioManager",
 		loggerv2.String("command", command),
 		loggerv2.Any("args", args))
@@ -38,11 +43,12 @@ func NewStdioManager(command string, args []string, env []string, logger loggerv
 	serverKey := fmt.Sprintf("%s_%v_%s", command, args, envHash)
 
 	return &StdioManager{
-		command:   command,
-		args:      args,
-		env:       env,
-		logger:    logger,
-		serverKey: serverKey,
+		command:    command,
+		args:       args,
+		env:        env,
+		workingDir: workingDir,
+		logger:     logger,
+		serverKey:  serverKey,
 	}
 }
 
@@ -51,7 +57,21 @@ func NewStdioManager(command string, args []string, env []string, logger loggerv
 func (s *StdioManager) CreateClient() (*client.Client, error) {
 	s.logger.Debug("Creating stdio client directly (no pooling)")
 
-	mcpClient, err := client.NewStdioMCPClient(s.command, s.env, s.args...)
+	var mcpClient *client.Client
+	var err error
+	if s.workingDir != "" {
+		opts := []transport.StdioOption{
+			transport.WithCommandFunc(func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error) {
+				cmd := exec.CommandContext(ctx, command, args...)
+				cmd.Env = env
+				cmd.Dir = s.workingDir
+				return cmd, nil
+			}),
+		}
+		mcpClient, err = client.NewStdioMCPClientWithOptions(s.command, s.env, s.args, opts...)
+	} else {
+		mcpClient, err = client.NewStdioMCPClient(s.command, s.env, s.args...)
+	}
 	if err != nil {
 		s.logger.Error("Failed to create stdio client", err)
 		return nil, fmt.Errorf("failed to create stdio client: %w", err)
@@ -101,7 +121,21 @@ func (s *StdioManager) Connect(ctx context.Context) (*client.Client, error) {
 	s.logger.Info(fmt.Sprintf("🔍 [MCP INIT] Step 1/2: Creating stdio MCP client - server=%s, command=%s", s.serverKey, s.command),
 		loggerv2.String("server", s.serverKey))
 	clientStartTime := time.Now()
-	mcpClient, err := client.NewStdioMCPClient(s.command, s.env, s.args...)
+	var mcpClient *client.Client
+	var err error
+	if s.workingDir != "" {
+		opts := []transport.StdioOption{
+			transport.WithCommandFunc(func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error) {
+				cmd := exec.CommandContext(ctx, command, args...)
+				cmd.Env = env
+				cmd.Dir = s.workingDir
+				return cmd, nil
+			}),
+		}
+		mcpClient, err = client.NewStdioMCPClientWithOptions(s.command, s.env, s.args, opts...)
+	} else {
+		mcpClient, err = client.NewStdioMCPClient(s.command, s.env, s.args...)
+	}
 
 	if err != nil {
 		clientDuration := time.Since(clientStartTime)

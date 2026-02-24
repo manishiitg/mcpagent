@@ -190,7 +190,7 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		fallthrough
 	default:
 		// Default to stdio for backward compatibility
-		stdioManager := NewStdioManager(c.config.Command, c.config.Args, env, c.logger)
+		stdioManager := NewStdioManager(c.config.Command, c.config.Args, env, c.config.WorkingDir, c.logger)
 		mcpClient, err = stdioManager.Connect(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to create MCP client: %w", err)

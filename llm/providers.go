@@ -308,6 +308,12 @@ func WithMaxTurns(maxTurns int) CallOption {
 	return llmproviders.WithMaxTurns(maxTurns)
 }
 
+// WithResumeSessionID sets the --resume flag so the Claude Code CLI resumes
+// an existing session instead of starting a new one.
+func WithResumeSessionID(id string) CallOption {
+	return llmproviders.WithResumeSessionID(id)
+}
+
 // Re-export helper functions from llm-providers
 
 // GetDefaultModel returns the default model for each provider from environment variables

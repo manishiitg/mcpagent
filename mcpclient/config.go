@@ -85,6 +85,7 @@ type MCPServerConfig struct {
 	Command     string            `json:"command"`
 	Args        []string          `json:"args"`
 	Env         map[string]string `json:"env,omitempty"`
+	WorkingDir  string            `json:"working_dir,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Protocol    ProtocolType      `json:"protocol,omitempty"`
 	PoolConfig  *PoolConfig       `json:"pool_config,omitempty"`
@@ -105,6 +106,9 @@ type RuntimeConfigOverride struct {
 	ArgsAppend []string `json:"args_append,omitempty"`
 	// EnvOverride adds or overrides environment variables
 	EnvOverride map[string]string `json:"env_override,omitempty"`
+	// WorkingDir sets the subprocess working directory (stdio only). Used so tools that resolve
+	// relative paths (e.g. Playwright MCP custom filenames) use the desired output directory.
+	WorkingDir string `json:"working_dir,omitempty"`
 }
 
 // RuntimeOverrides maps server names to their runtime configuration overrides
@@ -154,6 +158,10 @@ func (c MCPServerConfig) ApplyOverride(override RuntimeConfigOverride) MCPServer
 		for k, v := range override.EnvOverride {
 			newConfig.Env[k] = v
 		}
+	}
+
+	if override.WorkingDir != "" {
+		newConfig.WorkingDir = override.WorkingDir
 	}
 
 	return newConfig

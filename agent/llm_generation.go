@@ -468,19 +468,19 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 
 		bridgeConfig, err := a.BuildBridgeMCPConfig()
 		if err != nil {
-			a.Logger.Warn("Failed to build bridge MCP config, falling back to raw config", loggerv2.Error(err))
-			// Fallback to raw MCP config (e.g., if bridge binary not found)
-			if mcpConfig, err := a.GetMCPConfigJSON(); err == nil {
-				opts = append(opts, llm.WithMCPConfig(mcpConfig))
-			}
-		} else {
-			opts = append(opts, llm.WithMCPConfig(bridgeConfig))
-			a.Logger.Info("🌉 Using MCP bridge for Claude Code tool access via HTTP API")
+			return nil, fmt.Errorf("Claude Code requires the MCP bridge: %w", err)
 		}
+		opts = append(opts, llm.WithMCPConfig(bridgeConfig))
+		a.Logger.Info("🌉 Using MCP bridge for Claude Code tool access via HTTP API")
 
 		// Pass max turns to Claude Code CLI
 		if a.MaxTurns > 0 {
 			opts = append(opts, llm.WithMaxTurns(a.MaxTurns))
+		}
+
+		// Resume existing Claude Code session if available
+		if a.ClaudeCodeSessionID != "" {
+			opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
 		}
 	}
 

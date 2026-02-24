@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 
 	agentmcp "github.com/manishiitg/mcpagent/cmd/testing/agent-mcp"
+	claudecodebridge "github.com/manishiitg/mcpagent/cmd/testing/claude-code-bridge"
 	connectionisolation "github.com/manishiitg/mcpagent/cmd/testing/connection-isolation"
 	executortest "github.com/manishiitg/mcpagent/cmd/testing/executor"
 	hello "github.com/manishiitg/mcpagent/cmd/testing/hello"
@@ -17,6 +18,7 @@ import (
 	langsmith "github.com/manishiitg/mcpagent/cmd/testing/langsmith"
 	largetooloutput "github.com/manishiitg/mcpagent/cmd/testing/large-tool-output"
 	mcpagentcodeexec "github.com/manishiitg/mcpagent/cmd/testing/mcp-agent-code-exec"
+	mcpbridge "github.com/manishiitg/mcpagent/cmd/testing/mcpbridge"
 	oauthflow "github.com/manishiitg/mcpagent/cmd/testing/oauth-flow"
 	paralleltoolexec "github.com/manishiitg/mcpagent/cmd/testing/parallel-tool-exec"
 	smartrouting "github.com/manishiitg/mcpagent/cmd/testing/smart-routing"
@@ -102,6 +104,8 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(connectionisolation.GetConnectionIsolationTestCmd())
 	TestingCmd.AddCommand(executortest.GetExecutorTestCmd())
 	TestingCmd.AddCommand(mcpagentcodeexec.GetMCPAgentCodeExecTestCmd())
+	TestingCmd.AddCommand(mcpbridge.GetMCPBridgeTestCmd())
+	TestingCmd.AddCommand(claudecodebridge.GetClaudeCodeBridgeTestCmd())
 	TestingCmd.AddCommand(humanfeedbackcodeexec.GetHumanFeedbackCodeExecTestCmd())
 	TestingCmd.AddCommand(langfuse.GetLangfuseReadTestCmd())
 	TestingCmd.AddCommand(langsmith.GetLangsmithReadTestCmd())

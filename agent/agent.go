@@ -715,6 +715,9 @@ type Agent struct {
 	// Provider information
 	provider llm.Provider
 
+	// Claude Code CLI session ID for --resume on subsequent turns
+	ClaudeCodeSessionID string
+
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 
@@ -1721,6 +1724,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -1728,9 +1732,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Debug("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled natively by CLI)")
 		}
 
-		if ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Code Execution Mode (not supported)")
+		// Code execution mode is always enabled for Claude Code — MCP tools are
+		// accessed via the HTTP bridge (mcpbridge stdio binary)
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [CLAUDE_CODE] Auto-enabled Code Execution Mode (MCP tools via HTTP bridge)")
 		}
 
 		if ag.EnableContextEditing {
@@ -2606,6 +2612,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -2613,9 +2620,11 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 			logger.Debug("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled natively by CLI)")
 		}
 
-		if ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Code Execution Mode (not supported)")
+		// Code execution mode is always enabled for Claude Code — MCP tools are
+		// accessed via the HTTP bridge (mcpbridge stdio binary)
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [CLAUDE_CODE] Auto-enabled Code Execution Mode (MCP tools via HTTP bridge)")
 		}
 
 		if ag.EnableContextEditing {

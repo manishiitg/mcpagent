@@ -209,3 +209,64 @@ func (h *ExecutorHandlers) handlePerToolCustom(w http.ResponseWriter, r *http.Re
 
 	h.HandleCustomExecute(w, newReq)
 }
+
+// HandlePerToolVirtualRequest is the public entry point for per-tool virtual requests.
+// It handles requests to /tools/virtual/{tool}, extracting args from the body
+// and delegating to the standard virtual tool execution logic.
+func (h *ExecutorHandlers) HandlePerToolVirtualRequest(w http.ResponseWriter, r *http.Request, tool string) {
+	// Set CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Parse request body as tool arguments
+	var args map[string]interface{}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+			h.logger.Warn("Failed to decode per-tool virtual request body", loggerv2.Error(err))
+			_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec
+				Success: false,
+				Error:   fmt.Sprintf("Invalid request body: %v", err),
+			})
+			return
+		}
+	}
+	if args == nil {
+		args = make(map[string]interface{})
+	}
+
+	h.logger.Info("Per-tool virtual request", loggerv2.String("tool", tool))
+
+	// Build the standard VirtualExecuteRequest and reuse the full handler logic
+	wrappedBody := VirtualExecuteRequest{
+		Tool: tool,
+		Args: args,
+	}
+
+	bodyBytes, err := json.Marshal(wrappedBody)
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec
+			Success: false,
+			Error:   fmt.Sprintf("Internal error: %v", err),
+		})
+		return
+	}
+
+	newReq, err := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec
+			Success: false,
+			Error:   fmt.Sprintf("Internal error: %v", err),
+		})
+		return
+	}
+	newReq.Header.Set("Content-Type", "application/json")
+
+	h.HandleVirtualExecute(w, newReq)
+}

@@ -815,6 +815,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | LLM API responded | llm_duration=%dms err=%v",
 			turn+1, time.Since(conversationStartTime).Milliseconds(), time.Since(llmStartTime).Milliseconds(), genErr)
 
+		// Capture Claude Code session ID for --resume on next turn
+		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+			if sid, ok := resp.Choices[0].GenerationInfo.Additional["claude_code_session_id"].(string); ok && sid != "" {
+				a.ClaudeCodeSessionID = sid
+			}
+		}
+
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
 			// 🔧 DEBUG: Log token usage for this LLM call

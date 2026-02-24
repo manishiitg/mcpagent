@@ -213,22 +213,22 @@ func (a *Agent) buildToolIndex() (string, error) {
 		index[serverName] = ServerInfo{Tools: tools}
 	}
 
-	// Add custom tools grouped by category
-	// In code execution mode, custom tools are already available as direct tool calls,
-	// so they should NOT appear in the tool index (which is for API-only tools).
-	if !a.UseCodeExecutionMode {
-		customToolsByCategory := make(map[string][]string)
-		for toolName, ct := range a.customTools {
-			category := ct.Category
-			if category == "" {
-				continue
-			}
-			customToolsByCategory[category] = append(customToolsByCategory[category], toolName)
+	// Add custom tools grouped by category to the tool index.
+	// Even in code execution mode, custom tools must appear here so that Claude Code
+	// (which uses the MCP bridge and can only discover tools via get_api_spec) can
+	// find and call them via HTTP API. For non-Claude-Code providers, the tools are
+	// also available as direct LLM calls — having them in the index is harmless.
+	customToolsByCategory := make(map[string][]string)
+	for toolName, ct := range a.customTools {
+		category := ct.Category
+		if category == "" {
+			continue
 		}
-		for category, tools := range customToolsByCategory {
-			sort.Strings(tools)
-			index[category] = ServerInfo{Tools: tools}
-		}
+		customToolsByCategory[category] = append(customToolsByCategory[category], toolName)
+	}
+	for category, tools := range customToolsByCategory {
+		sort.Strings(tools)
+		index[category] = ServerInfo{Tools: tools}
 	}
 
 	jsonData, err := json.MarshalIndent(index, "", "  ")

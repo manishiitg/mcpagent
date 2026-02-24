@@ -14,54 +14,143 @@ Integrate the Claude Code CLI adapter into the MCP Agent system (`mcpagent`), en
     *   We implement `GetMCPConfigJSON()` in `mcpagent/agent/agent.go` to serialize the agent's current MCP configuration.
     *   We inject this config into the LLM execution call via `WithMCPConfig` option.
 
-3.  **Feature Auto-Disable**:
+3.  **Feature Auto-Configuration**:
     *   The `Claude Code` CLI handles its own context management, tool discovery, and code execution.
-    *   The `mcpagent`'s built-in implementations of these features (Tool Search, Code Execution, Context Editing, Context Offloading) conflict or are redundant.
-    *   We automatically disable these features in `NewAgent` when `ProviderClaudeCode` is detected.
+    *   The `mcpagent`'s built-in implementations of these features conflict or are redundant.
+    *   We automatically configure features in `NewAgent` and `NewAgentWithObservability` when `ProviderClaudeCode` is detected.
+
+## Feature Compatibility Matrix
+
+| Feature | Status | Reason |
+|---|---|---|
+| `Ask` / `AskWithHistory` | **Works** | Core chat functionality |
+| Streaming | **Auto-enabled** | Required for tool call observability events |
+| Tool Call Events (start/end) | **Works** | Parsed from CLI stream events with args, result, duration |
+| Langfuse/LangSmith Tracing | **Works** | Events use standard `ToolCallStartEvent`/`ToolCallEndEvent` |
+| Context Offloading | **Silently disabled** | CLI handles natively |
+| Context Summarization | **Error if enabled** | CLI handles natively |
+| Context Editing | **Error if enabled** | CLI handles natively |
+| Tool Search Mode | **Error if enabled** | CLI handles natively |
+| Code Execution Mode | **Error if enabled** | Not supported via CLI wrapper |
+| Structured Output (`AskStructured`, etc.) | **Error** | Requires second LLM call or tool-based extraction not available via CLI |
+| Smart Routing | **Runs but ignored** | CLI manages its own tool selection |
+| Parallel Tool Execution | **Flag ignored** | CLI manages its own parallel execution internally |
 
 ## Implementation Details
 
 ### 1. `multi-llm-provider-go`
-*   Modified `pkg/adapters/claudecode/adapter.go` to accept `WithMCPConfig` option.
-*   Modified `providers.go` to export `WithMCPConfig`.
+
+#### Adapter (`pkg/adapters/claudecode/claudecode_adapter.go`)
+*   Accepts `WithMCPConfig`, `WithDangerouslySkipPermissions`, and `WithClaudeCodeTools` options.
+*   Launches `claude` CLI with `--output-format stream-json --input-format stream-json --verbose --include-partial-messages`.
+*   Streams user/assistant messages via stdin in stream-json format.
+*   Parses stdout as a real-time JSON stream.
+
+#### Stream Event Parsing (Tool Call Observability)
+The adapter parses the CLI's `stream_event` JSON objects as a state machine:
+
+1.  **`content_block_start`** with `type: tool_use` → Emits `StreamChunkTypeToolCallStart` with tool name and ID. Buffers a `pendingToolCall` with start time.
+2.  **`content_block_delta`** with `input_json_delta` → Accumulates partial JSON arguments in a `strings.Builder`.
+3.  **`content_block_stop`** → Saves accumulated args to the pending buffer. Does NOT emit `ToolCallEnd` yet (waits for result).
+4.  **`"type": "user"`** with `tool_result` → Matches by `tool_use_id`, emits `StreamChunkTypeToolCallEnd` with:
+    *   `ToolArgs` — complete JSON arguments
+    *   `ToolResult` — tool execution result content
+    *   `ToolDuration` — wall-clock time from start to result
+5.  **`"type": "result"`** → Flushes any remaining pending tool calls as fallback (no result, duration only).
+
+#### Playback Deduplication
+*   Counts historical AI messages to skip them during playback streaming.
+*   Skips consolidated `assistant` messages when `stream_event`s are already providing real-time deltas.
+
+#### StreamChunk Types (`llmtypes/types.go`)
+```go
+const (
+    StreamChunkTypeContent       StreamChunkType = "content"
+    StreamChunkTypeToolCall      StreamChunkType = "tool_call"
+    StreamChunkTypeToolCallStart StreamChunkType = "tool_call_start"
+    StreamChunkTypeToolCallEnd   StreamChunkType = "tool_call_end"
+)
+
+type StreamChunk struct {
+    Type         StreamChunkType
+    Content      string
+    ToolCall     *ToolCall
+    ToolName     string
+    ToolCallID   string
+    ToolArgs     string          // Complete JSON arguments
+    ToolResult   string          // Tool execution result
+    ToolDuration time.Duration   // Duration from start to result
+}
+```
 
 ### 2. `mcpagent`
-*   **`llm/providers.go`**: Added `ProviderClaudeCode`.
-*   **`agent/agent.go`**:
-    *   Added `GetMCPConfigJSON()` method.
-    *   **CRITICAL**: Added auto-disable logic in `NewAgent` (and `NewAgentWithObservability`) to set `UseToolSearchMode`, `UseCodeExecutionMode`, etc., to `false`.
-*   **`agent/llm_generation.go`**: Updated `executeLLM` to inject the MCP config.
 
-## Testing Strategy
+#### Provider Registration (`llm/providers.go`)
+*   Added `ProviderClaudeCode`.
 
-### Integration Test (`cmd/testing/claude-code`)
-*   **Command**: `mcpagent-test test claude-code`
-*   **Steps**:
-    1.  Create a mock MCP configuration.
-    2.  Initialize an agent with `ProviderClaudeCode`.
-    3.  Explicitly enable incompatible features (e.g., `UseToolSearchMode = true`) in `NewAgent` call.
-    4.  Verify that `NewAgent` automatically disables these features (assert `UseToolSearchMode == false`).
-    5.  Verify `GetMCPConfigJSON` returns valid JSON matching the mock config.
+#### Auto-Configuration (`agent/agent.go`)
+In both `NewAgent` and `NewAgentWithObservability`:
+*   **Errors** for: `UseToolSearchMode`, `UseCodeExecutionMode`, `EnableContextEditing`, `EnableContextSummarization`
+*   **Silently disables**: `EnableContextOffloading`
+*   **Auto-enables**: `EnableStreaming` (required for tool call observability)
+*   **Structured output** methods (`AskStructured`, `AskWithHistoryStructured`, `AskWithHistoryStructuredViaTool`) return error when provider is `claude-code`.
+
+#### Tool Event Bridge (`agent/llm_generation.go`)
+`processChunks` in `streamingManager` handles:
+*   `StreamChunkTypeToolCallStart` → Emits `ToolCallStartEvent` via `EmitTypedEvent` with turn, tool name, correlation IDs.
+*   `StreamChunkTypeToolCallEnd` → Emits `ToolCallEndEvent` via `EmitTypedEvent` with tool name, result, duration, model ID, and ToolCallID for correlation.
+
+These events use the exact same `AgentEvent` structures as native tool execution, so all downstream consumers (Langfuse spans, event listeners, frontend EventDisplay) work without changes.
+
+#### MCP Config Injection (`agent/llm_generation.go`)
+*   `executeLLM` injects the MCP config via `WithMCPConfig` call option.
+
+## Testing
+
+### Integration Test (`cmd/testing/parallel-tool-exec`)
+Verified with `--provider claude-code`:
+*   Agent creates with auto-enabled streaming.
+*   `ToolCallStart` and `ToolCallEnd` events are received by the event listener.
+*   Tool name, call ID, args, result, and duration populated correctly.
+*   Test passes with `tool_calls >= 1`.
+
+```bash
+# Run with claude-code provider
+unset CLAUDECODE && go run ./cmd/testing parallel-tool-exec \
+  --provider claude-code \
+  --log-file logs/parallel-claude-code.log \
+  --log-level debug
+```
+
+### Unit Test (`multi-llm-provider-go`)
+```bash
+cd multi-llm-provider-go
+go test -v ./pkg/adapters/claudecode -run TestClaudeCodeStreaming
+```
 
 ## Known Limitations
 
 ### HTTP/SSE MCP Servers
-Currently, the `claude` CLI cannot dynamically bootstrap remote HTTP/SSE based MCP servers via the `--mcp-config` JSON string argument when running in headless/non-interactive mode (`-p`). 
+The `claude` CLI cannot dynamically bootstrap remote HTTP/SSE based MCP servers via `--mcp-config` in headless mode (`-p`).
 
-*   **Behavior**: Injecting an HTTP configuration (e.g. `{"type": "http", "url": "..."}`) into `--mcp-config` causes the non-interactive CLI to hang indefinitely and eventually time out.
-*   **Root Cause**: The CLI's internal MCP engine is optimized for spawning local `stdio` command sub-processes (like `npx`). While the CLI supports HTTP MCPs natively, it currently expects them to be configured interactively via the standard interactive prompt (e.g. `claude mcp add --transport http ...`).
-*   **Workaround**: Tests and automated usage of the `ProviderClaudeCode` integration must utilize `stdio` based local servers (such as `@modelcontextprotocol/server-memory`) rather than remote HTTP servers.
+*   **Behavior**: Injecting HTTP config causes the non-interactive CLI to hang and time out.
+*   **Root Cause**: The CLI expects HTTP MCPs to be configured interactively.
+*   **Workaround**: Use `stdio` based local servers (e.g., `@modelcontextprotocol/server-memory`).
 
-## Current Status & Issues
+### Nested Sessions
+Claude Code CLI cannot be launched inside another Claude Code session. The `CLAUDECODE` environment variable must be unset for testing.
 
-### Issue: Test Failure (Resolved)
-The integration test previously failed because the auto-disable logic was misplaced in `NewAgentWithObservability` instead of `NewAgent`.
+### Tool Results
+Tool results are captured from the CLI's internal `tool_result` messages. If a tool call is interrupted or the CLI exits before returning a result, the `ToolCallEnd` event will be emitted without a result (fallback from the `"type": "result"` flush).
 
-### Root Cause Analysis (Resolved)
-*   The logic was inserted in the wrong constructor (`NewAgentWithObservability`).
-*   The test calls `mcpagent.NewAgent`.
-*   We have now moved the logic to the end of `NewAgent` function.
+## Files Modified
 
-### Next Steps
-1.  Verify the fix by running the test.
-2.  Commit and push changes.
+### `multi-llm-provider-go`
+*   `llmtypes/types.go` — StreamChunk types and fields
+*   `pkg/adapters/claudecode/claudecode_adapter.go` — Stream parsing, tool buffering, result matching
+*   `pkg/adapters/claudecode/claudecode_stream_integration_test.go` — Integration test
+
+### `mcpagent`
+*   `llm/providers.go` — `ProviderClaudeCode` registration
+*   `agent/agent.go` — Auto-configuration block, structured output guards, `GetMCPConfigJSON`
+*   `agent/llm_generation.go` — `processChunks` tool event bridge, `executeLLM` MCP config injection
