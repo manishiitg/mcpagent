@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -302,22 +303,31 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			}
 
 		case llmtypes.StreamChunkTypeToolCallStart:
+			// Determine source label from provider
+			sourceLabel := string(a.provider)
+			if sourceLabel == "" {
+				sourceLabel = "cli"
+			}
 			toolStartEvent := events.NewToolCallStartEventWithCorrelation(
 				sm.turn,
 				chunk.ToolName,
 				events.ToolParams{Arguments: chunk.ToolArgs},
-				"claude-code",
+				sourceLabel,
 				string(a.TraceID), string(a.TraceID),
 			)
 			toolStartEvent.ToolCallID = chunk.ToolCallID
 			a.EmitTypedEvent(ctx, toolStartEvent)
 
 		case llmtypes.StreamChunkTypeToolCallEnd:
+			sourceLabel := string(a.provider)
+			if sourceLabel == "" {
+				sourceLabel = "cli"
+			}
 			toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(
 				sm.turn,
 				chunk.ToolName,
 				chunk.ToolResult,   // tool execution result from CLI
-				"claude-code",      // serverName
+				sourceLabel,        // serverName
 				chunk.ToolDuration, // duration from start to tool_result
 				"",                 // spanID
 				0, 0, 0,            // context usage metrics (not available)
@@ -344,11 +354,30 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 	}
 
 	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
-		if resp.Choices[0].GenerationInfo.TotalTokens != nil {
-			endEvent.TotalTokens = *resp.Choices[0].GenerationInfo.TotalTokens
+		genInfo := resp.Choices[0].GenerationInfo
+		if genInfo.TotalTokens != nil {
+			endEvent.TotalTokens = *genInfo.TotalTokens
 		}
 		if resp.Choices[0].StopReason != "" {
 			endEvent.FinishReason = resp.Choices[0].StopReason
+		}
+		// Extract provider-specific metadata (Gemini CLI / Claude Code)
+		if additional := genInfo.Additional; additional != nil {
+			// Gemini CLI metadata
+			if model, ok := additional["gemini_model"].(string); ok {
+				endEvent.ResolvedModel = model
+			}
+			if tc, ok := additional["gemini_tool_calls"].(int); ok {
+				endEvent.ToolCalls = tc
+			}
+			// Claude Code metadata
+			if model, ok := additional["claude_code_model"].(string); ok && endEvent.ResolvedModel == "" {
+				endEvent.ResolvedModel = model
+			}
+		}
+		// Populate cache tokens from CachedContentTokens (set by both adapters)
+		if genInfo.CachedContentTokens != nil {
+			endEvent.CacheTokens = *genInfo.CachedContentTokens
 		}
 	}
 	a.EmitTypedEvent(ctx, endEvent)
@@ -481,6 +510,50 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// Resume existing Claude Code session if available
 		if a.ClaudeCodeSessionID != "" {
 			opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
+		}
+	}
+
+	// 🔧 GEMINI CLI INTEGRATION: Project settings + MCP bridge
+	// Gemini CLI reads .gemini/settings.json from its working directory. We create
+	// a temp directory with settings that:
+	//   1. Restrict built-in tools via tools.core (only google_web_search allowed)
+	//   2. Configure the MCP bridge server via mcpServers
+	// The adapter runs `gemini` from that temp dir so these settings take effect.
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderGeminiCLI {
+		// Set approval mode to yolo for non-interactive usage
+		opts = append(opts, llm.WithGeminiApprovalMode("yolo"))
+
+		// Build project settings with tool restriction + MCP bridge config
+		settings := map[string]interface{}{
+			"tools": map[string]interface{}{
+				"core": []string{"google_web_search"},
+			},
+		}
+
+		// Build bridge MCP config and merge mcpServers into settings
+		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
+		if bridgeErr == nil {
+			var bridgeParsed map[string]interface{}
+			if json.Unmarshal([]byte(bridgeConfig), &bridgeParsed) == nil {
+				if mcpServers, ok := bridgeParsed["mcpServers"]; ok {
+					settings["mcpServers"] = mcpServers
+				}
+			}
+		} else {
+			a.Logger.Warn("Could not build bridge MCP config for Gemini CLI (tools may be limited)", loggerv2.Error(bridgeErr))
+		}
+
+		settingsBytes, _ := json.Marshal(settings)
+		opts = append(opts, llm.WithGeminiProjectSettings(string(settingsBytes)))
+
+		// Allow MCP bridge tools and google_web_search to run without confirmation
+		opts = append(opts, llm.WithGeminiAllowedTools("mcp__api-bridge__*,google_web_search"))
+
+		a.Logger.Info("🌉 Using Gemini CLI with project settings (tools.core restricted, MCP bridge configured)")
+
+		// Resume existing Gemini session if available
+		if a.GeminiSessionID != "" {
+			opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
 		}
 	}
 

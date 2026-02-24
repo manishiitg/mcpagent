@@ -2090,6 +2090,10 @@ type StreamingEndEvent struct {
 	TotalTokens  int    `json:"total_tokens,omitempty"`
 	FinishReason string `json:"finish_reason,omitempty"`
 	Duration     string `json:"duration,omitempty"`
+	// Provider-specific metadata (resolved model, cache stats, etc.)
+	ResolvedModel string `json:"resolved_model,omitempty"`
+	CacheTokens   int    `json:"cache_tokens,omitempty"`
+	ToolCalls     int    `json:"tool_calls,omitempty"`
 }
 
 func (e *StreamingEndEvent) GetEventType() EventType {

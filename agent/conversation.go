@@ -822,6 +822,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			}
 		}
 
+		// Capture Gemini CLI session ID for --resume on next turn
+		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+			if sid, ok := resp.Choices[0].GenerationInfo.Additional["gemini_session_id"].(string); ok && sid != "" {
+				a.GeminiSessionID = sid
+			}
+		}
+
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
 			// 🔧 DEBUG: Log token usage for this LLM call

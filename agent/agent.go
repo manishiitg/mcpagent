@@ -718,6 +718,9 @@ type Agent struct {
 	// Claude Code CLI session ID for --resume on subsequent turns
 	ClaudeCodeSessionID string
 
+	// Gemini CLI session ID for --resume on subsequent turns
+	GeminiSessionID string
+
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 
@@ -1762,6 +1765,37 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 	}
 
+	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
+	if ag.provider == llmproviders.ProviderGeminiCLI {
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
 	// Agent initialization complete
 
 	return ag, nil
@@ -2038,6 +2072,18 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 	if fixedThresholdPercent > 0 {
 		llmEndEvent.Metadata["fixed_threshold_percent"] = fixedThresholdPercent
 		llmEndEvent.Metadata["fixed_threshold_tokens"] = a.FixedTokenThreshold
+	}
+
+	// Propagate provider-specific metadata from GenerationInfo.Additional
+	// This captures CLI provider info like resolved model, duration, tool calls, etc.
+	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		for k, v := range resp.Choices[0].GenerationInfo.Additional {
+			// Skip session IDs (already handled separately) and nil values
+			if v == nil || k == "gemini_session_id" || k == "claude_code_session_id" {
+				continue
+			}
+			llmEndEvent.Metadata[k] = v
+		}
 	}
 
 	a.EmitTypedEvent(ctx, llmEndEvent)
@@ -2675,6 +2721,37 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		}
 	}
 
+	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
+	if ag.provider == llmproviders.ProviderGeminiCLI {
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
 	// Agent initialization complete
 
 	return ag, nil
@@ -3096,10 +3173,14 @@ func AskStructured[T any](a *Agent, ctx context.Context, question string, schema
 //   - []llmtypes.MessageContent: The updated conversation history.
 //   - error: An error if processing or conversion fails.
 func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error) {
-	// 🔧 CLAUDE CODE INTEGRATION: Structured output is not supported via CLI wrapper
+	// 🔧 CLI INTEGRATION: Structured output is not supported via CLI wrappers
 	if a.provider == llm.ProviderClaudeCode {
 		var zero T
 		return zero, messages, fmt.Errorf("structured output is not supported with the claude-code provider")
+	}
+	if a.provider == llm.ProviderGeminiCLI {
+		var zero T
+		return zero, messages, fmt.Errorf("structured output is not supported with the gemini-cli provider")
 	}
 
 	// First, get the text response using the existing method
@@ -3144,10 +3225,14 @@ func AskWithHistoryStructuredViaTool[T any](
 	toolDescription string,
 	schema string,
 ) (StructuredOutputResult[T], error) {
-	// 🔧 CLAUDE CODE INTEGRATION: Structured output is not supported via CLI wrapper
+	// 🔧 CLI INTEGRATION: Structured output is not supported via CLI wrappers
 	if a.provider == llm.ProviderClaudeCode {
 		var zero StructuredOutputResult[T]
 		return zero, fmt.Errorf("structured output is not supported with the claude-code provider")
+	}
+	if a.provider == llm.ProviderGeminiCLI {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("structured output is not supported with the gemini-cli provider")
 	}
 
 	// Parse schema string to get tool parameters

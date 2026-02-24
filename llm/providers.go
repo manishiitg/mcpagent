@@ -25,6 +25,7 @@ const (
 	ProviderVertex     = llmproviders.ProviderVertex
 	ProviderAzure      = llmproviders.ProviderAzure
 	ProviderClaudeCode = llmproviders.ProviderClaudeCode
+	ProviderGeminiCLI  = llmproviders.ProviderGeminiCLI
 )
 
 const (
@@ -312,6 +313,36 @@ func WithMaxTurns(maxTurns int) CallOption {
 // an existing session instead of starting a new one.
 func WithResumeSessionID(id string) CallOption {
 	return llmproviders.WithResumeSessionID(id)
+}
+
+// --- Gemini CLI Wrapper Functions ---
+
+// WithGeminiResumeSessionID sets the --resume flag so the Gemini CLI resumes
+// an existing session instead of starting a new one.
+func WithGeminiResumeSessionID(id string) CallOption {
+	return llmproviders.WithGeminiResumeSessionID(id)
+}
+
+// WithGeminiApprovalMode sets the --approval-mode flag for the Gemini CLI.
+func WithGeminiApprovalMode(mode string) CallOption {
+	return llmproviders.WithGeminiApprovalMode(mode)
+}
+
+// WithGeminiSystemPromptFile sets the GEMINI_SYSTEM_MD environment variable path.
+func WithGeminiSystemPromptFile(path string) CallOption {
+	return llmproviders.WithGeminiSystemPromptFile(path)
+}
+
+// WithGeminiProjectSettings writes a .gemini/settings.json in a temp directory
+// and runs the Gemini CLI from there. Controls tool restrictions and MCP bridge config.
+func WithGeminiProjectSettings(settingsJSON string) CallOption {
+	return llmproviders.WithGeminiProjectSettings(settingsJSON)
+}
+
+// WithGeminiAllowedTools sets the --allowed-tools flag for the Gemini CLI.
+// These tools bypass the confirmation dialog.
+func WithGeminiAllowedTools(tools string) CallOption {
+	return llmproviders.WithGeminiAllowedTools(tools)
 }
 
 // Re-export helper functions from llm-providers
