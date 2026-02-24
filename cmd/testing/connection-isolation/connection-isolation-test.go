@@ -108,7 +108,7 @@ func testParallelStdioConnections(log loggerv2.Logger) error {
 				loggerv2.Int("connection_id", connID))
 
 			// Create a new StdioManager - each should be independent
-			manager := mcpclient.NewStdioManager(command, args, nil, log)
+			manager := mcpclient.NewStdioManager(command, args, nil, "", log)
 
 			// Connect - this creates a new subprocess
 			client, err := manager.Connect(ctx)
@@ -191,7 +191,7 @@ func testSequentialConnectionLifecycle(log loggerv2.Logger) error {
 	for i := 0; i < 3; i++ {
 		log.Info("Creating connection", loggerv2.Int("iteration", i))
 
-		manager := mcpclient.NewStdioManager(command, args, nil, log)
+		manager := mcpclient.NewStdioManager(command, args, nil, "", log)
 		client, err := manager.Connect(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to create connection in iteration %d: %w", i, err)
