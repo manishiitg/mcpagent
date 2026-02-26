@@ -61,18 +61,18 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	// Emit broken pipe detection event
 	h.emitBrokenPipeEvent(ctx, toolCall, serverName, originalErr)
 
-	// Close the old broken connection if it exists
-	// Use clientsMu to safely access the Clients map (may be called concurrently during parallel tool execution)
-	h.agent.clientsMu.Lock()
-	if oldClient, exists := h.agent.Clients[serverName]; exists && oldClient != nil {
-		h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Closing old broken connection for server: %s", serverName),
-			loggerv2.String("server", serverName))
-		_ = oldClient.Close() // Ignore errors during cleanup
-	}
-	h.agent.clientsMu.Unlock()
+	var freshClient mcpclient.ClientInterface
+	var freshErr error
 
-	// Create a fresh connection immediately using shared function
-	freshClient, freshErr := mcpcache.GetFreshConnection(ctx, serverName, h.agent.configPath, h.logger)
+	if h.agent.SessionID != "" {
+		// Session-scoped mode: use the registry so the new connection is tracked
+		// and will be cleaned up by CloseAllSessions at shutdown.
+		freshClient, freshErr = h.recreateViaRegistry(ctx, serverName)
+	} else {
+		// Legacy mode: direct close + fresh connection (no registry)
+		freshClient, freshErr = h.recreateDirect(ctx, serverName)
+	}
+
 	if freshErr != nil {
 		h.logger.Error(fmt.Sprintf("🔧 [BROKEN PIPE] Failed to create fresh connection: %v", freshErr), freshErr)
 		return nil, time.Since(startTime), freshErr
@@ -80,7 +80,6 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 
 	// Update the agent's client map with the new connection
 	// This ensures future tool calls use the new connection
-	// Use clientsMu to safely write to the Clients map
 	h.agent.clientsMu.Lock()
 	h.agent.Clients[serverName] = freshClient
 	h.agent.clientsMu.Unlock()
@@ -89,6 +88,70 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 
 	// Retry the tool call once with the fresh connection
 	return h.retryToolCall(ctx, toolCall, freshClient, serverName, startTime)
+}
+
+// recreateViaRegistry closes the stale connection in the session registry and
+// creates a fresh one that the registry tracks. This prevents connection leaks
+// because CloseAllSessions will close the replacement connection at shutdown.
+func (h *BrokenPipeHandler) recreateViaRegistry(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
+	// Compute the connection session ID — stateless servers share "global",
+	// matching the logic in connection_session.go:170-175.
+	connSessionID := h.agent.SessionID
+	if serverName != "playwright" && serverName != "agent-browser" {
+		connSessionID = "global"
+	}
+
+	registry := mcpclient.GetSessionRegistry()
+
+	// Atomically close AND remove the stale entry from the registry.
+	h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Closing stale registry entry for server: %s (session=%s)", serverName, connSessionID),
+		loggerv2.String("server", serverName))
+	registry.CloseSessionServer(connSessionID, serverName)
+
+	// Load server config so we can pass it to GetOrCreateConnection.
+	config, err := mcpclient.LoadMergedConfig(h.agent.configPath, h.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load MCP config for broken pipe recovery: %w", err)
+	}
+	serverConfig, err := config.GetServer(serverName)
+	if err != nil {
+		return nil, fmt.Errorf("server %s not found in config: %w", serverName, err)
+	}
+
+	// Apply runtime overrides (matching connection_session.go:149-158)
+	if h.agent.RuntimeOverrides != nil {
+		if override, hasOverride := h.agent.RuntimeOverrides[serverName]; hasOverride {
+			serverConfig = serverConfig.ApplyOverride(override)
+		}
+	}
+
+	// Apply per-user OAuth token path (matching connection_session.go:161-168)
+	if h.agent.UserID != "" && serverConfig.OAuth != nil {
+		serverConfig.OAuth.TokenFile = fmt.Sprintf("~/.config/mcpagent/tokens/%s/%s.json", h.agent.UserID, serverName)
+	}
+
+	// Create a fresh connection tracked by the registry.
+	// The per-key mutex inside the registry prevents concurrent broken pipe
+	// handlers from spawning duplicate connections for the same server.
+	client, _, err := registry.GetOrCreateConnection(ctx, connSessionID, serverName, serverConfig, h.logger)
+	if err != nil {
+		return nil, fmt.Errorf("registry GetOrCreateConnection failed: %w", err)
+	}
+	return client, nil
+}
+
+// recreateDirect closes the old connection directly and creates a fresh one
+// via mcpcache. Used when there is no session registry (legacy mode).
+func (h *BrokenPipeHandler) recreateDirect(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
+	h.agent.clientsMu.Lock()
+	if oldClient, exists := h.agent.Clients[serverName]; exists && oldClient != nil {
+		h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Closing old broken connection for server: %s", serverName),
+			loggerv2.String("server", serverName))
+		_ = oldClient.Close()
+	}
+	h.agent.clientsMu.Unlock()
+
+	return mcpcache.GetFreshConnection(ctx, serverName, h.agent.configPath, h.logger)
 }
 
 // retryToolCall retries a tool call with a fresh connection

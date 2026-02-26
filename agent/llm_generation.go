@@ -724,9 +724,9 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			errorType := classifyLLMError(err)
 			lastErr = err
 
-			// Special handling for retrying SAME model (throttling/zero candidates)
+			// Special handling for retrying SAME model (throttling/zero candidates/internal errors)
 			// For zero_candidates errors: limit to 3 retries before fallback
-			// For throttling errors: use full 5 retries
+			// For throttling/internal errors: use full 5 retries
 			shouldRetrySameModel := false
 			if errorType == "zero_candidates_error" {
 				// Zero candidates: retry up to 3 times (attempts 0, 1, 2 = 3 retries total)
@@ -738,8 +738,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					logger.Warn(fmt.Sprintf("❌ Model failed after %d retries: %s/%s - %v", maxRetriesZeroCandidates, model.Provider, model.ModelID, err))
 					break // Break retry loop, proceed to next model
 				}
-			} else if errorType == "throttling_error" {
-				// Throttling: retry up to 5 times (existing behavior)
+			} else if errorType == "throttling_error" || errorType == "internal_error" || errorType == "connection_error" || errorType == "stream_error" {
+				// Throttling/internal/connection/stream errors: retry up to 5 times (transient)
 				if attempt < maxRetries-1 {
 					shouldRetrySameModel = true
 				}

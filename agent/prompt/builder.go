@@ -66,11 +66,12 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 3. Use execute_shell_command to write and run code — prefer Python for reliability and readability
 4. MCP_API_URL and MCP_API_TOKEN env vars are available in the execution environment
 5. MCP and custom tools are accessed via HTTP POST to per-tool endpoints documented in the OpenAPI spec
+6. Session tracking is automatic — MCP_API_URL already includes the session context, so you do NOT need to add session_id to request bodies
 
 **How to call tools from code:**
-- MCP tools: POST /tools/mcp/{server}/{tool}
-- Custom tools: POST /tools/custom/{tool}
-- Send tool arguments as JSON body
+- MCP tools: POST {MCP_API_URL}/tools/mcp/{server}/{tool}
+- Custom tools: POST {MCP_API_URL}/tools/custom/{tool}
+- Send tool arguments as JSON body (do NOT include session_id — it is handled automatically via the URL)
 - Include Authorization: Bearer $MCP_API_TOKEN header
 - Response: {"success": true/false, "result": "...", "error": "..."}
 
@@ -79,7 +80,8 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 import requests, os
 url = os.environ["MCP_API_URL"] + "/tools/mcp/google_sheets/get_document"
 headers = {"Authorization": f"Bearer {os.environ.get('MCP_API_TOKEN', '')}", "Content-Type": "application/json"}
-resp = requests.post(url, json={"spreadsheet_id": "abc123"}, headers=headers)
+payload = {"spreadsheet_id": "abc123"}
+resp = requests.post(url, json=payload, headers=headers)
 print(resp.json())
 ` + "```" + `
 
@@ -96,7 +98,8 @@ curl -X POST "$MCP_API_URL/tools/mcp/google_sheets/get_document" \
 - Prefer Python for writing code — it handles JSON, HTTP requests, and error handling cleanly
 - Break complex tasks into steps, test each tool call individually
 - Always check the "success" field in responses
-- MCP_API_URL and MCP_API_TOKEN are pre-set in the shell environment`
+- MCP_API_URL and MCP_API_TOKEN are pre-set in the shell environment — always use them
+- **IMPORTANT**: When custom tools are available as direct calls (via mcp__api-bridge__*), ALWAYS prefer using them over writing equivalent shell commands. Custom tools provide structured input validation and atomic operations.`
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions

@@ -96,7 +96,15 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 			}
 		}
 		if len(customToolsForSpec) == 0 {
-			return "", fmt.Errorf("tool(s) %v not found in category %s", toolNames, serverName)
+			// Collect available tools in this category for helpful error message
+			var availableInCategory []string
+			for toolName, ct := range a.customTools {
+				if ct.Category == serverName || openapi.GetPackageName(ct.Category) == serverName+"_tools" {
+					availableInCategory = append(availableInCategory, toolName)
+				}
+			}
+			sort.Strings(availableInCategory)
+			return "", fmt.Errorf("tool(s) %v not found in category %q. Available tools in %q: %v", toolNames, serverName, serverName, availableInCategory)
 		}
 
 		specBytes, err := openapi.GenerateCustomToolsOpenAPISpec(serverName, customToolsForSpec, baseURL)
@@ -109,7 +117,33 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 
 	// MCP server
 	if !a.serverIsAvailable(serverName) {
-		return "", fmt.Errorf("server %s is not available or filtered out", serverName)
+		// Build list of available servers and custom tool categories for helpful error
+		availableSet := make(map[string]bool)
+		for _, srvName := range a.toolToServer {
+			if srvName == "custom" {
+				continue
+			}
+			normalized := strings.ReplaceAll(srvName, "-", "_")
+			shouldInclude := a.toolFilter.ShouldIncludeServer(srvName)
+			if !shouldInclude {
+				shouldInclude = a.toolFilter.ShouldIncludeServer(normalized)
+			}
+			if shouldInclude {
+				availableSet[normalized] = true
+			}
+		}
+		// Add custom tool categories
+		for _, ct := range a.customTools {
+			if ct.Category != "" {
+				availableSet[ct.Category] = true
+			}
+		}
+		availableServers := make([]string, 0, len(availableSet))
+		for s := range availableSet {
+			availableServers = append(availableServers, s)
+		}
+		sort.Strings(availableServers)
+		return "", fmt.Errorf("server %q is not available. Available servers/categories: %v. Use get_api_spec(server_name=\"<server>\", tool_name=\"<tool>\") with one of these server names", serverName, availableServers)
 	}
 
 	toolSource := a.Tools
@@ -131,7 +165,16 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	}
 
 	if len(serverTools) == 0 {
-		return "", fmt.Errorf("tool(s) %v not found on server %s", toolNames, serverName)
+		// Collect available tools on this server
+		var availableOnServer []string
+		for toolName, srvName := range a.toolToServer {
+			normalized := strings.ReplaceAll(srvName, "-", "_")
+			if normalized == serverName && srvName != "custom" {
+				availableOnServer = append(availableOnServer, toolName)
+			}
+		}
+		sort.Strings(availableOnServer)
+		return "", fmt.Errorf("tool(s) %v not found on server %q. Available tools on %q: %v", toolNames, serverName, serverName, availableOnServer)
 	}
 
 	specBytes, err := openapi.GenerateServerOpenAPISpec(serverName, serverTools, baseURL)

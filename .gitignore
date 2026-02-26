@@ -113,3 +113,7 @@ examples/**/*_search
 
 generated/*
 .claude/
+
+# Compiled binaries at repo root
+/mcpbridge
+/server

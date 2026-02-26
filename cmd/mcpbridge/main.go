@@ -75,30 +75,30 @@ func main() {
 			// Marshal arguments
 			argsJSON, err := json.Marshal(req.GetArguments())
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("failed to marshal arguments: %v", err)), nil
+				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to marshal arguments: %v", err)), nil
 			}
 
 			// Make HTTP POST request
 			httpReq, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(argsJSON)))
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("failed to create request: %v", err)), nil
+				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to create request: %v", err)), nil
 			}
 			httpReq.Header.Set("Authorization", "Bearer "+apiToken)
 			httpReq.Header.Set("Content-Type", "application/json")
 
 			resp, err := httpClient.Do(httpReq)
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("HTTP request failed: %v", err)), nil
+				return mcp.NewToolResultText(fmt.Sprintf("ERROR: HTTP request failed: %v", err)), nil
 			}
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("failed to read response: %v", err)), nil
+				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to read response: %v", err)), nil
 			}
 
 			if resp.StatusCode >= 400 {
-				return mcp.NewToolResultError(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))), nil
+				return mcp.NewToolResultText(fmt.Sprintf("ERROR: HTTP %d: %s", resp.StatusCode, string(body))), nil
 			}
 
 			var result struct {
@@ -112,7 +112,15 @@ func main() {
 			}
 
 			if !result.Success {
-				return mcp.NewToolResultError(result.Error), nil
+				// Return error as regular text (not IsError) so the LLM always sees the
+				// actual error details. Some CLI providers (Gemini CLI, Claude Code) show
+				// only a generic "MCP tool reported an error" when IsError=true, hiding
+				// the actual error content from the LLM.
+				errorMsg := result.Error
+				if errorMsg == "" {
+					errorMsg = "unknown error (no details in response)"
+				}
+				return mcp.NewToolResultText(fmt.Sprintf("ERROR: %s", errorMsg)), nil
 			}
 			return mcp.NewToolResultText(result.Result), nil
 		})

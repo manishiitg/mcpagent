@@ -63,12 +63,13 @@ func NewToolFilter(
 	// Note: workspace has sub-categories (workspace_basic, workspace_browser, workspace_advanced, workspace_git)
 	// and human has sub-categories (human_tools)
 	systemCats := []string{
-		"workspace",         // legacy/generic
-		"workspace_basic",   // read_workspace_file, update_workspace_file, etc.
-		"workspace_browser", // agent_browser
+		"workspace",          // legacy/generic
+		"workspace_basic",    // read_workspace_file, update_workspace_file, etc.
+		"workspace_browser",  // agent_browser
 		"workspace_advanced", // execute_shell_command
-		"workspace_git",     // git tools
-		"human",             // human_feedback, etc.
+		"workspace_git",      // git tools
+		"human",              // human_feedback, etc.
+		"workflow",           // plan modification tools (update_regular_step, add_regular_step, etc.)
 	}
 	for _, cat := range systemCats {
 		tf.systemCategories[cat] = true

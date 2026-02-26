@@ -1727,7 +1727,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.\n\nIMPORTANT: In addition to workspace tools (execute_shell_command, diff_patch_workspace_file, etc.), you have access to domain-specific custom tools via the `mcp__api-bridge__*` prefix. These include plan modification tools, variable tools, and other specialized tools. ALWAYS prefer using these custom tools over writing shell commands to achieve the same result. For example, use `mcp__api-bridge__update_regular_step` to modify plan steps instead of manually editing plan.json via shell commands.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -1767,7 +1767,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.\n\nIMPORTANT: In addition to workspace tools (execute_shell_command, diff_patch_workspace_file, etc.), you have access to domain-specific custom tools via the `mcp__api-bridge__*` prefix. These include plan modification tools, variable tools, and other specialized tools. ALWAYS prefer using these custom tools over writing shell commands to achieve the same result. For example, use `mcp__api-bridge__update_regular_step` to modify plan steps instead of manually editing plan.json via shell commands.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2683,7 +2683,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.\n\nIMPORTANT: In addition to workspace tools (execute_shell_command, diff_patch_workspace_file, etc.), you have access to domain-specific custom tools via the `mcp__api-bridge__*` prefix. These include plan modification tools, variable tools, and other specialized tools. ALWAYS prefer using these custom tools over writing shell commands to achieve the same result. For example, use `mcp__api-bridge__update_regular_step` to modify plan steps instead of manually editing plan.json via shell commands.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -2723,7 +2723,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.\n\nIMPORTANT: In addition to workspace tools (execute_shell_command, diff_patch_workspace_file, etc.), you have access to domain-specific custom tools via the `mcp__api-bridge__*` prefix. These include plan modification tools, variable tools, and other specialized tools. ALWAYS prefer using these custom tools over writing shell commands to achieve the same result. For example, use `mcp__api-bridge__update_regular_step` to modify plan steps instead of manually editing plan.json via shell commands.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -3173,14 +3173,9 @@ func AskStructured[T any](a *Agent, ctx context.Context, question string, schema
 //   - []llmtypes.MessageContent: The updated conversation history.
 //   - error: An error if processing or conversion fails.
 func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error) {
-	// 🔧 CLI INTEGRATION: Structured output is not supported via CLI wrappers
-	if a.provider == llm.ProviderClaudeCode {
-		var zero T
-		return zero, messages, fmt.Errorf("structured output is not supported with the claude-code provider")
-	}
-	if a.provider == llm.ProviderGeminiCLI {
-		var zero T
-		return zero, messages, fmt.Errorf("structured output is not supported with the gemini-cli provider")
+	// 🔧 CLI INTEGRATION: Use prompt-injection + local JSON extraction for CLI providers
+	if isCLIProvider(a.provider) {
+		return askWithHistoryStructuredCLI[T](a, ctx, messages, schema, schemaString)
 	}
 
 	// First, get the text response using the existing method
@@ -3225,14 +3220,9 @@ func AskWithHistoryStructuredViaTool[T any](
 	toolDescription string,
 	schema string,
 ) (StructuredOutputResult[T], error) {
-	// 🔧 CLI INTEGRATION: Structured output is not supported via CLI wrappers
-	if a.provider == llm.ProviderClaudeCode {
-		var zero StructuredOutputResult[T]
-		return zero, fmt.Errorf("structured output is not supported with the claude-code provider")
-	}
-	if a.provider == llm.ProviderGeminiCLI {
-		var zero StructuredOutputResult[T]
-		return zero, fmt.Errorf("structured output is not supported with the gemini-cli provider")
+	// 🔧 CLI INTEGRATION: Use prompt-injection + local JSON extraction for CLI providers
+	if isCLIProvider(a.provider) {
+		return askWithHistoryStructuredViaToolCLI[T](a, ctx, messages, toolName, toolDescription, schema)
 	}
 
 	// Parse schema string to get tool parameters
@@ -3450,7 +3440,21 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 	}
 
 	a.SystemPrompt = systemPrompt
-	if a.Logger != nil {
+
+	// Re-append any prompts that were added via AppendSystemPrompt()
+	// (e.g. CRITICAL INSTRUCTION for Claude Code, delegation guidance)
+	// Without this, SetSystemPrompt overwrites everything including appended prompts.
+	if a.HasAppendedPrompts && len(a.AppendedSystemPrompts) > 0 {
+		for _, p := range a.AppendedSystemPrompts {
+			a.SystemPrompt += "\n\n" + p
+		}
+		if a.Logger != nil {
+			a.Logger.Debug("✅ System prompt overwritten + re-appended prompts",
+				loggerv2.Int("base_length_chars", len(systemPrompt)),
+				loggerv2.Int("appended_count", len(a.AppendedSystemPrompts)),
+				loggerv2.Int("total_length_chars", len(a.SystemPrompt)))
+		}
+	} else if a.Logger != nil {
 		a.Logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
 	}
 	a.hasCustomSystemPrompt = true

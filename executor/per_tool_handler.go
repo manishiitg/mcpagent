@@ -61,6 +61,15 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 		delete(args, "session_id")
 	}
 
+	// Server-side fallback: if session_id is empty in body, check X-Session-ID header.
+	// This header is set automatically when requests come through session-scoped routes
+	// (/s/{session_id}/tools/...), so session_id is enforced without agent cooperation.
+	if sessionID == "" {
+		if hdr := r.Header.Get("X-Session-ID"); hdr != "" {
+			sessionID = hdr
+		}
+	}
+
 	h.logger.Info("Per-tool MCP request",
 		loggerv2.String("server", server),
 		loggerv2.String("tool", tool),
@@ -175,6 +184,13 @@ func (h *ExecutorHandlers) handlePerToolCustom(w http.ResponseWriter, r *http.Re
 	if sid, ok := args["session_id"].(string); ok {
 		sessionID = sid
 		delete(args, "session_id")
+	}
+
+	// Server-side fallback: check X-Session-ID header if body doesn't have session_id
+	if sessionID == "" {
+		if hdr := r.Header.Get("X-Session-ID"); hdr != "" {
+			sessionID = hdr
+		}
 	}
 
 	h.logger.Info("Per-tool custom request",

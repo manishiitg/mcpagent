@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
@@ -25,6 +26,19 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// serverConnectionResult holds the per-server results from parallel connection + discovery.
+type serverConnectionResult struct {
+	serverName string
+	client     mcpclient.ClientInterface
+	tools      []llmtypes.Tool
+	toolNames  []string // tool names in order, for toolToServer mapping
+	prompts    []mcp.Prompt
+	resources  []mcp.Resource
+	wasCreated bool
+	mcpCount   int // number of MCP tools discovered (for logging)
+	err        error
+}
 
 // NewAgentConnectionWithSession creates MCP connections using the session registry.
 // Connections are reused if they already exist for the session.
@@ -127,157 +141,183 @@ func NewAgentConnectionWithSession(
 	}
 
 	registry := mcpclient.GetSessionRegistry()
+
+	// Connect to all servers in parallel — each goroutine handles connection + tool discovery
+	results := make([]serverConnectionResult, len(servers))
+	var wg sync.WaitGroup
+
+	for i, srvName := range servers {
+		wg.Add(1)
+		go func(idx int, srvName string) {
+			defer wg.Done()
+			result := &results[idx]
+			result.serverName = srvName
+
+			serverConfig, err := config.GetServer(srvName)
+			if err != nil {
+				logger.Warn(fmt.Sprintf("Server %s not found in config, skipping", srvName),
+					loggerv2.Error(err))
+				result.err = err
+				return
+			}
+
+			// Apply runtime overrides if provided for this server
+			if runtimeOverrides != nil {
+				if override, hasOverride := runtimeOverrides[srvName]; hasOverride {
+					serverConfig = serverConfig.ApplyOverride(override)
+					logger.Info("Applied runtime overrides to server config",
+						loggerv2.String("server", srvName),
+						loggerv2.Any("args_replace", override.ArgsReplace),
+						loggerv2.Any("args_append", override.ArgsAppend),
+						loggerv2.Any("env_override", override.EnvOverride))
+				}
+			}
+
+			// Override OAuth token file path for per-user isolation
+			if userID != "" && serverConfig.OAuth != nil {
+				userTokenFile := fmt.Sprintf("~/.config/mcpagent/tokens/%s/%s.json", userID, srvName)
+				serverConfig.OAuth.TokenFile = userTokenFile
+				logger.Info("Using per-user OAuth token path",
+					loggerv2.String("server", srvName),
+					loggerv2.String("user_id", userID),
+					loggerv2.String("token_file", userTokenFile))
+			}
+
+			// Use global shared session for stateless MCP servers.
+			// Only stateful servers (e.g., playwright with browser state) need per-session connections.
+			connSessionID := sessionID
+			if srvName != "playwright" && srvName != "agent-browser" {
+				connSessionID = "global"
+			}
+
+			// Get or create connection via registry
+			client, wasCreated, err := registry.GetOrCreateConnection(ctx, connSessionID, srvName, serverConfig, logger)
+			if err != nil {
+				logger.Error(fmt.Sprintf("Failed to get/create connection for %s", srvName), err,
+					loggerv2.String("session_id", sessionID))
+				result.err = err
+				return
+			}
+
+			result.client = client
+			result.wasCreated = wasCreated
+
+			// Discover tools using ListTools (correct interface method)
+			mcpTools, err := client.ListTools(ctx)
+			if err != nil {
+				logger.Warn(fmt.Sprintf("Failed to discover tools for %s: %v", srvName, err))
+
+				// 🔧 FALLBACK: Try to use cached tools when ListTools fails (e.g., connection closed)
+				if !wasCreated {
+					// Only try cache fallback for reused connections (new connections shouldn't have cache yet)
+					logger.Info(fmt.Sprintf("Attempting to use cached tools for %s as fallback", srvName))
+
+					cacheManager := mcpcache.GetCacheManager(logger)
+					cacheKey := mcpcache.GenerateUnifiedCacheKey(srvName, serverConfig)
+
+					if cachedEntry, exists := cacheManager.Get(cacheKey); exists && len(cachedEntry.Tools) > 0 {
+						logger.Info(fmt.Sprintf("✅ Using %d cached tools for %s (fallback from failed ListTools)",
+							len(cachedEntry.Tools), srvName))
+
+						// Use cached tools directly (they're already in llmtypes.Tool format)
+						for _, llmTool := range cachedEntry.Tools {
+							if llmTool.Function == nil {
+								continue
+							}
+							toolName := llmTool.Function.Name
+
+							// Check ToolOwnership to skip duplicates (if available)
+							if cachedEntry.ToolOwnership != nil {
+								if ownership, exists := cachedEntry.ToolOwnership[toolName]; exists && ownership == "duplicate" {
+									logger.Debug("Skipping duplicate tool from cache",
+										loggerv2.String("tool", toolName),
+										loggerv2.String("server", srvName))
+									continue
+								}
+							}
+
+							result.tools = append(result.tools, llmTool)
+							result.toolNames = append(result.toolNames, toolName)
+						}
+
+						mcpTools = []mcp.Tool{} // indicate cache was used
+					} else {
+						logger.Warn(fmt.Sprintf("No cached tools available for %s, continuing with empty tool list", srvName))
+					}
+				}
+			} else {
+				// Convert MCP tools to LLM tools using batch conversion
+				llmTools, convErr := mcpclient.ToolsAsLLM(mcpTools)
+				if convErr != nil {
+					logger.Warn(fmt.Sprintf("Failed to convert tools for %s: %v", srvName, convErr))
+				} else {
+					for _, llmTool := range llmTools {
+						if llmTool.Function == nil {
+							continue
+						}
+						result.tools = append(result.tools, llmTool)
+						result.toolNames = append(result.toolNames, llmTool.Function.Name)
+					}
+				}
+			}
+			result.mcpCount = len(mcpTools)
+
+			// Discover prompts using ListPrompts (correct interface method)
+			if serverPrompts, err := client.ListPrompts(ctx); err == nil && len(serverPrompts) > 0 {
+				result.prompts = serverPrompts
+			}
+
+			// Discover resources using ListResources (correct interface method)
+			if serverResources, err := client.ListResources(ctx); err == nil && len(serverResources) > 0 {
+				result.resources = serverResources
+			}
+		}(i, srvName)
+	}
+
+	wg.Wait()
+
+	// Merge results from all goroutines (serial — preserves server order, deduplicates tools)
 	clients := make(map[string]mcpclient.ClientInterface)
 	toolToServer := make(map[string]string)
 	var allTools []llmtypes.Tool
 	prompts := make(map[string][]mcp.Prompt)
 	resources := make(map[string][]mcp.Resource)
 	var connectedServers []string
-
-	// Track seen tools to prevent duplicates
 	seenTools := make(map[string]bool)
 
-	for _, srvName := range servers {
-		serverConfig, err := config.GetServer(srvName)
-		if err != nil {
-			logger.Warn(fmt.Sprintf("Server %s not found in config, skipping", srvName),
-				loggerv2.Error(err))
+	for _, result := range results {
+		if result.err != nil || result.client == nil {
 			continue
 		}
 
-		// Apply runtime overrides if provided for this server
-		if runtimeOverrides != nil {
-			if override, hasOverride := runtimeOverrides[srvName]; hasOverride {
-				serverConfig = serverConfig.ApplyOverride(override)
-				logger.Info("Applied runtime overrides to server config",
-					loggerv2.String("server", srvName),
-					loggerv2.Any("args_replace", override.ArgsReplace),
-					loggerv2.Any("args_append", override.ArgsAppend),
-					loggerv2.Any("env_override", override.EnvOverride))
+		clients[result.serverName] = result.client
+		connectedServers = append(connectedServers, result.serverName)
+
+		// Merge tools with deduplication
+		for i, llmTool := range result.tools {
+			toolName := result.toolNames[i]
+			if seenTools[toolName] {
+				logger.Warn(fmt.Sprintf("Duplicate tool %s from server %s, skipping", toolName, result.serverName))
+				continue
 			}
+			seenTools[toolName] = true
+			allTools = append(allTools, llmTool)
+			toolToServer[toolName] = result.serverName
 		}
 
-		// Override OAuth token file path for per-user isolation
-		if userID != "" && serverConfig.OAuth != nil {
-			userTokenFile := fmt.Sprintf("~/.config/mcpagent/tokens/%s/%s.json", userID, srvName)
-			serverConfig.OAuth.TokenFile = userTokenFile
-			logger.Info("Using per-user OAuth token path",
-				loggerv2.String("server", srvName),
-				loggerv2.String("user_id", userID),
-				loggerv2.String("token_file", userTokenFile))
+		if len(result.prompts) > 0 {
+			prompts[result.serverName] = result.prompts
+		}
+		if len(result.resources) > 0 {
+			resources[result.serverName] = result.resources
 		}
 
-		// Use global shared session for stateless MCP servers.
-		// Only stateful servers (e.g., playwright with browser state) need per-session connections.
-		connSessionID := sessionID
-		if srvName != "playwright" && srvName != "agent-browser" {
-			connSessionID = "global"
-		}
-
-		// Get or create connection via registry
-		client, wasCreated, err := registry.GetOrCreateConnection(ctx, connSessionID, srvName, serverConfig, logger)
-		if err != nil {
-			logger.Error(fmt.Sprintf("Failed to get/create connection for %s", srvName), err,
-				loggerv2.String("session_id", sessionID))
-			continue
-		}
-
-		clients[srvName] = client
-		connectedServers = append(connectedServers, srvName)
-
-		// Discover tools using ListTools (correct interface method)
-		mcpTools, err := client.ListTools(ctx)
-		if err != nil {
-			logger.Warn(fmt.Sprintf("Failed to discover tools for %s: %v", srvName, err))
-			
-			// 🔧 FALLBACK: Try to use cached tools when ListTools fails (e.g., connection closed)
-			if !wasCreated {
-				// Only try cache fallback for reused connections (new connections shouldn't have cache yet)
-				logger.Info(fmt.Sprintf("Attempting to use cached tools for %s as fallback", srvName))
-				
-				cacheManager := mcpcache.GetCacheManager(logger)
-				cacheKey := mcpcache.GenerateUnifiedCacheKey(srvName, serverConfig)
-				
-				if cachedEntry, exists := cacheManager.Get(cacheKey); exists && len(cachedEntry.Tools) > 0 {
-					logger.Info(fmt.Sprintf("✅ Using %d cached tools for %s (fallback from failed ListTools)", 
-						len(cachedEntry.Tools), srvName))
-					
-					// Use cached tools directly (they're already in llmtypes.Tool format)
-					for _, llmTool := range cachedEntry.Tools {
-						if llmTool.Function == nil {
-							continue
-						}
-						toolName := llmTool.Function.Name
-						
-						// Check ToolOwnership to skip duplicates (if available)
-						if cachedEntry.ToolOwnership != nil {
-							if ownership, exists := cachedEntry.ToolOwnership[toolName]; exists && ownership == "duplicate" {
-								logger.Debug("Skipping duplicate tool from cache",
-									loggerv2.String("tool", toolName),
-									loggerv2.String("server", srvName))
-								continue
-							}
-						}
-						
-						// Runtime duplicate check (defensive)
-						if seenTools[toolName] {
-							logger.Warn(fmt.Sprintf("Duplicate tool %s from server %s (cached), skipping", toolName, srvName))
-							continue
-						}
-						
-						seenTools[toolName] = true
-						allTools = append(allTools, llmTool)
-						toolToServer[toolName] = srvName
-					}
-					
-					// Set mcpTools to empty slice to indicate we used cache (for logging)
-					mcpTools = []mcp.Tool{}
-				} else {
-					logger.Warn(fmt.Sprintf("No cached tools available for %s, continuing with empty tool list", srvName))
-				}
-			}
-		} else {
-			// Convert MCP tools to LLM tools using batch conversion
-			llmTools, convErr := mcpclient.ToolsAsLLM(mcpTools)
-			if convErr != nil {
-				logger.Warn(fmt.Sprintf("Failed to convert tools for %s: %v", srvName, convErr))
-			} else {
-				for _, llmTool := range llmTools {
-					if llmTool.Function == nil {
-						continue
-					}
-					toolName := llmTool.Function.Name
-					// Skip duplicates
-					if seenTools[toolName] {
-						logger.Warn(fmt.Sprintf("Duplicate tool %s from server %s, skipping", toolName, srvName))
-						continue
-					}
-					seenTools[toolName] = true
-					allTools = append(allTools, llmTool)
-					toolToServer[toolName] = srvName
-				}
-			}
-		}
-
-		// Discover prompts using ListPrompts (correct interface method)
-		if serverPrompts, err := client.ListPrompts(ctx); err == nil && len(serverPrompts) > 0 {
-			prompts[srvName] = serverPrompts
-		}
-
-		// Discover resources using ListResources (correct interface method)
-		if serverResources, err := client.ListResources(ctx); err == nil && len(serverResources) > 0 {
-			resources[srvName] = serverResources
-		}
-
-		// Note: System prompt is not retrieved here - it comes from agent configuration
-		// The ClientInterface doesn't expose GetSystemPrompt
-
-		if wasCreated {
+		if result.wasCreated {
 			logger.Info(fmt.Sprintf("New connection to %s (session=%s): %d tools discovered",
-				srvName, sessionID, len(mcpTools)))
+				result.serverName, sessionID, result.mcpCount))
 		} else {
 			logger.Info(fmt.Sprintf("Reused connection to %s (session=%s): %d tools available",
-				srvName, sessionID, len(mcpTools)))
+				result.serverName, sessionID, result.mcpCount))
 		}
 	}
 

@@ -93,6 +93,15 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		return "", fmt.Errorf("API token not configured (set APIToken or MCP_API_TOKEN)")
 	}
 
+	// Embed session_id in the API URL path for the bridge.
+	// The server registers session-scoped routes at /s/{session_id}/tools/...
+	// so all bridge tool calls automatically include the session context.
+	if a.SessionID != "" {
+		apiURL = apiURL + "/s/" + a.SessionID
+		logger.Info("Bridge API URL includes session prefix",
+			loggerv2.String("session_id", a.SessionID))
+	}
+
 	// 4. Build MCP config JSON
 	toolsJSON, err := json.Marshal(toolDefs)
 	if err != nil {
