@@ -721,6 +721,9 @@ type Agent struct {
 	// Gemini CLI session ID for --resume on subsequent turns
 	GeminiSessionID string
 
+	// Gemini CLI project directory ID for per-invocation isolation
+	GeminiProjectDirID string
+
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 

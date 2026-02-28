@@ -827,6 +827,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			if sid, ok := resp.Choices[0].GenerationInfo.Additional["gemini_session_id"].(string); ok && sid != "" {
 				a.GeminiSessionID = sid
 			}
+			// Capture Gemini CLI project dir ID for per-invocation isolation
+			if dirID, ok := resp.Choices[0].GenerationInfo.Additional["gemini_project_dir_id"].(string); ok && dirID != "" {
+				a.GeminiProjectDirID = dirID
+				a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Captured project dir ID: %s (session: %s)", dirID, a.GeminiSessionID))
+			}
 		}
 
 		// NEW: End LLM generation for hierarchy tracking

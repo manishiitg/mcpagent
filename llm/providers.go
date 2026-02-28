@@ -347,6 +347,12 @@ func WithGeminiAllowedTools(tools string) CallOption {
 	return llmproviders.WithGeminiAllowedTools(tools)
 }
 
+// WithGeminiProjectDirID sets an explicit project directory ID for the Gemini CLI.
+// This ensures resume calls use the same isolated project directory as the original invocation.
+func WithGeminiProjectDirID(id string) CallOption {
+	return llmproviders.WithGeminiProjectDirID(id)
+}
+
 // Re-export helper functions from llm-providers
 
 // GetDefaultModel returns the default model for each provider from environment variables

@@ -555,6 +555,12 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		if a.GeminiSessionID != "" {
 			opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
 		}
+
+		// Pass project dir ID so resume uses the same isolated directory
+		if a.GeminiProjectDirID != "" {
+			opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
+			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Resuming with project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
+		}
 	}
 
 	return llmInstance.GenerateContent(ctx, messages, opts...)
