@@ -118,6 +118,7 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 					"MCP_API_TOKEN": apiToken,
 					"MCP_TOOLS":     string(toolsJSON),
 				},
+				"trust": true, // Auto-trust: bypass confirmation dialogs for non-interactive usage
 			},
 		},
 	}

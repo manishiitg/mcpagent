@@ -779,6 +779,13 @@ type Agent struct {
 	// Custom tools that are handled as virtual tools
 	customTools map[string]CustomTool
 
+	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
+	// before execution. This is the PRIMARY interception point — agent-internal tool calls
+	// go through conversation.go (not the HTTP handler), so transformers must live here.
+	// Registered via SetToolArgTransformer(), applied in conversation.go before all execution
+	// branches (virtual tools, custom tools, MCP tools via session/codeexec/mcpcache).
+	toolArgTransformers map[string]func(args map[string]interface{})
+
 	// Custom logger (optional) - uses v2.Logger interface
 	Logger loggerv2.Logger
 
@@ -3494,6 +3501,21 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 
 	// Mark as custom to prevent overwriting
 	a.hasCustomSystemPrompt = true
+}
+
+// SetToolArgTransformer registers a per-tool argument transformer on the agent.
+// The transformer mutates args in-place before the tool is dispatched to any execution
+// backend (virtual, custom, or MCP). This is the primary interception point for
+// agent-driven tool calls. For HTTP API tool calls, see ExecutorHandlers.SetToolArgTransformer.
+//
+// Use case: Playwright's browser_file_upload requires absolute host paths, but the LLM
+// only knows workspace-relative paths. A transformer resolves "Downloads/file.pdf" to
+// the full absolute path before the call reaches the Playwright MCP server.
+func (a *Agent) SetToolArgTransformer(toolName string, fn func(args map[string]interface{})) {
+	if a.toolArgTransformers == nil {
+		a.toolArgTransformers = make(map[string]func(args map[string]interface{}))
+	}
+	a.toolArgTransformers[toolName] = fn
 }
 
 // RegisterCustomTool registers a dynamic custom tool with the agent.
