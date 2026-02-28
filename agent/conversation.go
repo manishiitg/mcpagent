@@ -1305,6 +1305,19 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				toolCtx = context.WithValue(toolCtx, ToolExecutionServerKey, serverName)
 				toolCtx = context.WithValue(toolCtx, ToolExecutionLLMConfigKey, a.GetLLMModelConfig())
 
+				// Apply per-tool argument transformer if registered.
+				// This runs BEFORE any execution branch (virtual → custom → MCP) so all paths
+				// see transformed args. Primary use case: resolve workspace-relative paths
+				// (e.g. "Downloads/file.pdf") to absolute host paths for Playwright browser_file_upload.
+				// Transformers are registered via Agent.SetToolArgTransformer().
+				if a.toolArgTransformers != nil {
+					if transformer, ok := a.toolArgTransformers[tc.FunctionCall.Name]; ok {
+						v2Logger.Info("[BROWSER_UPLOAD] Applying tool arg transformer",
+							loggerv2.String("tool_name", tc.FunctionCall.Name))
+						transformer(args)
+					}
+				}
+
 				var result *mcp.CallToolResult
 				var toolErr error
 

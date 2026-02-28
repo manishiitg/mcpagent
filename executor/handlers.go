@@ -62,8 +62,23 @@ type VirtualExecuteResponse struct {
 // ExecutorHandlers provides HTTP handlers for tool execution endpoints.
 // Use NewExecutorHandlers to create and attach to your HTTP mux.
 type ExecutorHandlers struct {
-	configPath string
-	logger     loggerv2.Logger
+	configPath          string
+	logger              loggerv2.Logger
+	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
+	// before execution. This is the HTTP handler path (backup) — the primary interception
+	// happens in agent/conversation.go for agent-internal tool calls.
+	// Example: resolving workspace-relative file paths to absolute for Playwright MCP.
+	toolArgTransformers map[string]func(args map[string]interface{})
+}
+
+// SetToolArgTransformer registers a function that mutates tool arguments in-place
+// before the tool is executed. This covers the HTTP /api/mcp/execute path.
+// For agent-internal tool calls (the primary path), use Agent.SetToolArgTransformer instead.
+func (h *ExecutorHandlers) SetToolArgTransformer(toolName string, fn func(args map[string]interface{})) {
+	if h.toolArgTransformers == nil {
+		h.toolArgTransformers = make(map[string]func(args map[string]interface{}))
+	}
+	h.toolArgTransformers[toolName] = fn
 }
 
 // NewExecutorHandlers creates a new ExecutorHandlers instance.
@@ -131,6 +146,18 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
+
+	// Apply tool argument transformers before ANY execution path (session registry, codeexec, mcpcache).
+	// This mutates req.Args in-place so all downstream paths see the transformed values.
+	// Example: resolves "Downloads/file.pdf" → "/abs/path/workspace-docs/_users/default/Downloads/file.pdf"
+	// for Playwright's browser_file_upload tool which requires absolute host paths.
+	if h.toolArgTransformers != nil {
+		if transformer, ok := h.toolArgTransformers[req.Tool]; ok {
+			h.logger.Info("[BROWSER_UPLOAD] Applying tool arg transformer before execution",
+				loggerv2.String("tool", req.Tool))
+			transformer(req.Args)
+		}
+	}
 
 	// 🔧 STRATEGY: Try multiple connection sources in priority order
 	// 1. Session registry (if session_id provided) - enables Playwright browser reuse

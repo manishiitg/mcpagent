@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -520,8 +522,9 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 	//   2. Configure the MCP bridge server via mcpServers
 	// The adapter runs `gemini` from that temp dir so these settings take effect.
 	if llmproviders.Provider(model.Provider) == llmproviders.ProviderGeminiCLI {
-		// Set approval mode to yolo for non-interactive usage
-		opts = append(opts, llm.WithGeminiApprovalMode("yolo"))
+		// No --approval-mode: the Policy Engine TOML handles all tool approval.
+		// "allow" decisions auto-approve MCP tools, "deny" blocks built-in tools.
+		// Yolo mode bypasses the policy engine entirely, so we must NOT use it.
 
 		// Build project settings with tool restriction + MCP bridge config
 		settings := map[string]interface{}{
@@ -549,18 +552,46 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// Allow MCP bridge tools and google_web_search to run without confirmation
 		opts = append(opts, llm.WithGeminiAllowedTools("mcp__api-bridge__*,google_web_search"))
 
-		a.Logger.Info("🌉 Using Gemini CLI with project settings (tools.core restricted, MCP bridge configured)")
+		// Pre-create project dir with policy files to restrict built-in tools.
+		// Policy Engine: .gemini/policies/*.toml overrides yolo mode defaults.
+		// Workspace-tier policies (priority base 3) beat Default-tier yolo (priority base 1).
+		if a.GeminiProjectDirID == "" {
+			a.GeminiProjectDirID = fmt.Sprintf("%d-%05d", time.Now().UnixMilli(), rand.Intn(100000))
+		}
+		projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
+		policiesDir := filepath.Join(projectDir, ".gemini", "policies")
+		if err := os.MkdirAll(policiesDir, 0755); err != nil {
+			a.Logger.Warn("Failed to create Gemini CLI policies directory", loggerv2.Error(err))
+		} else {
+			policyContent := `# Only MCP bridge tools are allowed - deny all built-in tools
+[[rule]]
+toolName = "mcp__*"
+decision = "allow"
+priority = 999
+
+[[rule]]
+toolName = "*"
+decision = "deny"
+priority = 998
+deny_message = "Use MCP bridge tools instead of built-in tools."
+`
+			if err := os.WriteFile(filepath.Join(policiesDir, "restrict-tools.toml"), []byte(policyContent), 0644); err != nil {
+				a.Logger.Warn("Failed to write Gemini CLI policy file", loggerv2.Error(err))
+			} else {
+				a.Logger.Info(fmt.Sprintf("📋 Wrote Gemini CLI policy file to %s", policiesDir))
+			}
+		}
+
+		a.Logger.Info("🌉 Using Gemini CLI with project settings (tools.core restricted, MCP bridge configured, policy engine active)")
 
 		// Resume existing Gemini session if available
 		if a.GeminiSessionID != "" {
 			opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
 		}
 
-		// Pass project dir ID so resume uses the same isolated directory
-		if a.GeminiProjectDirID != "" {
-			opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
-			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Resuming with project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
-		}
+		// Pass project dir ID so adapter reuses our pre-created directory
+		opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
+		a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
 	}
 
 	return llmInstance.GenerateContent(ctx, messages, opts...)
