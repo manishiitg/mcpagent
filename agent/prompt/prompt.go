@@ -72,10 +72,14 @@ const (
 // RemoveAIStaffEngineerText removes the "AI Staff Engineer" header and description from a system prompt
 // This is used when appending/prepending custom prompts to avoid duplicate role descriptions
 func RemoveAIStaffEngineerText(prompt string) string {
-	// Remove the header line: "# AI Staff Engineer - MCP Tool Integration Specialist"
+	// Remove header variants (with or without subtitle)
 	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist\n\n", "")
 	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist\n", "")
 	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist", "")
+	// The actual template uses just "# AI Staff Engineer" without a subtitle
+	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer\n\n", "")
+	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer\n", "")
+	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer", "")
 
 	// Remove the description line: "You are an **AI Staff Engineer** specializing in..."
 	aiStaffEngineerDesc := "You are an **AI Staff Engineer** specializing in MCP tools and system analysis with capabilities for multi-server integration, data analysis, strategic tool usage, and robust error handling."

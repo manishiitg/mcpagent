@@ -3913,15 +3913,25 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 		a.EnableParallelToolExecution,
 	)
 
-	// Update the agent's system prompt
-	a.SystemPrompt = newSystemPrompt
-
-	// Re-append any prompts that were added via AppendSystemPrompt()
-	// (e.g. CRITICAL INSTRUCTION for Claude Code, delegation guidance)
+	// When custom prompts have been appended (guidance, delegation instructions, etc.),
+	// use them as the primary system prompt so the custom identity is not buried under
+	// the default "AI Staff Engineer" template. The tool structure is embedded inside
+	// newSystemPrompt via the {{TOOL_STRUCTURE}} placeholder expansion.
 	if a.HasAppendedPrompts && len(a.AppendedSystemPrompts) > 0 {
-		for _, p := range a.AppendedSystemPrompts {
-			a.SystemPrompt += "\n\n" + p
+		// Start from a clean base: strip the AI Staff Engineer persona so our custom
+		// prompts lead. The tool-structure section (available_tools JSON) from
+		// newSystemPrompt is kept so the agent still knows its tools.
+		cleanBase := prompt.RemoveAIStaffEngineerText(newSystemPrompt)
+		if cleanBase != "" {
+			a.SystemPrompt = cleanBase
+			for _, p := range a.AppendedSystemPrompts {
+				a.SystemPrompt += "\n\n" + p
+			}
+		} else {
+			a.SystemPrompt = strings.Join(a.AppendedSystemPrompts, "\n\n")
 		}
+	} else {
+		a.SystemPrompt = newSystemPrompt
 	}
 
 	if a.Logger != nil {
