@@ -62,8 +62,19 @@ type VirtualExecuteResponse struct {
 // ExecutorHandlers provides HTTP handlers for tool execution endpoints.
 // Use NewExecutorHandlers to create and attach to your HTTP mux.
 type ExecutorHandlers struct {
-	configPath string
-	logger     loggerv2.Logger
+	configPath          string
+	logger              loggerv2.Logger
+	toolArgTransformers map[string]func(args map[string]interface{}) // per-tool argument transformers applied before CallTool
+}
+
+// SetToolArgTransformer registers a function that mutates tool arguments
+// in-place before the tool is executed via CallTool. Useful for resolving
+// relative paths, injecting defaults, etc.
+func (h *ExecutorHandlers) SetToolArgTransformer(toolName string, fn func(args map[string]interface{})) {
+	if h.toolArgTransformers == nil {
+		h.toolArgTransformers = make(map[string]func(args map[string]interface{}))
+	}
+	h.toolArgTransformers[toolName] = fn
 }
 
 // NewExecutorHandlers creates a new ExecutorHandlers instance.
@@ -215,6 +226,15 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		}
 		h.logger.Warn("⚠️ [SESSION MISS] Created new connection via mcpcache",
 			loggerv2.String("server", req.Server))
+	}
+
+	// Transform tool arguments if a transformer is registered
+	if h.toolArgTransformers != nil {
+		if transformer, ok := h.toolArgTransformers[req.Tool]; ok {
+			h.logger.Info("[BROWSER_UPLOAD] Applying tool arg transformer",
+				loggerv2.String("tool", req.Tool))
+			transformer(req.Args)
+		}
 	}
 
 	// Execute tool
