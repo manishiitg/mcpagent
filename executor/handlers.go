@@ -248,6 +248,8 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	h.logger.Info("🚀 Executing tool via direct connection",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.String("server", req.Server))
+	mcpToolStartTime := time.Now()
+	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION START - Time: %s, Tool: %s, Server: %s", mcpToolStartTime.Format(time.RFC3339), req.Tool, req.Server))
 	result, err := client.CallTool(ctx, req.Tool, req.Args)
 
 	// 🔧 BROKEN PIPE DETECTION AND RETRY
@@ -275,6 +277,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION END - Time: %s, Tool: %s, Server: %s, Duration: %v", time.Now().Format(time.RFC3339), req.Tool, req.Server, time.Since(mcpToolStartTime)))
 	if err != nil {
 		h.logger.Error("Tool execution failed", err,
 			loggerv2.String("tool", req.Tool),
@@ -348,7 +351,11 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	h.logger.Info("🚀 Executing custom tool",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.String("session_id", req.SessionID))
+	toolStartTime := time.Now()
+	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION START - Time: %s, Tool: %s", toolStartTime.Format(time.RFC3339), req.Tool))
 	result, err := codeexec.CallCustomToolWithSession(ctx, req.SessionID, req.Tool, req.Args)
+	toolDuration := time.Since(toolStartTime)
+	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION END - Time: %s, Tool: %s, Duration: %v", time.Now().Format(time.RFC3339), req.Tool, toolDuration))
 	if err != nil {
 		h.logger.Error("Custom tool execution failed", err, loggerv2.String("tool", req.Tool))
 		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers

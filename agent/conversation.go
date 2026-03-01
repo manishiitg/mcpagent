@@ -998,6 +998,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 			// 2. For each tool call, execute and append the tool result as a new message
 			// Use parallel execution when enabled and there are multiple tool calls
+			toolDispatchMode := "sequential"
+			if a.EnableParallelToolExecution && len(choice.ToolCalls) > 1 {
+				toolDispatchMode = "parallel"
+			}
+			v2Logger.Info(fmt.Sprintf("⏱️  TOOL DISPATCH START - Time: %s, Count: %d, Mode: %s, Turn: %d",
+				time.Now().Format(time.RFC3339), len(choice.ToolCalls), toolDispatchMode, turn+1))
 			if a.EnableParallelToolExecution && len(choice.ToolCalls) > 1 {
 				var parallelErr error
 				messages, parallelErr = executeToolCallsParallel(ctx, a, choice.ToolCalls, messages, turn, traceID, conversationStartTime, lastUserMessage, loopDetector, agentCtx)
@@ -1262,6 +1268,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				defer cancel()
 
 				startTime := time.Now()
+				v2Logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION START - Time: %s, Tool: %s, Turn: %d",
+					startTime.Format(time.RFC3339), tc.FunctionCall.Name, turn+1))
 
 				// 🔧 DEBUG: Log tool call with arguments
 				toolType := "MCP"
@@ -1408,6 +1416,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 
 				duration := time.Since(startTime)
+				v2Logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION END - Time: %s, Tool: %s, Duration: %v, Turn: %d",
+					time.Now().Format(time.RFC3339), tc.FunctionCall.Name, duration, turn+1))
 				log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Tool executed: %s | tool_duration=%dms err=%v",
 					turn+1, time.Since(conversationStartTime).Milliseconds(), tc.FunctionCall.Name, duration.Milliseconds(), toolErr)
 
