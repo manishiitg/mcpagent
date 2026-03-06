@@ -252,76 +252,38 @@ Please continue the conversation from where we left it off without asking the us
 Create a summary following the exact format above. The summary should be self-contained and allow an AI agent to continue the conversation with full context. Be thorough but concise - include all critical information while avoiding unnecessary verbosity.`
 }
 
-// findSafeSplitPoint finds a safe split point that doesn't break tool call/response pairs
-// It works backwards from the desired split point to ensure tool calls and their responses stay together
+// findSafeSplitPoint finds a safe split point that doesn't break tool call/response pairs.
+// It scans FORWARD from the desired split point to push any orphaned tool responses into
+// the "summarize" bucket (where their tool call already lives), rather than scanning backward
+// which would pull far more messages into "keep" than configured.
 func findSafeSplitPoint(messages []llmtypes.MessageContent, desiredSplitIndex int) int {
 	if desiredSplitIndex <= 0 {
 		return 0
 	}
-
-	// Start from desired split point and work backwards
-	// We need to ensure that any tool responses in the "keep" section have their tool calls included
-	splitIndex := desiredSplitIndex
-
-	// Scan backwards from splitIndex to find any tool responses that need their tool calls
-	for i := splitIndex; i < len(messages); i++ {
-		msg := messages[i]
-
-		// If this is a tool message (tool response), we must include its tool call
-		if msg.Role == llmtypes.ChatMessageTypeTool {
-			// Find the assistant message that called this tool (should be before this tool message)
-			for j := i - 1; j >= 0; j-- {
-				prevMsg := messages[j]
-				if prevMsg.Role == llmtypes.ChatMessageTypeAI {
-					// Check if this assistant message has tool calls
-					hasToolCalls := false
-					for _, part := range prevMsg.Parts {
-						if _, ok := part.(llmtypes.ToolCall); ok {
-							hasToolCalls = true
-							break
-						}
-					}
-					if hasToolCalls {
-						// Found the tool call - if it's before splitIndex, move splitIndex back
-						if j < splitIndex {
-							splitIndex = j
-						}
-						break
-					}
-				}
-				// Stop if we hit a user message (start of a turn)
-				if prevMsg.Role == llmtypes.ChatMessageTypeHuman {
-					break
-				}
-			}
-		}
+	if desiredSplitIndex >= len(messages) {
+		return len(messages)
 	}
 
-	// Now check: if splitIndex points to an assistant message with tool calls,
-	// ensure all its tool responses are in the "keep" section
-	if splitIndex < len(messages) {
-		msg := messages[splitIndex]
-		if msg.Role == llmtypes.ChatMessageTypeAI {
-			hasToolCalls := false
-			for _, part := range msg.Parts {
+	splitIndex := desiredSplitIndex
+
+	// If the split lands on a tool response, its tool call is already in the summarize
+	// section. Advance forward past all consecutive tool responses so the whole
+	// tool call/response turn is summarized together.
+	for splitIndex < len(messages) && messages[splitIndex].Role == llmtypes.ChatMessageTypeTool {
+		splitIndex++
+	}
+
+	// If the last message in the summarize section is an assistant with tool calls,
+	// its tool responses immediately follow — advance past them too.
+	if splitIndex > 0 {
+		prevMsg := messages[splitIndex-1]
+		if prevMsg.Role == llmtypes.ChatMessageTypeAI {
+			for _, part := range prevMsg.Parts {
 				if _, ok := part.(llmtypes.ToolCall); ok {
-					hasToolCalls = true
+					for splitIndex < len(messages) && messages[splitIndex].Role == llmtypes.ChatMessageTypeTool {
+						splitIndex++
+					}
 					break
-				}
-			}
-			if hasToolCalls {
-				// This assistant has tool calls - check if all tool responses are included
-				// Look forward for tool responses
-				for j := splitIndex + 1; j < len(messages); j++ {
-					nextMsg := messages[j]
-					if nextMsg.Role == llmtypes.ChatMessageTypeTool {
-						// Tool response is in keep section, good
-						continue
-					}
-					// If we hit another assistant message, we've passed all tool responses
-					if nextMsg.Role == llmtypes.ChatMessageTypeAI {
-						break
-					}
 				}
 			}
 		}
@@ -330,86 +292,11 @@ func findSafeSplitPoint(messages []llmtypes.MessageContent, desiredSplitIndex in
 	return splitIndex
 }
 
-// ensureToolCallResponseIntegrity ensures that if we split at splitIndex, we don't break tool call/response pairs
-// Specifically: if the last message in old section is a tool call, all its responses must be in old section
-// If the first message in recent section is a tool response, its tool call must be in recent section
+// ensureToolCallResponseIntegrity is a safety net after findSafeSplitPoint.
+// findSafeSplitPoint already handles all cases by scanning forward, so this
+// just re-applies the same forward-scan logic as a double-check.
 func ensureToolCallResponseIntegrity(messages []llmtypes.MessageContent, splitIndex int) int {
-	if splitIndex <= 0 || splitIndex >= len(messages) {
-		return splitIndex
-	}
-
-	// Check 1: If the last message in old section (splitIndex-1) is an assistant with tool calls,
-	// ensure all its tool responses are also in the old section
-	if splitIndex > 0 {
-		lastOldMsg := messages[splitIndex-1]
-		if lastOldMsg.Role == llmtypes.ChatMessageTypeAI {
-			hasToolCalls := false
-			for _, part := range lastOldMsg.Parts {
-				if _, ok := part.(llmtypes.ToolCall); ok {
-					hasToolCalls = true
-					break
-				}
-			}
-			if hasToolCalls {
-				// This tool call is in old section - find all its tool responses
-				// Tool responses should come immediately after the tool call
-				toolResponseCount := 0
-				for j := splitIndex; j < len(messages); j++ {
-					nextMsg := messages[j]
-					if nextMsg.Role == llmtypes.ChatMessageTypeTool {
-						// This is a tool response - it should be in old section, not recent
-						// Move split point forward to include it in old section
-						toolResponseCount++
-					} else if nextMsg.Role == llmtypes.ChatMessageTypeAI {
-						// Hit another assistant message - we've passed all tool responses
-						break
-					} else if nextMsg.Role == llmtypes.ChatMessageTypeHuman {
-						// Hit a user message - we've passed all tool responses
-						break
-					}
-				}
-				// If we found tool responses that would be in recent section, move split point forward
-				if toolResponseCount > 0 {
-					// Move split point to include all tool responses in old section
-					splitIndex = splitIndex + toolResponseCount
-				}
-			}
-		}
-	}
-
-	// Check 2: If the first message in recent section (splitIndex) is a tool response,
-	// ensure its tool call is also in recent section (this should already be handled by findSafeSplitPoint,
-	// but we double-check here)
-	if splitIndex < len(messages) {
-		firstRecentMsg := messages[splitIndex]
-		if firstRecentMsg.Role == llmtypes.ChatMessageTypeTool {
-			// Find the assistant message that called this tool
-			for j := splitIndex - 1; j >= 0; j-- {
-				prevMsg := messages[j]
-				if prevMsg.Role == llmtypes.ChatMessageTypeAI {
-					hasToolCalls := false
-					for _, part := range prevMsg.Parts {
-						if _, ok := part.(llmtypes.ToolCall); ok {
-							hasToolCalls = true
-							break
-						}
-					}
-					if hasToolCalls {
-						// Found the tool call - if it's in old section, move split point back
-						if j < splitIndex {
-							splitIndex = j
-						}
-						break
-					}
-				}
-				if prevMsg.Role == llmtypes.ChatMessageTypeHuman {
-					break
-				}
-			}
-		}
-	}
-
-	return splitIndex
+	return findSafeSplitPoint(messages, splitIndex)
 }
 
 // rebuildMessagesWithSummary rebuilds the messages array with summarized old history
@@ -453,14 +340,26 @@ func rebuildMessagesWithSummary(
 	oldMessages := messages[:splitIndex]
 	recentMessages := messages[splitIndex:]
 
+	// Determine the role of the first "keep" message and last "summarize" message for debugging
+	firstKeepRole := "n/a"
+	if len(recentMessages) > 0 {
+		firstKeepRole = string(recentMessages[0].Role)
+	}
+	lastSummarizeRole := "n/a"
+	if len(oldMessages) > 0 {
+		lastSummarizeRole = string(oldMessages[len(oldMessages)-1].Role)
+	}
 	v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Splitting messages for summarization",
 		loggerv2.Int("total_messages", len(messages)),
 		loggerv2.Int("desired_split_index", desiredSplitIndex),
 		loggerv2.Int("safe_split_index", splitIndex),
+		loggerv2.Int("split_adjusted_by", splitIndex-desiredSplitIndex),
 		loggerv2.Int("old_messages_count", len(oldMessages)),
 		loggerv2.Int("recent_messages_count", len(recentMessages)),
 		loggerv2.Int("keep_last_messages", keepLastMessages),
-		loggerv2.Any("split_adjusted", splitIndex != desiredSplitIndex))
+		loggerv2.Any("split_adjusted", splitIndex != desiredSplitIndex),
+		loggerv2.String("last_summarize_msg_role", lastSummarizeRole),
+		loggerv2.String("first_keep_msg_role", firstKeepRole))
 
 	// Check if first message is system prompt
 	var systemMessage *llmtypes.MessageContent
