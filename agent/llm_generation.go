@@ -347,6 +347,14 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 		return
 	}
 
+	// If executeLLM failed before calling GenerateContent (e.g. InitializeLLM error),
+	// the adapter's deferred close never ran, so close the channel here to unblock
+	// processChunks. Use recover to safely handle the "close of closed channel" case.
+	func() {
+		defer func() { recover() }() //nolint:errcheck
+		close(sm.streamChan)
+	}()
+
 	<-sm.streamingDone
 
 	endEvent := &events.StreamingEndEvent{
@@ -428,6 +436,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 			OpenAI:     a.APIKeys.OpenAI,
 			Anthropic:  a.APIKeys.Anthropic,
 			Vertex:     a.APIKeys.Vertex,
+			MiniMax:    a.APIKeys.MiniMax,
 		}
 		if a.APIKeys.Bedrock != nil {
 			apiKeys.Bedrock = &llm.BedrockConfig{
@@ -455,6 +464,8 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 			apiKeys.Anthropic = model.APIKey
 		case llmproviders.ProviderVertex:
 			apiKeys.Vertex = model.APIKey
+		case llmproviders.ProviderMiniMax:
+			apiKeys.MiniMax = model.APIKey
 		}
 	}
 

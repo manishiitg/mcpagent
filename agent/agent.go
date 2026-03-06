@@ -748,6 +748,11 @@ type Agent struct {
 	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
 	SummarizationCooldownTurns     int     // Number of turns to wait after summarization before allowing another (0 = use default: 3)
 	lastSummarizationTurn          int     // Track when last summarization occurred (turn number)
+	// Post-summarization baseline: captures actual token count from the first LLM call after
+	// summarization. Re-summarization is blocked until tokens grow meaningfully above this baseline,
+	// preventing infinite re-trigger loops when the system prompt alone exceeds the threshold.
+	postSummarizationTokenBaseline   int  // Token count captured right after summarization (-1 = not set)
+	capturePostSummarizationBaseline bool // If true, next accumulateTokenUsage call sets the baseline
 
 	// Context editing configuration (see context_editing.go)
 	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
@@ -956,6 +961,7 @@ type AgentAPIKeys struct {
 	OpenAI     *string
 	Anthropic  *string
 	Vertex     *string
+	MiniMax    *string
 	Bedrock    *AgentBedrockConfig
 	Azure      *AgentAzureConfig
 }
@@ -1737,7 +1743,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.\n\nIMPORTANT: In addition to workspace tools (execute_shell_command, diff_patch_workspace_file, etc.), you have access to domain-specific custom tools via the `mcp__api-bridge__*` prefix. These include plan modification tools, variable tools, and other specialized tools. ALWAYS prefer using these custom tools over writing shell commands to achieve the same result. For example, use `mcp__api-bridge__update_regular_step` to modify plan steps instead of manually editing plan.json via shell commands.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -1777,7 +1783,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.\n\nIMPORTANT: In addition to workspace tools (execute_shell_command, diff_patch_workspace_file, etc.), you have access to domain-specific custom tools via the `mcp__api-bridge__*` prefix. These include plan modification tools, variable tools, and other specialized tools. ALWAYS prefer using these custom tools over writing shell commands to achieve the same result. For example, use `mcp__api-bridge__update_regular_step` to modify plan steps instead of manually editing plan.json via shell commands.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2693,7 +2699,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.\n\nIMPORTANT: In addition to workspace tools (execute_shell_command, diff_patch_workspace_file, etc.), you have access to domain-specific custom tools via the `mcp__api-bridge__*` prefix. These include plan modification tools, variable tools, and other specialized tools. ALWAYS prefer using these custom tools over writing shell commands to achieve the same result. For example, use `mcp__api-bridge__update_regular_step` to modify plan steps instead of manually editing plan.json via shell commands.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -2733,7 +2739,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.\n\nIMPORTANT: In addition to workspace tools (execute_shell_command, diff_patch_workspace_file, etc.), you have access to domain-specific custom tools via the `mcp__api-bridge__*` prefix. These include plan modification tools, variable tools, and other specialized tools. ALWAYS prefer using these custom tools over writing shell commands to achieve the same result. For example, use `mcp__api-bridge__update_regular_step` to modify plan steps instead of manually editing plan.json via shell commands.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
