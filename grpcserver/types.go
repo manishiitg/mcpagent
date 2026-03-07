@@ -31,6 +31,8 @@ type ProviderAPIKeys struct {
 	Anthropic  *string         `json:"anthropic,omitempty"`
 	OpenRouter *string         `json:"openrouter,omitempty"`
 	Vertex     *string         `json:"vertex,omitempty"`
+	GeminiCLI  *string         `json:"gemini_cli,omitempty"`
+	MiniMax    *string         `json:"minimax,omitempty"`
 	Bedrock    *BedrockConfig  `json:"bedrock,omitempty"`
 	Azure      *AzureAPIConfig `json:"azure,omitempty"`
 }

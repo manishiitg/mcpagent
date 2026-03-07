@@ -961,6 +961,7 @@ type AgentAPIKeys struct {
 	OpenAI     *string
 	Anthropic  *string
 	Vertex     *string
+	GeminiCLI  *string
 	MiniMax    *string
 	Bedrock    *AgentBedrockConfig
 	Azure      *AgentAzureConfig
@@ -1097,6 +1098,8 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 			OpenAI:     providerKeys.OpenAI,
 			Anthropic:  providerKeys.Anthropic,
 			Vertex:     providerKeys.Vertex,
+			GeminiCLI:  providerKeys.GeminiCLI,
+			MiniMax:    providerKeys.MiniMax,
 		}
 		if providerKeys.Bedrock != nil {
 			agentKeys.Bedrock = &AgentBedrockConfig{
@@ -1660,12 +1663,17 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Initialize registry with virtual tools
 	codeexec.InitRegistryWithVirtualTools(ag.Clients, customToolExecutors, virtualToolExecutors, ag.toolToServer, logger)
 
-	// Also register session-scoped custom tools to prevent cross-workflow contamination
+	// Also register session-scoped tools to prevent cross-workflow contamination
 	if ag.SessionID != "" {
 		codeexec.InitRegistryForSession(ag.SessionID, customToolExecutors, logger)
 		logger.Info("✅ Session-scoped custom tools registered during initialization",
 			loggerv2.String("session_id", ag.SessionID),
 			loggerv2.Int("count", len(customToolExecutors)))
+
+		codeexec.InitRegistryVirtualToolsForSession(ag.SessionID, virtualToolExecutors, logger)
+		logger.Info("✅ Session-scoped virtual tools registered during initialization",
+			loggerv2.String("session_id", ag.SessionID),
+			loggerv2.Int("count", len(virtualToolExecutors)))
 	}
 
 	// No Go code generation needed — OpenAPI specs are generated on-demand via get_api_spec
@@ -3885,9 +3893,32 @@ func (a *Agent) UpdateCodeExecutionRegistry() error {
 	if a.SessionID != "" {
 		codeexec.InitRegistryForSession(a.SessionID, customToolExecutors, a.Logger)
 		if a.Logger != nil {
-			a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped tools registered",
+			a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped custom tools registered",
 				loggerv2.String("session_id", a.SessionID),
 				loggerv2.Int("count", len(customToolExecutors)))
+		}
+
+		// Build virtual tool executors by re-creating virtual tool definitions
+		// and mapping them to this agent's HandleVirtualTool
+		virtualToolDefs := a.CreateVirtualTools()
+		virtualToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+		for _, vt := range virtualToolDefs {
+			if vt.Function != nil {
+				toolName := vt.Function.Name
+				virtualToolExecutors[toolName] = func(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
+					return func(ctx context.Context, args map[string]interface{}) (string, error) {
+						return a.HandleVirtualTool(ctx, name, args)
+					}
+				}(toolName)
+			}
+		}
+		if len(virtualToolExecutors) > 0 {
+			codeexec.InitRegistryVirtualToolsForSession(a.SessionID, virtualToolExecutors, a.Logger)
+			if a.Logger != nil {
+				a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped virtual tools registered",
+					loggerv2.String("session_id", a.SessionID),
+					loggerv2.Int("count", len(virtualToolExecutors)))
+			}
 		}
 	}
 
