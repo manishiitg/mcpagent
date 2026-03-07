@@ -1671,9 +1671,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			loggerv2.Int("count", len(customToolExecutors)))
 
 		codeexec.InitRegistryVirtualToolsForSession(ag.SessionID, virtualToolExecutors, logger)
-		logger.Info("✅ Session-scoped virtual tools registered during initialization",
+		logger.Info("✅ Session-scoped virtual tools registered during initialization (NewAgent)",
 			loggerv2.String("session_id", ag.SessionID),
-			loggerv2.Int("count", len(virtualToolExecutors)))
+			loggerv2.Int("virtual_tool_count", len(virtualToolExecutors)),
+			loggerv2.Int("custom_tool_count", len(ag.customTools)),
+			loggerv2.String("agent_ptr", fmt.Sprintf("%p", ag)))
 	}
 
 	// No Go code generation needed — OpenAPI specs are generated on-demand via get_api_spec
@@ -3915,9 +3917,11 @@ func (a *Agent) UpdateCodeExecutionRegistry() error {
 		if len(virtualToolExecutors) > 0 {
 			codeexec.InitRegistryVirtualToolsForSession(a.SessionID, virtualToolExecutors, a.Logger)
 			if a.Logger != nil {
-				a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped virtual tools registered",
+				a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped virtual tools registered (UpdateCodeExecutionRegistry)",
 					loggerv2.String("session_id", a.SessionID),
-					loggerv2.Int("count", len(virtualToolExecutors)))
+					loggerv2.Int("virtual_tool_count", len(virtualToolExecutors)),
+					loggerv2.Int("custom_tool_count", len(a.customTools)),
+					loggerv2.String("agent_ptr", fmt.Sprintf("%p", a)))
 			}
 		}
 	}
