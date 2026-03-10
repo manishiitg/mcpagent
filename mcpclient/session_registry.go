@@ -162,6 +162,17 @@ func (r *SessionConnectionRegistry) GetSessionConnections(sessionID string) map[
 	return result
 }
 
+// StoreConnection stores an existing client into the session registry.
+// Used when a connection was created outside the registry (e.g., mcpcache fallback)
+// and needs to be registered so future requests can reuse it.
+func (r *SessionConnectionRegistry) StoreConnection(sessionID, serverName string, client ClientInterface) {
+	sessionConnsRaw, _ := r.sessions.LoadOrStore(sessionID, &sessionConnections{
+		createdAt: time.Now(),
+	})
+	sessionConns := sessionConnsRaw.(*sessionConnections)
+	sessionConns.clients.Store(serverName, client)
+}
+
 // HasSession checks if a session exists in the registry
 func (r *SessionConnectionRegistry) HasSession(sessionID string) bool {
 	_, ok := r.sessions.Load(sessionID)

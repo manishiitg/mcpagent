@@ -250,6 +250,15 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		}
 		h.logger.Warn("⚠️ [SESSION MISS] Created new connection via mcpcache",
 			loggerv2.String("server", req.Server))
+		// Store the new connection in the session registry so future requests reuse it
+		// instead of spawning a new process (critical for Playwright browser reuse).
+		if req.SessionID != "" {
+			registry := mcpclient.GetSessionRegistry()
+			registry.StoreConnection(req.SessionID, req.Server, client)
+			h.logger.Info("✅ [SESSION MISS] Stored mcpcache connection in session registry for reuse",
+				loggerv2.String("server", req.Server),
+				loggerv2.String("session_id", req.SessionID))
+		}
 	}
 
 	// Execute tool
