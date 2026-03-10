@@ -437,7 +437,8 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 			Anthropic:  a.APIKeys.Anthropic,
 			Vertex:     a.APIKeys.Vertex,
 			GeminiCLI:  a.APIKeys.GeminiCLI,
-			MiniMax:    a.APIKeys.MiniMax,
+			MiniMax:           a.APIKeys.MiniMax,
+			MiniMaxCodingPlan: a.APIKeys.MiniMaxCodingPlan,
 		}
 		if a.APIKeys.Bedrock != nil {
 			apiKeys.Bedrock = &llm.BedrockConfig{

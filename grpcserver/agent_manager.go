@@ -233,7 +233,8 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 			OpenRouter: config.APIKeys.OpenRouter,
 			Vertex:     config.APIKeys.Vertex,
 			GeminiCLI:  config.APIKeys.GeminiCLI,
-			MiniMax:    config.APIKeys.MiniMax,
+			MiniMax:           config.APIKeys.MiniMax,
+			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
 		}
 		if config.APIKeys.Bedrock != nil {
 			apiKeys.Bedrock = &llm.BedrockConfig{

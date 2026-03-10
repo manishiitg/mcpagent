@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
@@ -144,8 +145,14 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	// Create context with timeout (respects TOOL_EXECUTION_TIMEOUT env var, default 10 min)
+	toolTimeout := 10 * time.Minute
+	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
+		if d, err := time.ParseDuration(envVal); err == nil && d > 0 {
+			toolTimeout = d
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), toolTimeout)
 	defer cancel()
 
 	// Apply tool argument transformers before ANY execution path (session registry, codeexec, mcpcache).
@@ -344,8 +351,14 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	// Create context with timeout (respects TOOL_EXECUTION_TIMEOUT env var, default 10 min)
+	toolTimeout := 10 * time.Minute
+	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
+		if d, err := time.ParseDuration(envVal); err == nil && d > 0 {
+			toolTimeout = d
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), toolTimeout)
 	defer cancel()
 
 	// Execute custom tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
@@ -417,8 +430,14 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	// Create context with timeout (respects TOOL_EXECUTION_TIMEOUT env var, default 10 min)
+	toolTimeout := 10 * time.Minute
+	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
+		if d, err := time.ParseDuration(envVal); err == nil && d > 0 {
+			toolTimeout = d
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), toolTimeout)
 	defer cancel()
 
 	// Execute virtual tool using codeexec registry (session-scoped to prevent cross-workflow contamination)

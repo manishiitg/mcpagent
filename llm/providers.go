@@ -26,7 +26,8 @@ const (
 	ProviderAzure      = llmproviders.ProviderAzure
 	ProviderClaudeCode = llmproviders.ProviderClaudeCode
 	ProviderGeminiCLI  = llmproviders.ProviderGeminiCLI
-	ProviderMiniMax    = llmproviders.ProviderMiniMax
+	ProviderMiniMax            = llmproviders.ProviderMiniMax
+	ProviderMiniMaxCodingPlan  = llmproviders.ProviderMiniMaxCodingPlan
 )
 
 const (
@@ -61,8 +62,9 @@ type ProviderAPIKeys struct {
 	Anthropic  *string
 	Vertex     *string
 	GeminiCLI  *string
-	MiniMax    *string
-	Bedrock    *BedrockConfig
+	MiniMax            *string
+	MiniMaxCodingPlan  *string
+	Bedrock            *BedrockConfig
 	Azure      *AzureAPIConfig
 }
 
@@ -137,12 +139,13 @@ func convertConfig(config Config) llmproviders.Config {
 	var providerAPIKeys *llmproviders.ProviderAPIKeys
 	if config.APIKeys != nil {
 		providerAPIKeys = &llmproviders.ProviderAPIKeys{
-			OpenRouter: config.APIKeys.OpenRouter,
-			OpenAI:     config.APIKeys.OpenAI,
-			Anthropic:  config.APIKeys.Anthropic,
-			Vertex:     config.APIKeys.Vertex,
-			GeminiCLI:  config.APIKeys.GeminiCLI,
-			MiniMax:    config.APIKeys.MiniMax,
+			OpenRouter:        config.APIKeys.OpenRouter,
+			OpenAI:            config.APIKeys.OpenAI,
+			Anthropic:         config.APIKeys.Anthropic,
+			Vertex:            config.APIKeys.Vertex,
+			GeminiCLI:         config.APIKeys.GeminiCLI,
+			MiniMax:           config.APIKeys.MiniMax,
+			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
 		}
 		if config.APIKeys.Bedrock != nil {
 			providerAPIKeys.Bedrock = &llmproviders.BedrockConfig{
