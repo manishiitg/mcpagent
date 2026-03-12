@@ -60,6 +60,11 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 	}
 
 	// 2. Collect the 3 bridge tools by name
+	logger.Debug("BuildBridgeMCPConfig: agent state",
+		loggerv2.Int("tools_count", len(a.Tools)),
+		loggerv2.Int("custom_tools_count", len(a.customTools)),
+		loggerv2.Any("use_code_execution_mode", a.UseCodeExecutionMode))
+
 	var toolDefs []BridgeToolDef
 	for _, want := range bridgeTools {
 		def := a.lookupBridgeTool(want.name, want.toolType, logger)

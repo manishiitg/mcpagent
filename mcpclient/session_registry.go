@@ -46,6 +46,46 @@ var globalSessionRegistry = &SessionConnectionRegistry{
 	connLocks: make(map[string]*sync.Mutex),
 }
 
+// httpSessionTracker maps HTTP session IDs to their active MCP session IDs.
+// This allows closing all MCP sessions when an HTTP session (workflow) is stopped.
+var globalHTTPSessionTracker = &httpSessionTracker{
+	sessions: make(map[string]map[string]struct{}),
+}
+
+type httpSessionTracker struct {
+	mu       sync.Mutex
+	sessions map[string]map[string]struct{} // httpSessionID -> set of mcpSessionIDs
+}
+
+func (t *httpSessionTracker) register(httpSessionID, mcpSessionID string) {
+	if httpSessionID == "" || mcpSessionID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.sessions[httpSessionID]; !ok {
+		t.sessions[httpSessionID] = make(map[string]struct{})
+	}
+	t.sessions[httpSessionID][mcpSessionID] = struct{}{}
+}
+
+func (t *httpSessionTracker) getMCPSessions(httpSessionID string) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	mcpIDs := t.sessions[httpSessionID]
+	result := make([]string, 0, len(mcpIDs))
+	for id := range mcpIDs {
+		result = append(result, id)
+	}
+	return result
+}
+
+func (t *httpSessionTracker) remove(httpSessionID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.sessions, httpSessionID)
+}
+
 // GetSessionRegistry returns the global session connection registry
 func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry
@@ -256,6 +296,23 @@ func (r *SessionConnectionRegistry) GetSessionStats(sessionID string) *SessionSt
 	})
 
 	return stats
+}
+
+// RegisterHTTPSession registers an MCP session ID under an HTTP session ID.
+// Call this whenever a new MCP session is created for a workflow so that
+// CloseHTTPSession can close all of them when the workflow stops.
+func (r *SessionConnectionRegistry) RegisterHTTPSession(httpSessionID, mcpSessionID string) {
+	globalHTTPSessionTracker.register(httpSessionID, mcpSessionID)
+}
+
+// CloseHTTPSession closes all MCP sessions registered under the given HTTP session ID.
+// This is the primary cleanup path for workflow stop/completion.
+func (r *SessionConnectionRegistry) CloseHTTPSession(httpSessionID string) {
+	mcpSessionIDs := globalHTTPSessionTracker.getMCPSessions(httpSessionID)
+	globalHTTPSessionTracker.remove(httpSessionID)
+	for _, mcpID := range mcpSessionIDs {
+		r.CloseSession(mcpID)
+	}
 }
 
 // CloseAllSessions closes all sessions and their connections.

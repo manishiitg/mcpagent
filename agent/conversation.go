@@ -862,23 +862,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		}
 
 		// Check for context cancellation after LLM generation
-		// TEMPORARILY DISABLED: This check was causing issues with HTTP requests
 		if agentCtx.Err() != nil {
-			v2Logger.Debug("Context cancelled after LLM generation (temporarily ignoring)",
+			v2Logger.Debug("Context cancelled after LLM generation",
 				loggerv2.Int("turn", turn+1),
 				loggerv2.Error(agentCtx.Err()),
 				loggerv2.String("duration", time.Since(conversationStartTime).String()))
-
-			// TEMPORARILY DISABLED: Don't return error, continue with the turn
-			// This allows HTTP requests to work while we investigate the root cause
-			// When re-enabled, emit ContextCancelledEvent instead of returning error:
-			// cancellationEvent := events.NewContextCancelledEvent(
-			// 	turn+1,
-			// 	agentCtx.Err().Error(),
-			// 	time.Since(conversationStartTime),
-			// )
-			// a.EmitTypedEvent(ctx, cancellationEvent)
-			// return "", messages, fmt.Errorf("conversation cancelled after LLM generation: %w", agentCtx.Err())
+			cancellationEvent := events.NewContextCancelledEvent(
+				turn+1,
+				agentCtx.Err().Error(),
+				time.Since(conversationStartTime),
+			)
+			a.EmitTypedEvent(ctx, cancellationEvent)
+			return "", messages, fmt.Errorf("conversation cancelled after LLM generation: %w", agentCtx.Err())
 		}
 
 		if genErr != nil {
@@ -1431,10 +1426,14 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 
 				if agentCtx.Err() != nil {
-					v2Logger.Debug("Tool call context error",
+					v2Logger.Debug("Context cancelled after tool execution (will stop after appending result)",
 						loggerv2.Int("turn", turn+1),
 						loggerv2.String("tool_name", tc.FunctionCall.Name),
 						loggerv2.Error(agentCtx.Err()))
+					// Don't return early here — the tool result must be appended to messages
+					// first (line ~1613) to keep the conversation state valid (every tool call
+					// needs a response). The cancellation will be caught at the start of the
+					// next turn (line 533) or before the next tool execution (line 1222).
 				}
 
 				// Handle tool execution errors gracefully - provide feedback to LLM and continue

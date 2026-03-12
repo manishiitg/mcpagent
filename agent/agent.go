@@ -1585,6 +1585,20 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Add virtual tools to the LLM tools list
 	virtualTools := ag.CreateVirtualTools()
 
+	// Pre-detect Claude Code provider to set correct modes BEFORE virtual tool filtering.
+	// Claude Code always needs code execution mode (tools accessed via HTTP bridge).
+	// Without this, get_api_spec would be excluded during filtering below.
+	if ag.provider == llmproviders.ProviderClaudeCode {
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("[BRIDGE_DEBUG] Pre-set UseCodeExecutionMode for Claude Code provider")
+		}
+		if ag.UseToolSearchMode {
+			ag.UseToolSearchMode = false
+			logger.Debug("[BRIDGE_DEBUG] Pre-disabled UseToolSearchMode for Claude Code provider")
+		}
+	}
+
 	// Filter virtual tools based on mode
 	if ag.UseCodeExecutionMode {
 		// In code execution mode, only include get_api_spec
@@ -1598,7 +1612,8 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			}
 		}
 		virtualTools = filteredVirtualTools
-		logger.Debug("Code execution mode: Filtered virtual tools - only get_api_spec available")
+		logger.Debug("Code execution mode: virtual tools after filtering",
+			loggerv2.Int("count", len(virtualTools)))
 	} else if ag.UseToolSearchMode {
 		// In tool search mode, only include search_tools and context offloading tools
 		var filteredVirtualTools []llmtypes.Tool
@@ -1646,6 +1661,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	ag.Tools = append(ag.Tools, virtualTools...)
+
+	logger.Debug("[BRIDGE_DEBUG] Tools after virtual tools appended",
+		loggerv2.Int("total_tools", len(ag.Tools)),
+		loggerv2.Int("virtual_tools_added", len(virtualTools)))
 
 	// Convert virtual tools to executor functions
 	// Note: We need to capture the tool name in the closure
@@ -1763,11 +1782,12 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Debug("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled natively by CLI)")
 		}
 
-		// Code execution mode is always enabled for Claude Code — MCP tools are
-		// accessed via the HTTP bridge (mcpbridge stdio binary)
+		// Code execution mode is pre-set before virtual tool filtering (see pre-detection
+		// block above CreateVirtualTools). Enforce as safety net in case that block is
+		// bypassed or reordered in the future.
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [CLAUDE_CODE] Auto-enabled Code Execution Mode (MCP tools via HTTP bridge)")
+			logger.Warn("[BRIDGE_DEBUG] CLAUDE_CODE: UseCodeExecutionMode was not pre-set — enforcing now (safety net)")
 		}
 
 		if ag.EnableContextEditing {
@@ -3613,6 +3633,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	// so we must avoid accumulating duplicate entries for the same tool name.
 	//
 	// Before appending, strip any existing tool with this name from Tools and filteredTools.
+	beforeCount := len(a.Tools)
 	if len(a.Tools) > 0 {
 		cleanTools := make([]llmtypes.Tool, 0, len(a.Tools))
 		for _, t := range a.Tools {
@@ -3621,6 +3642,9 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 			}
 		}
 		a.Tools = cleanTools
+	}
+	if len(a.Tools) != beforeCount && a.Logger != nil {
+		a.Logger.Debug(fmt.Sprintf("[BRIDGE_DEBUG] RegisterCustomTool(%s): cleanup removed %d duplicate(s)", name, beforeCount-len(a.Tools)))
 	}
 
 	if len(a.filteredTools) > 0 {

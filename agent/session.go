@@ -137,6 +137,22 @@ func HasSession(sessionID string) bool {
 	return registry.HasSession(sessionID)
 }
 
+// RegisterHTTPSession registers an MCP session ID under an HTTP session ID.
+// Call this whenever a new MCP session (workflow or group) is created so that
+// CloseHTTPSession can close all of them when the HTTP session stops.
+func RegisterHTTPSession(httpSessionID, mcpSessionID string) {
+	registry := mcpclient.GetSessionRegistry()
+	registry.RegisterHTTPSession(httpSessionID, mcpSessionID)
+}
+
+// CloseHTTPSession closes all MCP sessions registered under the given HTTP session ID.
+// Call this in the workflow stop handler and on workflow completion to immediately
+// free browser processes and other MCP server resources.
+func CloseHTTPSession(httpSessionID string) {
+	registry := mcpclient.GetSessionRegistry()
+	registry.CloseHTTPSession(httpSessionID)
+}
+
 // GetSessionRegistry returns the underlying session connection registry.
 // This is for advanced use cases where direct registry access is needed.
 func GetSessionRegistry() *mcpclient.SessionConnectionRegistry {
