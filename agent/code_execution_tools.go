@@ -122,12 +122,9 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 			return "", fmt.Errorf("tool(s) %v not found in category %q. Available tools in %q: %v", toolNames, serverName, serverName, availableInCategory)
 		}
 
-		specBytes, err := openapi.GenerateCustomToolsOpenAPISpec(serverName, customToolsForSpec, baseURL)
-		if err != nil {
-			return "", fmt.Errorf("failed to generate OpenAPI spec for %s: %w", serverName, err)
-		}
-		a.cacheSpec(cacheKey, specBytes)
-		return string(specBytes), nil
+		spec := openapi.GenerateCustomToolsCompactSpec(serverName, customToolsForSpec, baseURL)
+		a.cacheSpec(cacheKey, []byte(spec))
+		return spec, nil
 	}
 
 	// MCP server
@@ -192,21 +189,18 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 		return "", fmt.Errorf("tool(s) %v not found on server %q. Available tools on %q: %v", toolNames, serverName, serverName, availableOnServer)
 	}
 
-	specBytes, err := openapi.GenerateServerOpenAPISpec(serverName, serverTools, baseURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to generate OpenAPI spec for %s: %w", serverName, err)
-	}
-	a.cacheSpec(cacheKey, specBytes)
+	spec := openapi.GenerateCompactSpec(serverName, serverTools, baseURL)
+	a.cacheSpec(cacheKey, []byte(spec))
 
 	if a.Logger != nil {
-		a.Logger.Info("Generated OpenAPI spec",
+		a.Logger.Info("Generated compact spec",
 			loggerv2.String("server", serverName),
 			loggerv2.Int("tools_requested", len(toolNames)),
 			loggerv2.Int("tools_found", len(serverTools)),
-			loggerv2.Int("spec_bytes", len(specBytes)))
+			loggerv2.Int("spec_bytes", len(spec)))
 	}
 
-	return string(specBytes), nil
+	return spec, nil
 }
 
 // serverIsAvailable checks if a server passes the tool filter.
