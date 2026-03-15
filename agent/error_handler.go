@@ -45,7 +45,13 @@ func IsBrokenPipeError(err error) bool {
 	return mcpclient.IsBrokenPipeError(err)
 }
 
-// HandleBrokenPipeError handles broken pipe errors by recreating the connection and retrying
+// HandleBrokenPipeError handles broken pipe errors by recreating the connection and retrying.
+//
+// IMPORTANT: This method checks for intentional session stops before retrying.
+// When a user stops a workflow, MCP connections are closed which causes "transport closed"
+// errors that look like broken pipes. Without this check, the broken pipe handler would
+// reconnect and the sub-agent would continue running as a zombie — ignoring the stop.
+// See: zombie sub-agent bug where stopped workflows continued executing for 60+ seconds.
 func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	ctx context.Context,
 	toolCall *llmtypes.ToolCall,
@@ -53,6 +59,32 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	originalErr error,
 	startTime time.Time,
 ) (*mcp.CallToolResult, time.Duration, error) {
+
+	// CHECK 1: If the context is already canceled, this is likely an intentional stop,
+	// not a transient network error. Do NOT retry — return immediately so the agent
+	// loop can detect the cancellation and exit cleanly.
+	if ctx.Err() != nil {
+		h.logger.Info("🔧 [BROKEN PIPE] Skipping retry — context already canceled (intentional stop)",
+			loggerv2.String("tool", toolCall.FunctionCall.Name),
+			loggerv2.String("server", serverName),
+			loggerv2.String("ctx_err", ctx.Err().Error()))
+		return nil, time.Since(startTime), fmt.Errorf("broken pipe during canceled context: %w", originalErr)
+	}
+
+	// CHECK 2: If the session was stopped via CloseHTTPSession, the registry marks
+	// all associated MCP session IDs as "stopped". This catches the case where
+	// the sub-agent's context is NOT derived from the workflow context (e.g., tool
+	// calls dispatched via HTTP from claude-code CLI have independent contexts).
+	if h.agent.SessionID != "" {
+		registry := mcpclient.GetSessionRegistry()
+		if registry.IsSessionStopped(h.agent.SessionID) {
+			h.logger.Info("🔧 [BROKEN PIPE] Skipping retry — session was stopped (zombie prevention)",
+				loggerv2.String("tool", toolCall.FunctionCall.Name),
+				loggerv2.String("server", serverName),
+				loggerv2.String("session_id", h.agent.SessionID))
+			return nil, time.Since(startTime), fmt.Errorf("session stopped — broken pipe not retried: %w", originalErr)
+		}
+	}
 
 	h.logger.Info("Broken pipe detected, attempting connection recreation",
 		loggerv2.String("tool", toolCall.FunctionCall.Name),
@@ -162,6 +194,15 @@ func (h *BrokenPipeHandler) retryToolCall(
 	serverName string,
 	startTime time.Time,
 ) (*mcp.CallToolResult, time.Duration, error) {
+
+	// Final guard: context may have been canceled while we were reconnecting.
+	// Check again before actually retrying the tool call.
+	if ctx.Err() != nil {
+		h.logger.Info("🔧 [BROKEN PIPE] Aborting retry — context canceled during reconnection",
+			loggerv2.String("tool", toolCall.FunctionCall.Name),
+			loggerv2.String("ctx_err", ctx.Err().Error()))
+		return nil, time.Since(startTime), fmt.Errorf("context canceled before retry: %w", ctx.Err())
+	}
 
 	h.logger.Info("Retrying tool call with fresh connection",
 		loggerv2.String("tool", toolCall.FunctionCall.Name))

@@ -3,6 +3,7 @@ package mcpclient
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -49,12 +50,14 @@ var globalSessionRegistry = &SessionConnectionRegistry{
 // httpSessionTracker maps HTTP session IDs to their active MCP session IDs.
 // This allows closing all MCP sessions when an HTTP session (workflow) is stopped.
 var globalHTTPSessionTracker = &httpSessionTracker{
-	sessions: make(map[string]map[string]struct{}),
+	sessions:        make(map[string]map[string]struct{}),
+	stoppedSessions: make(map[string]struct{}),
 }
 
 type httpSessionTracker struct {
-	mu       sync.Mutex
-	sessions map[string]map[string]struct{} // httpSessionID -> set of mcpSessionIDs
+	mu              sync.Mutex
+	sessions        map[string]map[string]struct{} // httpSessionID -> set of mcpSessionIDs
+	stoppedSessions map[string]struct{}             // set of stopped MCP session IDs (prevents broken pipe reconnection)
 }
 
 func (t *httpSessionTracker) register(httpSessionID, mcpSessionID string) {
@@ -84,6 +87,31 @@ func (t *httpSessionTracker) remove(httpSessionID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.sessions, httpSessionID)
+}
+
+// markStopped records MCP session IDs as stopped so that broken pipe handlers
+// will NOT recreate connections for sessions that were intentionally closed.
+func (t *httpSessionTracker) markStopped(mcpSessionIDs []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, id := range mcpSessionIDs {
+		t.stoppedSessions[id] = struct{}{}
+	}
+}
+
+// isStopped returns true if the given MCP session was closed via CloseHTTPSession.
+func (t *httpSessionTracker) isStopped(mcpSessionID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.stoppedSessions[mcpSessionID]
+	return ok
+}
+
+// clearStopped removes a session from the stopped set (e.g., on re-use).
+func (t *httpSessionTracker) clearStopped(mcpSessionID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.stoppedSessions, mcpSessionID)
 }
 
 // GetSessionRegistry returns the global session connection registry
@@ -125,6 +153,20 @@ func (r *SessionConnectionRegistry) GetOrCreateConnection(
 	config MCPServerConfig,
 	logger loggerv2.Logger,
 ) (ClientInterface, bool, error) {
+
+	// Refuse to create connections for sessions that were intentionally stopped.
+	// This prevents broken pipe handlers from resurrecting zombie sub-agents
+	// after a workflow is stopped by the user.
+	//
+	// WHY: When a user stops a workflow, CloseHTTPSession closes all MCP connections.
+	// In-flight tool calls (e.g., browser_navigate) get "transport closed" errors.
+	// The broken pipe handler then tries to recreate the connection via GetOrCreateConnection.
+	// Without this guard, the sub-agent gets a fresh connection and continues executing
+	// for minutes after the user pressed stop — a zombie sub-agent.
+	if globalHTTPSessionTracker.isStopped(sessionID) {
+		logger.Info(fmt.Sprintf("🛑 [ZOMBIE PREVENTION] Refusing connection for stopped session=%s server=%s", sessionID, serverName))
+		return nil, false, fmt.Errorf("session %s was stopped — refusing to create new connection (zombie prevention)", sessionID)
+	}
 
 	// Get or create session's connection map
 	sessionConnsRaw, _ := r.sessions.LoadOrStore(sessionID, &sessionConnections{
@@ -307,12 +349,29 @@ func (r *SessionConnectionRegistry) RegisterHTTPSession(httpSessionID, mcpSessio
 
 // CloseHTTPSession closes all MCP sessions registered under the given HTTP session ID.
 // This is the primary cleanup path for workflow stop/completion.
+// It also marks all associated MCP session IDs as stopped so that broken pipe
+// handlers will NOT recreate connections for intentionally stopped sessions.
 func (r *SessionConnectionRegistry) CloseHTTPSession(httpSessionID string) {
 	mcpSessionIDs := globalHTTPSessionTracker.getMCPSessions(httpSessionID)
+	log.Printf("[ZOMBIE PREVENTION] CloseHTTPSession(%s): marking %d MCP sessions as stopped: %v",
+		httpSessionID, len(mcpSessionIDs), mcpSessionIDs)
+	// Mark sessions as stopped BEFORE closing, so that any broken pipe handler
+	// that fires during close will see the stopped flag and bail out.
+	// This is the critical ordering: markStopped → close. If we close first,
+	// the broken pipe handler could sneak in between close and markStopped,
+	// recreating the connection before we flag it as stopped.
+	globalHTTPSessionTracker.markStopped(mcpSessionIDs)
 	globalHTTPSessionTracker.remove(httpSessionID)
 	for _, mcpID := range mcpSessionIDs {
 		r.CloseSession(mcpID)
 	}
+}
+
+// IsSessionStopped returns true if the given MCP session was closed via
+// CloseHTTPSession (i.e., the workflow was intentionally stopped).
+// Used by broken pipe handlers to avoid reconnecting zombie sub-agents.
+func (r *SessionConnectionRegistry) IsSessionStopped(mcpSessionID string) bool {
+	return globalHTTPSessionTracker.isStopped(mcpSessionID)
 }
 
 // CloseAllSessions closes all sessions and their connections.

@@ -1400,6 +1400,23 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		logger,
 	)
 
+	// Pre-detect CLI providers (Claude Code, Gemini CLI) to set correct modes BEFORE MCP tool filtering.
+	// CLI providers always need code execution mode (tools accessed via HTTP bridge).
+	// Without this, the tool filtering below would take the UseToolSearchMode path instead of
+	// UseCodeExecutionMode, leaving allMCPToolDefs empty and breaking get_api_spec.
+	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI {
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("[BRIDGE_DEBUG] Pre-set UseCodeExecutionMode for CLI provider before MCP tool filtering",
+				loggerv2.String("provider", string(ag.provider)))
+		}
+		if ag.UseToolSearchMode {
+			ag.UseToolSearchMode = false
+			logger.Debug("[BRIDGE_DEBUG] Pre-disabled UseToolSearchMode for CLI provider before MCP tool filtering",
+				loggerv2.String("provider", string(ag.provider)))
+		}
+	}
+
 	// Handle code execution mode: filter out MCP and custom tools (both accessed via HTTP API)
 	var toolsToUse []llmtypes.Tool
 	if ag.UseCodeExecutionMode {
@@ -1585,17 +1602,19 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Add virtual tools to the LLM tools list
 	virtualTools := ag.CreateVirtualTools()
 
-	// Pre-detect Claude Code provider to set correct modes BEFORE virtual tool filtering.
-	// Claude Code always needs code execution mode (tools accessed via HTTP bridge).
-	// Without this, get_api_spec would be excluded during filtering below.
-	if ag.provider == llmproviders.ProviderClaudeCode {
+	// Safety net: Ensure CLI provider modes are correct before virtual tool filtering.
+	// The primary pre-detection is above (before MCP tool filtering at allMCPToolDefs).
+	// This block is a safety net in case code is reordered in the future.
+	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
-			logger.Debug("[BRIDGE_DEBUG] Pre-set UseCodeExecutionMode for Claude Code provider")
+			logger.Warn("[BRIDGE_DEBUG] CLI provider UseCodeExecutionMode was not pre-set — enforcing before virtual tool filtering (safety net)",
+				loggerv2.String("provider", string(ag.provider)))
 		}
 		if ag.UseToolSearchMode {
 			ag.UseToolSearchMode = false
-			logger.Debug("[BRIDGE_DEBUG] Pre-disabled UseToolSearchMode for Claude Code provider")
+			logger.Warn("[BRIDGE_DEBUG] CLI provider UseToolSearchMode still active — disabling before virtual tool filtering (safety net)",
+				loggerv2.String("provider", string(ag.provider)))
 		}
 	}
 
@@ -1703,6 +1722,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// In code execution mode, build tool index from agent internal state
 	var toolStructureJSON string
+	var preDiscoveredToolSpecs string
 	if ag.UseCodeExecutionMode {
 		toolStructure, err := ag.buildToolIndex()
 		if err != nil {
@@ -1710,6 +1730,8 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		} else {
 			toolStructureJSON = toolStructure
 		}
+		// Build pre-discovered tool specs (inline specs for tools that don't need get_api_spec)
+		preDiscoveredToolSpecs = ag.buildPreDiscoveredToolSpecs()
 	}
 
 	// Always rebuild system prompt with the correct agent mode and tool structure
@@ -1723,7 +1745,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 				toolCategories = append(toolCategories, serverName)
 			}
 		}
-		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.UseToolSearchMode, toolCategories, ag.Logger, ag.EnableParallelToolExecution)
+		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, preDiscoveredToolSpecs, ag.UseToolSearchMode, toolCategories, ag.Logger, ag.EnableParallelToolExecution)
 	}
 
 	// 🎯 SMART ROUTING INITIALIZATION - Run AFTER all tools are loaded (including virtual tools)
@@ -2527,6 +2549,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 		a.DiscoverPrompt,
 		a.UseCodeExecutionMode,
 		toolStructureJSON,
+		"", // preDiscoveredToolSpecs - not needed for tool refresh (already in prompt)
 		a.UseToolSearchMode,
 		toolCategoriesFiltered,
 		a.Logger,
@@ -3478,11 +3501,20 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 			}
 			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
 		} else {
+			// Build pre-discovered tool specs (inline specs for tools that don't need get_api_spec)
+			preDiscoveredSpecs := a.buildPreDiscoveredToolSpecs()
+			var getApiSpecNote string
+			if preDiscoveredSpecs != "" {
+				getApiSpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
+			} else {
+				getApiSpecNote = "Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n"
+			}
 			toolStructureSection := "\n\n<available_tools>\n" +
 				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
 				"```json\n" + toolStructure + "\n```\n\n" +
-				"Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n" +
-				"</available_tools>\n"
+				getApiSpecNote +
+				"</available_tools>\n" +
+				preDiscoveredSpecs
 			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
 		}
 	}
@@ -3996,8 +4028,9 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 		a.DiscoverPrompt,
 		a.UseCodeExecutionMode,
 		toolStructure,
-		false, // UseToolSearchMode - not applicable in code execution mode
-		nil,   // toolCategories - not applicable in code execution mode
+		a.buildPreDiscoveredToolSpecs(), // preDiscoveredToolSpecs
+		false,                           // UseToolSearchMode - not applicable in code execution mode
+		nil,                             // toolCategories - not applicable in code execution mode
 		a.Logger,
 		a.EnableParallelToolExecution,
 	)

@@ -222,6 +222,127 @@ func (a *Agent) cacheSpec(key string, specBytes []byte) {
 	a.openAPISpecCacheMu.Unlock()
 }
 
+// buildPreDiscoveredToolSpecs generates compact API specs for pre-discovered tools.
+// When pre-discovered tools are configured, their full specs (endpoint + parameter schema)
+// are included inline in the system prompt so the agent doesn't need to call get_api_spec.
+// Returns empty string if no pre-discovered tools are configured or found.
+func (a *Agent) buildPreDiscoveredToolSpecs() string {
+	if len(a.preDiscoveredTools) == 0 {
+		return ""
+	}
+
+	// Build a set of pre-discovered tool names for fast lookup
+	preDiscoveredSet := make(map[string]bool, len(a.preDiscoveredTools))
+	for _, name := range a.preDiscoveredTools {
+		preDiscoveredSet[name] = true
+	}
+
+	// Determine the API base URL
+	baseURL := a.APIBaseURL
+	if baseURL == "" {
+		baseURL = os.Getenv("MCP_API_URL")
+	}
+	if baseURL == "" {
+		baseURL = "http://localhost:8000"
+	}
+
+	// Collect MCP tool definitions for pre-discovered tools
+	var mcpToolsByServer = make(map[string][]llmtypes.Tool)
+	toolSource := a.allMCPToolDefs
+	if len(toolSource) == 0 {
+		toolSource = a.Tools
+	}
+
+	for _, tool := range toolSource {
+		if tool.Function == nil {
+			continue
+		}
+		if !preDiscoveredSet[tool.Function.Name] {
+			continue
+		}
+		// Find the server for this tool
+		serverName, ok := a.toolToServer[tool.Function.Name]
+		if !ok || serverName == "custom" {
+			continue
+		}
+		normalized := strings.ReplaceAll(serverName, "-", "_")
+		mcpToolsByServer[normalized] = append(mcpToolsByServer[normalized], tool)
+	}
+
+	// Collect custom tool definitions for pre-discovered tools
+	customToolsByCategory := make(map[string]map[string]openapi.CustomToolForOpenAPI)
+	for toolName, ct := range a.customTools {
+		if !preDiscoveredSet[toolName] {
+			continue
+		}
+		category := ct.Category
+		if category == "" {
+			continue
+		}
+		if customToolsByCategory[category] == nil {
+			customToolsByCategory[category] = make(map[string]openapi.CustomToolForOpenAPI)
+		}
+		customToolsByCategory[category][toolName] = openapi.CustomToolForOpenAPI{
+			Definition: ct.Definition,
+			Category:   ct.Category,
+		}
+	}
+
+	if len(mcpToolsByServer) == 0 && len(customToolsByCategory) == 0 {
+		return ""
+	}
+
+	// Generate compact specs for each server's pre-discovered tools
+	var sb strings.Builder
+	sb.WriteString("\n\n<pre_discovered_tool_specs>\n")
+	sb.WriteString("**PRE-LOADED TOOL SPECS** (no need to call get_api_spec for these):\n\n")
+
+	// Sort servers for deterministic output
+	serverNames := make([]string, 0, len(mcpToolsByServer))
+	for name := range mcpToolsByServer {
+		serverNames = append(serverNames, name)
+	}
+	sort.Strings(serverNames)
+
+	for _, serverName := range serverNames {
+		tools := mcpToolsByServer[serverName]
+		spec := openapi.GenerateCompactSpec(serverName, tools, baseURL)
+		sb.WriteString(spec)
+		sb.WriteString("\n")
+	}
+
+	// Sort categories for deterministic output
+	categoryNames := make([]string, 0, len(customToolsByCategory))
+	for name := range customToolsByCategory {
+		categoryNames = append(categoryNames, name)
+	}
+	sort.Strings(categoryNames)
+
+	for _, category := range categoryNames {
+		tools := customToolsByCategory[category]
+		spec := openapi.GenerateCustomToolsCompactSpec(category, tools, baseURL)
+		sb.WriteString(spec)
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("</pre_discovered_tool_specs>\n")
+
+	if a.Logger != nil {
+		totalPreDiscovered := 0
+		for _, tools := range mcpToolsByServer {
+			totalPreDiscovered += len(tools)
+		}
+		for _, tools := range customToolsByCategory {
+			totalPreDiscovered += len(tools)
+		}
+		a.Logger.Info("Built pre-discovered tool specs for system prompt",
+			loggerv2.Int("pre_discovered_tools", totalPreDiscovered),
+			loggerv2.Int("configured", len(a.preDiscoveredTools)))
+	}
+
+	return sb.String()
+}
+
 // buildToolIndex returns a JSON index of available servers and their tool names.
 // This is included in the system prompt so the LLM knows what's available.
 // It builds the index purely from agent internal state (no filesystem scanning).

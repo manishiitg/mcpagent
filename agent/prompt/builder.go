@@ -61,8 +61,7 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 
 **Workflow:**
 1. See available servers and tools in the index above
-2. Call get_api_spec(server_name="...", tool_name="...") to get the full API spec for the tool(s) you need
-   - tool_name accepts a single string or an array of strings for multiple tools
+2. If pre-loaded tool specs are provided below, use them directly — no need to call get_api_spec for those tools. For other tools, call get_api_spec(server_name="...", tool_name="...") to get the full API spec (tool_name accepts a single string or an array of strings)
 3. Use execute_shell_command to write and run code — prefer Python for reliability and readability
 4. MCP_API_URL and MCP_API_TOKEN env vars are available in the execution environment
 5. MCP and custom tools are accessed via HTTP POST to per-tool endpoints documented in the OpenAPI spec
@@ -94,9 +93,9 @@ curl -X POST "$MCP_API_URL/tools/mcp/google_sheets/get_document" \
 ` + "```" + `
 
 **Best Practices:**
-- Use get_api_spec(server_name="...", tool_name="...") to get specs before calling any tool
+- If pre-loaded tool specs are available, use them directly without calling get_api_spec. Only call get_api_spec for tools whose specs are NOT pre-loaded.
 - Prefer Python for writing code — it handles JSON, HTTP requests, and error handling cleanly
-- Break complex tasks into steps, test each tool call individually
+- Write one comprehensive script when possible — minimize the number of execute_shell_command calls
 - Always check the "success" field in responses
 - MCP_API_URL and MCP_API_TOKEN are pre-set in the shell environment — always use them
 - **IMPORTANT**: When custom tools are available as direct calls (via mcp__api-bridge__*), ALWAYS prefer using them over writing equivalent shell commands. Custom tools provide structured input validation and atomic operations.`
@@ -105,9 +104,10 @@ curl -X POST "$MCP_API_URL/tools/mcp/google_sheets/get_document" \
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 // toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
+// preDiscoveredToolSpecs is optional - pre-generated compact specs for pre-discovered tools (inline in prompt)
 // useToolSearchMode enables tool search mode instructions when true
 // toolCategories is optional list of tool categories for tool search mode
-func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, useToolSearchMode bool, toolCategories []string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
+func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, preDiscoveredToolSpecs string, useToolSearchMode bool, toolCategories []string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
 	// Build prompts section with previews (only if discoverPrompt is true and NOT in code execution mode)
 	// In code execution mode, prompts/resources are not accessible via get_prompt/get_resource
 	var promptsSection string
@@ -172,16 +172,23 @@ When answering questions:
 
 		// Replace {{TOOL_STRUCTURE}} placeholder with the tool index
 		if toolStructureJSON != "" {
+			var getApiSpecNote string
+			if preDiscoveredToolSpecs != "" {
+				getApiSpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
+			} else {
+				getApiSpecNote = "Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the full API spec for specific tools.\n"
+			}
 			toolStructureSection := "\n\n<available_tools>\n" +
 				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
 				"The following MCP servers and their tools are accessible via HTTP API.\n" +
-				"Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the full API spec for specific tools.\n\n" +
+				getApiSpecNote + "\n" +
 				"```json\n" +
 				toolStructureJSON + "\n" +
 				"```\n\n" +
 				"Domain tools (MCP and custom) are accessible via HTTP API endpoints documented in the OpenAPI spec.\n" +
 				"System tools (e.g. execute_shell_command) are available as direct LLM calls.\n" +
-				"</available_tools>\n"
+				"</available_tools>\n" +
+				preDiscoveredToolSpecs
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
 		} else {
 			toolStructureSection := "\n\n<available_tools>\n" +
@@ -387,10 +394,9 @@ func buildVirtualToolsSection(useCodeExecutionMode bool, useToolSearchMode bool,
 	if useCodeExecutionMode {
 		return `AVAILABLE FUNCTIONS:
 
-- **get_api_spec** - Get the full OpenAPI spec for specific tool(s)
+- **get_api_spec** - Get the full OpenAPI spec for specific tool(s). Skip this for tools whose specs are already pre-loaded in the system prompt.
   Usage: get_api_spec(server_name="google_sheets", tool_name="get_document")
   Multiple tools: get_api_spec(server_name="google_sheets", tool_name=["create_spreadsheet", "update_values"])
-  All servers and tool names are listed in the tool index above — use get_api_spec to get endpoint details and request schemas.
 
 Domain tools (MCP and custom) are accessed via HTTP endpoints documented in the OpenAPI spec.
 System tools (e.g. execute_shell_command) are available as direct LLM function calls.

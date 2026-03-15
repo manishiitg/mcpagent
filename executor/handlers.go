@@ -270,27 +270,43 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	result, err := client.CallTool(ctx, req.Tool, req.Args)
 
 	// 🔧 BROKEN PIPE DETECTION AND RETRY
+	// When a workflow is stopped, MCP connections are closed which causes "transport closed"
+	// errors. We must NOT retry in that case — otherwise sub-agents continue as zombies.
 	if err != nil && mcpclient.IsBrokenPipeError(err) {
-		h.logger.Info("🔧 [BROKEN PIPE] Detected, getting fresh connection...",
-			loggerv2.String("tool", req.Tool),
-			loggerv2.String("server", req.Server))
-
-		// Get fresh connection using shared function (bypasses cache by invalidating)
-		freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
-		if freshErr == nil {
-			h.logger.Info("🔧 [BROKEN PIPE] Retrying with fresh connection...",
-				loggerv2.String("tool", req.Tool))
-			result, err = freshClient.CallTool(ctx, req.Tool, req.Args)
-			if err == nil {
-				h.logger.Info("🔧 [BROKEN PIPE] Retry successful",
-					loggerv2.String("tool", req.Tool))
-			} else {
-				h.logger.Error("🔧 [BROKEN PIPE] Retry failed", err,
-					loggerv2.String("tool", req.Tool))
-			}
+		// Guard: skip retry if context is canceled (intentional stop, not transient error)
+		if ctx.Err() != nil {
+			h.logger.Info("🔧 [BROKEN PIPE] Skipping retry — context canceled (intentional stop)",
+				loggerv2.String("tool", req.Tool),
+				loggerv2.String("server", req.Server),
+				loggerv2.String("ctx_err", ctx.Err().Error()))
+		} else if req.SessionID != "" && mcpclient.GetSessionRegistry().IsSessionStopped(req.SessionID) {
+			// Guard: skip retry if the session was stopped via CloseHTTPSession
+			h.logger.Info("🔧 [BROKEN PIPE] Skipping retry — session stopped (zombie prevention)",
+				loggerv2.String("tool", req.Tool),
+				loggerv2.String("server", req.Server),
+				loggerv2.String("session_id", req.SessionID))
 		} else {
-			h.logger.Error("🔧 [BROKEN PIPE] Failed to get fresh connection", freshErr,
+			h.logger.Info("🔧 [BROKEN PIPE] Detected, getting fresh connection...",
+				loggerv2.String("tool", req.Tool),
 				loggerv2.String("server", req.Server))
+
+			// Get fresh connection using shared function (bypasses cache by invalidating)
+			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			if freshErr == nil {
+				h.logger.Info("🔧 [BROKEN PIPE] Retrying with fresh connection...",
+					loggerv2.String("tool", req.Tool))
+				result, err = freshClient.CallTool(ctx, req.Tool, req.Args)
+				if err == nil {
+					h.logger.Info("🔧 [BROKEN PIPE] Retry successful",
+						loggerv2.String("tool", req.Tool))
+				} else {
+					h.logger.Error("🔧 [BROKEN PIPE] Retry failed", err,
+						loggerv2.String("tool", req.Tool))
+				}
+			} else {
+				h.logger.Error("🔧 [BROKEN PIPE] Failed to get fresh connection", freshErr,
+					loggerv2.String("server", req.Server))
+			}
 		}
 	}
 
