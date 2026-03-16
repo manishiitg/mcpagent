@@ -50,7 +50,7 @@ func CreateToolSearchTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "add_tool",
-			Description: "Add one or more tools to your available tools. Use this after finding tools with search_tools.",
+			Description: "Add one or more tools to your available tools. Use this after finding tools with search_tools. If the same tool name exists on multiple servers, specify the 'server' parameter to pick one, or omit it to add both (renamed as servername__toolname).",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -59,12 +59,37 @@ func CreateToolSearchTools() []llmtypes.Tool {
 						"items":       map[string]interface{}{"type": "string"},
 						"description": "Array of exact names of the tools to add (e.g., ['read_file', 'weather_get']).",
 					},
+					"server": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional: Server name to disambiguate when the same tool exists on multiple MCP servers.",
+					},
 				},
 				"required": []string{"tool_names"},
 			}),
 		},
 	}
 	tools = append(tools, addToolTool)
+
+	// Add remove_tool tool
+	removeToolTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "remove_tool",
+			Description: "Remove one or more tools from your active tools when you no longer need them. This reduces clutter and helps you focus on relevant tools.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"tool_names": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Array of exact names of the tools to remove.",
+					},
+				},
+				"required": []string{"tool_names"},
+			}),
+		},
+	}
+	tools = append(tools, removeToolTool)
 
 	// Add show_all_tools tool
 	showAllToolsTool := llmtypes.Tool{

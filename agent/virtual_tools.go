@@ -159,6 +159,8 @@ func (a *Agent) HandleVirtualTool(ctx context.Context, toolName string, args map
 		return a.handleSearchTools(ctx, args)
 	case "add_tool":
 		return a.handleAddTool(ctx, args)
+	case "remove_tool":
+		return a.handleRemoveTool(ctx, args)
 	case "show_all_tools":
 		return a.handleShowAllTools(ctx, args)
 	default:

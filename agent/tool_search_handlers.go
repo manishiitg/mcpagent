@@ -16,6 +16,7 @@ import (
 type ToolSearchResult struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Server      string `json:"server,omitempty"`
 }
 
 // handleSearchTools handles the search_tools virtual tool
@@ -34,7 +35,7 @@ func (a *Agent) handleSearchTools(ctx context.Context, args map[string]interface
 
 	// Search all deferred tools with regex
 	var matches []ToolSearchResult
-	for _, tool := range a.allDeferredTools {
+	for i, tool := range a.allDeferredTools {
 		if tool.Function == nil {
 			continue
 		}
@@ -42,10 +43,15 @@ func (a *Agent) handleSearchTools(ctx context.Context, args map[string]interface
 		desc := tool.Function.Description
 
 		if pattern.MatchString(name) || pattern.MatchString(desc) {
-			matches = append(matches, ToolSearchResult{
+			result := ToolSearchResult{
 				Name:        name,
 				Description: desc,
-			})
+			}
+			// Include server name so the LLM can disambiguate duplicate tool names
+			if i < len(a.allDeferredToolServers) {
+				result.Server = a.allDeferredToolServers[i]
+			}
+			matches = append(matches, result)
 			// Do NOT add to discovered tools - user must explicitly add them
 		}
 	}
@@ -55,6 +61,7 @@ func (a *Agent) handleSearchTools(ctx context.Context, args map[string]interface
 
 // handleAddTool handles the add_tool virtual tool
 // It adds specific tools from the deferred list to the active discovered tools
+// When duplicate tool names exist across servers, tools are renamed to servername__toolname
 func (a *Agent) handleAddTool(ctx context.Context, args map[string]interface{}) (string, error) {
 	var toolNames []string
 
@@ -70,6 +77,9 @@ func (a *Agent) handleAddTool(ctx context.Context, args map[string]interface{}) 
 		toolNames = []string{name}
 	}
 
+	// Optional server parameter to disambiguate duplicate tool names
+	serverFilter, _ := args["server"].(string)
+
 	if len(toolNames) == 0 {
 		return "Error: tool_names parameter is required", nil
 	}
@@ -77,10 +87,10 @@ func (a *Agent) handleAddTool(ctx context.Context, args map[string]interface{}) 
 	var added []string
 	var alreadyAvailable []string
 	var notFound []string
+	var ambiguous []string
 
 	for _, toolName := range toolNames {
 		// Normalize tool name: convert PascalCase to snake_case for lookup
-		// Discovery shows PascalCase (e.g., ReadWorkspaceFile) but tools are stored as snake_case (read_workspace_file)
 		normalizedName := pascalToSnakeCase(toolName)
 
 		// Resolve any aliases (e.g., write_workspace_file -> update_workspace_file)
@@ -100,27 +110,69 @@ func (a *Agent) handleAddTool(ctx context.Context, args map[string]interface{}) 
 			continue
 		}
 
-		var foundTool *llmtypes.Tool
-		var actualToolName string
-		for _, tool := range a.allDeferredTools {
+		// Find all matching tools (there may be duplicates across servers)
+		type toolMatch struct {
+			tool       llmtypes.Tool
+			serverName string
+		}
+		var matches []toolMatch
+		for i, tool := range a.allDeferredTools {
 			if tool.Function != nil {
-				// Match against original name, normalized snake_case name, or aliased name
 				if tool.Function.Name == toolName || tool.Function.Name == normalizedName || tool.Function.Name == aliasedName {
-					foundTool = &tool
-					actualToolName = tool.Function.Name
-					break
+					srv := ""
+					if i < len(a.allDeferredToolServers) {
+						srv = a.allDeferredToolServers[i]
+					}
+					// If server filter specified, only include matching server
+					if serverFilter != "" && srv != "" && srv != serverFilter {
+						continue
+					}
+					matches = append(matches, toolMatch{tool: tool, serverName: srv})
 				}
 			}
 		}
 
-		if foundTool == nil {
+		if len(matches) == 0 {
 			notFound = append(notFound, toolName)
 			continue
 		}
 
-		// Store with actual tool name (snake_case) to ensure consistency
-		a.discoveredTools[actualToolName] = *foundTool
-		added = append(added, actualToolName)
+		if len(matches) == 1 {
+			// Single match - add with original name
+			actualToolName := matches[0].tool.Function.Name
+			a.discoveredTools[actualToolName] = matches[0].tool
+			added = append(added, actualToolName)
+		} else if serverFilter != "" && len(matches) == 1 {
+			// Server filter narrowed it down to one
+			actualToolName := matches[0].tool.Function.Name
+			a.discoveredTools[actualToolName] = matches[0].tool
+			added = append(added, actualToolName)
+		} else {
+			// Multiple matches - rename to servername__toolname for disambiguation
+			// Also update toolToServer so tool calls route correctly
+			serverNames := make([]string, 0, len(matches))
+			for _, m := range matches {
+				qualifiedName := m.tool.Function.Name
+				if m.serverName != "" {
+					qualifiedName = m.serverName + "__" + m.tool.Function.Name
+				}
+				// Create a copy with the qualified name
+				qualifiedTool := m.tool
+				qualifiedTool.Function = &llmtypes.FunctionDefinition{
+					Name:        qualifiedName,
+					Description: fmt.Sprintf("[%s] %s", m.serverName, m.tool.Function.Description),
+					Parameters:  m.tool.Function.Parameters,
+				}
+				a.discoveredTools[qualifiedName] = qualifiedTool
+				// Update toolToServer so tool execution routes to the correct server
+				if a.toolToServer != nil && m.serverName != "" {
+					a.toolToServer[qualifiedName] = m.serverName
+				}
+				added = append(added, qualifiedName)
+				serverNames = append(serverNames, m.serverName)
+			}
+			ambiguous = append(ambiguous, fmt.Sprintf("%s (found on servers: %s, added as separate tools)", toolName, strings.Join(serverNames, ", ")))
+		}
 	}
 
 	// Build response message
@@ -133,6 +185,72 @@ func (a *Agent) handleAddTool(ctx context.Context, args map[string]interface{}) 
 	}
 	if len(notFound) > 0 {
 		msgs = append(msgs, fmt.Sprintf("Not found: %s", strings.Join(notFound, ", ")))
+	}
+	if len(ambiguous) > 0 {
+		msgs = append(msgs, fmt.Sprintf("Disambiguated: %s", strings.Join(ambiguous, "; ")))
+	}
+
+	return strings.Join(msgs, "\n"), nil
+}
+
+// handleRemoveTool handles the remove_tool virtual tool
+// It removes tools from the active discovered tools set
+func (a *Agent) handleRemoveTool(ctx context.Context, args map[string]interface{}) (string, error) {
+	var toolNames []string
+
+	// Check for tool_names array
+	if names, ok := args["tool_names"].([]interface{}); ok {
+		for _, n := range names {
+			if s, ok := n.(string); ok {
+				toolNames = append(toolNames, s)
+			}
+		}
+	} else if name, ok := args["tool_name"].(string); ok {
+		toolNames = []string{name}
+	}
+
+	if len(toolNames) == 0 {
+		return "Error: tool_names parameter is required", nil
+	}
+
+	var removed []string
+	var notActive []string
+
+	for _, toolName := range toolNames {
+		// Don't allow removing virtual tools (search_tools, add_tool, etc.)
+		if isVirtualTool(toolName) || toolName == "remove_tool" {
+			notActive = append(notActive, fmt.Sprintf("%s (cannot remove virtual tool)", toolName))
+			continue
+		}
+
+		// Try exact name first
+		if _, exists := a.discoveredTools[toolName]; exists {
+			delete(a.discoveredTools, toolName)
+			// Clean up qualified name from toolToServer if it was a disambiguated tool
+			if strings.Contains(toolName, "__") && a.toolToServer != nil {
+				delete(a.toolToServer, toolName)
+			}
+			removed = append(removed, toolName)
+			continue
+		}
+
+		// Try normalized name
+		normalizedName := pascalToSnakeCase(toolName)
+		if _, exists := a.discoveredTools[normalizedName]; exists {
+			delete(a.discoveredTools, normalizedName)
+			removed = append(removed, normalizedName)
+			continue
+		}
+
+		notActive = append(notActive, toolName)
+	}
+
+	var msgs []string
+	if len(removed) > 0 {
+		msgs = append(msgs, fmt.Sprintf("Removed tools: %s", strings.Join(removed, ", ")))
+	}
+	if len(notActive) > 0 {
+		msgs = append(msgs, fmt.Sprintf("Not in active tools: %s", strings.Join(notActive, ", ")))
 	}
 
 	return strings.Join(msgs, "\n"), nil
@@ -180,7 +298,23 @@ func (a *Agent) formatSearchResults(matches []ToolSearchResult) (string, error) 
 		return "No tools found matching the pattern. Try a different search query.", nil
 	}
 
+	// Check if any results have duplicate tool names
+	nameCount := make(map[string]int)
+	for _, m := range matches {
+		nameCount[m.Name]++
+	}
+	hasDuplicates := false
+	for _, count := range nameCount {
+		if count > 1 {
+			hasDuplicates = true
+			break
+		}
+	}
+
 	message := "Found matching tools. Use 'add_tool' to load the ones you need."
+	if hasDuplicates {
+		message += " Some tools exist on multiple servers - use the 'server' parameter in add_tool to pick a specific one, or add without server to get both (renamed as servername__toolname)."
+	}
 
 	result, err := json.MarshalIndent(map[string]interface{}{
 		"found":   len(matches),
@@ -276,7 +410,7 @@ func pascalToSnakeCase(s string) string {
 // This handles cases where LLMs use common conventions that differ from actual tool names
 var toolAliases = map[string]string{
 	// write is commonly used as an alias for update/create
-	"write_workspace_file": "update_workspace_file",
+	"write_workspace_file":  "update_workspace_file",
 	"create_workspace_file": "update_workspace_file",
 }
 

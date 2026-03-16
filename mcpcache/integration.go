@@ -18,6 +18,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// DuplicateToolEntry represents a tool that exists on multiple MCP servers
+type DuplicateToolEntry struct {
+	Server string
+	Tool   llmtypes.Tool
+}
+
 // CachedConnectionResult represents the result of a cached or fresh MCP connection
 type CachedConnectionResult struct {
 	// Original connection data
@@ -27,6 +33,11 @@ type CachedConnectionResult struct {
 	Prompts      map[string][]mcp.Prompt
 	Resources    map[string][]mcp.Resource
 	SystemPrompt string
+
+	// DuplicateTools contains tools that were skipped during dedup because another
+	// server already registered a tool with the same name. Maps tool name to a list
+	// of (server, tool) pairs for all duplicate occurrences.
+	DuplicateTools map[string][]DuplicateToolEntry
 
 	// Cache metadata
 	CacheUsed     bool
@@ -725,10 +736,17 @@ func processCachedData(
 			if entry.ToolOwnership != nil {
 				ownership, exists := entry.ToolOwnership[toolName]
 				if exists && ownership == "duplicate" {
-					// This tool is a duplicate - skip it with deterministic logging
-					logger.Debug("Skipping duplicate tool (marked as duplicate in cache)",
+					// This tool is a duplicate - track it in DuplicateTools for tool search disambiguation
+					logger.Debug("Tracking duplicate tool for disambiguation",
 						loggerv2.String("tool", toolName),
 						loggerv2.String("server", srvName))
+					if result.DuplicateTools == nil {
+						result.DuplicateTools = make(map[string][]DuplicateToolEntry)
+					}
+					result.DuplicateTools[toolName] = append(result.DuplicateTools[toolName], DuplicateToolEntry{
+						Server: srvName,
+						Tool:   t,
+					})
 					continue
 				}
 				// If ownership is "primary" or not set, include the tool
@@ -736,12 +754,18 @@ func processCachedData(
 
 			// Runtime duplicate check (defensive - should not happen with ToolOwnership)
 			if seenTools[toolName] {
-				// Duplicate tool found despite ToolOwnership metadata - log warning
-				existingServer := result.ToolToServer[toolName]
-				logger.Warn("Unexpected duplicate tool in cache (ToolOwnership may need update)",
+				// Duplicate tool found despite ToolOwnership metadata - track for disambiguation
+				logger.Debug("Tracking unexpected duplicate tool for disambiguation",
 					loggerv2.String("tool", toolName),
-					loggerv2.String("existing_server", existingServer),
+					loggerv2.String("existing_server", result.ToolToServer[toolName]),
 					loggerv2.String("duplicate_server", srvName))
+				if result.DuplicateTools == nil {
+					result.DuplicateTools = make(map[string][]DuplicateToolEntry)
+				}
+				result.DuplicateTools[toolName] = append(result.DuplicateTools[toolName], DuplicateToolEntry{
+					Server: srvName,
+					Tool:   t,
+				})
 				continue
 			}
 

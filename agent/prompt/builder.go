@@ -16,13 +16,14 @@ func GetToolSearchInstructions() string {
 	return `**TOOL SEARCH MODE - Dynamic Tool Discovery:**
 
 You have access to a large catalog of tools, but they are not loaded by default to optimize performance.
-Use the **search_tools** function to discover tools, and then **add_tool** to load them.
+Use the **search_tools** function to discover tools, **add_tool** to load them, and **remove_tool** to unload tools you no longer need.
 
-**📋 How to Search & Add:**
+**📋 How to Search, Add & Remove:**
 1. Call search_tools with a search pattern (regex or keywords)
-2. Review the returned tools with their descriptions
+2. Review the returned tools with their descriptions and server names
 3. Call add_tool with the names of the tools you want to use
 4. Use the discovered tools to complete your task
+5. Call remove_tool to unload tools you are done with
 
 **🔍 Search Examples:**
 - search_tools(query="weather") - Find weather-related tools
@@ -35,18 +36,27 @@ Use the **search_tools** function to discover tools, and then **add_tool** to lo
 - If no regex matches found, fuzzy search is automatically applied
 - Fuzzy search considers tool names and descriptions
 - Top 5 fuzzy matches are returned when exact matches fail
+- Search results include the server name for each tool
+
+**🔀 Duplicate Tools Across Servers:**
+- The same tool name may exist on multiple MCP servers (e.g., list_files on both "aws" and "azure")
+- Search results show the server name so you can tell them apart
+- Use add_tool(tool_names=["list_files"], server="aws") to pick a specific server's version
+- If you add without specifying server, both are added as servername__toolname (e.g., aws__list_files, azure__list_files)
 
 **📝 Workflow:**
 1. **Understand** the user's request
 2. **Search** for relevant tools using search_tools
 3. **Add** the tools you need using add_tool(tool_names=["tool1", "tool2"])
 4. **Use** the discovered tools to complete the task
-5. **Search again** if needed for additional capabilities
+5. **Remove** tools you no longer need using remove_tool(tool_names=["tool1"]) to keep your toolkit focused
+6. **Search again** if needed for additional capabilities
 
 **💡 Tips:**
 - Start with broad searches, then narrow down
 - Discovered tools must be explicitly added with add_tool
-- Once added, tools remain available for the entire conversation
+- Once added, tools remain available until removed or the conversation ends
+- Remove tools when you're done with a phase of work to reduce clutter
 - You can search multiple times to find different tools
 - Check tool descriptions to understand parameters`
 }
@@ -152,6 +162,7 @@ When answering questions:
 2. **Be Proactive:** Once tools are discovered, use them without asking for permission.
 3. **Chain Actions:** If a tool output leads to a next step, take it immediately.
 4. **Search Again:** If you need additional capabilities, search for more tools.
+5. **Clean Up:** When done with a set of tools, use remove_tool to unload them and keep your toolkit focused.
 </core_principles>`
 	} else {
 		corePrinciplesSection = `<core_principles>
@@ -410,13 +421,18 @@ MCP tools use: POST /tools/mcp/{server}/{tool}`
 
 - **search_tools** - Search for available tools by name or description
   Usage: search_tools(query="regex_pattern")
-  Returns matching tools (you must use add_tool to load them)
+  Returns matching tools with server names (you must use add_tool to load them)
   Supports regex patterns and fuzzy matching
 
 - **add_tool** - Add one or more tools to your toolkit
   Usage: add_tool(tool_names=["name1", "name2"])
-  
-Once you discover tools using search_tools, add them using add_tool, then they will be available for you to call directly.`
+  Optional: add_tool(tool_names=["name1"], server="server_name") to pick a specific server when duplicates exist
+
+- **remove_tool** - Remove tools you no longer need from your active toolkit
+  Usage: remove_tool(tool_names=["name1", "name2"])
+
+Once you discover tools using search_tools, add them using add_tool, then they will be available for you to call directly.
+When you finish a phase of work, use remove_tool to unload tools you no longer need — this keeps your toolkit focused and reduces noise.`
 	}
 
 	// Check if prompts actually exist

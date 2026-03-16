@@ -63,7 +63,7 @@ func isVirtualTool(toolName string) bool {
 		"get_prompt", "get_resource",
 		"read_large_output", "search_large_output", "query_large_output",
 		"get_api_spec", // Code execution mode tools
-		"search_tools", "add_tool", "show_all_tools", // Tool search mode tools
+		"search_tools", "add_tool", "remove_tool", "show_all_tools", // Tool search mode tools
 	}
 	for _, vt := range virtualTools {
 		if vt == toolName {
@@ -1324,6 +1324,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				var result *mcp.CallToolResult
 				var toolErr error
 
+				// Resolve disambiguated tool names (servername__toolname -> toolname)
+				// When duplicate tools from different servers are added, they get renamed
+				// to servername__toolname. We need to use the original name for MCP calls.
+				actualToolName := tc.FunctionCall.Name
+				if strings.Contains(actualToolName, "__") {
+					parts := strings.SplitN(actualToolName, "__", 2)
+					if len(parts) == 2 {
+						actualToolName = parts[1]
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Resolved disambiguated tool '%s' -> '%s' (server: %s)", tc.FunctionCall.Name, actualToolName, parts[0]))
+					}
+				}
+
 				// Check if this is a virtual tool
 				if isVirtualTool(tc.FunctionCall.Name) {
 					// Handle virtual tool execution
@@ -1380,11 +1392,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					} else {
 						// Handle regular MCP tool execution
 						v2Logger.Debug("🔧 [TOOL_CALL] About to call MCP tool via client (from customTools fallback)",
-							loggerv2.String("tool_name", tc.FunctionCall.Name),
+							loggerv2.String("tool_name", actualToolName),
 							loggerv2.String("server_name", serverName),
 							loggerv2.String("timeout", toolTimeout.String()))
 						callStart := time.Now()
-						result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, tc.FunctionCall.Name, args, v2Logger, serverName)
+						result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, actualToolName, args, v2Logger, serverName)
 						callDuration := time.Since(callStart)
 						v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed (from customTools fallback)",
 							loggerv2.String("tool_name", tc.FunctionCall.Name),
@@ -1396,11 +1408,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				} else {
 					// Handle regular MCP tool execution
 					v2Logger.Debug("🔧 [TOOL_CALL] About to execute MCP tool",
-						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("tool_name", actualToolName),
 						loggerv2.String("server_name", serverName),
 						loggerv2.String("timeout", toolTimeout.String()))
 					callStart := time.Now()
-					result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, tc.FunctionCall.Name, args, v2Logger, serverName)
+					result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, actualToolName, args, v2Logger, serverName)
 					callDuration := time.Since(callStart)
 					v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed",
 						loggerv2.String("tool_name", tc.FunctionCall.Name),

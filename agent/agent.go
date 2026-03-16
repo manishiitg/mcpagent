@@ -844,8 +844,9 @@ type Agent struct {
 	// When disabled (default): All tools are exposed directly
 	UseToolSearchMode  bool                     // Enable tool search mode
 	discoveredTools    map[string]llmtypes.Tool // Tools discovered during this session
-	allDeferredTools   []llmtypes.Tool          // All available tools (hidden until discovered)
-	preDiscoveredTools []string                 // Tool names that are always available without searching
+	allDeferredTools       []llmtypes.Tool   // All available tools (hidden until discovered), may include duplicates
+	allDeferredToolServers []string          // Parallel slice: server name for each entry in allDeferredTools
+	preDiscoveredTools   []string                 // Tool names that are always available without searching
 
 	// Cache configuration
 	// When enabled: Skips cache lookup and always performs fresh connections
@@ -1510,6 +1511,58 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			ag.allDeferredTools = allLLMTools
 			logger.Debug("Tool search mode: All MCP tools deferred for discovery (no filtering)",
 				loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
+		}
+
+		// Build parallel server slice for deferred tools (for tool search disambiguation)
+		ag.allDeferredToolServers = make([]string, len(ag.allDeferredTools))
+		for i, tool := range ag.allDeferredTools {
+			if tool.Function != nil {
+				if srv, ok := toolToServer[tool.Function.Name]; ok {
+					ag.allDeferredToolServers[i] = srv
+				}
+			}
+		}
+
+		// Re-discover tools from each client to find duplicates that were dropped
+		// during connection dedup. This ensures tool search shows all tools from all servers.
+		seenToolServers := make(map[string]map[string]bool) // tool name -> set of servers
+		for i, tool := range ag.allDeferredTools {
+			if tool.Function != nil {
+				if seenToolServers[tool.Function.Name] == nil {
+					seenToolServers[tool.Function.Name] = make(map[string]bool)
+				}
+				seenToolServers[tool.Function.Name][ag.allDeferredToolServers[i]] = true
+			}
+		}
+		for srvName, client := range clients {
+			if client == nil {
+				continue
+			}
+			mcpTools, listErr := client.ListTools(ctx)
+			if listErr != nil {
+				logger.Debug("Failed to list tools for duplicate detection",
+					loggerv2.String("server", srvName), loggerv2.Error(listErr))
+				continue
+			}
+			llmTools, convErr := mcpclient.ToolsAsLLM(mcpTools)
+			if convErr != nil {
+				continue
+			}
+			for _, tool := range llmTools {
+				if tool.Function == nil {
+					continue
+				}
+				toolName := tool.Function.Name
+				if seenToolServers[toolName] != nil && !seenToolServers[toolName][srvName] {
+					// Duplicate tool from a different server — add to deferred list
+					ag.allDeferredTools = append(ag.allDeferredTools, tool)
+					ag.allDeferredToolServers = append(ag.allDeferredToolServers, srvName)
+					seenToolServers[toolName][srvName] = true
+					logger.Info("Added duplicate tool for tool search disambiguation",
+						loggerv2.String("tool", toolName),
+						loggerv2.String("server", srvName))
+				}
+			}
 		}
 
 		// Don't add any MCP tools to the active tool list yet
