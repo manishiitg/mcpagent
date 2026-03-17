@@ -941,7 +941,8 @@ type LLMModel struct {
 	Region *string `json:"region,omitempty"`  // For Bedrock
 
 	// Model-specific options
-	Temperature *float64 `json:"temperature,omitempty"` // Override default temperature (0.0-1.0)
+	Temperature *float64                `json:"temperature,omitempty"` // Override default temperature (0.0-1.0)
+	Options     map[string]interface{} `json:"options,omitempty"`     // Provider-specific options (reasoning_effort, thinking_level, etc.)
 }
 
 // AgentLLMConfiguration holds the primary and fallback LLM configurations
@@ -1405,7 +1406,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// CLI providers always need code execution mode (tools accessed via HTTP bridge).
 	// Without this, the tool filtering below would take the UseToolSearchMode path instead of
 	// UseCodeExecutionMode, leaving allMCPToolDefs empty and breaking get_api_spec.
-	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI {
+	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI || ag.provider == llmproviders.ProviderCodexCLI {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
 			logger.Debug("[BRIDGE_DEBUG] Pre-set UseCodeExecutionMode for CLI provider before MCP tool filtering",
@@ -1658,7 +1659,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Safety net: Ensure CLI provider modes are correct before virtual tool filtering.
 	// The primary pre-detection is above (before MCP tool filtering at allMCPToolDefs).
 	// This block is a safety net in case code is reordered in the future.
-	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI {
+	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI || ag.provider == llmproviders.ProviderCodexCLI {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
 			logger.Warn("[BRIDGE_DEBUG] CLI provider UseCodeExecutionMode was not pre-set — enforcing before virtual tool filtering (safety net)",
@@ -1916,6 +1917,37 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.EnableStreaming {
 			ag.EnableStreaming = true
 			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
+	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
+	if ag.provider == llmproviders.ProviderCodexCLI {
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [CODEX_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [CODEX_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [CODEX_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [CODEX_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [CODEX_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 
@@ -2873,6 +2905,37 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		if !ag.EnableStreaming {
 			ag.EnableStreaming = true
 			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
+	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
+	if ag.provider == llmproviders.ProviderCodexCLI {
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [CODEX_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [CODEX_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [CODEX_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [CODEX_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [CODEX_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 

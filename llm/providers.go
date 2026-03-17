@@ -26,6 +26,7 @@ const (
 	ProviderAzure      = llmproviders.ProviderAzure
 	ProviderClaudeCode = llmproviders.ProviderClaudeCode
 	ProviderGeminiCLI  = llmproviders.ProviderGeminiCLI
+	ProviderCodexCLI   = llmproviders.ProviderCodexCLI
 	ProviderMiniMax            = llmproviders.ProviderMiniMax
 	ProviderMiniMaxCodingPlan  = llmproviders.ProviderMiniMaxCodingPlan
 )
@@ -62,6 +63,7 @@ type ProviderAPIKeys struct {
 	Anthropic  *string
 	Vertex     *string
 	GeminiCLI  *string
+	CodexCLI   *string
 	MiniMax            *string
 	MiniMaxCodingPlan  *string
 	Bedrock            *BedrockConfig
@@ -144,6 +146,7 @@ func convertConfig(config Config) llmproviders.Config {
 			Anthropic:         config.APIKeys.Anthropic,
 			Vertex:            config.APIKeys.Vertex,
 			GeminiCLI:         config.APIKeys.GeminiCLI,
+			CodexCLI:          config.APIKeys.CodexCLI,
 			MiniMax:           config.APIKeys.MiniMax,
 			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
 		}
@@ -323,6 +326,12 @@ func WithResumeSessionID(id string) CallOption {
 	return llmproviders.WithResumeSessionID(id)
 }
 
+// WithClaudeCodeEffort sets the --effort flag for the Claude Code CLI.
+// Values: "low", "medium", "high", "max"
+func WithClaudeCodeEffort(level string) CallOption {
+	return llmproviders.WithClaudeCodeEffort(level)
+}
+
 // --- Gemini CLI Wrapper Functions ---
 
 // WithGeminiResumeSessionID sets the --resume flag so the Gemini CLI resumes
@@ -357,6 +366,48 @@ func WithGeminiAllowedTools(tools string) CallOption {
 // This ensures resume calls use the same isolated project directory as the original invocation.
 func WithGeminiProjectDirID(id string) CallOption {
 	return llmproviders.WithGeminiProjectDirID(id)
+}
+
+// --- Codex CLI Wrapper Functions ---
+
+// WithCodexResumeSessionID resumes a Codex CLI session by thread ID.
+func WithCodexResumeSessionID(id string) CallOption {
+	return llmproviders.WithCodexResumeSessionID(id)
+}
+
+// WithCodexApprovalPolicy sets the approval_policy for the Codex CLI.
+func WithCodexApprovalPolicy(policy string) CallOption {
+	return llmproviders.WithCodexApprovalPolicy(policy)
+}
+
+// WithCodexReasoningEffort sets the model_reasoning_effort for the Codex CLI.
+func WithCodexReasoningEffort(effort string) CallOption {
+	return llmproviders.WithCodexReasoningEffort(effort)
+}
+
+// WithCodexDisableShellTool disables the built-in shell tool in Codex CLI.
+func WithCodexDisableShellTool() CallOption {
+	return llmproviders.WithCodexDisableShellTool()
+}
+
+// WithCodexFullAuto enables --full-auto mode for the Codex CLI.
+func WithCodexFullAuto() CallOption {
+	return llmproviders.WithCodexFullAuto()
+}
+
+// WithCodexSandbox sets the --sandbox flag for the Codex CLI.
+func WithCodexSandbox(sandbox string) CallOption {
+	return llmproviders.WithCodexSandbox(sandbox)
+}
+
+// WithCodexProjectDirID sets the working directory for the Codex CLI.
+func WithCodexProjectDirID(dir string) CallOption {
+	return llmproviders.WithCodexProjectDirID(dir)
+}
+
+// WithCodexConfigOverrides passes arbitrary -c key=value overrides to the Codex CLI.
+func WithCodexConfigOverrides(overrides []string) CallOption {
+	return llmproviders.WithCodexConfigOverrides(overrides)
 }
 
 // Re-export helper functions from llm-providers

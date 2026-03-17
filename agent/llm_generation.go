@@ -470,6 +470,8 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 			apiKeys.MiniMax = model.APIKey
 		case llmproviders.ProviderGeminiCLI:
 			apiKeys.GeminiCLI = model.APIKey
+		case llmproviders.ProviderCodexCLI:
+			apiKeys.CodexCLI = model.APIKey
 		}
 	}
 
@@ -527,6 +529,14 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// Resume existing Claude Code session if available
 		if a.ClaudeCodeSessionID != "" {
 			opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
+		}
+
+		// Pass effort level from model options
+		if model.Options != nil {
+			if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
+				opts = append(opts, llm.WithClaudeCodeEffort(effort))
+				a.Logger.Info(fmt.Sprintf("🧠 [CLAUDE_CODE] Effort level set to: %s", effort))
+			}
 		}
 	}
 
@@ -607,6 +617,72 @@ deny_message = "Use MCP bridge tools instead of built-in tools."
 		// Pass project dir ID so adapter reuses our pre-created directory
 		opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
 		a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
+	}
+
+	// 🔧 CODEX CLI INTEGRATION: MCP bridge + disable shell + auto-approve
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderCodexCLI {
+		// Disable shell tool so Codex only uses MCP bridge tools
+		opts = append(opts, llm.WithCodexDisableShellTool())
+		// Auto-approve all tool calls (no interactive prompts)
+		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
+
+		// Build MCP bridge config and pass as Codex CLI config overrides
+		// Codex CLI uses config.toml format: mcp_servers.<name>.command, .args, .env
+		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
+		if bridgeErr == nil {
+			var bridgeParsed map[string]interface{}
+			if json.Unmarshal([]byte(bridgeConfig), &bridgeParsed) == nil {
+				if mcpServers, ok := bridgeParsed["mcpServers"].(map[string]interface{}); ok {
+					if apiBridge, ok := mcpServers["api-bridge"].(map[string]interface{}); ok {
+						var configOverrides []string
+
+						// Set the bridge command
+						if cmd, ok := apiBridge["command"].(string); ok {
+							configOverrides = append(configOverrides, fmt.Sprintf("mcp_servers.api-bridge.command=%q", cmd))
+						}
+
+						// Set environment variables for the bridge
+						if envMap, ok := apiBridge["env"].(map[string]interface{}); ok {
+							for k, v := range envMap {
+								if vStr, ok := v.(string); ok {
+									configOverrides = append(configOverrides, fmt.Sprintf("mcp_servers.api-bridge.env.%s=%q", k, vStr))
+								}
+							}
+						}
+
+						if len(configOverrides) > 0 {
+							opts = append(opts, llm.WithCodexConfigOverrides(configOverrides))
+							a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge with %d config overrides", len(configOverrides)))
+						}
+					}
+				}
+			}
+		} else {
+			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Codex CLI (tools may be limited): %v", bridgeErr))
+		}
+
+		// Pass reasoning effort from model options
+		if model.Options != nil {
+			if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
+				opts = append(opts, llm.WithCodexReasoningEffort(effort))
+				a.Logger.Info(fmt.Sprintf("🧠 [CODEX_CLI] Reasoning effort set to: %s", effort))
+			}
+		}
+
+		a.Logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
+	}
+
+	// Apply model options for all providers (reasoning_effort, thinking_level, etc.)
+	if model.Options != nil {
+		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" && llmproviders.Provider(model.Provider) != llmproviders.ProviderCodexCLI {
+			opts = append(opts, llmtypes.WithReasoningEffort(effort))
+		}
+		if level, ok := model.Options["thinking_level"].(string); ok && level != "" {
+			opts = append(opts, llmtypes.WithThinkingLevel(level))
+		}
+		if budget, ok := model.Options["thinking_budget"].(float64); ok && budget > 0 {
+			opts = append(opts, llmtypes.WithThinkingBudget(int(budget)))
+		}
 	}
 
 	return llmInstance.GenerateContent(ctx, messages, opts...)
