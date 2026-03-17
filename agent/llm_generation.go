@@ -94,6 +94,25 @@ func isMaxTokenError(err error) bool {
 		strings.Contains(msg, "too long")
 }
 
+// isQuotaExhaustedError checks if an error is a permanent quota exhaustion (daily/monthly limits)
+// that will NOT recover within minutes — skip same-model retries and go straight to fallback.
+func isQuotaExhaustedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "per_day") ||
+		strings.Contains(msg, "per_month") ||
+		strings.Contains(msg, "GenerateRequestsPerDay") ||
+		strings.Contains(msg, "RESOURCE_EXHAUSTED") ||
+		strings.Contains(msg, "quota exceeded for metric") ||
+		strings.Contains(msg, "exceeded your current quota") ||
+		strings.Contains(msg, "retryDelay:3") || // retryDelay >= 3600s (1+ hour)
+		strings.Contains(msg, "retryDelay:4") ||
+		strings.Contains(msg, "retryDelay:8") ||
+		strings.Contains(msg, "retryDelay:9")
+}
+
 // isThrottlingError checks if an error is due to API throttling
 func isThrottlingError(err error) bool {
 	if err == nil {
@@ -228,6 +247,8 @@ func isInternalError(err error) bool {
 func classifyLLMError(err error) string {
 	if isMaxTokenError(err) {
 		return "max_token_error"
+	} else if isQuotaExhaustedError(err) {
+		return "quota_exhausted_error"
 	} else if isThrottlingError(err) {
 		return "throttling_error"
 	} else if isZeroCandidatesError(err) {
@@ -723,9 +744,20 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	// Get effective configuration (supports new and legacy)
 	llmConfig := a.getEffectiveLLMConfig()
 
-	// Build list of models to try: Primary + Fallbacks
-	modelsToTry := []LLMModel{llmConfig.Primary}
-	modelsToTry = append(modelsToTry, llmConfig.Fallbacks...)
+	// Build list of models to try: Primary + Fallbacks, skipping permanently quota-exhausted models.
+	allModels := append([]LLMModel{llmConfig.Primary}, llmConfig.Fallbacks...)
+	var modelsToTry []LLMModel
+	for _, m := range allModels {
+		key := m.Provider + "/" + m.ModelID
+		if a.quotaExhaustedModels[key] {
+			logger.Info(fmt.Sprintf("⏭️ [QUOTA_SKIP] Skipping permanently exhausted model %s (remembered from prior turn)", key))
+			continue
+		}
+		modelsToTry = append(modelsToTry, m)
+	}
+	if len(modelsToTry) == 0 {
+		return nil, usage, fmt.Errorf("all LLMs failed (primary + %d fallbacks): all models are quota-exhausted", len(llmConfig.Fallbacks))
+	}
 
 	generationStartTime := time.Now()
 
@@ -840,14 +872,20 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
 			}
 
-			// Emit error event for actual errors
-			a.EmitTypedEvent(ctx, &events.LLMGenerationErrorEvent{
-				BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-				Turn:          turn + 1,
-				ModelID:       model.ModelID,
-				Error:         err.Error(),
-				Duration:      time.Since(generationStartTime),
-			})
+			// Only emit LLMGenerationErrorEvent when this is the last model (no fallback will follow).
+			// For intermediate failures where a fallback will be tried, the FallbackModelUsedEvent
+			// already communicates the model switch — emitting an error card here causes confusing
+			// red error UI even though the request ultimately succeeded via the fallback.
+			isLastModel := modelIndex == len(modelsToTry)-1
+			if isLastModel {
+				a.EmitTypedEvent(ctx, &events.LLMGenerationErrorEvent{
+					BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+					Turn:          turn + 1,
+					ModelID:       model.ModelID,
+					Error:         err.Error(),
+					Duration:      time.Since(generationStartTime),
+				})
+			}
 
 			errorType := classifyLLMError(err)
 			lastErr = err
@@ -856,7 +894,17 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// For zero_candidates errors: limit to 3 retries before fallback
 			// For throttling/internal errors: use full 5 retries
 			shouldRetrySameModel := false
-			if errorType == "zero_candidates_error" {
+			if errorType == "quota_exhausted_error" {
+				// Permanent quota exhaustion (daily/monthly) — retrying same model is pointless.
+				// Remember this model so future turns skip it immediately.
+				if a.quotaExhaustedModels == nil {
+					a.quotaExhaustedModels = make(map[string]bool)
+				}
+				key := model.Provider + "/" + model.ModelID
+				a.quotaExhaustedModels[key] = true
+				logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Daily/permanent quota exceeded for %s — marked as exhausted for remaining turns", key))
+				break
+			} else if errorType == "zero_candidates_error" {
 				// Zero candidates: retry up to 3 times (attempts 0, 1, 2 = 3 retries total)
 				if attempt < maxRetriesZeroCandidates-1 {
 					shouldRetrySameModel = true

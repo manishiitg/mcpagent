@@ -929,6 +929,11 @@ type Agent struct {
 
 	// LLM Configuration
 	LLMConfig AgentLLMConfiguration
+
+	// quotaExhaustedModels tracks models that hit permanent quota exhaustion (daily/monthly limits).
+	// These are skipped on subsequent turns to avoid wasted API calls.
+	// Key: "provider/model_id"
+	quotaExhaustedModels map[string]bool
 }
 
 // LLMModel represents a single LLM configuration
