@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
@@ -70,10 +71,14 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	mcpStartTime := time.Now()
 	h.logger.Info("Per-tool MCP request",
 		loggerv2.String("server", server),
 		loggerv2.String("tool", tool),
 		loggerv2.String("session_id", sessionID))
+	defer func() {
+		h.logger.Info(fmt.Sprintf("[TOOL_LIFECYCLE] MCP tool completed | server=%s tool=%s session=%s duration=%dms", server, tool, sessionID, time.Since(mcpStartTime).Milliseconds()))
+	}()
 
 	// Build the standard MCPExecuteRequest and reuse the full handler logic.
 	// URL path segments are sanitized (hyphens→underscores via SanitizePathSegment).
@@ -271,15 +276,31 @@ func (h *ExecutorHandlers) HandlePerToolVirtualRequest(w http.ResponseWriter, r 
 		}
 	}
 
+	// Per-agent virtual tool scoping: if X-Virtual-Scope-ID header is present,
+	// use it instead of session_id for virtual tool lookup. This prevents parent/child
+	// agents sharing the same MCP session from overwriting each other's get_api_spec handler.
+	virtualScopeID := sessionID
+	if scopeHdr := r.Header.Get("X-Virtual-Scope-ID"); scopeHdr != "" {
+		virtualScopeID = scopeHdr
+	}
+
+	startTime := time.Now()
 	h.logger.Info("Per-tool virtual request",
 		loggerv2.String("tool", tool),
-		loggerv2.String("session_id", sessionID))
+		loggerv2.String("session_id", sessionID),
+		loggerv2.String("virtual_scope_id", virtualScopeID))
 
-	// Build the standard VirtualExecuteRequest and reuse the full handler logic
+	// Log completion when response is sent
+	defer func() {
+		h.logger.Info(fmt.Sprintf("[TOOL_LIFECYCLE] Virtual tool completed | tool=%s session=%s duration=%dms", tool, sessionID, time.Since(startTime).Milliseconds()))
+	}()
+
+	// Build the standard VirtualExecuteRequest and reuse the full handler logic.
+	// Use virtualScopeID for virtual tool lookup (per-agent scoping).
 	wrappedBody := VirtualExecuteRequest{
 		Tool:      tool,
 		Args:      args,
-		SessionID: sessionID,
+		SessionID: virtualScopeID,
 	}
 
 	bodyBytes, err := json.Marshal(wrappedBody)

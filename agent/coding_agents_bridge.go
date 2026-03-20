@@ -59,7 +59,7 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		}
 	}
 
-	// 2. Collect the 3 bridge tools by name
+	// 2. Collect the bridge tools by name
 	logger.Debug("BuildBridgeMCPConfig: agent state",
 		loggerv2.Int("tools_count", len(a.Tools)),
 		loggerv2.Int("custom_tools_count", len(a.customTools)),
@@ -113,17 +113,24 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		return "", fmt.Errorf("failed to marshal tool definitions: %w", err)
 	}
 
+	bridgeEnv := map[string]string{
+		"MCP_API_URL":   apiURL,
+		"MCP_API_TOKEN": apiToken,
+		"MCP_TOOLS":     string(toolsJSON),
+	}
+	// Pass per-agent virtual tool scope so the bridge can route get_api_spec
+	// to the correct agent's handler (prevents parent/child overwrite)
+	if virtualScopeID := a.GetVirtualToolScopeID(); virtualScopeID != "" {
+		bridgeEnv["MCP_VIRTUAL_SCOPE_ID"] = virtualScopeID
+	}
+
 	config := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
 			"api-bridge": map[string]interface{}{
 				"command": bridgePath,
 				"args":    []string{},
-				"env": map[string]string{
-					"MCP_API_URL":   apiURL,
-					"MCP_API_TOKEN": apiToken,
-					"MCP_TOOLS":     string(toolsJSON),
-				},
-				"trust": true, // Auto-trust: bypass confirmation dialogs for non-interactive usage
+				"env":     bridgeEnv,
+				"trust":   true, // Auto-trust: bypass confirmation dialogs for non-interactive usage
 			},
 		},
 	}

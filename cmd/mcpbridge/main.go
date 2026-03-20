@@ -33,6 +33,7 @@ func main() {
 	apiURL := os.Getenv("MCP_API_URL")
 	apiToken := os.Getenv("MCP_API_TOKEN")
 	toolsJSON := os.Getenv("MCP_TOOLS")
+	virtualScopeID := os.Getenv("MCP_VIRTUAL_SCOPE_ID") // Per-agent scope for virtual tools (prevents parent/child overwrite)
 
 	if apiURL == "" || apiToken == "" || toolsJSON == "" {
 		log.Fatal("MCP_API_URL, MCP_API_TOKEN, and MCP_TOOLS env vars are required")
@@ -85,6 +86,9 @@ func main() {
 			}
 			httpReq.Header.Set("Authorization", "Bearer "+apiToken)
 			httpReq.Header.Set("Content-Type", "application/json")
+			if def.Type == "virtual" && virtualScopeID != "" {
+				httpReq.Header.Set("X-Virtual-Scope-ID", virtualScopeID)
+			}
 
 			resp, err := httpClient.Do(httpReq)
 			if err != nil {

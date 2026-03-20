@@ -570,8 +570,16 @@ func CleanupSession(sessionID string) {
 	}
 
 	if globalRegistry.sessionVirtualTools != nil {
+		// Clean up exact match (legacy: virtual tools keyed by sessionID)
 		if _, exists := globalRegistry.sessionVirtualTools[sessionID]; exists {
 			delete(globalRegistry.sessionVirtualTools, sessionID)
+		}
+		// Clean up per-agent virtual tool scopes (keyed as "sessionID:vt:traceID")
+		prefix := sessionID + ":vt:"
+		for key := range globalRegistry.sessionVirtualTools {
+			if strings.HasPrefix(key, prefix) {
+				delete(globalRegistry.sessionVirtualTools, key)
+			}
 		}
 	}
 

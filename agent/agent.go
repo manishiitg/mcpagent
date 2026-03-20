@@ -1764,9 +1764,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			loggerv2.String("session_id", ag.SessionID),
 			loggerv2.Int("count", len(customToolExecutors)))
 
-		codeexec.InitRegistryVirtualToolsForSession(ag.SessionID, virtualToolExecutors, logger)
+		virtualScopeID := ag.GetVirtualToolScopeID()
+		codeexec.InitRegistryVirtualToolsForSession(virtualScopeID, virtualToolExecutors, logger)
 		logger.Info("✅ Session-scoped virtual tools registered during initialization (NewAgent)",
 			loggerv2.String("session_id", ag.SessionID),
+			loggerv2.String("virtual_scope_id", virtualScopeID),
 			loggerv2.Int("virtual_tool_count", len(virtualToolExecutors)),
 			loggerv2.Int("custom_tool_count", len(ag.customTools)),
 			loggerv2.String("agent_ptr", fmt.Sprintf("%p", ag)))
@@ -4034,6 +4036,18 @@ func (a *Agent) GetCustomTools() map[string]CustomTool {
 	return a.customTools
 }
 
+// GetVirtualToolScopeID returns a unique scope key for this agent's virtual tools.
+// This prevents parent/child agents sharing the same SessionID from overwriting
+// each other's virtual tool handlers (e.g., get_api_spec bound to different agent instances).
+// Custom tools continue to use SessionID for sharing, but virtual tools need per-agent scoping
+// because they bind to agent-specific state (customTools, toolFilter).
+func (a *Agent) GetVirtualToolScopeID() string {
+	if a.SessionID == "" {
+		return ""
+	}
+	return a.SessionID + ":vt:" + string(a.TraceID)
+}
+
 // UpdateCodeExecutionRegistry explicitly updates the code execution registry with all custom tools
 // This is useful when tools are registered after agent initialization (e.g., workspace/human tools)
 // It also rebuilds the system prompt to include the newly registered tools in the tool structure
@@ -4089,10 +4103,16 @@ func (a *Agent) UpdateCodeExecutionRegistry() error {
 			}
 		}
 		if len(virtualToolExecutors) > 0 {
-			codeexec.InitRegistryVirtualToolsForSession(a.SessionID, virtualToolExecutors, a.Logger)
+			// Use per-agent scope for virtual tools to prevent parent/child overwrite.
+			// Multiple agents share the same SessionID for MCP connection sharing,
+			// but each agent's virtual tools (especially get_api_spec) must bind to
+			// its own agent instance since they access agent-specific customTools/toolFilter.
+			virtualScopeID := a.GetVirtualToolScopeID()
+			codeexec.InitRegistryVirtualToolsForSession(virtualScopeID, virtualToolExecutors, a.Logger)
 			if a.Logger != nil {
 				a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped virtual tools registered (UpdateCodeExecutionRegistry)",
 					loggerv2.String("session_id", a.SessionID),
+					loggerv2.String("virtual_scope_id", virtualScopeID),
 					loggerv2.Int("virtual_tool_count", len(virtualToolExecutors)),
 					loggerv2.Int("custom_tool_count", len(a.customTools)),
 					loggerv2.String("agent_ptr", fmt.Sprintf("%p", a)))
