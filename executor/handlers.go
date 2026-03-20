@@ -12,6 +12,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpcache"
 	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/toolcalllog"
 )
 
 // --- REQUEST/RESPONSE TYPES ---
@@ -231,6 +232,21 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			loggerv2.String("tool", req.Tool),
 			loggerv2.String("server", req.Server),
 			loggerv2.String("registry_error", callErr.Error()))
+
+		// 🔒 SCOPE ENFORCEMENT: If the session registry is active (has MCP clients) but
+		// the requested server is not in scope, deny the request instead of spawning a
+		// new browser/process. This prevents agents from reaching MCP servers that are
+		// not configured for the current workflow (e.g. playwright in a non-browser workflow).
+		if req.SessionID != "" && !codeexec.IsServerInScope(req.Server) {
+			h.logger.Warn("🔒 [SCOPE DENIED] Server not in session scope, refusing mcpcache fallback",
+				loggerv2.String("server", req.Server),
+				loggerv2.String("session_id", req.SessionID))
+			_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec
+				Success: false,
+				Error:   fmt.Sprintf("Server '%s' is not available in this session's scope. The workflow does not have access to this MCP server.", req.Server),
+			})
+			return
+		}
 	}
 
 	// PRIORITY 3: Fall back to mcpcache (creates new connection)
@@ -329,6 +345,12 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		loggerv2.String("tool", req.Tool),
 		loggerv2.Int("result_length", len(resultStr)))
 
+	// Record completed call so LLMAgentWrapper can reconstruct history on cancellation.
+	if req.SessionID != "" {
+		argsJSON, _ := json.Marshal(req.Args)
+		toolcalllog.Record(req.SessionID, req.Tool, string(argsJSON), resultStr)
+	}
+
 	// Return success response
 	_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 		Success: true,
@@ -407,6 +429,12 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	h.logger.Info("✅ Custom tool executed successfully",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.Int("result_length", len(result)))
+
+	// Record completed call so LLMAgentWrapper can reconstruct history on cancellation.
+	if req.SessionID != "" {
+		argsJSON, _ := json.Marshal(req.Args)
+		toolcalllog.Record(req.SessionID, req.Tool, string(argsJSON), result)
+	}
 
 	// Return success response
 	_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers

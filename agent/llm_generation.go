@@ -110,7 +110,9 @@ func isQuotaExhaustedError(err error) bool {
 		strings.Contains(msg, "retryDelay:3") || // retryDelay >= 3600s (1+ hour)
 		strings.Contains(msg, "retryDelay:4") ||
 		strings.Contains(msg, "retryDelay:8") ||
-		strings.Contains(msg, "retryDelay:9")
+		strings.Contains(msg, "retryDelay:9") ||
+		strings.Contains(msg, "hit your usage limit") || // Codex CLI usage exhaustion
+		strings.Contains(msg, "usage limit")
 }
 
 // isThrottlingError checks if an error is due to API throttling
@@ -358,6 +360,12 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			)
 			toolEndEvent.ToolCallID = chunk.ToolCallID
 			a.EmitTypedEvent(ctx, toolEndEvent)
+
+			// Forward to StreamingCallback so wrappers (e.g. LLMAgentWrapper) can track
+			// completed tool calls for history reconstruction on cancellation.
+			if a.StreamingCallback != nil {
+				a.StreamingCallback(chunk)
+			}
 		}
 	}
 }

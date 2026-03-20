@@ -161,6 +161,23 @@ func GetRegistry() *ToolRegistry {
 	return globalRegistry
 }
 
+// IsServerInScope returns true if the given MCP server is registered in the active session's
+// tool registry. Returns true (permissive) if the registry is not initialized or has no clients,
+// so scope enforcement only kicks in when a session is actually active.
+func IsServerInScope(serverName string) bool {
+	registry := globalRegistry
+	if registry == nil {
+		return true
+	}
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	if len(registry.mcpClients) == 0 {
+		return true
+	}
+	_, exists := registry.mcpClients[serverName]
+	return exists
+}
+
 // CallMCPTool calls an MCP tool by name
 func CallMCPTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	registry := GetRegistry()
