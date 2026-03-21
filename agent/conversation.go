@@ -30,6 +30,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 )
 
 // Generic tool execution context keys
@@ -727,6 +728,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		opts := []llmtypes.CallOption{}
 		if !llm.IsO3O4Model(a.ModelID) {
 			opts = append(opts, llmtypes.WithTemperature(a.Temperature))
+		}
+		if a.provider == "codex-cli" {
+			opts = append(opts, codexcli.WithDisableShellTool())
 		}
 
 		// Use proper LLM function calling via llmtypes.WithTools()
