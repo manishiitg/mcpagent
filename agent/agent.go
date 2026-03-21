@@ -408,7 +408,7 @@ func WithSmartRoutingConfig(temperature float64, maxTokens, maxMessages, userMsg
 // Note: To append to the system prompt instead of replacing it, use AppendSystemPrompt() method.
 func WithSystemPrompt(systemPrompt string) AgentOption {
 	return func(a *Agent) {
-		a.SystemPrompt = systemPrompt
+		a.systemPrompt = systemPrompt
 		a.hasCustomSystemPrompt = true
 	}
 }
@@ -702,7 +702,7 @@ type Agent struct {
 	toolFilter      *ToolFilter   // Unified tool filter for consistent filtering
 
 	// Enhanced tracking info
-	SystemPrompt string
+	systemPrompt string
 	TraceID      observability.TraceID
 	configPath   string // Path to MCP config file for on-demand connections
 	serverName   string // Server name(s) to connect to (default: AllServers)
@@ -817,10 +817,10 @@ type Agent struct {
 	// Pre-filtered tools for smart routing (determined once at conversation start)
 	filteredTools []llmtypes.Tool
 
-	// NEW: Track appended system prompts separately for smart routing
-	AppendedSystemPrompts []string // Track each appended prompt
-	OriginalSystemPrompt  string   // Keep original system prompt
-	HasAppendedPrompts    bool     // Flag to indicate if any prompts were appended
+	// Track appended system prompts separately for smart routing
+	appendedSystemPrompts []string // Track each appended prompt
+	originalSystemPrompt  string   // Keep original system prompt
+	hasAppendedPrompts    bool     // Flag to indicate if any prompts were appended
 
 	// Hierarchy tracking fields for event tree structure
 	currentParentEventID  string // Track current parent event ID
@@ -1363,7 +1363,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	ag.Client = firstClient
 	ag.Clients = clients
 	ag.toolToServer = toolToServer
-	ag.SystemPrompt = systemPrompt
+	ag.systemPrompt = systemPrompt
 	ag.servers = servers
 	ag.toolOutputHandler = toolOutputHandler
 	ag.prompts = prompts
@@ -1806,7 +1806,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 				toolCategories = append(toolCategories, serverName)
 			}
 		}
-		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, preDiscoveredToolSpecs, ag.UseToolSearchMode, toolCategories, ag.Logger, ag.EnableParallelToolExecution)
+		ag.systemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, preDiscoveredToolSpecs, ag.UseToolSearchMode, toolCategories, ag.Logger, ag.EnableParallelToolExecution)
 	}
 
 	// 🎯 SMART ROUTING INITIALIZATION - Run AFTER all tools are loaded (including virtual tools)
@@ -2649,7 +2649,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 	)
 
 	// Update the agent's system prompt
-	a.SystemPrompt = newSystemPrompt
+	a.systemPrompt = newSystemPrompt
 
 	logger.Info("✅ System prompt rebuilt with filtered servers",
 		loggerv2.Int("filtered_prompts_count", len(filteredPrompts)),
@@ -2827,7 +2827,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	ag.toolToServer = toolToServer
 	ag.LLM = llm
 	ag.Tools = allLLMTools
-	ag.SystemPrompt = systemPrompt
+	ag.systemPrompt = systemPrompt
 	ag.servers = servers
 	ag.toolOutputHandler = toolOutputHandler
 	ag.prompts = prompts
@@ -3642,20 +3642,20 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 		}
 	}
 
-	a.SystemPrompt = systemPrompt
+	a.systemPrompt = systemPrompt
 
 	// Re-append any prompts that were added via AppendSystemPrompt()
 	// (e.g. CRITICAL INSTRUCTION for Claude Code, delegation guidance)
 	// Without this, SetSystemPrompt overwrites everything including appended prompts.
-	if a.HasAppendedPrompts && len(a.AppendedSystemPrompts) > 0 {
-		for _, p := range a.AppendedSystemPrompts {
-			a.SystemPrompt += "\n\n" + p
+	if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
+		for _, p := range a.appendedSystemPrompts {
+			a.systemPrompt += "\n\n" + p
 		}
 		if a.Logger != nil {
 			a.Logger.Debug("✅ System prompt overwritten + re-appended prompts",
 				loggerv2.Int("base_length_chars", len(systemPrompt)),
-				loggerv2.Int("appended_count", len(a.AppendedSystemPrompts)),
-				loggerv2.Int("total_length_chars", len(a.SystemPrompt)))
+				loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
+				loggerv2.Int("total_length_chars", len(a.systemPrompt)))
 		}
 	} else if a.Logger != nil {
 		a.Logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
@@ -3671,25 +3671,25 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 	}
 
 	// Track the appended prompt for smart routing
-	a.AppendedSystemPrompts = append(a.AppendedSystemPrompts, additionalPrompt)
-	a.HasAppendedPrompts = true
+	a.appendedSystemPrompts = append(a.appendedSystemPrompts, additionalPrompt)
+	a.hasAppendedPrompts = true
 
 	// Store original system prompt if this is the first append
-	if a.OriginalSystemPrompt == "" {
-		a.OriginalSystemPrompt = a.SystemPrompt
+	if a.originalSystemPrompt == "" {
+		a.originalSystemPrompt = a.systemPrompt
 	}
 
 	// If we already have a system prompt, remove AI Staff Engineer text and append with separator
-	if a.SystemPrompt != "" {
+	if a.systemPrompt != "" {
 		// Remove "AI Staff Engineer" text from existing prompt before appending
-		existingPrompt := prompt.RemoveAIStaffEngineerText(a.SystemPrompt)
-		a.SystemPrompt = existingPrompt + "\n\n" + additionalPrompt
+		existingPrompt := prompt.RemoveAIStaffEngineerText(a.systemPrompt)
+		a.systemPrompt = existingPrompt + "\n\n" + additionalPrompt
 		if a.Logger != nil {
 			a.Logger.Debug("✅ System prompt appended - AI Staff Engineer text removed", loggerv2.Int("length_chars", len(additionalPrompt)))
 		}
 	} else {
 		// If no existing system prompt, just set it
-		a.SystemPrompt = additionalPrompt
+		a.systemPrompt = additionalPrompt
 	}
 
 	// Mark as custom to prevent overwriting
@@ -4176,25 +4176,39 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 		a.EnableParallelToolExecution,
 	)
 
-	// When custom prompts have been appended (guidance, delegation instructions, etc.),
-	// use them as the primary system prompt so the custom identity is not buried under
-	// the default "AI Staff Engineer" template. The tool structure is embedded inside
-	// newSystemPrompt via the {{TOOL_STRUCTURE}} placeholder expansion.
-	if a.HasAppendedPrompts && len(a.AppendedSystemPrompts) > 0 {
+	// When a custom system prompt has been set (via SetSystemPrompt) or custom prompts
+	// have been appended, preserve them. Only inject the updated tool structure section
+	// into the existing prompt rather than replacing the whole prompt with AI Staff Engineer.
+	if a.hasCustomSystemPrompt {
+		// Extract just the tool structure section from the newly built prompt
+		// and inject it into the existing custom system prompt
+		toolStructureStart := strings.Index(newSystemPrompt, "<available_tools>")
+		toolStructureEnd := strings.Index(newSystemPrompt, "</available_tools>")
+		if toolStructureStart != -1 && toolStructureEnd != -1 {
+			newToolSection := newSystemPrompt[toolStructureStart : toolStructureEnd+len("</available_tools>")]
+			// Replace the old tool section in the existing prompt, or append if not found
+			existingStart := strings.Index(a.systemPrompt, "<available_tools>")
+			existingEnd := strings.Index(a.systemPrompt, "</available_tools>")
+			if existingStart != -1 && existingEnd != -1 {
+				a.systemPrompt = a.systemPrompt[:existingStart] + newToolSection + a.systemPrompt[existingEnd+len("</available_tools>"):]
+			}
+			// If no existing tool section, the custom prompt doesn't use tool structure — leave as is
+		}
+	} else if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
 		// Start from a clean base: strip the AI Staff Engineer persona so our custom
 		// prompts lead. The tool-structure section (available_tools JSON) from
 		// newSystemPrompt is kept so the agent still knows its tools.
 		cleanBase := prompt.RemoveAIStaffEngineerText(newSystemPrompt)
 		if cleanBase != "" {
-			a.SystemPrompt = cleanBase
-			for _, p := range a.AppendedSystemPrompts {
-				a.SystemPrompt += "\n\n" + p
+			a.systemPrompt = cleanBase
+			for _, p := range a.appendedSystemPrompts {
+				a.systemPrompt += "\n\n" + p
 			}
 		} else {
-			a.SystemPrompt = strings.Join(a.AppendedSystemPrompts, "\n\n")
+			a.systemPrompt = strings.Join(a.appendedSystemPrompts, "\n\n")
 		}
 	} else {
-		a.SystemPrompt = newSystemPrompt
+		a.systemPrompt = newSystemPrompt
 	}
 
 	if a.Logger != nil {
@@ -4206,29 +4220,41 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 	return nil
 }
 
+// GetSystemPrompt returns the current system prompt
+func (a *Agent) GetSystemPrompt() string {
+	return a.systemPrompt
+}
+
+// ClearAppendedSystemPrompts removes all appended system prompts
+func (a *Agent) ClearAppendedSystemPrompts() {
+	a.appendedSystemPrompts = nil
+	a.hasAppendedPrompts = false
+	a.originalSystemPrompt = ""
+}
+
 // GetAppendedSystemPrompts returns the list of appended system prompts
 func (a *Agent) GetAppendedSystemPrompts() []string {
-	return a.AppendedSystemPrompts
+	return a.appendedSystemPrompts
 }
 
 // HasAppendedSystemPrompts returns true if any system prompts were appended
 func (a *Agent) HasAppendedSystemPrompts() bool {
-	return a.HasAppendedPrompts
+	return a.hasAppendedPrompts
 }
 
 // GetAppendedPromptCount returns the number of appended system prompts
 func (a *Agent) GetAppendedPromptCount() int {
-	return len(a.AppendedSystemPrompts)
+	return len(a.appendedSystemPrompts)
 }
 
 // GetAppendedPromptSummary returns a summary of appended prompts
 func (a *Agent) GetAppendedPromptSummary() string {
-	if !a.HasAppendedPrompts || len(a.AppendedSystemPrompts) == 0 {
+	if !a.hasAppendedPrompts || len(a.appendedSystemPrompts) == 0 {
 		return ""
 	}
 
 	var summary strings.Builder
-	for i, prompt := range a.AppendedSystemPrompts {
+	for i, prompt := range a.appendedSystemPrompts {
 		if i > 0 {
 			summary.WriteString("; ")
 		}

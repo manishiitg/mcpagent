@@ -113,13 +113,13 @@ func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext 
 		)
 
 		// NEW: Add appended prompt information even for failures
-		endEvent.HasAppendedPrompts = a.HasAppendedPrompts
-		endEvent.AppendedPromptCount = len(a.AppendedSystemPrompts)
+		endEvent.HasAppendedPrompts = a.hasAppendedPrompts
+		endEvent.AppendedPromptCount = len(a.appendedSystemPrompts)
 
-		if a.HasAppendedPrompts && len(a.AppendedSystemPrompts) > 0 {
+		if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
 			// Create a summary of appended prompts
 			var summary strings.Builder
-			for i, prompt := range a.AppendedSystemPrompts {
+			for i, prompt := range a.appendedSystemPrompts {
 				if i > 0 {
 					summary.WriteString("; ")
 				}
@@ -168,13 +168,13 @@ func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext 
 	endEvent.SelectedServers = strings.Join(relevantServers, ", ")
 
 	// NEW: Add appended prompt information
-	endEvent.HasAppendedPrompts = a.HasAppendedPrompts
-	endEvent.AppendedPromptCount = len(a.AppendedSystemPrompts)
+	endEvent.HasAppendedPrompts = a.hasAppendedPrompts
+	endEvent.AppendedPromptCount = len(a.appendedSystemPrompts)
 
-	if a.HasAppendedPrompts && len(a.AppendedSystemPrompts) > 0 {
+	if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
 		// Create a summary of appended prompts
 		var summary strings.Builder
-		for i, prompt := range a.AppendedSystemPrompts {
+		for i, prompt := range a.appendedSystemPrompts {
 			if i > 0 {
 				summary.WriteString("; ")
 			}
@@ -262,9 +262,9 @@ func (a *Agent) buildServerSelectionPrompt(conversationContext string) string {
 
 	// NEW: Build appended system prompt section
 	var systemPromptSection strings.Builder
-	if a.HasAppendedPrompts && len(a.AppendedSystemPrompts) > 0 {
+	if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
 		systemPromptSection.WriteString("IMPORTANT INSTRUCTIONS WHICH ARE ADDED AS A SYSTEM PROMPT TO THE AGENT:\n")
-		for i, appendedPrompt := range a.AppendedSystemPrompts {
+		for i, appendedPrompt := range a.appendedSystemPrompts {
 			// Truncate each appended prompt to avoid token bloat
 			content := appendedPrompt
 			if len(content) > 500 {

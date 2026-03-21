@@ -227,7 +227,7 @@ func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes
 	// Always use the agent's current system prompt — it reflects the latest mode
 	// (code execution, tool search, etc.) which may differ from a stale system
 	// message carried over in conversation history from a previous turn.
-	systemPrompt := a.SystemPrompt
+	systemPrompt := a.systemPrompt
 
 	systemMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeSystem,
@@ -413,7 +413,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Metadata for conversation tracking (used in events)
 	conversationMetadata := map[string]interface{}{
-		"system_prompt":   a.SystemPrompt,
+		"system_prompt":   a.systemPrompt,
 		"tools_count":     len(a.Tools),
 		"agent_mode":      string(a.AgentMode),
 		"model_id":        a.ModelID,
@@ -430,7 +430,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	_ = conversationMetadata
 
 	// Emit conversation start event with correlation (child of agent start)
-	conversationStartEvent := events.NewConversationStartEventWithCorrelation(lastUserMessage, a.SystemPrompt, len(a.Tools), serverList, traceID, agentStartEventID)
+	conversationStartEvent := events.NewConversationStartEventWithCorrelation(lastUserMessage, a.systemPrompt, len(a.Tools), serverList, traceID, agentStartEventID)
 	a.EmitTypedEvent(ctx, conversationStartEvent)
 
 	// Store conversation start event ID for correlation
@@ -492,9 +492,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Calculate token count for the system prompt if tool output handler is available
 	var tokenCount int
 	if a.toolOutputHandler != nil && a.ModelID != "" {
-		tokenCount = a.toolOutputHandler.CountTokensForModel(a.SystemPrompt, a.ModelID)
+		tokenCount = a.toolOutputHandler.CountTokensForModel(a.systemPrompt, a.ModelID)
 	}
-	systemPromptEvent := events.NewSystemPromptEventWithTokens(a.SystemPrompt, 0, tokenCount)
+	systemPromptEvent := events.NewSystemPromptEventWithTokens(a.systemPrompt, 0, tokenCount)
 	a.EmitTypedEvent(ctx, systemPromptEvent)
 
 	// Loop detection: track recent tool calls and responses to detect infinite loops
