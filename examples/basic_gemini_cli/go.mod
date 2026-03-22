@@ -1,4 +1,4 @@
-module basic-example
+module basic-gemini-cli-example
 
 go 1.24.4
 

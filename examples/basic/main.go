@@ -89,4 +89,19 @@ func main() {
 	fmt.Println("\n=== Agent Response ===")
 	fmt.Println(answer)
 	fmt.Println("=====================")
+	printTokenUsage(agent)
+}
+
+func printTokenUsage(agent *mcpagent.Agent) {
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := agent.GetTokenUsage()
+
+	fmt.Println("\n=== Token Usage ===")
+	fmt.Printf("Prompt tokens: %d\n", promptTokens)
+	fmt.Printf("Completion tokens: %d\n", completionTokens)
+	fmt.Printf("Total tokens: %d\n", totalTokens)
+	fmt.Printf("Cache tokens: %d\n", cacheTokens)
+	fmt.Printf("Reasoning tokens: %d\n", reasoningTokens)
+	fmt.Printf("LLM calls: %d\n", llmCallCount)
+	fmt.Printf("Cache-enabled calls: %d\n", cacheEnabledCallCount)
+	fmt.Println("===================")
 }

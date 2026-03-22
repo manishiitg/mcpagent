@@ -1,185 +1,66 @@
-# MCPAgent Node.js HTTP Example
+# MCPAgent Node.js SDK Examples
 
-This example demonstrates how to use MCPAgent from Node.js via the HTTP API.
+This directory contains working examples for the official Node.js/TypeScript SDK in this repo. The SDK talks to the Go runtime over gRPC on a Unix socket and can auto-start the Go server for you.
 
-## Quick Start with Docker Compose
+## Quick Start
 
-The easiest way to run this example is with Docker Compose:
+From this directory:
 
 ```bash
-cd examples/nodejs-http
-
-# Create .env file with your OpenAI API key
-echo "OPENAI_API_KEY=your-api-key-here" > .env
-
-# Start the server
-docker compose up -d
-
-# Verify the server is running
-curl http://localhost:8080/health
-# Should return: {"status":"ok"}
-
-# Run the example
 npm install
 npm run dev
 ```
 
-## Prerequisites
+The examples expect API keys to be available in your environment or in a local `.env` file that the SDK can read.
 
-### Option 1: Docker Compose (Recommended)
+## How It Works
 
-The Docker image includes all necessary runtimes for MCP servers:
-- Node.js 20.x with npm/npx
-- Python 3.11 with uv/uvx
-- curl, ca-certificates
+- The SDK package is `@mcpagent/node`
+- The SDK auto-starts the Go server from the local `mcpagent` checkout
+- Communication uses gRPC over a Unix domain socket, not an HTTP REST API
+- MCP server configuration is loaded from `mcp_servers.json` in this example directory
 
-Just create a `.env` file with your API key and run `docker compose up -d`.
+## Example Files
 
-### Option 2: Run Go Server Directly
+- `src/basic.ts` - Initialize the SDK, stream responses, and inspect token usage
+- `src/custom-tools.ts` - Register JavaScript tool handlers that the agent can call
+- `src/multi-turn.ts` - Continue a conversation with explicit message history
+- `src/multi-mcp-server.ts` - Work with multiple configured MCP servers
 
-From the `mcpagent` root directory:
-
-```bash
-# Load environment variables (contains OPENAI_API_KEY)
-source examples/basic/.env
-
-# Start the server
-go run cmd/server/main.go --port 8080 --config examples/nodejs-http/mcp_servers.json
-```
-
-## Running the Examples
-
-```bash
-# Install dependencies
-npm install
-
-# Run basic example (single questions)
-npm run dev
-
-# Run multi-turn conversation example
-npm run dev:multi-turn
-```
-
-## Examples
-
-### Basic Example (`src/basic.ts`)
-
-Demonstrates:
-- Creating an agent with OpenAI gpt-4.1-mini
-- Asking single questions
-- Using MCP tools (context7 for documentation)
-- Getting token usage and costs
-- Destroying the agent
-
-### Multi-turn Example (`src/multi-turn.ts`)
-
-Demonstrates:
-- Maintaining conversation history
-- Context-aware responses across multiple turns
-- Session summary with total costs
-
-## API Overview
+## Minimal SDK Example
 
 ```typescript
-import { MCPAgent } from 'mcpagent';
+import { MCPAgent } from '@mcpagent/node';
+import path from 'path';
 
-// Create client
-const agent = new MCPAgent('http://localhost:8080');
-
-// Initialize agent
-await agent.initialize({
-  provider: 'openai',
-  modelId: 'gpt-4.1-mini',
+const agent = new MCPAgent({
+  serverOptions: {
+    mcpConfigPath: path.join(__dirname, '..', 'mcp_servers.json'),
+    logLevel: 'info',
+  },
 });
 
-// Ask questions
+await agent.initialize({
+  provider: 'openai',
+  modelId: 'gpt-4o',
+});
+
 const response = await agent.ask('What tools are available?');
 console.log(response.response);
 
-// Multi-turn conversation
-const messages = [
-  { role: 'user', content: 'Hello' },
-  { role: 'assistant', content: 'Hi there!' },
-  { role: 'user', content: 'What can you do?' },
-];
-const result = await agent.askWithHistory(messages);
-
-// Get usage stats
-const usage = await agent.getTokenUsage();
-console.log(`Cost: $${usage.costs.totalCost}`);
-
-// Cleanup
 await agent.destroy();
-```
-
-## MCP Servers Configuration
-
-The `mcp_servers.json` file configures which MCP servers to connect:
-
-```json
-{
-  "mcpServers": {
-    "context7": {
-      "url": "https://mcp.context7.com/mcp",
-      "protocol": "http"
-    },
-    "sequential-thinking": {
-      "command": "npx",
-      "args": ["--yes", "@modelcontextprotocol/server-sequential-thinking"]
-    },
-    "ddg-search": {
-      "command": "uvx",
-      "args": ["duckduckgo-mcp-server"]
-    }
-  }
-}
 ```
 
 ## Configuration
 
-| Environment Variable | Description |
-|---------------------|-------------|
-| `OPENAI_API_KEY` | Your OpenAI API key (required) |
-| `MCPAGENT_URL` | Server URL (default: `http://localhost:8080`) |
+Important inputs:
 
-## Project Structure
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, or other provider credentials depending on the example you run
+- `mcp_servers.json` for MCP server definitions
+- Optional `serverOptions.goProjectPath` if you want the SDK to start the Go runtime from a non-default checkout
 
-```
-nodejs-http/
-├── src/
-│   ├── basic.ts           # Simple example
-│   └── multi-turn.ts      # Conversation example
-├── .env                   # API keys (create this)
-├── docker-compose.yaml    # Docker Compose config
-├── mcp_servers.json       # MCP servers config
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+## Notes
 
-## Supported LLM Providers
-
-The HTTP API supports multiple LLM providers:
-
-| Provider | Example Models |
-|----------|---------------|
-| `openai` | `gpt-4.1-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini` |
-| `anthropic` | `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229` |
-| `bedrock` | `anthropic.claude-3-5-sonnet-20241022-v2:0` |
-| `openrouter` | Various models via OpenRouter |
-| `vertex` | Google Vertex AI models |
-
-## Troubleshooting
-
-### Server not starting
-- Check if port 8080 is available
-- Verify your `.env` file has a valid `OPENAI_API_KEY`
-
-### MCP servers not connecting
-- For `npx` servers: Node.js must be installed in the container
-- For `uvx` servers: Python and uv must be installed in the container
-- The Docker image includes both runtimes
-
-### Timeout errors
-- The first request may take longer as MCP servers initialize
-- Subsequent requests will be faster due to connection caching
+- The first run can be slower because the Go server and MCP servers may need to start
+- The SDK examples are local-development oriented and assume the `mcpagent` repo is present
+- For package-level SDK docs, see `/Users/mipl/ai-work/mcpagent/sdk-node/README.md`

@@ -1,26 +1,24 @@
-# MCP Agent - Go Library
+# MCPAgent - Go Agent Runtime
 
 [![Go Version](https://img.shields.io/badge/Go-1.24.4-blue.svg)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-A **production-ready Go library** for building MCP (Model Context Protocol) agents that connect to multiple MCP servers and execute tools using LLMs. This is a fully independent package that can be used in any Go application.
+A production-ready Go library for building tool-using, code-executing agents across frontier, open, and CLI-native model providers. MCP support is built in, but it is only one part of the runtime.
 
-## 🎯 What is MCP Agent?
+## 🎯 What is MCPAgent?
 
-MCP Agent is a Go library that provides a complete framework for building AI agents that interact with MCP servers. It handles:
+MCPAgent is a general-purpose Go agent runtime. It gives you one agent abstraction that can:
 
-- **Multi-Server MCP Connections**: Connect to multiple MCP servers simultaneously (HTTP, SSE, stdio protocols)
-- **LLM Integration**: Works with OpenAI, AWS Bedrock, Google Vertex AI, and other LLM providers
-- **Tool Execution**: Automatic tool discovery, execution, and result handling (with optional parallel execution)
-- **Code Execution Mode**: Execute Go code instead of JSON tool calls for complex workflows
-- **Tool Search Mode**: Dynamic tool discovery for large tool catalogs - LLM searches and loads tools on-demand
-- **Smart Routing** (DEPRECATED): Dynamically filter tools based on conversation context
-- **Context Offloading**: Automatically offload large tool outputs to filesystem to prevent context window overflow
-- **Structured Output**: Get structured data from LLM responses using fixed conversion or tool-based methods
-- **Custom Tools**: Register your own tools with the agent for extended functionality
-- **Observability**: Built-in tracing with Langfuse support
-- **Caching**: Intelligent caching of MCP server metadata and tool definitions
-- **Node.js SDK**: Official TypeScript/JavaScript SDK with gRPC streaming support
+- **Use MCP tools** across multiple servers and protocols (HTTP, SSE, stdio)
+- **Run in multiple execution modes** with `SimpleAgent`, tool search, and code execution
+- **Connect to coding-agent CLIs** such as Claude Code, Gemini CLI, and Codex-style providers
+- **Route across model ecosystems** including OpenAI, Anthropic, OpenRouter, Bedrock, Vertex, Azure, MiniMax, and open-model gateways
+- **Execute tools efficiently** with optional parallel tool calls, caching, and dynamic tool discovery
+- **Stay productive in long sessions** with context summarization and large-output offloading
+- **Return structured results** using fixed conversion or tool-based structured output
+- **Support production workflows** with observability, custom tools, session reuse, and a Node.js SDK
+
+If you only need MCP, the library does that well. If you need a broader agent runtime that can mix MCP, code execution, provider routing, coding agents, and structured workflows, that is the larger value of the project.
 
 ## 🚀 Quick Start
 
@@ -28,10 +26,10 @@ MCP Agent is a Go library that provides a complete framework for building AI age
 
 ```bash
 # Add to your go.mod
-go get mcpagent
+go get github.com/manishiitg/mcpagent
 
 # Or use replace directive for local development
-replace mcpagent => ../mcpagent
+replace github.com/manishiitg/mcpagent => ../mcpagent
 ```
 
 ### Basic Usage
@@ -40,48 +38,60 @@ replace mcpagent => ../mcpagent
 package main
 
 import (
-    "context"
-    "time"
-    
-    mcpagent "github.com/manishiitg/mcpagent/agent"
-    "github.com/manishiitg/mcpagent/llm"
-    "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
 )
 
 func main() {
-    // Initialize LLM
-    llmModel, err := llm.InitializeLLM(llm.Config{
-        Provider: llm.ProviderOpenAI,
-        ModelID:  openai.ModelGPT41,
-        APIKeys: &llm.ProviderAPIKeys{
-            OpenAI: &openAIKey,
-        },
-    })
-    
-    // Create agent
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-    defer cancel()
-    
-    agent, err := mcpagent.NewAgent(
-        ctx,
-        llmModel,
-        "",              // server name (empty = all servers)
-        "mcp_servers.json", // MCP config path
-        openai.ModelGPT41,       // model ID
-        nil,             // tracer (optional)
-        "",              // trace ID
-        nil,             // logger (optional)
-    )
-    
-    // Ask a question
-    response, err := agent.Ask(ctx, "What tools are available?")
-    fmt.Println(response)
+	openAIKey := os.Getenv("OPENAI_API_KEY")
+	if openAIKey == "" {
+		panic("OPENAI_API_KEY is required")
+	}
+
+	llmModel, err := llm.InitializeLLM(llm.Config{
+		Provider: llm.ProviderOpenAI,
+		ModelID:  "gpt-4o",
+		APIKeys: &llm.ProviderAPIKeys{
+			OpenAI: &openAIKey,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	agent, err := mcpagent.NewAgent(
+		ctx,
+		llmModel,
+		"mcp_servers.json",
+		mcpagent.WithMode(mcpagent.SimpleAgent),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	response, err := agent.Ask(ctx, "What tools are available?")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(response)
 }
 ```
 
 See [examples/](examples/) for complete working examples:
 
 - **[basic/](examples/basic/)** - Basic agent setup with single MCP server
+- **[basic_claude_code/](examples/basic_claude_code/)** - Basic Claude Code setup using the MCP bridge layer (defaults to `claude-haiku-4-5`)
+- **[basic_gemini_cli/](examples/basic_gemini_cli/)** - Basic Gemini CLI setup using the MCP bridge layer (defaults to `flash-lite`)
+- **[basic_codex_cli/](examples/basic_codex_cli/)** - Basic Codex CLI setup using the MCP bridge layer (defaults to `gpt-5.3-codex-spark`)
 - **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with history
 - **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers
 - **[browser-automation/](examples/browser-automation/)** - Browser automation with Playwright
@@ -215,8 +225,9 @@ The default mode where the LLM invokes tools directly through native tool callin
 
 ```go
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "", "config.json", "model-id",
-    nil, "", nil,
+    ctx,
+    llmModel,
+    "config.json",
     mcpagent.WithMode(mcpagent.SimpleAgent),
 )
 ```
@@ -227,7 +238,9 @@ Enable dynamic tool discovery for large tool catalogs. The LLM starts with only 
 
 ```go
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "config.json",
+    ctx,
+    llmModel,
+    "config.json",
     mcpagent.WithToolSearchMode(true),
     // Optional: pre-discover frequently used tools
     mcpagent.WithPreDiscoveredTools([]string{"get_weather", "send_message"}),
@@ -277,8 +290,9 @@ defer server.Shutdown(ctx)
 
 // Create agent with code execution mode
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "", "config.json", "model-id",
-    nil, "", nil,
+    ctx,
+    llmModel,
+    "config.json",
     mcpagent.WithCodeExecutionMode(true),
     mcpagent.WithAPIConfig("http://127.0.0.1:8000", apiToken),
 )
@@ -296,8 +310,9 @@ Dynamically filter tools based on conversation context to reduce token usage:
 
 ```go
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "", "config.json", "model-id",
-    nil, "", nil,
+    ctx,
+    llmModel,
+    "config.json",
     mcpagent.WithSmartRouting(true), // DEPRECATED
     mcpagent.WithSmartRoutingThresholds(20, 3), // DEPRECATED
 )
@@ -420,8 +435,9 @@ Automatically summarize conversation history when token usage exceeds a threshol
 
 ```go
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "", "config.json", "model-id",
-    nil, "", nil,
+    ctx,
+    llmModel,
+    "config.json",
     // Enable context summarization
     mcpagent.WithContextSummarization(true),
     // Trigger when token usage reaches 70% of context window
@@ -456,7 +472,8 @@ type Person struct {
     Email string `json:"email"`
 }
 
-person, err := agent.AskStructured[Person](
+person, err := mcpagent.AskStructured(
+    agent,
     ctx,
     "Create a person profile for John Doe, age 30, email john@example.com",
     Person{},
@@ -466,7 +483,8 @@ person, err := agent.AskStructured[Person](
 
 **Tool-Based Model** (1 LLM call - faster):
 ```go
-result, err := agent.AskWithHistoryStructuredViaTool[Order](
+result, err := mcpagent.AskWithHistoryStructuredViaTool[Order](
+    agent,
     ctx,
     messages,
     "submit_order",
@@ -577,8 +595,12 @@ Built-in tracing with Langfuse support:
 ```go
 tracer := observability.NewLangfuseTracer(...)
 agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "", "config.json", "model-id",
-    tracer, "trace-id", logger,
+    ctx,
+    llmModel,
+    "config.json",
+    mcpagent.WithTracer(tracer),
+    mcpagent.WithTraceID("trace-id"),
+    mcpagent.WithLogger(logger),
 )
 ```
 
@@ -611,6 +633,20 @@ Complete working examples are available in the [examples/](examples/) directory:
 - **[basic/](examples/basic/)** - Simple agent setup with a single MCP server
 - **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with conversation history
 - **[context_summarization/](examples/context_summarization/)** - Automatic context summarization
+
+### Coding Agent Examples
+- **[basic_claude_code/](examples/basic_claude_code/)** - Claude Code provider with bridge-backed MCP access
+  - Uses `ProviderClaudeCode` with the `mcpbridge` flow
+  - Starts a local executor API automatically for bridge-backed tool access
+  - Defaults to the faster `claude-haiku-4-5` model
+- **[basic_gemini_cli/](examples/basic_gemini_cli/)** - Gemini CLI provider with bridge-backed MCP access
+  - Uses `ProviderGeminiCLI` with the `mcpbridge` flow
+  - Starts a local executor API automatically for bridge-backed tool access
+  - Defaults to the faster `flash-lite` model
+- **[basic_codex_cli/](examples/basic_codex_cli/)** - Codex CLI provider with bridge-backed MCP access
+  - Uses `ProviderCodexCLI` with the `mcpbridge` flow
+  - Starts a local executor API automatically for bridge-backed tool access
+  - Defaults to the faster `gpt-5.3-codex-spark` model
 
 ### Advanced Examples
 - **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers simultaneously
@@ -672,11 +708,12 @@ Complete working examples are available in the [examples/](examples/) directory:
   - MCP tools accessed via HTTP API with bearer auth
   - Example: Weather tool accessible alongside MCP tools
 
-Each example includes:
+Examples include:
 - Complete working code
-- README with detailed documentation
 - MCP server configuration
-- Setup instructions
+- Setup instructions in code, local files, or companion docs
+
+Some example directories include dedicated `README.md` files, while others are intentionally lightweight and are meant to be read directly from the example source.
 
 ## 🔧 Configuration
 
@@ -721,7 +758,6 @@ agent, err := mcpagent.NewAgent(
     
     // Code execution
     mcpagent.WithCodeExecutionMode(true),
-    mcpagent.SetFolderGuardPaths(allowedRead, allowedWrite),
 
     // Tool search mode (dynamic tool discovery)
     mcpagent.WithToolSearchMode(true),
@@ -752,6 +788,9 @@ agent, err := mcpagent.NewAgent(
     // Custom tool registration (after agent creation)
     // agent.RegisterCustomTool(name, description, params, execFunc, category)
 )
+
+// Folder guard paths are set on the created agent instance
+agent.SetFolderGuardPaths(allowedRead, allowedWrite)
 ```
 
 ## 🧪 Testing
@@ -820,12 +859,19 @@ mcpagent/
 
 ## 🔌 Supported LLM Providers
 
-- **OpenAI**: GPT-4, GPT-3.5, and other models
-- **AWS Bedrock**: Claude Sonnet, Claude Haiku, and other models
-- **Google Vertex AI**: Gemini, PaLM, and other models
+- **OpenAI**: GPT-4.1, GPT-4o, reasoning models, and compatible tool-calling models
+- **Anthropic**: Claude models through direct provider integration
+- **OpenRouter**: Access to open and frontier models behind a unified API
+- **AWS Bedrock**: Claude, Llama, Mistral, and other Bedrock-served models
+- **Google Vertex AI**: Gemini and related Vertex-hosted models
+- **Azure**: Azure-hosted OpenAI and related model deployments
+- **Claude Code / Gemini CLI / Codex-style CLI providers**: Coding-agent integrations through provider abstractions
+- **MiniMax**: MiniMax chat and coding-plan providers
 - **Custom Providers**: Extensible provider interface
 
 ## 🔌 Supported MCP Protocols
+
+MCP remains an important integration layer in the runtime, with support for:
 
 - **stdio**: Standard input/output (most common)
 - **SSE**: Server-Sent Events
@@ -849,4 +895,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Made with ❤️ for the AI community**
-

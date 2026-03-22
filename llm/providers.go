@@ -356,8 +356,8 @@ func WithGeminiProjectSettings(settingsJSON string) CallOption {
 	return llmproviders.WithGeminiProjectSettings(settingsJSON)
 }
 
-// WithGeminiAllowedTools sets the --allowed-tools flag for the Gemini CLI.
-// These tools bypass the confirmation dialog.
+// WithGeminiAllowedTools sets the deprecated --allowed-tools flag for the Gemini CLI.
+// Prefer WithGeminiProjectSettings plus Policy Engine rules instead.
 func WithGeminiAllowedTools(tools string) CallOption {
 	return llmproviders.WithGeminiAllowedTools(tools)
 }
