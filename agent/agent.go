@@ -3980,6 +3980,23 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 //   - parameters: JSON schema defining the tool's expected arguments.
 //   - executionFunc: The Go function to execute when the tool is called.
 //   - timeout: Per-tool timeout. 0 = no timeout (tool runs indefinitely). -1 = use agent default.
+// ReplaceCustomToolExecutor replaces the execution function for an already-registered custom tool.
+// Used to swap in session-aware executors (with ExtraEnv like _DEFAULT_WORKING_DIR) after agent creation.
+func (a *Agent) ReplaceCustomToolExecutor(name string, executor func(ctx context.Context, args map[string]interface{}) (string, error)) {
+	if ct, exists := a.customTools[name]; exists {
+		ct.Execution = executor
+		a.customTools[name] = ct
+	}
+}
+
+// GetCustomToolExecutor returns the current execution function for a custom tool, or nil if not found.
+func (a *Agent) GetCustomToolExecutor(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
+	if ct, exists := a.customTools[name]; exists {
+		return ct.Execution
+	}
+	return nil
+}
+
 //   - category: REQUIRED. The tool's category (e.g., "workspace", "human", "virtual").
 //
 // Returns:
