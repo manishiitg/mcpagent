@@ -1,4 +1,4 @@
-module multi-mcp-server-example
+module basic-gemini-cli-fallback-claude-code-example
 
 go 1.24.4
 
@@ -9,7 +9,6 @@ replace github.com/manishiitg/multi-llm-provider-go => ../../../multi-llm-provid
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/manishiitg/mcpagent v0.0.0
-	github.com/manishiitg/multi-llm-provider-go v0.5.3
 )
 
 require (
@@ -48,6 +47,7 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/manishiitg/multi-llm-provider-go v0.5.3 // indirect
 	github.com/mark3labs/mcp-go v0.45.0 // indirect
 	github.com/openai/openai-go/v3 v3.16.0 // indirect
 	github.com/pkoukk/tiktoken-go v0.1.8 // indirect

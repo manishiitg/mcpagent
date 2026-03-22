@@ -1,17 +1,20 @@
 # Multi-MCP Server Example
 
-This example demonstrates how to use the MCP Agent with multiple MCP servers working together to perform complex tasks that require different capabilities.
+This example demonstrates how to use the MCP Agent with multiple MCP servers working together in a focused, easy-to-follow workflow.
+
+The default path is intentionally biased toward a reliable three-server setup: `playwright`, `sequential-thinking`, and `context7`.
+It also exposes only a small subset of tools so the run stays fast and deterministic.
 
 ## Features
 
-- **Multiple MCP Servers**: Uses 4 different MCP servers simultaneously:
+- **Multiple MCP Servers**: Uses multiple MCP servers simultaneously, with a reliable default trio:
   - **Playwright**: Browser automation for web browsing and data extraction
   - **Sequential Thinking**: Advanced reasoning and step-by-step analysis
   - **Context7**: Library documentation and code reference access
-  - **AWS Knowledge MCP**: AWS knowledge base and documentation access
+- **Minimal Tool Surface**: Restricts the example to the exact tools needed for the demo
 - **Cross-Server Collaboration**: Demonstrates how different servers can work together
 - **Complex Task Execution**: Performs tasks that require multiple capabilities
-- **Default Task**: Researches cloud computing trends, analyzes findings, and checks AWS pricing
+- **Default Task**: Opens the CNCF homepage, identifies cloud-native themes, organizes them with sequential thinking, and supports the write-up with Context7 documentation for Kubernetes
 
 ## Setup
 
@@ -20,11 +23,9 @@ This example demonstrates how to use the MCP Agent with multiple MCP servers wor
    OPENAI_API_KEY=your-api-key-here
    ```
 
-2. Initialize the Go module:
+2. Prepare the example module:
    ```bash
    cd examples/multi-mcp-server
-   go mod init multi-mcp-server-example
-   go mod edit -replace mcpagent=../..
    go mod tidy
    ```
 
@@ -37,39 +38,39 @@ This example demonstrates how to use the MCP Agent with multiple MCP servers wor
 ## Usage
 
 ```bash
-# Run with default cloud computing research task
+# Run with the default focused multi-server task
 go run main.go
 
 # Run with custom config file
 go run main.go mcp_servers.json
 
 # Run with custom task
-go run main.go mcp_servers.json "Research AI trends, analyze them, and check relevant AWS services"
+go run main.go mcp_servers.json "Open a public product page, analyze the main themes, and support the summary with Context7 docs"
 ```
 
 ## Default Task
 
-The default task demonstrates multi-server collaboration:
+The default task demonstrates a clean multi-server collaboration flow:
 
-1. **Browser Research** (Playwright): Uses browser automation to search for recent cloud computing trends
-2. **Analysis** (Sequential Thinking): Breaks down and analyzes the information using advanced reasoning
-3. **AWS Knowledge** (AWS Knowledge MCP): Accesses AWS documentation and knowledge base
-4. **Reporting**: Presents findings in a structured format with key insights
+1. **Browser Navigation** (Playwright): Opens the CNCF homepage
+2. **Page Snapshot** (Playwright): Captures a single structured snapshot of the page
+3. **Analysis** (Sequential Thinking): Organizes the visible themes into a concise summary
+4. **Technical Support** (Context7): Pulls supporting Kubernetes documentation as a representative cloud-native technology
+5. **Reporting**: Presents the final answer as key insights plus practical takeaways
 
 ## How It Works
 
-1. The agent initializes with all configured MCP servers
-2. Each server provides different tools:
-   - **Playwright**: Browser navigation, page content extraction, web interactions
-   - **Sequential Thinking**: Step-by-step reasoning, problem decomposition
-   - **Context7**: Library documentation lookup, code examples
-   - **AWS Knowledge MCP**: AWS documentation, knowledge base, service information
+1. The agent initializes with the selected MCP servers
+2. The example intentionally exposes only a minimal tool set:
+   - **Playwright**: `browser_navigate`, `browser_snapshot`
+   - **Sequential Thinking**: `sequentialthinking`
+   - **Context7**: `resolve-library-id`, `query-docs`
 3. The LLM orchestrates tools from different servers to complete the task
-4. Results are compiled from multiple sources and presented as a comprehensive analysis
+4. Results are compiled from multiple sources and presented as a concise analysis
 
 ## Configuration
 
-The `mcp_servers.json` file configures all MCP servers:
+The bundled `mcp_servers.json` file keeps the example focused on the three default servers:
 
 ```json
 {
@@ -87,9 +88,6 @@ The `mcp_servers.json` file configures all MCP servers:
       "args": null,
       "protocol": "http",
       "url": "https://mcp.context7.com/mcp"
-    },
-    "aws-knowledge-mcp": {
-      "url": "https://knowledge-mcp.global.api.aws"
     }
   }
 }
@@ -97,8 +95,8 @@ The `mcp_servers.json` file configures all MCP servers:
 
 ## Example Use Cases
 
-- **Research & Analysis**: Use browser automation to gather data, sequential thinking to analyze it, and AWS Knowledge MCP to access AWS documentation
-- **Development Workflows**: Use Context7 for library docs, Playwright for testing, and AWS Knowledge MCP for AWS service information
+- **Research & Analysis**: Use browser automation to gather source material, sequential thinking to analyze it, and Context7 to support technical claims
+- **Development Workflows**: Use Context7 for library docs, Playwright for testing, and sequential thinking for synthesis
 - **Market Research**: Combine web research with analytical reasoning and cloud cost analysis
 - **Technical Analysis**: Gather information from multiple sources and synthesize insights
 
@@ -114,8 +112,8 @@ The `mcp_servers.json` file configures all MCP servers:
 - Multi-server tasks may take longer than single-server operations
 - The default timeout is set to 15 minutes to allow for complex multi-step operations
 - Each server runs independently and can be used in parallel when appropriate
-- Some servers may require additional setup or API keys
-- The agent automatically routes requests to the appropriate server based on the task
+- You can expand the config with more servers later, but the bundled example is intentionally narrow for a more reliable first run
+- The agent automatically routes requests to the appropriate tool based on the task
 
 ## Server Details
 
@@ -134,9 +132,15 @@ The `mcp_servers.json` file configures all MCP servers:
 - Can search and retrieve code examples
 - Useful for development and technical reference
 
-### AWS Knowledge MCP
-- Provides access to AWS knowledge base and documentation
-- Can query AWS service information, best practices, and technical documentation
-- No credentials required - public knowledge base access
-- Accessible via HTTPS endpoint
+## Output
 
+At the end of the run, the example prints:
+
+- The final synthesized response
+- Prompt tokens
+- Completion tokens
+- Total tokens
+- Cache tokens
+- Reasoning tokens
+- LLM call count
+- Cache-enabled call count

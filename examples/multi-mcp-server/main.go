@@ -108,20 +108,22 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	// Step 7: Create the agent with multiple MCP servers
-	// By default, connects to all servers. Use WithServerName("server-name") to filter to specific server.
-	// modelID is automatically extracted from llmModel
-	// Tool filtering: Only allow read_email and search_emails from gmail, all tools from other servers
+	// Step 7: Create the agent with a reliable multi-server collaboration setup.
+	// We deliberately expose only a minimal tool set for this example so it stays
+	// focused and deterministic instead of wandering through a broad Playwright surface.
 
 	agent, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
 		configPath,                       // path to MCP config file
 		mcpagent.WithLogger(agentLogger), // Use file logger for agent operations
-		// Filter gmail to only allow read_email and search_emails
-		mcpagent.WithSelectedTools([]string{"gmail:read_email", "gmail:search_emails"}),
-		// Allow all tools from other servers
-		mcpagent.WithSelectedServers([]string{"playwright", "sequential-thinking", "context7", "aws-knowledge-mcp", "google-sheets"}),
+		mcpagent.WithSelectedTools([]string{
+			"playwright:browser_navigate",
+			"playwright:browser_snapshot",
+			"sequential-thinking:sequentialthinking",
+			"context7:resolve-library-id",
+			"context7:query-docs",
+		}),
 		// Caching is enabled by default
 	)
 	if err != nil {
@@ -129,8 +131,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Step 8: Default task - demonstrates multi-server collaboration
-	task := "Research cloud computing trends using browser automation (playwright), analyze the findings with sequential thinking, access AWS documentation for relevant services (aws-knowledge-mcp), and provide a comprehensive analysis. Use the browser to search for recent cloud computing trends, use sequential thinking to break down and analyze the information, and leverage AWS Knowledge MCP to access AWS documentation and best practices for relevant cloud services. Present your findings in a structured format with key insights."
+	// Step 8: Default task - demonstrates a focused multi-server collaboration flow.
+	// The prompt is intentionally narrow so the example reliably shows:
+	// - one browser navigation
+	// - one page snapshot
+	// - one reasoning pass
+	// - one documentation lookup
+	task := "Open https://www.cncf.io/ with browser automation and capture a single page snapshot. From that snapshot, identify exactly three cloud-native themes visible on the page. Then use sequential thinking once to organize them into a concise summary. After that, use Context7 to retrieve supporting Kubernetes documentation as one representative technology. Return exactly three key insights and exactly two practical takeaways. Do not browse beyond the initial page, and do not repeat snapshot or search steps unless a tool call fails."
 	if len(os.Args) > 2 {
 		// Allow custom task via command line
 		task = os.Args[2]
@@ -156,7 +163,22 @@ func main() {
 	fmt.Println("\n=== Agent Response ===")
 	fmt.Println(answer)
 	fmt.Println("=====================")
+	printTokenUsage(agent)
 
 	// Log completion to agent log file
 	agentLogger.Info("Multi-MCP server task completed", loggerv2.Field{Key: "answer_length", Value: len(answer)})
+}
+
+func printTokenUsage(agent *mcpagent.Agent) {
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := agent.GetTokenUsage()
+
+	fmt.Println("\n=== Token Usage ===")
+	fmt.Printf("Prompt tokens: %d\n", promptTokens)
+	fmt.Printf("Completion tokens: %d\n", completionTokens)
+	fmt.Printf("Total tokens: %d\n", totalTokens)
+	fmt.Printf("Cache tokens: %d\n", cacheTokens)
+	fmt.Printf("Reasoning tokens: %d\n", reasoningTokens)
+	fmt.Printf("LLM calls: %d\n", llmCallCount)
+	fmt.Printf("Cache-enabled calls: %d\n", cacheEnabledCallCount)
+	fmt.Println("===================")
 }

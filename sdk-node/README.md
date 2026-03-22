@@ -5,7 +5,7 @@ Node.js SDK for MCPAgent - AI agents with MCP (Model Context Protocol) server su
 ## Features
 
 - **Auto-managed Go server** - Server starts/stops automatically with your Node.js process
-- **Multi-provider LLM support** - OpenAI, Anthropic, AWS Bedrock, OpenRouter, Vertex AI
+- **Multi-provider LLM support** - OpenAI, Anthropic, AWS Bedrock, OpenRouter, Vertex AI, Gemini CLI
 - **MCP server integration** - Connect to any MCP-compatible server (filesystem, github, etc.)
 - **Custom tools** - Register JavaScript functions as tools for the LLM
 - **Multi-turn conversations** - Maintain context across conversation turns
@@ -53,7 +53,7 @@ await agent.destroy();
 ```typescript
 await agent.initialize({
   // LLM Provider (required)
-  provider: 'openai',           // 'openai' | 'anthropic' | 'bedrock' | 'openrouter' | 'vertex'
+  provider: 'openai',           // 'openai' | 'anthropic' | 'bedrock' | 'openrouter' | 'vertex' | 'gemini-cli'
   modelId: 'gpt-4o',           // Model ID for the provider
 
   // Optional settings
@@ -88,6 +88,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export AWS_REGION=us-east-1
 export AWS_ACCESS_KEY_ID=...
 export AWS_SECRET_ACCESS_KEY=...
+
+# Gemini CLI
+export GEMINI_API_KEY=...
 ```
 
 ## Custom Tools
@@ -196,7 +199,7 @@ new MCPAgent(options?: MCPAgentOptions)
 
 ```typescript
 // LLM Providers
-type Provider = 'openai' | 'anthropic' | 'bedrock' | 'openrouter' | 'vertex';
+type Provider = 'openai' | 'anthropic' | 'bedrock' | 'openrouter' | 'vertex' | 'gemini-cli';
 
 // Conversation message
 interface Message {

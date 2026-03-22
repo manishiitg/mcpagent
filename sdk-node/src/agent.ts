@@ -233,7 +233,7 @@ export class MCPAgent {
    * for await (const event of agent.askStream('What is 2+2?')) {
    *   if (event.type === 'chunk') {
    *     process.stdout.write(event.text);
-   *   } else if (event.type === 'final') {
+   *   } else if (event.type === 'final' && event.response) {
    *     console.log('\nDone:', event.response);
    *   }
    * }
