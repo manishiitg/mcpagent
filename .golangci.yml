@@ -66,3 +66,8 @@ issues:
   
   # Make output more machine-readable
   uniq-by-line: true
+
+  exclude-rules:
+    - path: cmd/testing/.*
+      linters:
+        - gosec

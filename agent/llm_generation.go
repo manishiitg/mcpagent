@@ -1,11 +1,12 @@
 package mcpagent
 
 import (
+	cryptorand "crypto/rand"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -607,11 +608,17 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// Policy Engine: .gemini/policies/*.toml overrides yolo mode defaults.
 		// Workspace-tier policies (priority base 3) beat Default-tier yolo (priority base 1).
 		if a.GeminiProjectDirID == "" {
-			a.GeminiProjectDirID = fmt.Sprintf("%d-%05d", time.Now().UnixMilli(), rand.Intn(100000))
+			projectSuffix, randErr := cryptorand.Int(cryptorand.Reader, big.NewInt(100000))
+			if randErr != nil {
+				a.Logger.Warn("Failed to generate cryptographic random Gemini project suffix; using timestamp-only fallback", loggerv2.Error(randErr))
+				a.GeminiProjectDirID = fmt.Sprintf("%d-00000", time.Now().UnixMilli())
+			} else {
+				a.GeminiProjectDirID = fmt.Sprintf("%d-%05d", time.Now().UnixMilli(), projectSuffix.Int64())
+			}
 		}
 		projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
 		policiesDir := filepath.Join(projectDir, ".gemini", "policies")
-		if err := os.MkdirAll(policiesDir, 0755); err != nil {
+		if err := os.MkdirAll(policiesDir, 0750); err != nil {
 			a.Logger.Warn("Failed to create Gemini CLI policies directory", loggerv2.Error(err))
 		} else {
 			policyContent := `# Gemini CLI tool approvals are handled entirely by the Policy Engine.
@@ -631,7 +638,7 @@ decision = "deny"
 priority = 997
 deny_message = "Use MCP bridge tools from the api-bridge namespace or google_web_search instead of other built-in tools."
 `
-			if err := os.WriteFile(filepath.Join(policiesDir, "restrict-tools.toml"), []byte(policyContent), 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(policiesDir, "restrict-tools.toml"), []byte(policyContent), 0600); err != nil {
 				a.Logger.Warn("Failed to write Gemini CLI policy file", loggerv2.Error(err))
 			} else {
 				a.Logger.Info(fmt.Sprintf("📋 Wrote Gemini CLI policy file to %s", policiesDir))

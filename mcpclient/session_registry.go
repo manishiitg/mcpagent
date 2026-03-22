@@ -107,13 +107,6 @@ func (t *httpSessionTracker) isStopped(mcpSessionID string) bool {
 	return ok
 }
 
-// clearStopped removes a session from the stopped set (e.g., on re-use).
-func (t *httpSessionTracker) clearStopped(mcpSessionID string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.stoppedSessions, mcpSessionID)
-}
-
 // GetSessionRegistry returns the global session connection registry
 func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry

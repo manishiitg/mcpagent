@@ -748,11 +748,6 @@ type Agent struct {
 	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
 	SummarizationCooldownTurns     int     // Number of turns to wait after summarization before allowing another (0 = use default: 3)
 	lastSummarizationTurn          int     // Track when last summarization occurred (turn number)
-	// Post-summarization baseline: captures actual token count from the first LLM call after
-	// summarization. Re-summarization is blocked until tokens grow meaningfully above this baseline,
-	// preventing infinite re-trigger loops when the system prompt alone exceeds the threshold.
-	postSummarizationTokenBaseline   int  // Token count captured right after summarization (-1 = not set)
-	capturePostSummarizationBaseline bool // If true, next accumulateTokenUsage call sets the baseline
 
 	// Context editing configuration (see context_editing.go)
 	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
