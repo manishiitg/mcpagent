@@ -238,12 +238,14 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		// new browser/process. This prevents agents from reaching MCP servers that are
 		// not configured for the current workflow (e.g. playwright in a non-browser workflow).
 		if req.SessionID != "" && !codeexec.IsServerInScope(req.Server) {
+			availableServers := codeexec.ScopedServerNames()
 			h.logger.Warn("🔒 [SCOPE DENIED] Server not in session scope, refusing mcpcache fallback",
 				loggerv2.String("server", req.Server),
-				loggerv2.String("session_id", req.SessionID))
+				loggerv2.String("session_id", req.SessionID),
+				loggerv2.Any("available_servers", availableServers))
 			_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec
 				Success: false,
-				Error:   fmt.Sprintf("Server '%s' is not available in this session's scope. The workflow does not have access to this MCP server.", req.Server),
+				Error:   fmt.Sprintf("Server '%s' is not available in this session's scope. The workflow does not have access to this MCP server. Available servers: %v", req.Server, availableServers),
 			})
 			return
 		}

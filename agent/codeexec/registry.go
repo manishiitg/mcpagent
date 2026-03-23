@@ -164,6 +164,7 @@ func GetRegistry() *ToolRegistry {
 // IsServerInScope returns true if the given MCP server is registered in the active session's
 // tool registry. Returns true (permissive) if the registry is not initialized or has no clients,
 // so scope enforcement only kicks in when a session is actually active.
+// It normalizes hyphen/underscore variants (e.g. "google_sheets" matches "google-sheets").
 func IsServerInScope(serverName string) bool {
 	registry := globalRegistry
 	if registry == nil {
@@ -174,8 +175,32 @@ func IsServerInScope(serverName string) bool {
 	if len(registry.mcpClients) == 0 {
 		return true
 	}
-	_, exists := registry.mcpClients[serverName]
+	if _, exists := registry.mcpClients[serverName]; exists {
+		return true
+	}
+	// Try the alternate form: underscores↔hyphens
+	alt := strings.ReplaceAll(serverName, "_", "-")
+	if alt == serverName {
+		alt = strings.ReplaceAll(serverName, "-", "_")
+	}
+	_, exists := registry.mcpClients[alt]
 	return exists
+}
+
+// ScopedServerNames returns the names of all MCP servers currently registered in the global
+// tool registry. Returns nil if the registry is not initialized or has no clients.
+func ScopedServerNames() []string {
+	registry := globalRegistry
+	if registry == nil {
+		return nil
+	}
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	names := make([]string, 0, len(registry.mcpClients))
+	for name := range registry.mcpClients {
+		names = append(names, name)
+	}
+	return names
 }
 
 // CallMCPTool calls an MCP tool by name

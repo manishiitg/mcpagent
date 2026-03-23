@@ -127,7 +127,8 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 	var resp MCPExecuteResponse
 	shouldRetry := false
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
-		if !resp.Success && strings.Contains(resp.Error, "Failed to connect to server") {
+		if !resp.Success && (strings.Contains(resp.Error, "Failed to connect to server") ||
+			strings.Contains(resp.Error, "is not available in this session's scope")) {
 			shouldRetry = true
 		}
 	}

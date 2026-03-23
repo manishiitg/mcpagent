@@ -83,6 +83,19 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	isCustomCategory := a.toolFilter.IsCategoryDirectory(serverName) ||
 		a.toolFilter.IsCategoryDirectory(serverName+"_tools")
 
+	// If not a category, check if server_name is actually a custom tool name — resolve to its category.
+	// This lets the LLM call get_api_spec(server_name="agent_browser") instead of needing to know
+	// the category name "workspace_browser".
+	if !isCustomCategory {
+		if ct, ok := a.customTools[serverName]; ok && ct.Category != "" {
+			toolName := serverName
+			serverName = ct.Category
+			isCustomCategory = true
+			// Ensure the tool itself is in the want set
+			wantTools[toolName] = true
+		}
+	}
+
 	if isCustomCategory {
 		// Debug: log all custom tools and their categories for diagnosis
 		if a.Logger != nil {
