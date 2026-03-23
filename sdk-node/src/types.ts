@@ -1,7 +1,13 @@
 /**
  * LLM Provider types
  */
-export type Provider = 'bedrock' | 'openai' | 'anthropic' | 'openrouter' | 'vertex';
+export type Provider =
+  | 'bedrock'
+  | 'openai'
+  | 'anthropic'
+  | 'openrouter'
+  | 'vertex'
+  | 'gemini-cli';
 
 /**
  * Configuration for creating an agent

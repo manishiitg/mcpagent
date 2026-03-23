@@ -74,7 +74,7 @@ func initializeAgentRegistry(ctx context.Context, logger loggerv2.Logger, t *tes
 	// Create LLM with OpenAI
 	llmInstance, err := llm.InitializeLLM(llm.Config{
 		Provider:    llm.ProviderOpenAI,
-		ModelID:     openai.ModelGPT4oMini,
+		ModelID:     openai.ModelGPT41Mini,
 		Temperature: 0.0,
 		Logger:      logger,
 	})

@@ -530,7 +530,7 @@ func (h *StreamHandler) registerCustomTools(ctx context.Context, agent *ManagedA
 					if result.Error != nil {
 						errMsg = result.Error.Message
 					}
-					return "", fmt.Errorf(errMsg)
+					return "", fmt.Errorf("%s", errMsg)
 				}
 				return result.Result, nil
 			}

@@ -2,6 +2,8 @@
 
 This example demonstrates how to use the MCP Agent for multi-turn conversations where the agent maintains context across multiple questions.
 
+It includes a local `mcp_servers.json` and prints cumulative token usage at the end of the run.
+
 ## Features
 
 - **Conversation History**: Uses `AskWithHistory()` to maintain context between turns
@@ -18,8 +20,6 @@ This example demonstrates how to use the MCP Agent for multi-turn conversations 
 2. Run from the example directory:
    ```bash
    cd examples/multi-turn
-   go mod init multi-turn-example
-   go mod edit -replace mcpagent=../..
    go mod tidy
    ```
 
@@ -61,3 +61,15 @@ The `AskWithHistory()` method returns both the answer and the updated conversati
 - OpenAI API key in `.env` file
 - MCP server configuration in `mcp_servers.json`
 
+## Output
+
+At the end of the run, the example prints:
+
+- Total turns and message history size
+- Prompt tokens
+- Completion tokens
+- Total tokens
+- Cache tokens
+- Reasoning tokens
+- LLM call count
+- Cache-enabled call count

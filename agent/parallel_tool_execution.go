@@ -534,7 +534,6 @@ func executeToolCall(
 
 		if wasRecovered && recoveredErr == nil {
 			mcpResult = recoveredResult
-			toolErr = nil
 			result.duration = recoveredDuration
 		} else {
 			if wasRecovered {
@@ -623,5 +622,4 @@ func executeToolCall(
 	}}
 	return result
 }
-
 

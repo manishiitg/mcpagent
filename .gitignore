@@ -104,9 +104,13 @@ vendor/
 # Example-specific ignores (examples may have their own .env files)
 examples/**/.env
 examples/**/mcp_servers.json
+!examples/multi-turn/mcp_servers.json
+!examples/multi-mcp-server/mcp_servers.json
+!examples/basic_gemini_cli_fallback_claude_code/mcp_servers.json
 # Compiled binaries in examples
 examples/**/tool_search
 examples/**/*_search
+examples/**/cncf_snapshot.md
 
 
 .claude/

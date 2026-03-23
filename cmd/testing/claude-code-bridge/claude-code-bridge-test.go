@@ -163,6 +163,7 @@ func ensureBridgeBinary(log loggerv2.Logger) (string, error) {
 
 	// Try to build it
 	log.Info("mcpbridge not found, building...")
+	// #nosec G204 -- This test helper invokes a fixed local Go build command and controlled output path.
 	buildCmd := exec.Command("go", "build", "-o", goBinPath, "./cmd/mcpbridge/")
 	buildCmd.Dir = findMcpagentRoot()
 	buildCmd.Stdout = os.Stdout
@@ -196,8 +197,13 @@ func startExecutorServer(log loggerv2.Logger) (string, string, func(), error) {
 		if err != nil {
 			return "", "", nil, fmt.Errorf("failed to create temp config: %w", err)
 		}
-		tmpFile.WriteString(`{"mcpServers":{}}`)
-		tmpFile.Close()
+		if _, err := tmpFile.WriteString(`{"mcpServers":{}}`); err != nil {
+			_ = tmpFile.Close()
+			return "", "", nil, fmt.Errorf("failed to write temp config: %w", err)
+		}
+		if err := tmpFile.Close(); err != nil {
+			return "", "", nil, fmt.Errorf("failed to close temp config: %w", err)
+		}
 		configPath = tmpFile.Name()
 	}
 	log.Info("Executor using config", loggerv2.String("path", configPath))
@@ -269,7 +275,9 @@ func startExecutorServer(log loggerv2.Logger) (string, string, func(), error) {
 	shutdownFn := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(shutdownCtx)
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Warn("Executor server shutdown returned error", loggerv2.Error(err))
+		}
 		log.Info("Executor server stopped")
 	}
 
@@ -315,11 +323,20 @@ func createClaudeCodeAgent(ctx context.Context, log loggerv2.Logger, tracer obse
 		loggerv2.Int("server_count", len(mcpServers)))
 
 	// Set MCP_BRIDGE_BINARY env so BuildBridgeMCPConfig can find it
-	os.Setenv("MCP_BRIDGE_BINARY", bridgePath)
+	if err := os.Setenv("MCP_BRIDGE_BINARY", bridgePath); err != nil {
+		cleanup()
+		return nil, func() {}, fmt.Errorf("failed to set MCP_BRIDGE_BINARY: %w", err)
+	}
 
 	// Set MCP env vars so the agent (and bridge) can read them
-	os.Setenv("MCP_API_URL", apiURL)
-	os.Setenv("MCP_API_TOKEN", apiToken)
+	if err := os.Setenv("MCP_API_URL", apiURL); err != nil {
+		cleanup()
+		return nil, func() {}, fmt.Errorf("failed to set MCP_API_URL: %w", err)
+	}
+	if err := os.Setenv("MCP_API_TOKEN", apiToken); err != nil {
+		cleanup()
+		return nil, func() {}, fmt.Errorf("failed to set MCP_API_TOKEN: %w", err)
+	}
 
 	agent, err := testutils.CreateTestAgent(ctx, &testutils.TestAgentConfig{
 		LLM:        model,
@@ -527,7 +544,7 @@ func verifyBridgeConfig(agent *mcpagent.Agent, log loggerv2.Logger) error {
 
 	log.Info("Tool definitions in bridge config", loggerv2.Int("count", len(toolDefs)))
 
-	// Verify the bridge exposes exactly the 3 expected tools
+	// Verify the bridge exposes the expected native tool set
 	toolSet := make(map[string]string, len(toolDefs)) // name -> type
 	for _, td := range toolDefs {
 		name, _ := td["name"].(string)
@@ -537,9 +554,10 @@ func verifyBridgeConfig(agent *mcpagent.Agent, log loggerv2.Logger) error {
 	}
 
 	expectedTools := map[string]string{
-		"execute_shell_command": "custom",
-		"agent_browser":        "custom",
-		"get_api_spec":         "virtual",
+		"execute_shell_command":     "custom",
+		"diff_patch_workspace_file": "custom",
+		"agent_browser":             "custom",
+		"get_api_spec":              "virtual",
 	}
 	for name, wantType := range expectedTools {
 		gotType, ok := toolSet[name]
@@ -610,7 +628,7 @@ func testClaudeCodeQuery(ctx context.Context, agent *mcpagent.Agent, log loggerv
 	log.Info("  3. Claude Code agent created with code execution mode")
 	log.Info("  4. Multiple MCP servers configured (context7, docfork)")
 	log.Info("  5. Workspace custom tools registered (read_file, write_file, shell, browser)")
-	log.Info("  6. BuildBridgeMCPConfig() produced valid config with 3 bridge tools")
+	log.Info("  6. BuildBridgeMCPConfig() produced valid config with the expected native bridge tools")
 	log.Info("  7. Claude Code query executed through bridge successfully")
 
 	return nil

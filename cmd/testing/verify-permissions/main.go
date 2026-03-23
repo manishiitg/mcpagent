@@ -11,8 +11,10 @@ import (
 )
 
 func main() {
-	os.Setenv("LOG_LEVEL", "warn")
-	
+	if err := os.Setenv("LOG_LEVEL", "warn"); err != nil {
+		log.Fatalf("Failed to set LOG_LEVEL: %v", err)
+	}
+
 	fmt.Println("Initializing Claude Code LLM with WithAllowedTools...")
 	llmInstance, err := llm.InitializeLLM(llm.Config{
 		Provider: llm.ProviderClaudeCode,

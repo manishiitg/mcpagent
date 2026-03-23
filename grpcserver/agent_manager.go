@@ -198,6 +198,8 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 		provider = llm.ProviderOpenRouter
 	case llm.ProviderVertex:
 		provider = llm.ProviderVertex
+	case llm.ProviderGeminiCLI:
+		provider = llm.ProviderGeminiCLI
 	case llm.ProviderAzure:
 		provider = llm.ProviderAzure
 	}
@@ -212,6 +214,8 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 			modelID = "anthropic.claude-sonnet-4-20250514-v1:0"
 		case llm.ProviderAnthropic:
 			modelID = "claude-sonnet-4-20250514"
+		case llm.ProviderGeminiCLI:
+			modelID = "flash-lite"
 		case llm.ProviderAzure:
 			modelID = "gpt-4o"
 		default:
@@ -278,6 +282,8 @@ func (m *AgentManager) buildAgentOptions(config AgentConfig, sessionID string) [
 		provider = llm.ProviderOpenRouter
 	case llm.ProviderVertex:
 		provider = llm.ProviderVertex
+	case llm.ProviderGeminiCLI:
+		provider = llm.ProviderGeminiCLI
 	case llm.ProviderAzure:
 		provider = llm.ProviderAzure
 	}

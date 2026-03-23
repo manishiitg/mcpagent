@@ -137,13 +137,19 @@ func startMockAPIServer(log loggerv2.Logger) (*mockAPIServer, error) {
 		// Verify auth
 		if r.Header.Get("Authorization") != "Bearer "+mock.apiToken {
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "unauthorized"})
+			if err := json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "unauthorized"}); err != nil {
+				log.Warn("Failed to encode unauthorized MCP response", loggerv2.Error(err))
+			}
 			return
 		}
 
 		// Parse body
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"success":false,"error":"invalid json"}`, http.StatusBadRequest)
+			log.Warn("Failed to decode MCP request body", loggerv2.Error(err))
+			return
+		}
 
 		mock.mu.Lock()
 		mock.requests = append(mock.requests, requestLog{Method: r.Method, Path: r.URL.Path, Body: body})
@@ -155,22 +161,30 @@ func startMockAPIServer(log loggerv2.Logger) (*mockAPIServer, error) {
 
 		// Return success with a predictable result
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"result":  fmt.Sprintf("mock-result-for-%s", r.URL.Path),
-		})
+		}); err != nil {
+			log.Warn("Failed to encode MCP success response", loggerv2.Error(err))
+		}
 	})
 
 	// Per-tool custom endpoint: POST /tools/custom/{tool}
 	mux.HandleFunc("/tools/custom/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+mock.apiToken {
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "unauthorized"})
+			if err := json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "unauthorized"}); err != nil {
+				log.Warn("Failed to encode unauthorized custom response", loggerv2.Error(err))
+			}
 			return
 		}
 
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"success":false,"error":"invalid json"}`, http.StatusBadRequest)
+			log.Warn("Failed to decode custom request body", loggerv2.Error(err))
+			return
+		}
 
 		mock.mu.Lock()
 		mock.requests = append(mock.requests, requestLog{Method: r.Method, Path: r.URL.Path, Body: body})
@@ -179,22 +193,30 @@ func startMockAPIServer(log loggerv2.Logger) (*mockAPIServer, error) {
 		log.Info("Mock received custom request", loggerv2.String("path", r.URL.Path))
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"result":  fmt.Sprintf("custom-result-for-%s", r.URL.Path),
-		})
+		}); err != nil {
+			log.Warn("Failed to encode custom success response", loggerv2.Error(err))
+		}
 	})
 
 	// Per-tool virtual endpoint: POST /tools/virtual/{tool}
 	mux.HandleFunc("/tools/virtual/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+mock.apiToken {
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "unauthorized"})
+			if err := json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "unauthorized"}); err != nil {
+				log.Warn("Failed to encode unauthorized virtual response", loggerv2.Error(err))
+			}
 			return
 		}
 
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"success":false,"error":"invalid json"}`, http.StatusBadRequest)
+			log.Warn("Failed to decode virtual request body", loggerv2.Error(err))
+			return
+		}
 
 		mock.mu.Lock()
 		mock.requests = append(mock.requests, requestLog{Method: r.Method, Path: r.URL.Path, Body: body})
@@ -203,10 +225,12 @@ func startMockAPIServer(log loggerv2.Logger) (*mockAPIServer, error) {
 		log.Info("Mock received virtual request", loggerv2.String("path", r.URL.Path))
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"result":  fmt.Sprintf("virtual-result-for-%s", r.URL.Path),
-		})
+		}); err != nil {
+			log.Warn("Failed to encode virtual success response", loggerv2.Error(err))
+		}
 	})
 
 	// Error endpoint: always returns an error
@@ -221,10 +245,12 @@ func startMockAPIServer(log loggerv2.Logger) (*mockAPIServer, error) {
 		mock.mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "tool execution failed: test error",
-		})
+		}); err != nil {
+			log.Warn("Failed to encode error-server response", loggerv2.Error(err))
+		}
 	})
 
 	server := &http.Server{
@@ -244,7 +270,9 @@ func startMockAPIServer(log loggerv2.Logger) (*mockAPIServer, error) {
 	mock.shutdown = func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		if err := server.Shutdown(ctx); err != nil {
+			log.Warn("Mock server shutdown returned error", loggerv2.Error(err))
+		}
 		log.Info("Mock server stopped")
 	}
 
@@ -315,7 +343,9 @@ func createBridgeClient(bridgePath string, mock *mockAPIServer, log loggerv2.Log
 
 	_, err = c.Initialize(ctx, initReq)
 	if err != nil {
-		c.Close()
+		if closeErr := c.Close(); closeErr != nil {
+			log.Warn("Failed to close MCP client after initialization error", loggerv2.Error(closeErr))
+		}
 		return nil, fmt.Errorf("failed to initialize MCP client: %w", err)
 	}
 

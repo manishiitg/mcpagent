@@ -64,14 +64,7 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	}
 	a.openAPISpecCacheMu.RUnlock()
 
-	// Determine the API base URL
-	baseURL := a.APIBaseURL
-	if baseURL == "" {
-		baseURL = os.Getenv("MCP_API_URL")
-	}
-	if baseURL == "" {
-		baseURL = "http://localhost:8000"
-	}
+	baseURL := a.getCodeExecutionAPIBaseURL()
 
 	// Build a set for fast lookup
 	wantTools := make(map[string]bool, len(toolNames))
@@ -250,14 +243,7 @@ func (a *Agent) buildPreDiscoveredToolSpecs() string {
 		preDiscoveredSet[name] = true
 	}
 
-	// Determine the API base URL
-	baseURL := a.APIBaseURL
-	if baseURL == "" {
-		baseURL = os.Getenv("MCP_API_URL")
-	}
-	if baseURL == "" {
-		baseURL = "http://localhost:8000"
-	}
+	baseURL := a.getCodeExecutionAPIBaseURL()
 
 	// Collect MCP tool definitions for pre-discovered tools
 	var mcpToolsByServer = make(map[string][]llmtypes.Tool)
@@ -354,6 +340,27 @@ func (a *Agent) buildPreDiscoveredToolSpecs() string {
 	}
 
 	return sb.String()
+}
+
+func (a *Agent) getCodeExecutionAPIBaseURL() string {
+	baseURL := a.APIBaseURL
+	if baseURL == "" {
+		baseURL = os.Getenv("MCP_API_URL")
+	}
+	if baseURL == "" {
+		baseURL = "http://localhost:8000"
+	}
+
+	if a.SessionID == "" {
+		return strings.TrimRight(baseURL, "/")
+	}
+
+	sessionPrefix := "/s/" + a.SessionID
+	if strings.Contains(baseURL, sessionPrefix) {
+		return strings.TrimRight(baseURL, "/")
+	}
+
+	return strings.TrimRight(baseURL, "/") + sessionPrefix
 }
 
 // buildToolIndex returns a JSON index of available servers and their tool names.

@@ -2,6 +2,8 @@
 
 Simple example showing how to use the MCP Agent with OpenAI LLM and MCP servers.
 
+It prints the final answer and a cumulative token usage summary after each run.
+
 ## Setup
 
 1. Create `.env` file with your OpenAI API key:
@@ -29,9 +31,20 @@ go run main.go mcp_servers.json "What are the latest AI developments?"
 
 Edit `mcp_servers.json` to add/configure MCP servers. The example includes `tavily-search` for web search.
 
+## Output
+
+At the end of the run, the example prints:
+
+- Prompt tokens
+- Completion tokens
+- Total tokens
+- Cache tokens
+- Reasoning tokens
+- LLM call count
+- Cache-enabled call count
+
 ## Requirements
 
 - Go 1.24.4+
 - Node.js (for npx-based MCP servers)
 - OpenAI API key in `.env` file
-

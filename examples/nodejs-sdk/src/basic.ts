@@ -44,11 +44,16 @@ async function main() {
     // Step 2: Ask a simple question with streaming
     console.log('2. Asking with streaming: "What tools do you have available?"');
     console.log('   Response: ');
+    let streamedAnyText = false;
 
     for await (const event of agent.askStream('What tools do you have available? List them briefly.')) {
       if (event.type === 'chunk') {
+        streamedAnyText = true;
         process.stdout.write(event.text);
       } else if (event.type === 'final') {
+        if (!streamedAnyText && event.response) {
+          process.stdout.write(event.response);
+        }
         console.log('\n');
         console.log(`   Duration: ${event.durationMs}ms`);
         console.log(`   Tokens: ${event.tokenUsage.totalTokens}`);

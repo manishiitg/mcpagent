@@ -108,7 +108,9 @@ curl -X POST "$MCP_API_URL/tools/mcp/google_sheets/get_document" \
 - Write one comprehensive script when possible — minimize the number of execute_shell_command calls
 - Always check the "success" field in responses
 - MCP_API_URL and MCP_API_TOKEN are pre-set in the shell environment — always use them
-- **IMPORTANT**: When custom tools are available as direct calls (via mcp__api-bridge__*), ALWAYS prefer using them over writing equivalent shell commands. Custom tools provide structured input validation and atomic operations.`
+- **IMPORTANT**: Use the tool names exactly as declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces.
+- **IMPORTANT**: When custom tools are available as direct calls, ALWAYS prefer using them over writing equivalent shell commands. Custom tools provide structured input validation and atomic operations.
+- If a requested action is denied, blocked, unavailable, or returns a 404-like failure, do NOT keep retrying the same approach. Either switch to another declared tool or stop and explain the blocker clearly.`
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
@@ -197,7 +199,7 @@ When answering questions:
 				toolStructureJSON + "\n" +
 				"```\n\n" +
 				"Domain tools (MCP and custom) are accessible via HTTP API endpoints documented in the OpenAPI spec.\n" +
-				"System tools (e.g. execute_shell_command) are available as direct LLM calls.\n" +
+				"System tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) are available as direct LLM calls.\n" +
 				"</available_tools>\n" +
 				preDiscoveredToolSpecs
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
@@ -410,7 +412,7 @@ func buildVirtualToolsSection(useCodeExecutionMode bool, useToolSearchMode bool,
   Multiple tools: get_api_spec(server_name="google_sheets", tool_name=["create_spreadsheet", "update_values"])
 
 Domain tools (MCP and custom) are accessed via HTTP endpoints documented in the OpenAPI spec.
-System tools (e.g. execute_shell_command) are available as direct LLM function calls.
+System tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) are available as direct LLM function calls.
 Custom domain tools use: POST /tools/custom/{tool}
 MCP tools use: POST /tools/mcp/{server}/{tool}`
 	}
