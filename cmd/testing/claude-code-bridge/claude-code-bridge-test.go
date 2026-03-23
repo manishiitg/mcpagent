@@ -544,7 +544,7 @@ func verifyBridgeConfig(agent *mcpagent.Agent, log loggerv2.Logger) error {
 
 	log.Info("Tool definitions in bridge config", loggerv2.Int("count", len(toolDefs)))
 
-	// Verify the bridge exposes exactly the 3 expected tools
+	// Verify the bridge exposes the expected native tool set
 	toolSet := make(map[string]string, len(toolDefs)) // name -> type
 	for _, td := range toolDefs {
 		name, _ := td["name"].(string)
@@ -554,9 +554,10 @@ func verifyBridgeConfig(agent *mcpagent.Agent, log loggerv2.Logger) error {
 	}
 
 	expectedTools := map[string]string{
-		"execute_shell_command": "custom",
-		"agent_browser":        "custom",
-		"get_api_spec":         "virtual",
+		"execute_shell_command":     "custom",
+		"diff_patch_workspace_file": "custom",
+		"agent_browser":             "custom",
+		"get_api_spec":              "virtual",
 	}
 	for name, wantType := range expectedTools {
 		gotType, ok := toolSet[name]
@@ -627,7 +628,7 @@ func testClaudeCodeQuery(ctx context.Context, agent *mcpagent.Agent, log loggerv
 	log.Info("  3. Claude Code agent created with code execution mode")
 	log.Info("  4. Multiple MCP servers configured (context7, docfork)")
 	log.Info("  5. Workspace custom tools registered (read_file, write_file, shell, browser)")
-	log.Info("  6. BuildBridgeMCPConfig() produced valid config with 3 bridge tools")
+	log.Info("  6. BuildBridgeMCPConfig() produced valid config with the expected native bridge tools")
 	log.Info("  7. Claude Code query executed through bridge successfully")
 
 	return nil

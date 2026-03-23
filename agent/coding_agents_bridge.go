@@ -18,25 +18,27 @@ type BridgeToolDef struct {
 	Type        string          `json:"type"`             // "mcp", "custom", or "virtual"
 }
 
-// bridgeTools is the explicit list of tools exposed through the Claude Code MCP
-// bridge. Claude Code discovers all other MCP tools via get_api_spec and calls
-// them through execute_shell_command.
+// bridgeTools is the explicit list of tools exposed through the coding-agent MCP
+// bridge as native MCP tools. All other MCP/custom tools are discovered via
+// get_api_spec and called through HTTP API endpoints.
 var bridgeTools = []struct {
 	name     string
 	toolType string // "custom" or "virtual"
 }{
 	{"execute_shell_command", "custom"},
+	{"diff_patch_workspace_file", "custom"},
 	{"agent_browser", "custom"},
 	{"get_api_spec", "virtual"},
 }
 
 // BuildBridgeMCPConfig creates an MCP config that launches the mcpbridge binary
 // as a stdio server, forwarding tool calls to the HTTP API endpoints.
-// This is used by Claude Code to access MCP tools natively via the bridge.
+// This is used by CLI-native coding agents to access selected tools natively
+// via the bridge.
 //
-// The bridge exposes exactly 3 tools: execute_shell_command, agent_browser, and
-// get_api_spec. All other MCP tools are discovered via get_api_spec and called
-// through HTTP API endpoints using execute_shell_command.
+// The bridge exposes a small native tool set: execute_shell_command,
+// diff_patch_workspace_file, agent_browser, and get_api_spec. All other MCP
+// tools are discovered via get_api_spec and called through HTTP API endpoints.
 func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 	logger := getLogger(a)
 

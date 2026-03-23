@@ -1852,7 +1852,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -1893,7 +1893,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools as they are restricted and may fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -1924,7 +1924,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools as they are restricted and may fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2841,7 +2841,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -2881,7 +2881,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools as they are restricted and may fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2912,7 +2912,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. You MUST use the tools provided via the `mcp__api-bridge__*` prefix for all operations (like file reading, writing, and shell execution). DO NOT use your built-in tools as they are restricted and may fail.")
+		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools as they are restricted and may fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {

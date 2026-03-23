@@ -636,7 +636,7 @@ priority = 998
 toolName = "*"
 decision = "deny"
 priority = 997
-deny_message = "Use MCP bridge tools from the api-bridge namespace or google_web_search instead of other built-in tools."
+deny_message = "Use only the declared tools available in this session or google_web_search. Do not switch to blocked built-in tools."
 `
 			if err := os.WriteFile(filepath.Join(policiesDir, "restrict-tools.toml"), []byte(policyContent), 0600); err != nil {
 				a.Logger.Warn("Failed to write Gemini CLI policy file", loggerv2.Error(err))
