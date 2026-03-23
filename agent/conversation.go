@@ -1009,6 +1009,16 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				if parallelErr != nil {
 					return "", messages, parallelErr
 				}
+				// Drain and inject any pending steer messages from the user
+				if steerMsgs := a.DrainSteerMessages(); len(steerMsgs) > 0 {
+					for _, sm := range steerMsgs {
+						messages = append(messages, llmtypes.MessageContent{
+							Role:  llmtypes.ChatMessageTypeHuman,
+							Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sm}},
+						})
+						v2Logger.Info("Injected steer message after parallel tool execution", loggerv2.Int("turn", turn+1))
+					}
+				}
 				// After parallel execution, continue to next turn
 				continue
 			}
@@ -1680,6 +1690,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						HandleLoopDetection(a, ctx, loopResult, lastUserMessage, turn+1, conversationStartTime, &messages, v2Logger)
 						// Continue to next turn so LLM can respond to the correction message
 					}
+				}
+			}
+
+			// Drain and inject any pending steer messages from the user
+			if steerMsgs := a.DrainSteerMessages(); len(steerMsgs) > 0 {
+				for _, sm := range steerMsgs {
+					messages = append(messages, llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeHuman,
+						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sm}},
+					})
+					v2Logger.Info("Injected steer message after sequential tool execution", loggerv2.Int("turn", turn+1))
 				}
 			}
 

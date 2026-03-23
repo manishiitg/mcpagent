@@ -769,6 +769,11 @@ type Agent struct {
 	// Protects currentParentEventID and currentHierarchyLevel in EmitTypedEvent
 	eventMu sync.Mutex
 
+	// Steer messages: user messages injected mid-execution between tool results and next LLM call.
+	// Written by HTTP handler (AddSteerMessage), read by agent loop (DrainSteerMessages).
+	pendingSteerMessages []string
+	steerMu              sync.Mutex
+
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
 	resources map[string][]mcp.Resource
@@ -981,6 +986,27 @@ type AgentAzureConfig struct {
 	APIKey     string
 	APIVersion string
 	Region     string
+}
+
+// AddSteerMessage queues a user message to be injected into the conversation
+// between tool results and the next LLM call. Thread-safe — called by HTTP handlers.
+func (a *Agent) AddSteerMessage(msg string) {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	a.pendingSteerMessages = append(a.pendingSteerMessages, msg)
+}
+
+// DrainSteerMessages returns and clears all pending steer messages.
+// Thread-safe — called by the agent loop in conversation.go.
+func (a *Agent) DrainSteerMessages() []string {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	if len(a.pendingSteerMessages) == 0 {
+		return nil
+	}
+	msgs := a.pendingSteerMessages
+	a.pendingSteerMessages = nil
+	return msgs
 }
 
 // GetProvider returns the provider
