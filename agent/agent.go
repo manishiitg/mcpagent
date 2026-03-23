@@ -3610,30 +3610,37 @@ func (a *Agent) IsCancelled() bool {
 // Always overwrites the existing system prompt (removed prepending behavior for code execution mode)
 // In code execution mode, if the prompt contains {{TOOL_STRUCTURE}} placeholder, it will be replaced with actual tool structure JSON
 func (a *Agent) SetSystemPrompt(systemPrompt string) {
-	// In code execution mode, replace {{TOOL_STRUCTURE}} placeholder if present
-	if a.UseCodeExecutionMode && strings.Contains(systemPrompt, prompt.ToolStructurePlaceholder) {
-		toolStructure, err := a.buildToolIndex()
-		if err != nil {
-			if a.Logger != nil {
-				a.Logger.Warn("Failed to build tool index for placeholder replacement", loggerv2.Error(err))
-			}
-			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
-		} else {
-			// Build pre-discovered tool specs (inline specs for tools that don't need get_api_spec)
-			preDiscoveredSpecs := a.buildPreDiscoveredToolSpecs()
-			var getApiSpecNote string
-			if preDiscoveredSpecs != "" {
-				getApiSpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
+	// Replace {{TOOL_STRUCTURE}} placeholder if present:
+	// - In code execution mode: inject actual tool structure JSON so the agent knows available tools.
+	// - Otherwise: strip the placeholder so it doesn't appear as a literal string in the prompt.
+	if strings.Contains(systemPrompt, prompt.ToolStructurePlaceholder) {
+		if a.UseCodeExecutionMode {
+			toolStructure, err := a.buildToolIndex()
+			if err != nil {
+				if a.Logger != nil {
+					a.Logger.Warn("Failed to build tool index for placeholder replacement", loggerv2.Error(err))
+				}
+				systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
 			} else {
-				getApiSpecNote = "Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n"
+				// Build pre-discovered tool specs (inline specs for tools that don't need get_api_spec)
+				preDiscoveredSpecs := a.buildPreDiscoveredToolSpecs()
+				var getApiSpecNote string
+				if preDiscoveredSpecs != "" {
+					getApiSpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
+				} else {
+					getApiSpecNote = "Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n"
+				}
+				toolStructureSection := "\n\n<available_tools>\n" +
+					"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
+					"```json\n" + toolStructure + "\n```\n\n" +
+					getApiSpecNote +
+					"</available_tools>\n" +
+					preDiscoveredSpecs
+				systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
 			}
-			toolStructureSection := "\n\n<available_tools>\n" +
-				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
-				"```json\n" + toolStructure + "\n```\n\n" +
-				getApiSpecNote +
-				"</available_tools>\n" +
-				preDiscoveredSpecs
-			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
+		} else {
+			// Not in code execution mode — strip the placeholder rather than leaving it unresolved.
+			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
 		}
 	}
 

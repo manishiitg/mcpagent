@@ -1,8 +1,8 @@
 package mcpagent
 
 import (
-	cryptorand "crypto/rand"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,18 +101,20 @@ func isQuotaExhaustedError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "per_day") ||
 		strings.Contains(msg, "per_month") ||
-		strings.Contains(msg, "GenerateRequestsPerDay") ||
-		strings.Contains(msg, "RESOURCE_EXHAUSTED") ||
+		strings.Contains(msg, "generaterequestsperday") ||
+		strings.Contains(msg, "resource_exhausted") ||
 		strings.Contains(msg, "quota exceeded for metric") ||
 		strings.Contains(msg, "exceeded your current quota") ||
-		strings.Contains(msg, "retryDelay:3") || // retryDelay >= 3600s (1+ hour)
-		strings.Contains(msg, "retryDelay:4") ||
-		strings.Contains(msg, "retryDelay:8") ||
-		strings.Contains(msg, "retryDelay:9") ||
+		strings.Contains(msg, "retrydelay:3") || // retryDelay >= 3600s (1+ hour)
+		strings.Contains(msg, "retrydelay:4") ||
+		strings.Contains(msg, "retrydelay:8") ||
+		strings.Contains(msg, "retrydelay:9") ||
 		strings.Contains(msg, "hit your usage limit") || // Codex CLI usage exhaustion
+		strings.Contains(msg, "you've hit your limit") || // Claude Code usage exhaustion
+		strings.Contains(msg, "youve hit your limit") ||
 		strings.Contains(msg, "usage limit")
 }
 
@@ -425,23 +427,25 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 
 // getEffectiveLLMConfig returns a unified LLM configuration, compatible with legacy settings
 func (a *Agent) getEffectiveLLMConfig() AgentLLMConfiguration {
-	// If the new config is populated, use it
+	var config AgentLLMConfiguration
+
+	// If the new config is populated, use it as base
 	if a.LLMConfig.Primary.ModelID != "" && a.LLMConfig.Primary.Provider != "" {
-		return a.LLMConfig
+		config = a.LLMConfig
+	} else {
+		// Otherwise, build from legacy fields
+		config = AgentLLMConfiguration{
+			Primary: LLMModel{
+				Provider: string(a.provider),
+				ModelID:  a.ModelID,
+				// Note: API Key not easily accessible from legacy Agent struct without introspection
+				// but executeLLM will handle this by checking Agent.APIKeys if model.APIKey is nil
+			},
+			Fallbacks: []LLMModel{},
+		}
 	}
 
-	// Otherwise, build from legacy fields
-	config := AgentLLMConfiguration{
-		Primary: LLMModel{
-			Provider: string(a.provider),
-			ModelID:  a.ModelID,
-			// Note: API Key not easily accessible from legacy Agent struct without introspection
-			// but executeLLM will handle this by checking Agent.APIKeys if model.APIKey is nil
-		},
-		Fallbacks: []LLMModel{},
-	}
-
-	// Add legacy cross-provider fallbacks if available
+	// Merge legacy cross-provider fallbacks if available (backward compatibility).
 	if a.CrossProviderFallback != nil {
 		for _, model := range a.CrossProviderFallback.Models {
 			config.Fallbacks = append(config.Fallbacks, LLMModel{
@@ -451,7 +455,74 @@ func (a *Agent) getEffectiveLLMConfig() AgentLLMConfiguration {
 		}
 	}
 
+	// If no explicit fallbacks were provided, apply provider defaults.
+	// This keeps behavior aligned with older initialization paths that used
+	// default same-provider and cross-provider fallback env configuration.
+	if len(config.Fallbacks) == 0 && config.Primary.Provider != "" {
+		defaultFallbackRefs := append([]string{}, llm.GetDefaultFallbackModels(llm.Provider(config.Primary.Provider))...)
+		defaultFallbackRefs = append(defaultFallbackRefs, llm.GetCrossProviderFallbackModels(llm.Provider(config.Primary.Provider))...)
+
+		for _, fallbackRef := range defaultFallbackRefs {
+			if fallbackModel, ok := parseFallbackModelRef(config.Primary.Provider, fallbackRef); ok {
+				config.Fallbacks = append(config.Fallbacks, fallbackModel)
+			}
+		}
+	}
+
+	config.Fallbacks = dedupeFallbacks(config.Fallbacks)
 	return config
+}
+
+func parseFallbackModelRef(primaryProvider, fallbackRef string) (LLMModel, bool) {
+	ref := strings.TrimSpace(fallbackRef)
+	if ref == "" {
+		return LLMModel{}, false
+	}
+
+	slashIdx := strings.Index(ref, "/")
+	if slashIdx <= 0 {
+		return LLMModel{Provider: primaryProvider, ModelID: ref}, true
+	}
+
+	providerCandidate := strings.TrimSpace(ref[:slashIdx])
+	modelCandidate := strings.TrimSpace(ref[slashIdx+1:])
+	if providerCandidate == "" || modelCandidate == "" {
+		return LLMModel{Provider: primaryProvider, ModelID: ref}, true
+	}
+
+	// If the prefix is a known provider (e.g., "openai/gpt-5-mini"), treat
+	// as cross-provider fallback; otherwise keep as same-provider model ID
+	// that happens to contain "/" (e.g., OpenRouter "x-ai/grok-code-fast-1").
+	if _, err := llm.ValidateProvider(providerCandidate); err == nil {
+		return LLMModel{Provider: providerCandidate, ModelID: modelCandidate}, true
+	}
+
+	return LLMModel{Provider: primaryProvider, ModelID: ref}, true
+}
+
+func dedupeFallbacks(fallbacks []LLMModel) []LLMModel {
+	seen := make(map[string]struct{}, len(fallbacks))
+	result := make([]LLMModel, 0, len(fallbacks))
+
+	for _, fallback := range fallbacks {
+		provider := strings.TrimSpace(fallback.Provider)
+		modelID := strings.TrimSpace(fallback.ModelID)
+		if provider == "" || modelID == "" {
+			continue
+		}
+
+		key := provider + "/" + modelID
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		fallback.Provider = provider
+		fallback.ModelID = modelID
+		result = append(result, fallback)
+	}
+
+	return result
 }
 
 // executeLLM creates an LLM instance and executes it
@@ -462,11 +533,11 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 	// First, set up agent-level keys as base (so Azure and Bedrock configs are always available)
 	if a.APIKeys != nil {
 		apiKeys = &llm.ProviderAPIKeys{
-			OpenRouter: a.APIKeys.OpenRouter,
-			OpenAI:     a.APIKeys.OpenAI,
-			Anthropic:  a.APIKeys.Anthropic,
-			Vertex:     a.APIKeys.Vertex,
-			GeminiCLI:  a.APIKeys.GeminiCLI,
+			OpenRouter:        a.APIKeys.OpenRouter,
+			OpenAI:            a.APIKeys.OpenAI,
+			Anthropic:         a.APIKeys.Anthropic,
+			Vertex:            a.APIKeys.Vertex,
+			GeminiCLI:         a.APIKeys.GeminiCLI,
 			MiniMax:           a.APIKeys.MiniMax,
 			MiniMaxCodingPlan: a.APIKeys.MiniMaxCodingPlan,
 		}
