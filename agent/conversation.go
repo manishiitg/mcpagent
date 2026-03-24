@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
@@ -290,6 +292,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Ensure system prompt is included in messages
 	messages = ensureSystemPrompt(a, messages)
+
+	// Log final prompts to disk when LOG_AGENT_PROMPTS is enabled
+	if os.Getenv("LOG_AGENT_PROMPTS") == "true" {
+		logFinalPrompts(a, messages)
+	}
 
 	// NEW: Set current query for hierarchy tracking (will be set later when lastUserMessage is extracted)
 
@@ -1939,4 +1946,114 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	}
 
 	return finalChoice.Content, messages, nil
+}
+
+// promptLogCounter is a global counter for ordering prompt log files within a session.
+var promptLogCounter uint64
+var promptLogCounterMu sync.Mutex
+
+func nextPromptLogCounter() uint64 {
+	promptLogCounterMu.Lock()
+	defer promptLogCounterMu.Unlock()
+	promptLogCounter++
+	return promptLogCounter
+}
+
+// logFinalPrompts writes the final system prompt and user message to logs/agent_prompts/
+// as both JSON and Markdown files. This captures the true source-of-truth prompts right
+// before the LLM call, after all prompt processing (SetSystemPrompt, AppendSystemPrompt,
+// tool structure resolution) is complete.
+//
+// Files are organized by session:
+//
+//	logs/agent_prompts/{session_id}/001_{timestamp}_{provider}_{model}.{json,md}
+//
+// Runs in a goroutine to avoid blocking.
+func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) {
+	// Extract system prompt and last user message from the finalized messages
+	var systemPrompt, userMessage string
+	for _, msg := range messages {
+		if msg.Role == llmtypes.ChatMessageTypeSystem {
+			for _, part := range msg.Parts {
+				if tc, ok := part.(llmtypes.TextContent); ok {
+					systemPrompt = tc.Text
+				}
+			}
+		}
+	}
+	// Find last user message
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == llmtypes.ChatMessageTypeHuman {
+			for _, part := range messages[i].Parts {
+				if tc, ok := part.(llmtypes.TextContent); ok {
+					userMessage = tc.Text
+					break
+				}
+			}
+			break
+		}
+	}
+
+	seq := nextPromptLogCounter()
+
+	go func() {
+		// Organize by session ID
+		sessionDir := "no-session"
+		if a.SessionID != "" {
+			sessionDir = strings.ReplaceAll(a.SessionID, "/", "_")
+		}
+		dir := filepath.Join("logs", "agent_prompts", sessionDir)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return
+		}
+
+		ts := time.Now()
+		sanitize := func(s string) string {
+			s = strings.ReplaceAll(s, "/", "_")
+			s = strings.ReplaceAll(s, ":", "_")
+			s = strings.ReplaceAll(s, " ", "-")
+			s = strings.ToLower(s)
+			return s
+		}
+		// Use PromptLogLabel if set by orchestrator, otherwise derive from system prompt header
+		agentMode := a.PromptLogLabel
+		if agentMode == "" {
+			agentMode = "agent"
+			if idx := strings.Index(systemPrompt, "\n"); idx > 0 && strings.HasPrefix(systemPrompt, "# ") {
+				header := strings.TrimPrefix(systemPrompt[:idx], "# ")
+				header = strings.ToLower(strings.TrimSpace(header))
+				header = strings.ReplaceAll(header, " ", "-")
+				if len(header) > 30 {
+					header = header[:30]
+				}
+				agentMode = header
+			}
+		}
+		if a.UseCodeExecutionMode {
+			agentMode += "_code-exec"
+		}
+
+		baseName := fmt.Sprintf("%03d_%s_%s_%s_%s",
+			seq,
+			ts.Format("15-04-05"),
+			sanitize(agentMode),
+			sanitize(string(a.provider)),
+			sanitize(a.ModelID),
+		)
+
+		// Write Markdown
+		var md strings.Builder
+		md.WriteString(fmt.Sprintf("# Prompt #%d\n\n", seq))
+		md.WriteString(fmt.Sprintf("- **Timestamp**: %s\n", ts.Format(time.RFC3339)))
+		md.WriteString(fmt.Sprintf("- **Session**: %s\n", a.SessionID))
+		md.WriteString(fmt.Sprintf("- **Provider**: %s\n", a.provider))
+		md.WriteString(fmt.Sprintf("- **Model**: %s\n", a.ModelID))
+		md.WriteString(fmt.Sprintf("- **Messages**: %d\n\n", len(messages)))
+		md.WriteString("---\n\n## System Prompt\n\n")
+		md.WriteString(systemPrompt)
+		md.WriteString("\n\n---\n\n## User Message\n\n")
+		md.WriteString(userMessage)
+		md.WriteString("\n")
+		_ = os.WriteFile(filepath.Join(dir, baseName+".md"), []byte(md.String()), 0644)
+	}()
 }

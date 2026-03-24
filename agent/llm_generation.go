@@ -33,6 +33,193 @@ func isContextCanceledError(err error) bool {
 		strings.Contains(err.Error(), "context deadline exceeded")
 }
 
+func geminiDebugHooksEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("MCPAGENT_GEMINI_DEBUG_HOOKS"))
+	if v == "" {
+		return false
+	}
+	return v == "1" ||
+		strings.EqualFold(v, "true") ||
+		strings.EqualFold(v, "yes") ||
+		strings.EqualFold(v, "on")
+}
+
+func geminiHTTPRoutingHooksEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING"))
+	if v == "" {
+		return false
+	}
+	return v == "1" ||
+		strings.EqualFold(v, "true") ||
+		strings.EqualFold(v, "yes") ||
+		strings.EqualFold(v, "on")
+}
+
+func buildGeminiEnforcementHooks(debugEnabled bool) map[string]interface{} {
+	beforeToolHooks := []map[string]interface{}{
+		{
+			"name":        "enforce-http-tool-routing",
+			"type":        "command",
+			"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/enforce-http-tool-routing.py",
+			"timeout":     5000,
+			"description": "Allow only execute_shell_command and get_api_spec; deny all other Gemini tool calls",
+		},
+	}
+	if debugEnabled {
+		beforeToolHooks = append(beforeToolHooks, map[string]interface{}{
+			"name":        "log-before-tool",
+			"type":        "command",
+			"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/log-before-tool.py",
+			"timeout":     5000,
+			"description": "Log Gemini BeforeTool payloads to stderr for MCP bridge diagnostics",
+		})
+	}
+
+	return map[string]interface{}{
+		"BeforeToolSelection": []map[string]interface{}{
+			{
+				"matcher": "*",
+				"hooks": []map[string]interface{}{
+					{
+						"name":        "restrict-tool-selection",
+						"type":        "command",
+						"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/restrict-tool-selection.py",
+						"timeout":     5000,
+						"description": "Whitelist execute_shell_command and get_api_spec for Gemini bridge sessions",
+					},
+				},
+			},
+		},
+		"BeforeTool": []map[string]interface{}{
+			{
+				"matcher": "*",
+				"hooks":   beforeToolHooks,
+			},
+		},
+	}
+}
+
+func writeGeminiHookScripts(projectDir string, debugEnabled bool, enforceHTTPRouting bool) error {
+	hooksDir := filepath.Join(projectDir, ".gemini", "hooks")
+	if err := os.MkdirAll(hooksDir, 0750); err != nil {
+		return fmt.Errorf("create hooks dir: %w", err)
+	}
+
+	if enforceHTTPRouting {
+		restrictPath := filepath.Join(hooksDir, "restrict-tool-selection.py")
+		restrictScript := `#!/usr/bin/env python3
+import json
+import sys
+
+sys.stdin.read()
+sys.stdout.write(json.dumps({
+    "hookSpecificOutput": {
+        "toolConfig": {
+            "mode": "ANY",
+            "allowedFunctionNames": [
+                "execute_shell_command",
+                "get_api_spec"
+            ]
+        }
+    }
+}) + "\n")
+`
+		if err := os.WriteFile(restrictPath, []byte(restrictScript), 0750); err != nil {
+			return fmt.Errorf("write restrict tool selection hook: %w", err)
+		}
+
+		enforcePath := filepath.Join(hooksDir, "enforce-http-tool-routing.py")
+		enforceScript := `#!/usr/bin/env python3
+import json
+import sys
+
+ALLOWED = {"execute_shell_command", "get_api_spec"}
+
+raw = sys.stdin.read()
+payload = {}
+
+try:
+    payload = json.loads(raw) if raw else {}
+except Exception:
+    payload = {}
+
+tool_name = payload.get("tool_name", "")
+mcp_context = payload.get("mcp_context") or {}
+server_name = mcp_context.get("server_name")
+
+if tool_name in ALLOWED:
+    sys.stdout.write("{}\n")
+    raise SystemExit(0)
+
+reason = (
+    "Only execute_shell_command and get_api_spec are allowed in this Gemini bridge session. "
+    "Do not call '" + tool_name + "' directly. "
+    "If you need another capability, call get_api_spec to discover the HTTP endpoint and "
+    "use execute_shell_command to invoke it via MCP_API_URL/MCP_API_TOKEN."
+)
+
+if server_name == "api-bridge":
+    reason += " The blocked tool came through the api-bridge MCP server."
+
+sys.stdout.write(json.dumps({
+    "decision": "deny",
+    "reason": reason
+}) + "\n")
+`
+		if err := os.WriteFile(enforcePath, []byte(enforceScript), 0750); err != nil {
+			return fmt.Errorf("write enforce http routing hook: %w", err)
+		}
+	}
+
+	if !debugEnabled {
+		return nil
+	}
+
+	debugPath := filepath.Join(hooksDir, "log-before-tool.py")
+	debugScript := `#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+raw = sys.stdin.read()
+
+try:
+    payload = json.loads(raw)
+    debug_payload = {
+        "hook_event_name": payload.get("hook_event_name"),
+        "tool_name": payload.get("tool_name"),
+        "original_request_name": payload.get("original_request_name"),
+        "mcp_context": payload.get("mcp_context"),
+        "tool_input": payload.get("tool_input"),
+    }
+    project_dir = os.environ.get("GEMINI_PROJECT_DIR", "")
+    if project_dir:
+        log_path = Path(project_dir) / ".gemini" / "hooks" / "before-tool.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(debug_payload, ensure_ascii=True, sort_keys=True) + "\n")
+    sys.stderr.write(
+        "[GEMINI_DEBUG_HOOK BeforeTool] "
+        + json.dumps(debug_payload, ensure_ascii=True, sort_keys=True)
+        + "\n"
+    )
+except Exception as exc:
+    sys.stderr.write(
+        "[GEMINI_DEBUG_HOOK BeforeTool] failed to parse payload: %s\n" % exc
+    )
+    if raw:
+        sys.stderr.write(raw + "\n")
+
+sys.stdout.write("{}\n")
+`
+
+	if err := os.WriteFile(debugPath, []byte(debugScript), 0750); err != nil {
+		return fmt.Errorf("write debug hook script: %w", err)
+	}
+	return nil
+}
+
 // retryOriginalModel handles retry logic for throttling and zero_candidates errors
 // Returns: shouldRetry (bool), delay (time.Duration), error
 func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt, maxRetries int, baseDelay, maxDelay time.Duration, turn int, logger loggerv2.Logger, usage observability.UsageMetrics) (bool, time.Duration, error) {
@@ -652,11 +839,37 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// "allow" decisions auto-approve MCP tools, "deny" blocks built-in tools.
 		// Yolo mode bypasses the policy engine entirely, so we must NOT use it.
 
+		if a.GeminiProjectDirID == "" {
+			projectSuffix, randErr := cryptorand.Int(cryptorand.Reader, big.NewInt(100000))
+			if randErr != nil {
+				a.Logger.Warn("Failed to generate cryptographic random Gemini project suffix; using timestamp-only fallback", loggerv2.Error(randErr))
+				a.GeminiProjectDirID = fmt.Sprintf("%d-00000", time.Now().UnixMilli())
+			} else {
+				a.GeminiProjectDirID = fmt.Sprintf("%d-%05d", time.Now().UnixMilli(), projectSuffix.Int64())
+			}
+		}
+		projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
+
 		// Build project settings with tool restriction + MCP bridge config
 		settings := map[string]interface{}{
 			"tools": map[string]interface{}{
 				"core": []string{"google_web_search"},
 			},
+		}
+		debugHooksEnabled := geminiDebugHooksEnabled()
+		httpRoutingHooksEnabled := geminiHTTPRoutingHooksEnabled()
+		if debugHooksEnabled || httpRoutingHooksEnabled {
+			settings["hooks"] = buildGeminiEnforcementHooks(debugHooksEnabled)
+		}
+		if debugHooksEnabled {
+			a.Logger.Info("🪝 Gemini CLI BeforeTool debug hook enabled",
+				loggerv2.String("env", "MCPAGENT_GEMINI_DEBUG_HOOKS"),
+				loggerv2.String("project_dir", projectDir))
+		}
+		if httpRoutingHooksEnabled {
+			a.Logger.Info("🪝 Gemini CLI HTTP tool routing enforcement enabled",
+				loggerv2.String("env", "MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING"),
+				loggerv2.String("project_dir", projectDir))
 		}
 
 		// Build bridge MCP config and merge mcpServers into settings
@@ -678,16 +891,6 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// Pre-create project dir with policy files to restrict built-in tools.
 		// Policy Engine: .gemini/policies/*.toml overrides yolo mode defaults.
 		// Workspace-tier policies (priority base 3) beat Default-tier yolo (priority base 1).
-		if a.GeminiProjectDirID == "" {
-			projectSuffix, randErr := cryptorand.Int(cryptorand.Reader, big.NewInt(100000))
-			if randErr != nil {
-				a.Logger.Warn("Failed to generate cryptographic random Gemini project suffix; using timestamp-only fallback", loggerv2.Error(randErr))
-				a.GeminiProjectDirID = fmt.Sprintf("%d-00000", time.Now().UnixMilli())
-			} else {
-				a.GeminiProjectDirID = fmt.Sprintf("%d-%05d", time.Now().UnixMilli(), projectSuffix.Int64())
-			}
-		}
-		projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
 		policiesDir := filepath.Join(projectDir, ".gemini", "policies")
 		if err := os.MkdirAll(policiesDir, 0750); err != nil {
 			a.Logger.Warn("Failed to create Gemini CLI policies directory", loggerv2.Error(err))
@@ -713,6 +916,14 @@ deny_message = "Use only the declared tools available in this session or google_
 				a.Logger.Warn("Failed to write Gemini CLI policy file", loggerv2.Error(err))
 			} else {
 				a.Logger.Info(fmt.Sprintf("📋 Wrote Gemini CLI policy file to %s", policiesDir))
+			}
+		}
+		if debugHooksEnabled || httpRoutingHooksEnabled {
+			if err := writeGeminiHookScripts(projectDir, debugHooksEnabled, httpRoutingHooksEnabled); err != nil {
+				a.Logger.Warn("Failed to write Gemini CLI hook scripts", loggerv2.Error(err))
+			} else if debugHooksEnabled {
+				a.Logger.Info("🪝 Gemini CLI BeforeTool debug hook script ready",
+					loggerv2.String("path", filepath.Join(projectDir, ".gemini", "hooks", "log-before-tool.py")))
 			}
 		}
 

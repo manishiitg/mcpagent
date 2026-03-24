@@ -863,6 +863,11 @@ type Agent struct {
 	// When empty: Legacy behavior - each agent creates/owns its connections, closed on Agent.Close()
 	SessionID string
 
+	// PromptLogLabel is an optional label used in prompt log filenames to identify
+	// the agent type (e.g. "workflow-builder", "step-execution", "learning", "todo-task").
+	// Set by the orchestrator before execution. If empty, derived from system prompt header.
+	PromptLogLabel string
+
 	// API configuration for code execution mode
 	// When set, code execution subprocesses receive these as MCP_API_URL and MCP_API_TOKEN env vars
 	APIBaseURL string
@@ -1919,7 +1924,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools as they are restricted and may fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -1950,7 +1955,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools as they are restricted and may fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2907,7 +2912,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools as they are restricted and may fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2938,7 +2943,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools as they are restricted and may fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -3650,17 +3655,8 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 			} else {
 				// Build pre-discovered tool specs (inline specs for tools that don't need get_api_spec)
 				preDiscoveredSpecs := a.buildPreDiscoveredToolSpecs()
-				var getApiSpecNote string
-				if preDiscoveredSpecs != "" {
-					getApiSpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
-				} else {
-					getApiSpecNote = "Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n"
-				}
-				toolStructureSection := "\n\n<available_tools>\n" +
-					"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
-					"```json\n" + toolStructure + "\n```\n\n" +
-					getApiSpecNote +
-					"</available_tools>\n" +
+				toolStructureSection := "\n\n**AVAILABLE SERVERS AND TOOLS:**\n\n" +
+					"```json\n" + toolStructure + "\n```\n" +
 					preDiscoveredSpecs
 				systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
 			}
@@ -4224,20 +4220,28 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 	// When a custom system prompt has been set (via SetSystemPrompt) or custom prompts
 	// have been appended, preserve them. Only inject the updated tool structure section
 	// into the existing prompt rather than replacing the whole prompt with AI Staff Engineer.
+	const toolSectionMarker = "**AVAILABLE SERVERS AND TOOLS:**"
 	if a.hasCustomSystemPrompt {
 		// Extract just the tool structure section from the newly built prompt
-		// and inject it into the existing custom system prompt
-		toolStructureStart := strings.Index(newSystemPrompt, "<available_tools>")
-		toolStructureEnd := strings.Index(newSystemPrompt, "</available_tools>")
-		if toolStructureStart != -1 && toolStructureEnd != -1 {
-			newToolSection := newSystemPrompt[toolStructureStart : toolStructureEnd+len("</available_tools>")]
-			// Replace the old tool section in the existing prompt, or append if not found
-			existingStart := strings.Index(a.systemPrompt, "<available_tools>")
-			existingEnd := strings.Index(a.systemPrompt, "</available_tools>")
-			if existingStart != -1 && existingEnd != -1 {
-				a.systemPrompt = a.systemPrompt[:existingStart] + newToolSection + a.systemPrompt[existingEnd+len("</available_tools>"):]
+		// and inject it into the existing custom system prompt.
+		// The section starts with the marker and ends at the next double newline block boundary.
+		newStart := strings.Index(newSystemPrompt, toolSectionMarker)
+		if newStart != -1 {
+			// Find the end of the tool section: next occurrence of a markdown heading or end of string
+			newEnd := len(newSystemPrompt)
+			if idx := strings.Index(newSystemPrompt[newStart+len(toolSectionMarker):], "\n## "); idx != -1 {
+				newEnd = newStart + len(toolSectionMarker) + idx
 			}
-			// If no existing tool section, the custom prompt doesn't use tool structure — leave as is
+			newToolSection := newSystemPrompt[newStart:newEnd]
+
+			existingStart := strings.Index(a.systemPrompt, toolSectionMarker)
+			if existingStart != -1 {
+				existingEnd := len(a.systemPrompt)
+				if idx := strings.Index(a.systemPrompt[existingStart+len(toolSectionMarker):], "\n## "); idx != -1 {
+					existingEnd = existingStart + len(toolSectionMarker) + idx
+				}
+				a.systemPrompt = a.systemPrompt[:existingStart] + newToolSection + a.systemPrompt[existingEnd:]
+			}
 		}
 	} else if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
 		// Start from a clean base: strip the AI Staff Engineer persona so our custom
@@ -4290,6 +4294,36 @@ func (a *Agent) HasAppendedSystemPrompts() bool {
 // GetAppendedPromptCount returns the number of appended system prompts
 func (a *Agent) GetAppendedPromptCount() int {
 	return len(a.appendedSystemPrompts)
+}
+
+// ResolveToolStructure resolves the {{TOOL_STRUCTURE}} placeholder in the given
+// prompt string by replacing it with the actual tool index JSON (in code execution
+// mode) or stripping it (otherwise). This is a read-only operation with no side effects.
+func (a *Agent) ResolveToolStructure(input string) string {
+	if !strings.Contains(input, prompt.ToolStructurePlaceholder) {
+		return input
+	}
+	if a.UseCodeExecutionMode {
+		toolStructure, err := a.buildToolIndex()
+		if err != nil {
+			return strings.ReplaceAll(input, prompt.ToolStructurePlaceholder, "")
+		}
+		preDiscoveredSpecs := a.buildPreDiscoveredToolSpecs()
+		var getApiSpecNote string
+		if preDiscoveredSpecs != "" {
+			getApiSpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
+		} else {
+			getApiSpecNote = "Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n"
+		}
+		toolStructureSection := "\n\n<available_tools>\n" +
+			"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
+			"```json\n" + toolStructure + "\n```\n\n" +
+			getApiSpecNote +
+			"</available_tools>\n" +
+			preDiscoveredSpecs
+		return strings.ReplaceAll(input, prompt.ToolStructurePlaceholder, toolStructureSection)
+	}
+	return strings.ReplaceAll(input, prompt.ToolStructurePlaceholder, "")
 }
 
 // GetAppendedPromptSummary returns a summary of appended prompts

@@ -70,47 +70,18 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 {{TOOL_STRUCTURE}}
 
 **Workflow:**
-1. See available servers and tools in the index above
-2. If pre-loaded tool specs are provided below, use them directly — no need to call get_api_spec for those tools. For other tools, call get_api_spec(server_name="...", tool_name="...") to get the full API spec (tool_name accepts a single string or an array of strings)
-3. Use execute_shell_command to write and run code — prefer Python for reliability and readability
-4. MCP_API_URL and MCP_API_TOKEN env vars are available in the execution environment
-5. MCP and custom tools are accessed via HTTP POST to per-tool endpoints documented in the OpenAPI spec
-6. Session tracking is automatic — MCP_API_URL already includes the session context, so you do NOT need to add session_id to request bodies
+1. See available servers and tools in the JSON block above. Call get_api_spec(server_name="...", tool_name="...") to get the full API spec for any tool
+2. Use execute_shell_command to write and run code
+3. MCP_API_URL and MCP_API_TOKEN env vars are pre-set — use them as-is
 
-**How to call tools from code:**
-- MCP tools: POST {MCP_API_URL}/tools/mcp/{server}/{tool}
-- Custom tools: POST {MCP_API_URL}/tools/custom/{tool}
-- Send tool arguments as JSON body (do NOT include session_id — it is handled automatically via the URL)
-- Include Authorization: Bearer $MCP_API_TOKEN header
-- Response: {"success": true/false, "result": "...", "error": "..."}
-
-**Example (Python):**
+**Example — calling an MCP tool from Python:**
 ` + "```" + `python
 import requests, os
-url = os.environ["MCP_API_URL"] + "/tools/mcp/google_sheets/get_document"
-headers = {"Authorization": f"Bearer {os.environ.get('MCP_API_TOKEN', '')}", "Content-Type": "application/json"}
-payload = {"spreadsheet_id": "abc123"}
-resp = requests.post(url, json=payload, headers=headers)
-print(resp.json())
-` + "```" + `
-
-**Example (curl):**
-` + "```" + `bash
-curl -X POST "$MCP_API_URL/tools/mcp/google_sheets/get_document" \
-  -H "Authorization: Bearer $MCP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"spreadsheet_id": "abc123"}'
-` + "```" + `
-
-**Best Practices:**
-- If pre-loaded tool specs are available, use them directly without calling get_api_spec. Only call get_api_spec for tools whose specs are NOT pre-loaded.
-- Prefer Python for writing code — it handles JSON, HTTP requests, and error handling cleanly
-- Write one comprehensive script when possible — minimize the number of execute_shell_command calls
-- Always check the "success" field in responses
-- MCP_API_URL and MCP_API_TOKEN are pre-set in the shell environment — always use them
-- **IMPORTANT**: Use the tool names exactly as declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces.
-- **IMPORTANT**: When custom tools are available as direct calls, ALWAYS prefer using them over writing equivalent shell commands. Custom tools provide structured input validation and atomic operations.
-- If a requested action is denied, blocked, unavailable, or returns a 404-like failure, do NOT keep retrying the same approach. Either switch to another declared tool or stop and explain the blocker clearly.`
+url = os.environ["MCP_API_URL"] + "/tools/mcp/{server_name}/{tool_name}"
+headers = {"Authorization": f"Bearer {os.environ['MCP_API_TOKEN']}", "Content-Type": "application/json"}
+resp = requests.post(url, json={"arg1": "value1"}, headers=headers)
+data = resp.json()  # {"success": true/false, "result": "...", "error": "..."}
+` + "```" + ``
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions

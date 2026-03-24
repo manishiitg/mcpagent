@@ -2,7 +2,6 @@ package llm
 
 import (
 	"context"
-
 	"fmt"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -18,23 +17,23 @@ import (
 type Provider = llmproviders.Provider
 
 const (
-	ProviderBedrock    = llmproviders.ProviderBedrock
-	ProviderOpenAI     = llmproviders.ProviderOpenAI
-	ProviderAnthropic  = llmproviders.ProviderAnthropic
-	ProviderOpenRouter = llmproviders.ProviderOpenRouter
-	ProviderVertex     = llmproviders.ProviderVertex
-	ProviderAzure      = llmproviders.ProviderAzure
-	ProviderClaudeCode = llmproviders.ProviderClaudeCode
-	ProviderGeminiCLI  = llmproviders.ProviderGeminiCLI
-	ProviderCodexCLI   = llmproviders.ProviderCodexCLI
-	ProviderMiniMax            = llmproviders.ProviderMiniMax
-	ProviderMiniMaxCodingPlan  = llmproviders.ProviderMiniMaxCodingPlan
+	ProviderBedrock           = llmproviders.ProviderBedrock
+	ProviderOpenAI            = llmproviders.ProviderOpenAI
+	ProviderAnthropic         = llmproviders.ProviderAnthropic
+	ProviderOpenRouter        = llmproviders.ProviderOpenRouter
+	ProviderVertex            = llmproviders.ProviderVertex
+	ProviderAzure             = llmproviders.ProviderAzure
+	ProviderClaudeCode        = llmproviders.ProviderClaudeCode
+	ProviderGeminiCLI         = llmproviders.ProviderGeminiCLI
+	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
+	ProviderMiniMax           = llmproviders.ProviderMiniMax
+	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
 )
 
 const (
-	MetadataKeyMCPConfig                 = "mcp_config"
+	MetadataKeyMCPConfig                  = "mcp_config"
 	MetadataKeyDangerouslySkipPermissions = "dangerously_skip_permissions"
-	MetadataKeyTools                     = "claude_code_tools"
+	MetadataKeyTools                      = "claude_code_tools"
 )
 
 // Config holds configuration for LLM initialization (agent_go version)
@@ -58,16 +57,16 @@ type Config struct {
 
 // ProviderAPIKeys holds API keys for different providers
 type ProviderAPIKeys struct {
-	OpenRouter *string
-	OpenAI     *string
-	Anthropic  *string
-	Vertex     *string
-	GeminiCLI  *string
-	CodexCLI   *string
-	MiniMax            *string
-	MiniMaxCodingPlan  *string
-	Bedrock            *BedrockConfig
-	Azure      *AzureAPIConfig
+	OpenRouter        *string
+	OpenAI            *string
+	Anthropic         *string
+	Vertex            *string
+	GeminiCLI         *string
+	CodexCLI          *string
+	MiniMax           *string
+	MiniMaxCodingPlan *string
+	Bedrock           *BedrockConfig
+	Azure             *AzureAPIConfig
 }
 
 // AzureAPIConfig holds Azure-specific configuration
