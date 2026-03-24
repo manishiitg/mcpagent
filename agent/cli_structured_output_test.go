@@ -159,9 +159,13 @@ func TestInjectStructuredOutputIntoLastUserMessage(t *testing.T) {
 
 		_ = injectStructuredOutputIntoLastUserMessage(messages, instruction)
 
+		if len(messages) != 1 {
+			t.Fatalf("expected 1 message, got %d", len(messages))
+		}
+
 		// Original should still have 1 part
-		if len(messages[0].Parts) != 1 {
-			t.Errorf("original message was mutated: expected 1 part, got %d", len(messages[0].Parts))
+		if got := len(messages[0].Parts); got != 1 {
+			t.Errorf("original message was mutated: expected 1 part, got %d", got)
 		}
 	})
 

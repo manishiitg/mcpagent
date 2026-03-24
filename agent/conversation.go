@@ -65,7 +65,7 @@ func isVirtualTool(toolName string) bool {
 	virtualTools := []string{
 		"get_prompt", "get_resource",
 		"read_large_output", "search_large_output", "query_large_output",
-		"get_api_spec", // Code execution mode tools
+		"get_api_spec",                                              // Code execution mode tools
 		"search_tools", "add_tool", "remove_tool", "show_all_tools", // Tool search mode tools
 	}
 	for _, vt := range virtualTools {
@@ -1036,7 +1036,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					v2Logger.Warn("Tool call has nil FunctionCall", loggerv2.Int("tool_call_index", i+1))
 				}
 
-					// Determine server name for tool call events
+				// Determine server name for tool call events
 				serverName := a.toolToServer[tc.FunctionCall.Name]
 				if isVirtualTool(tc.FunctionCall.Name) {
 					// For get_api_spec, extract the actual server_name from arguments
@@ -2003,7 +2003,7 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) {
 			sessionDir = strings.ReplaceAll(a.SessionID, "/", "_")
 		}
 		dir := filepath.Join("logs", "agent_prompts", sessionDir)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return
 		}
 
@@ -2054,6 +2054,6 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) {
 		md.WriteString("\n\n---\n\n## User Message\n\n")
 		md.WriteString(userMessage)
 		md.WriteString("\n")
-		_ = os.WriteFile(filepath.Join(dir, baseName+".md"), []byte(md.String()), 0644)
+		_ = os.WriteFile(filepath.Join(dir, baseName+".md"), []byte(md.String()), 0600)
 	}()
 }

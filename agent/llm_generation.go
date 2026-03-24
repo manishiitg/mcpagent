@@ -124,7 +124,7 @@ sys.stdout.write(json.dumps({
     }
 }) + "\n")
 `
-		if err := os.WriteFile(restrictPath, []byte(restrictScript), 0750); err != nil {
+		if err := writeExecutableHookScript(restrictPath, restrictScript); err != nil {
 			return fmt.Errorf("write restrict tool selection hook: %w", err)
 		}
 
@@ -166,7 +166,7 @@ sys.stdout.write(json.dumps({
     "reason": reason
 }) + "\n")
 `
-		if err := os.WriteFile(enforcePath, []byte(enforceScript), 0750); err != nil {
+		if err := writeExecutableHookScript(enforcePath, enforceScript); err != nil {
 			return fmt.Errorf("write enforce http routing hook: %w", err)
 		}
 	}
@@ -214,10 +214,17 @@ except Exception as exc:
 sys.stdout.write("{}\n")
 `
 
-	if err := os.WriteFile(debugPath, []byte(debugScript), 0750); err != nil {
+	if err := writeExecutableHookScript(debugPath, debugScript); err != nil {
 		return fmt.Errorf("write debug hook script: %w", err)
 	}
 	return nil
+}
+
+func writeExecutableHookScript(path, contents string) error {
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0700)
 }
 
 // retryOriginalModel handles retry logic for throttling and zero_candidates errors
