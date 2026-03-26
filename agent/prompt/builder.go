@@ -13,52 +13,15 @@ import (
 // GetToolSearchInstructions returns the tool search mode instructions section
 // This provides guidance on how to use the search_tools virtual tool to discover tools
 func GetToolSearchInstructions() string {
-	return `**TOOL SEARCH MODE - Dynamic Tool Discovery:**
+	return `**Tool Discovery:**
 
-You have access to a large catalog of tools, but they are not loaded by default to optimize performance.
-Use the **search_tools** function to discover tools, **add_tool** to load them, and **remove_tool** to unload tools you no longer need.
+You have access to a large catalog of tools, but they are not loaded by default. Use these to discover and load them:
+- **show_all_tools**() — list all available tools across all servers
+- **search_tools**(query="pattern") — find tools by name/description (supports regex, falls back to fuzzy search)
+- **add_tool**(tool_names=["tool1", "tool2"], server="optional") — load tools for use
+- **remove_tool**(tool_names=["tool1"]) — unload tools (optional, useful for long-running tasks)
 
-**📋 How to Search, Add & Remove:**
-1. Call search_tools with a search pattern (regex or keywords)
-2. Review the returned tools with their descriptions and server names
-3. Call add_tool with the names of the tools you want to use
-4. Use the discovered tools to complete your task
-5. Call remove_tool to unload tools you are done with
-
-**🔍 Search Examples:**
-- search_tools(query="weather") - Find weather-related tools
-- search_tools(query="database.*query") - Regex for database query tools
-- search_tools(query="(?i)slack") - Case-insensitive search for Slack tools
-- search_tools(query="file") - Find file manipulation tools
-
-**⚠️ Search Behavior:**
-- Regex patterns are tried first for precise matching
-- If no regex matches found, fuzzy search is automatically applied
-- Fuzzy search considers tool names and descriptions
-- Top 5 fuzzy matches are returned when exact matches fail
-- Search results include the server name for each tool
-
-**🔀 Duplicate Tools Across Servers:**
-- The same tool name may exist on multiple MCP servers (e.g., list_files on both "aws" and "azure")
-- Search results show the server name so you can tell them apart
-- Use add_tool(tool_names=["list_files"], server="aws") to pick a specific server's version
-- If you add without specifying server, both are added as servername__toolname (e.g., aws__list_files, azure__list_files)
-
-**📝 Workflow:**
-1. **Understand** the user's request
-2. **Search** for relevant tools using search_tools
-3. **Add** the tools you need using add_tool(tool_names=["tool1", "tool2"])
-4. **Use** the discovered tools to complete the task
-5. **Remove** tools you no longer need using remove_tool(tool_names=["tool1"]) to keep your toolkit focused
-6. **Search again** if needed for additional capabilities
-
-**💡 Tips:**
-- Start with broad searches, then narrow down
-- Discovered tools must be explicitly added with add_tool
-- Once added, tools remain available until removed or the conversation ends
-- Remove tools when you're done with a phase of work to reduce clutter
-- You can search multiple times to find different tools
-- Check tool descriptions to understand parameters`
+Search or list first, add what you need, then use the tools. If the same tool exists on multiple servers, specify the server parameter in add_tool.`
 }
 
 // GetCodeExecutionInstructions returns the code execution mode instructions section.
@@ -74,13 +37,15 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 2. Use execute_shell_command to write and run code
 3. MCP_API_URL and MCP_API_TOKEN env vars are pre-set — use them as-is
 
-**Example — calling an MCP tool from Python:**
-` + "```" + `python
+**Example — calling an MCP tool:**
+` + "```" + `bash
+python3 -c "
 import requests, os
-url = os.environ["MCP_API_URL"] + "/tools/mcp/{server_name}/{tool_name}"
-headers = {"Authorization": f"Bearer {os.environ['MCP_API_TOKEN']}", "Content-Type": "application/json"}
-resp = requests.post(url, json={"arg1": "value1"}, headers=headers)
-data = resp.json()  # {"success": true/false, "result": "...", "error": "..."}
+url = os.environ['MCP_API_URL'] + '/tools/mcp/{server_name}/{tool_name}'
+headers = {'Authorization': f'Bearer {os.environ[\"MCP_API_TOKEN\"]}', 'Content-Type': 'application/json'}
+resp = requests.post(url, json={'arg1': 'value1'}, headers=headers)
+print(resp.json())  # {'success': true/false, 'result': '...', 'error': '...'}
+"
 ` + "```" + ``
 }
 
@@ -119,12 +84,16 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 
 	// Build core principles section based on mode
 	var corePrinciplesSection string
+	nonInteractiveNote := `
+**Non-Interactive Mode:** You are running autonomously without a human in the loop. Do NOT stop mid-task with a text message — always continue making tool calls until the task is fully complete or you determine it cannot be completed. Only generate a final text response when you are done.`
+
 	if useCodeExecutionMode {
 		corePrinciplesSection = `<core_principles>
 When answering questions:
 1. **Think** about what information/actions are needed
 2. **Write code** to gather information and perform actions
 3. **Provide helpful responses** based on execution results
+` + nonInteractiveNote + `
 </core_principles>`
 	} else if useToolSearchMode {
 		corePrinciplesSection = `<core_principles>
@@ -135,7 +104,7 @@ When answering questions:
 2. **Be Proactive:** Once tools are discovered, use them without asking for permission.
 3. **Chain Actions:** If a tool output leads to a next step, take it immediately.
 4. **Search Again:** If you need additional capabilities, search for more tools.
-5. **Clean Up:** When done with a set of tools, use remove_tool to unload them and keep your toolkit focused.
+` + nonInteractiveNote + `
 </core_principles>`
 	} else {
 		corePrinciplesSection = `<core_principles>
@@ -144,8 +113,8 @@ When answering questions:
 **Operating Rules:**
 1. **Be Proactive:** Do not ask for permission to use tools. Just use them.
 2. **Chain Actions:** If a tool output leads to a next step, take it immediately. Do not stop to report intermediate progress unless asked.
-3. **Solve Fully:** strive to reach the final answer or state before returning control to the user.
-4. **Conversational Messages:** For greetings, small talk, or simple questions that don't require any action, respond with a brief, friendly message naturally.
+3. **Solve Fully:** Strive to reach the final answer or state before returning control.
+` + nonInteractiveNote + `
 </core_principles>`
 	}
 

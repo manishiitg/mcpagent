@@ -724,6 +724,9 @@ type Agent struct {
 	// Gemini CLI project directory ID for per-invocation isolation
 	GeminiProjectDirID string
 
+	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
+	CodexProjectDirID string
+
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 

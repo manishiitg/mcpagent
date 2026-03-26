@@ -55,6 +55,100 @@ func geminiHTTPRoutingHooksEnabled() bool {
 		strings.EqualFold(v, "on")
 }
 
+func claudeHTTPRoutingHooksEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING"))
+	if v == "" {
+		return false
+	}
+	return v == "1" ||
+		strings.EqualFold(v, "true") ||
+		strings.EqualFold(v, "yes") ||
+		strings.EqualFold(v, "on")
+}
+
+func writeClaudeHTTPRoutingHook() (string, error) {
+	hooksDir := filepath.Join(os.TempDir(), "claude-code-hooks")
+	if err := os.MkdirAll(hooksDir, 0750); err != nil {
+		return "", fmt.Errorf("create claude hooks dir: %w", err)
+	}
+
+	hookPath := filepath.Join(hooksDir, "enforce-http-tool-routing.py")
+	hookScript := `#!/usr/bin/env python3
+import json
+from pathlib import Path
+import sys
+
+ALLOWED = {
+    "mcp__api-bridge__execute_shell_command",
+    "mcp__api-bridge__get_api_spec",
+    "WebSearch",
+}
+
+raw = sys.stdin.read()
+payload = {}
+log_path = Path("` + filepath.Join(os.TempDir(), "claude-code-hooks", "pretool.log") + `")
+
+try:
+    payload = json.loads(raw) if raw else {}
+except Exception:
+    payload = {}
+
+tool_name = payload.get("tool_name", "")
+
+with log_path.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps({
+        "tool_name": tool_name,
+        "tool_input": payload.get("tool_input"),
+    }, ensure_ascii=True, sort_keys=True) + "\n")
+
+if tool_name in ALLOWED:
+    raise SystemExit(0)
+
+sys.stdout.write(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": (
+            "Only mcp__api-bridge__execute_shell_command and "
+            "mcp__api-bridge__get_api_spec are allowed in this Claude Code bridge session. "
+            "Use get_api_spec plus execute_shell_command for HTTP-based tool access."
+        )
+    }
+}) + "\n")
+`
+
+	if err := os.WriteFile(hookPath, []byte(hookScript), 0750); err != nil {
+		return "", fmt.Errorf("write claude hook script: %w", err)
+	}
+	return hookPath, nil
+}
+
+func buildClaudeHTTPRoutingSettings(hookPath string) (string, error) {
+	command := fmt.Sprintf("python3 %q", hookPath)
+	settings := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"PreToolUse": []map[string]interface{}{
+				{
+					"matcher": "*",
+					"hooks": []map[string]interface{}{
+						{
+							"type":    "command",
+							"command": command,
+							"timeout": 5,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	settingsBytes, err := json.Marshal(settings)
+	if err != nil {
+		return "", fmt.Errorf("marshal claude hook settings: %w", err)
+	}
+	return string(settingsBytes), nil
+}
+
 func buildGeminiEnforcementHooks(debugEnabled bool) map[string]interface{} {
 	beforeToolHooks := []map[string]interface{}{
 		{
@@ -225,6 +319,68 @@ func writeExecutableHookScript(path, contents string) error {
 		return err
 	}
 	return os.Chmod(path, 0700)
+}
+
+// writeCodexHookScripts creates Codex CLI hook scripts and config in the project directory.
+// The PreToolUse hook blocks shell and command_execution tools as defense-in-depth
+// (--disable shell_tool is the primary control; this is a backup).
+func writeCodexHookScripts(projectDir string) error {
+	codexDir := filepath.Join(projectDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0750); err != nil {
+		return fmt.Errorf("create codex dir: %w", err)
+	}
+
+	// Write the PreToolUse hook script
+	hookScript := `#!/usr/bin/env python3
+"""Codex CLI PreToolUse hook: blocks native shell tools as defense-in-depth.
+The --disable shell_tool flag is the primary control; this is a backup.
+Reads JSON from stdin, writes JSON decision to stdout."""
+import json
+import sys
+
+BLOCKED_TOOLS = {"shell", "command_execution", "bash", "terminal"}
+
+raw = sys.stdin.read()
+try:
+    payload = json.loads(raw) if raw else {}
+except Exception:
+    payload = {}
+
+tool_name = payload.get("tool_name", "")
+
+if tool_name in BLOCKED_TOOLS:
+    sys.stdout.write(json.dumps({
+        "decision": "deny",
+        "reason": "Native shell tools are disabled. Use only MCP bridge tools (execute_shell_command via api-bridge)."
+    }) + "\n")
+else:
+    sys.stdout.write("{}\n")
+`
+	hookPath := filepath.Join(codexDir, "block-shell-hook.py")
+	if err := writeExecutableHookScript(hookPath, hookScript); err != nil {
+		return fmt.Errorf("write codex block-shell hook: %w", err)
+	}
+
+	// Write config.toml with hooks configuration
+	// Codex CLI reads ~/.codex/config.toml but also supports project-level config
+	// via --cd <project-dir> where .codex/config.toml is read
+	configContent := fmt.Sprintf(`# Codex CLI hooks config — defense-in-depth shell blocking
+# This config is loaded from the project directory via --cd flag.
+
+[hooks]
+# PreToolUse hook blocks native shell tools as a backup to --disable shell_tool
+[[hooks.pre_tool_use]]
+type = "command"
+command = %q
+timeout = 5000
+`, hookPath)
+
+	configPath := filepath.Join(codexDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		return fmt.Errorf("write codex config.toml: %w", err)
+	}
+
+	return nil
 }
 
 // retryOriginalModel handles retry logic for throttling and zero_candidates errors
@@ -801,13 +957,37 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 	// Claude Code always uses code execution mode — tools are accessed via the
 	// mcpbridge stdio binary which forwards calls to the HTTP API endpoints.
 	if llmproviders.Provider(model.Provider) == llmproviders.ProviderClaudeCode {
+		claudeHTTPHooksEnabled := claudeHTTPRoutingHooksEnabled()
+
 		// Use restricted permissions instead of skipping them entirely
-		// Allow our bridge tools and WebSearch to run without prompts
-		opts = append(opts, llm.WithAllowedTools("mcp__api-bridge__*,WebSearch"))
+		// Allow our bridge tools and WebSearch to run without prompts.
+		// When HTTP tool routing enforcement is enabled, narrow this to the minimal set.
+		allowedTools := "mcp__api-bridge__*,WebSearch"
+		if claudeHTTPHooksEnabled {
+			allowedTools = "mcp__api-bridge__execute_shell_command,mcp__api-bridge__get_api_spec,WebSearch"
+		}
+		opts = append(opts, llm.WithAllowedTools(allowedTools))
 
 		// Force Claude to use our custom tools by disabling its own internal ones
 		// We explicitly allow only WebSearch (if desired) and disable all others (Bash, Read, Edit, etc.)
 		opts = append(opts, llm.WithClaudeCodeTools("WebSearch"))
+
+		if claudeHTTPHooksEnabled {
+			hookPath, hookErr := writeClaudeHTTPRoutingHook()
+			if hookErr != nil {
+				a.Logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
+			} else {
+				settingsJSON, settingsErr := buildClaudeHTTPRoutingSettings(hookPath)
+				if settingsErr != nil {
+					a.Logger.Warn("Failed to build Claude Code hook settings", loggerv2.Error(settingsErr))
+				} else {
+					opts = append(opts, llm.WithClaudeCodeSettings(settingsJSON))
+					a.Logger.Info("🪝 Claude Code HTTP tool routing enforcement enabled",
+						loggerv2.String("env", "MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING"),
+						loggerv2.String("hook_path", hookPath))
+				}
+			}
+		}
 
 		bridgeConfig, err := a.BuildBridgeMCPConfig()
 		if err != nil {

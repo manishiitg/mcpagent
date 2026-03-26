@@ -409,6 +409,11 @@ func WithCodexConfigOverrides(overrides []string) CallOption {
 	return llmproviders.WithCodexConfigOverrides(overrides)
 }
 
+// WithCodexEnableFeatures enables one or more Codex CLI features (comma-separated).
+func WithCodexEnableFeatures(features string) CallOption {
+	return llmproviders.WithCodexEnableFeatures(features)
+}
+
 // Re-export helper functions from llm-providers
 
 // GetDefaultModel returns the default model for each provider from environment variables
