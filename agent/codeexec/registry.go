@@ -42,6 +42,11 @@ type ToolRegistry struct {
 	// Key: sessionID, Value: map of toolName -> executor
 	// When multiple workflows run concurrently, each gets its own virtual tool handlers
 	sessionVirtualTools map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
+
+	// Session-scoped tool allow lists for mode-based restriction.
+	// Key: sessionID, Value: set of allowed tool names (nil = no restriction).
+	// Set via SetSessionToolAllowList, checked in CallCustomToolWithSession.
+	sessionToolAllowLists map[string]map[string]bool
 }
 
 var (
@@ -544,6 +549,27 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 		loggerv2.Int("total_sessions", len(globalRegistry.sessionCustomTools)))
 }
 
+// SetSessionToolAllowList sets the tool allow list for a session in the code execution registry.
+// When set, CallCustomToolWithSession will reject tools not in the list.
+// Pass nil to clear the restriction (all tools allowed).
+func SetSessionToolAllowList(sessionID string, allowList map[string]bool) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if globalRegistry == nil {
+		return
+	}
+	globalRegistry.mu.Lock()
+	defer globalRegistry.mu.Unlock()
+	if globalRegistry.sessionToolAllowLists == nil {
+		globalRegistry.sessionToolAllowLists = make(map[string]map[string]bool)
+	}
+	if allowList == nil {
+		delete(globalRegistry.sessionToolAllowLists, sessionID)
+	} else {
+		globalRegistry.sessionToolAllowLists[sessionID] = allowList
+	}
+}
+
 // CallCustomToolWithSession calls a custom tool with session scoping
 // It first checks session-scoped tools, then falls back to global tools
 // This prevents cross-workflow contamination when multiple workflows run concurrently
@@ -555,6 +581,18 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
+
+	// Check session-scoped tool allow list — reject blocked tools before execution
+	if sessionID != "" && registry.sessionToolAllowLists != nil {
+		if allowList, exists := registry.sessionToolAllowLists[sessionID]; exists && !allowList[toolName] {
+			if registry.logger != nil {
+				registry.logger.Info("🔒 [TOOL_ALLOW_LIST] Blocked code-exec HTTP call",
+					loggerv2.String("session_id", sessionID),
+					loggerv2.String("tool", toolName))
+			}
+			return "", fmt.Errorf("tool %q is not available in the current workshop mode", toolName)
+		}
+	}
 
 	// Priority 1: Check session-scoped tools first (if sessionID provided)
 	if sessionID != "" && registry.sessionCustomTools != nil {

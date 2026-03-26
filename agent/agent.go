@@ -777,6 +777,13 @@ type Agent struct {
 	pendingSteerMessages []string
 	steerMu              sync.Mutex
 
+	// Dynamic tool allow list: when non-nil, only tools whose names appear in this set
+	// are included in filteredTools (and the code-exec tool index). Updated per-turn via
+	// SetToolAllowList / ClearToolAllowList so the workshop builder can restrict tools
+	// based on the current mode (build/optimize/debug/run/eval/output).
+	toolAllowList    map[string]bool // nil = no restriction (all tools allowed)
+	toolAllowListMu  sync.RWMutex
+
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
 	resources map[string][]mcp.Resource
@@ -4270,6 +4277,95 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 	}
 
 	return nil
+}
+
+// SetToolAllowList restricts the tools available to the LLM to only those whose names
+// appear in the provided list. Virtual/system tools are always included regardless.
+// This is applied per-turn in conversation.go (filteredTools) and in buildToolIndex()
+// (code execution mode). Call ClearToolAllowList to remove the restriction.
+func (a *Agent) SetToolAllowList(toolNames []string) {
+	a.toolAllowListMu.Lock()
+	defer a.toolAllowListMu.Unlock()
+	if len(toolNames) == 0 {
+		a.toolAllowList = nil
+		// Also clear from code exec registry (for HTTP-based tool calls in code exec mode)
+		if a.SessionID != "" {
+			codeexec.SetSessionToolAllowList(a.SessionID, nil)
+		}
+		return
+	}
+	a.toolAllowList = make(map[string]bool, len(toolNames))
+	for _, name := range toolNames {
+		a.toolAllowList[name] = true
+	}
+	// Also set on code exec registry so HTTP-based tool calls are blocked too
+	if a.SessionID != "" {
+		codeexec.SetSessionToolAllowList(a.SessionID, a.toolAllowList)
+	}
+	if a.Logger != nil {
+		a.Logger.Info("🔒 [TOOL_ALLOW_LIST] Set",
+			loggerv2.Int("allowed_count", len(toolNames)),
+			loggerv2.Any("allowed_tools", toolNames))
+	}
+}
+
+// ClearToolAllowList removes any tool restriction, making all registered tools available.
+func (a *Agent) ClearToolAllowList() {
+	a.toolAllowListMu.Lock()
+	defer a.toolAllowListMu.Unlock()
+	a.toolAllowList = nil
+	// Also clear from code exec registry
+	if a.SessionID != "" {
+		codeexec.SetSessionToolAllowList(a.SessionID, nil)
+	}
+	if a.Logger != nil {
+		a.Logger.Info("🔓 Tool allow list cleared — all tools available")
+	}
+}
+
+// isToolAllowed checks if a tool name passes the allow list filter.
+// Returns true if no allow list is set or if the tool is in the list.
+func (a *Agent) isToolAllowed(toolName string) bool {
+	a.toolAllowListMu.RLock()
+	defer a.toolAllowListMu.RUnlock()
+	if a.toolAllowList == nil {
+		return true
+	}
+	return a.toolAllowList[toolName]
+}
+
+// applyToolAllowList filters a tool slice to only include tools in the allow list.
+// The caller is responsible for including virtual/system tool names in the allow list
+// if they should remain available.
+func (a *Agent) applyToolAllowList(tools []llmtypes.Tool) []llmtypes.Tool {
+	a.toolAllowListMu.RLock()
+	defer a.toolAllowListMu.RUnlock()
+	if a.toolAllowList == nil {
+		return tools
+	}
+	filtered := make([]llmtypes.Tool, 0, len(tools))
+	var blocked []string
+	for _, t := range tools {
+		if t.Function == nil {
+			filtered = append(filtered, t)
+			continue
+		}
+		if a.toolAllowList[t.Function.Name] {
+			filtered = append(filtered, t)
+		} else {
+			blocked = append(blocked, t.Function.Name)
+		}
+	}
+	if a.Logger != nil {
+		a.Logger.Info("🔒 [TOOL_ALLOW_LIST] Applied",
+			loggerv2.Int("total", len(tools)),
+			loggerv2.Int("allowed", len(filtered)),
+			loggerv2.Int("blocked", len(blocked)))
+		if len(blocked) > 0 {
+			a.Logger.Debug("🔒 [TOOL_ALLOW_LIST] Blocked tools", loggerv2.Any("blocked", blocked))
+		}
+	}
+	return filtered
 }
 
 // GetSystemPrompt returns the current system prompt

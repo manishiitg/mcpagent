@@ -304,9 +304,22 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				loggerv2.String("server", req.Server),
 				loggerv2.String("session_id", req.SessionID))
 		} else {
-			h.logger.Info("🔧 [BROKEN PIPE] Detected, getting fresh connection...",
+			h.logger.Info("🔧 [BROKEN PIPE] Detected, closing old connection and getting fresh one...",
 				loggerv2.String("tool", req.Tool),
 				loggerv2.String("server", req.Server))
+
+			// Close the old broken connection first to kill the subprocess (prevents zombie browsers)
+			if client != nil {
+				h.logger.Info("🔧 [BROKEN PIPE] Closing old broken connection",
+					loggerv2.String("server", req.Server))
+				_ = client.Close()
+			}
+
+			// Also close via session registry if session-scoped (stateful servers like playwright)
+			if req.SessionID != "" {
+				registry := mcpclient.GetSessionRegistry()
+				registry.CloseSessionServer(req.SessionID, req.Server)
+			}
 
 			// Get fresh connection using shared function (bypasses cache by invalidating)
 			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)

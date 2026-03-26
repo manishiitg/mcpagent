@@ -59,6 +59,19 @@ func getLogger(a *Agent) loggerv2.Logger {
 	return a.Logger
 }
 
+func injectSteerMessages(ctx context.Context, a *Agent, messages []llmtypes.MessageContent, steerMsgs []string, turn int, logMessage string) []llmtypes.MessageContent {
+	for _, sm := range steerMsgs {
+		messages = append(messages, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sm}},
+		})
+		// Emit a standard user_message event so the UI shows the steer exactly when it is picked up.
+		a.EmitTypedEvent(ctx, events.NewUserMessageEvent(turn+1, sm, "user"))
+		getLogger(a).Info(logMessage, loggerv2.Int("turn", turn+1))
+	}
+	return messages
+}
+
 // isVirtualTool checks if a tool name is a virtual tool
 func isVirtualTool(toolName string) bool {
 	// Check hardcoded virtual tools (includes all possible virtual tools)
@@ -448,17 +461,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Reset filtered tools at the start of each conversation to ensure fresh evaluation
 	// In tool search mode, use getToolsForToolSearchMode() to include discovered tools
 	if a.UseToolSearchMode {
-		a.filteredTools = a.getToolsForToolSearchMode()
+		a.filteredTools = a.applyToolAllowList(a.getToolsForToolSearchMode())
 		v2Logger.Debug("🔍 Tool search mode: using getToolsForToolSearchMode()",
 			loggerv2.Int("filtered_count", len(a.filteredTools)))
 	} else {
-		a.filteredTools = a.Tools // Start with all tools, then filter based on conversation context
+		a.filteredTools = a.applyToolAllowList(a.Tools) // Start with all tools, apply allow list if set
 		v2Logger.Debug("🔧 Normal/Code execution mode: using a.Tools",
 			loggerv2.Int("tools_count", len(a.Tools)),
 			loggerv2.Int("filtered_count", len(a.filteredTools)))
 		// Log tool names for debugging
-		toolNames := make([]string, 0, len(a.Tools))
-		for _, t := range a.Tools {
+		toolNames := make([]string, 0, len(a.filteredTools))
+		for _, t := range a.filteredTools {
 			if t.Function != nil {
 				toolNames = append(toolNames, t.Function.Name)
 			}
@@ -1018,13 +1031,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 				// Drain and inject any pending steer messages from the user
 				if steerMsgs := a.DrainSteerMessages(); len(steerMsgs) > 0 {
-					for _, sm := range steerMsgs {
-						messages = append(messages, llmtypes.MessageContent{
-							Role:  llmtypes.ChatMessageTypeHuman,
-							Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sm}},
-						})
-						v2Logger.Info("Injected steer message after parallel tool execution", loggerv2.Int("turn", turn+1))
-					}
+					messages = injectSteerMessages(ctx, a, messages, steerMsgs, turn, "Injected steer message after parallel tool execution")
 				}
 				// After parallel execution, continue to next turn
 				continue
@@ -1702,13 +1709,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 			// Drain and inject any pending steer messages from the user
 			if steerMsgs := a.DrainSteerMessages(); len(steerMsgs) > 0 {
-				for _, sm := range steerMsgs {
-					messages = append(messages, llmtypes.MessageContent{
-						Role:  llmtypes.ChatMessageTypeHuman,
-						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sm}},
-					})
-					v2Logger.Info("Injected steer message after sequential tool execution", loggerv2.Int("turn", turn+1))
-				}
+				messages = injectSteerMessages(ctx, a, messages, steerMsgs, turn, "Injected steer message after sequential tool execution")
 			}
 
 			// After processing all tool calls, continue to next turn

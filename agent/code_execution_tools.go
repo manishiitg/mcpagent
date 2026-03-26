@@ -411,13 +411,25 @@ func (a *Agent) buildToolIndex() (string, error) {
 	// (which uses the MCP bridge and can only discover tools via get_api_spec) can
 	// find and call them via HTTP API. For non-Claude-Code providers, the tools are
 	// also available as direct LLM calls — having them in the index is harmless.
+	// Respect toolAllowList: if set, only include allowed custom tools in the index.
 	customToolsByCategory := make(map[string][]string)
+	var blockedCustomTools []string
 	for toolName, ct := range a.customTools {
 		category := ct.Category
 		if category == "" {
 			continue
 		}
+		if !a.isToolAllowed(toolName) {
+			blockedCustomTools = append(blockedCustomTools, toolName)
+			continue
+		}
 		customToolsByCategory[category] = append(customToolsByCategory[category], toolName)
+	}
+	if a.Logger != nil && len(blockedCustomTools) > 0 {
+		sort.Strings(blockedCustomTools)
+		a.Logger.Info("🔒 [TOOL_ALLOW_LIST] buildToolIndex blocked custom tools",
+			loggerv2.Int("blocked_count", len(blockedCustomTools)),
+			loggerv2.Any("blocked", blockedCustomTools))
 	}
 	for category, tools := range customToolsByCategory {
 		sort.Strings(tools)
