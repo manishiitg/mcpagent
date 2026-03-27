@@ -117,7 +117,7 @@ sys.stdout.write(json.dumps({
 }) + "\n")
 `
 
-	if err := os.WriteFile(hookPath, []byte(hookScript), 0750); err != nil {
+	if err := os.WriteFile(hookPath, []byte(hookScript), 0600); err != nil { //nolint:gosec
 		return "", fmt.Errorf("write claude hook script: %w", err)
 	}
 	return hookPath, nil
@@ -318,69 +318,7 @@ func writeExecutableHookScript(path, contents string) error {
 	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0700)
-}
-
-// writeCodexHookScripts creates Codex CLI hook scripts and config in the project directory.
-// The PreToolUse hook blocks shell and command_execution tools as defense-in-depth
-// (--disable shell_tool is the primary control; this is a backup).
-func writeCodexHookScripts(projectDir string) error {
-	codexDir := filepath.Join(projectDir, ".codex")
-	if err := os.MkdirAll(codexDir, 0750); err != nil {
-		return fmt.Errorf("create codex dir: %w", err)
-	}
-
-	// Write the PreToolUse hook script
-	hookScript := `#!/usr/bin/env python3
-"""Codex CLI PreToolUse hook: blocks native shell tools as defense-in-depth.
-The --disable shell_tool flag is the primary control; this is a backup.
-Reads JSON from stdin, writes JSON decision to stdout."""
-import json
-import sys
-
-BLOCKED_TOOLS = {"shell", "command_execution", "bash", "terminal"}
-
-raw = sys.stdin.read()
-try:
-    payload = json.loads(raw) if raw else {}
-except Exception:
-    payload = {}
-
-tool_name = payload.get("tool_name", "")
-
-if tool_name in BLOCKED_TOOLS:
-    sys.stdout.write(json.dumps({
-        "decision": "deny",
-        "reason": "Native shell tools are disabled. Use only MCP bridge tools (execute_shell_command via api-bridge)."
-    }) + "\n")
-else:
-    sys.stdout.write("{}\n")
-`
-	hookPath := filepath.Join(codexDir, "block-shell-hook.py")
-	if err := writeExecutableHookScript(hookPath, hookScript); err != nil {
-		return fmt.Errorf("write codex block-shell hook: %w", err)
-	}
-
-	// Write config.toml with hooks configuration
-	// Codex CLI reads ~/.codex/config.toml but also supports project-level config
-	// via --cd <project-dir> where .codex/config.toml is read
-	configContent := fmt.Sprintf(`# Codex CLI hooks config — defense-in-depth shell blocking
-# This config is loaded from the project directory via --cd flag.
-
-[hooks]
-# PreToolUse hook blocks native shell tools as a backup to --disable shell_tool
-[[hooks.pre_tool_use]]
-type = "command"
-command = %q
-timeout = 5000
-`, hookPath)
-
-	configPath := filepath.Join(codexDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
-		return fmt.Errorf("write codex config.toml: %w", err)
-	}
-
-	return nil
+	return os.Chmod(path, 0700) //nolint:gosec // hook scripts must be executable
 }
 
 // retryOriginalModel handles retry logic for throttling and zero_candidates errors
