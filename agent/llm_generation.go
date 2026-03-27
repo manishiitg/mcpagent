@@ -80,6 +80,8 @@ import sys
 
 ALLOWED = {
     "mcp__api-bridge__execute_shell_command",
+    "mcp__api-bridge__diff_patch_workspace_file",
+    "mcp__api-bridge__agent_browser",
     "mcp__api-bridge__get_api_spec",
     "WebSearch",
 }
@@ -109,8 +111,8 @@ sys.stdout.write(json.dumps({
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": (
-            "Only mcp__api-bridge__execute_shell_command and "
-            "mcp__api-bridge__get_api_spec are allowed in this Claude Code bridge session. "
+            "Only mcp__api-bridge__ tools (execute_shell_command, diff_patch_workspace_file, agent_browser, get_api_spec) "
+            "and WebSearch are allowed in this Claude Code bridge session. "
             "Use get_api_spec plus execute_shell_command for HTTP-based tool access."
         )
     }
@@ -209,10 +211,13 @@ sys.stdin.read()
 sys.stdout.write(json.dumps({
     "hookSpecificOutput": {
         "toolConfig": {
-            "mode": "ANY",
+            "mode": "AUTO",
             "allowedFunctionNames": [
                 "execute_shell_command",
-                "get_api_spec"
+                "diff_patch_workspace_file",
+                "agent_browser",
+                "get_api_spec",
+                "google_web_search"
             ]
         }
     }
@@ -227,7 +232,7 @@ sys.stdout.write(json.dumps({
 import json
 import sys
 
-ALLOWED = {"execute_shell_command", "get_api_spec"}
+ALLOWED = {"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec", "google_web_search"}
 
 raw = sys.stdin.read()
 payload = {}
@@ -246,7 +251,7 @@ if tool_name in ALLOWED:
     raise SystemExit(0)
 
 reason = (
-    "Only execute_shell_command and get_api_spec are allowed in this Gemini bridge session. "
+    "Only execute_shell_command, diff_patch_workspace_file, agent_browser, get_api_spec, and google_web_search are allowed in this Gemini bridge session. "
     "Do not call '" + tool_name + "' directly. "
     "If you need another capability, call get_api_spec to discover the HTTP endpoint and "
     "use execute_shell_command to invoke it via MCP_API_URL/MCP_API_TOKEN."
@@ -902,7 +907,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// When HTTP tool routing enforcement is enabled, narrow this to the minimal set.
 		allowedTools := "mcp__api-bridge__*,WebSearch"
 		if claudeHTTPHooksEnabled {
-			allowedTools = "mcp__api-bridge__execute_shell_command,mcp__api-bridge__get_api_spec,WebSearch"
+			allowedTools = "mcp__api-bridge__execute_shell_command,mcp__api-bridge__diff_patch_workspace_file,mcp__api-bridge__agent_browser,mcp__api-bridge__get_api_spec,WebSearch"
 		}
 		opts = append(opts, llm.WithAllowedTools(allowedTools))
 
