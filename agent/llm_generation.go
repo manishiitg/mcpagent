@@ -171,21 +171,10 @@ func buildGeminiEnforcementHooks(debugEnabled bool) map[string]interface{} {
 		})
 	}
 
+	// Note: BeforeToolSelection hook removed — it required allowedFunctionNames which
+	// is only valid with mode=ANY (forces tool calls every turn). Tool restriction is
+	// handled by BeforeTool hook (enforce-http-tool-routing) + Policy Engine TOML.
 	return map[string]interface{}{
-		"BeforeToolSelection": []map[string]interface{}{
-			{
-				"matcher": "*",
-				"hooks": []map[string]interface{}{
-					{
-						"name":        "restrict-tool-selection",
-						"type":        "command",
-						"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/restrict-tool-selection.py",
-						"timeout":     5000,
-						"description": "Whitelist execute_shell_command and get_api_spec for Gemini bridge sessions",
-					},
-				},
-			},
-		},
 		"BeforeTool": []map[string]interface{}{
 			{
 				"matcher": "*",
@@ -202,31 +191,6 @@ func writeGeminiHookScripts(projectDir string, debugEnabled bool, enforceHTTPRou
 	}
 
 	if enforceHTTPRouting {
-		restrictPath := filepath.Join(hooksDir, "restrict-tool-selection.py")
-		restrictScript := `#!/usr/bin/env python3
-import json
-import sys
-
-sys.stdin.read()
-sys.stdout.write(json.dumps({
-    "hookSpecificOutput": {
-        "toolConfig": {
-            "mode": "AUTO",
-            "allowedFunctionNames": [
-                "execute_shell_command",
-                "diff_patch_workspace_file",
-                "agent_browser",
-                "get_api_spec",
-                "google_web_search"
-            ]
-        }
-    }
-}) + "\n")
-`
-		if err := writeExecutableHookScript(restrictPath, restrictScript); err != nil {
-			return fmt.Errorf("write restrict tool selection hook: %w", err)
-		}
-
 		enforcePath := filepath.Join(hooksDir, "enforce-http-tool-routing.py")
 		enforceScript := `#!/usr/bin/env python3
 import json
@@ -1056,7 +1020,7 @@ deny_message = "Use only the declared tools available in this session or google_
 			}
 		}
 
-		a.Logger.Info("🌉 Using Gemini CLI with project settings (tools.core restricted, MCP bridge configured, policy engine active)")
+		a.Logger.Info("🌉 Using Gemini CLI with project settings (MCP bridge configured, policy engine active)")
 
 		// Resume existing Gemini session if available
 		if a.GeminiSessionID != "" {

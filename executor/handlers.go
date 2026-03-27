@@ -205,6 +205,20 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				loggerv2.String("session_id", req.SessionID),
 				loggerv2.String("server", req.Server))
 			client = existingClient
+		} else if serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server); hasConfig {
+			// Lazy connect: first actual tool call to this server — connect now
+			h.logger.Info("⚡ [LAZY] First tool call to "+req.Server+" — connecting now",
+				loggerv2.String("session_id", req.SessionID))
+			connSessionID := req.SessionID
+			if req.Server != "playwright" && req.Server != "camofox" {
+				connSessionID = "global"
+			}
+			lazyClient, _, lazyErr := registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
+			if lazyErr != nil {
+				h.logger.Error("Lazy connect failed for server "+req.Server, lazyErr)
+			} else {
+				client = lazyClient
+			}
 		} else {
 			h.logger.Info("🔄 Session registry miss, trying codeexec registry",
 				loggerv2.String("session_id", req.SessionID),

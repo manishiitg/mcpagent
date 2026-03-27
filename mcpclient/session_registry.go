@@ -38,6 +38,8 @@ type SessionConnectionRegistry struct {
 type sessionConnections struct {
 	// serverName -> ClientInterface
 	clients sync.Map
+	// serverName -> MCPServerConfig (for lazy on-demand connection)
+	pendingConfigs sync.Map
 	// Track creation time for debugging
 	createdAt time.Time
 }
@@ -252,6 +254,30 @@ func (r *SessionConnectionRegistry) StoreConnection(sessionID, serverName string
 func (r *SessionConnectionRegistry) HasSession(sessionID string) bool {
 	_, ok := r.sessions.Load(sessionID)
 	return ok
+}
+
+// StoreServerConfig saves a server config for lazy on-demand connection.
+// Called when tool definitions are loaded from cache but no connection is created yet.
+func (r *SessionConnectionRegistry) StoreServerConfig(sessionID, serverName string, config MCPServerConfig) {
+	sessionConnsRaw, _ := r.sessions.LoadOrStore(sessionID, &sessionConnections{
+		createdAt: time.Now(),
+	})
+	sessionConns := sessionConnsRaw.(*sessionConnections)
+	sessionConns.pendingConfigs.Store(serverName, config)
+}
+
+// GetServerConfig retrieves a stored server config for lazy connection.
+// Returns (config, true) if found, (zero, false) if not.
+func (r *SessionConnectionRegistry) GetServerConfig(sessionID, serverName string) (MCPServerConfig, bool) {
+	sessionConnsRaw, ok := r.sessions.Load(sessionID)
+	if !ok {
+		return MCPServerConfig{}, false
+	}
+	sessionConns := sessionConnsRaw.(*sessionConnections)
+	if raw, ok := sessionConns.pendingConfigs.Load(serverName); ok {
+		return raw.(MCPServerConfig), true
+	}
+	return MCPServerConfig{}, false
 }
 
 // CloseSession closes all connections for a session and removes it from registry.

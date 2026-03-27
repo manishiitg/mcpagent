@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 
 	agentmcp "github.com/manishiitg/mcpagent/cmd/testing/agent-mcp"
+	geminiclitest "github.com/manishiitg/mcpagent/cmd/testing/gemini-cli"
 	claudecodebridge "github.com/manishiitg/mcpagent/cmd/testing/claude-code-bridge"
 	connectionisolation "github.com/manishiitg/mcpagent/cmd/testing/connection-isolation"
 	executortest "github.com/manishiitg/mcpagent/cmd/testing/executor"
@@ -117,6 +118,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(tokentracking.GetTokenTrackingTestCmd())
 	TestingCmd.AddCommand(toolsearch.GetToolSearchTestCmd())
 	TestingCmd.AddCommand(paralleltoolexec.GetParallelToolExecTestCmd())
+	TestingCmd.AddCommand(geminiclitest.GetGeminiCLITestCmd())
 }
 
 func main() {

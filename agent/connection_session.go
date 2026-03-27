@@ -36,7 +36,8 @@ type serverConnectionResult struct {
 	prompts    []mcp.Prompt
 	resources  []mcp.Resource
 	wasCreated bool
-	mcpCount   int // number of MCP tools discovered (for logging)
+	isLazy     bool // true = tools loaded from cache, connection deferred until first tool call
+	mcpCount   int  // number of MCP tools discovered (for logging)
 	err        error
 }
 
@@ -160,6 +161,7 @@ func NewAgentConnectionWithSession(
 				result.err = err
 				return
 			}
+			baseServerConfig := serverConfig // capture before any overrides for cache fallback
 
 			// Apply runtime overrides if provided for this server
 			if runtimeOverrides != nil {
@@ -183,10 +185,50 @@ func NewAgentConnectionWithSession(
 					loggerv2.String("token_file", userTokenFile))
 			}
 
+			// Lazy connection: if tool definitions are cached, defer subprocess spawn
+			// until the first actual tool call. This avoids starting idle browser/server
+			// processes when the LLM might not use them at all.
+			if !disableCache {
+				cacheManager := mcpcache.GetCacheManager(logger)
+				cacheKey := mcpcache.GenerateUnifiedCacheKey(srvName, serverConfig)
+				var cachedEntry *mcpcache.CacheEntry
+				var exists bool
+				if cachedEntry, exists = cacheManager.Get(cacheKey); !exists || len(cachedEntry.Tools) == 0 {
+					// Playwright: runtime overrides change --output-dir which affects the
+					// cache key hash, but tool schemas are identical. Fall back to base
+					// config cache key so the startup-populated cache entry is reused.
+					if srvName == "playwright" || srvName == "camofox" {
+						baseKey := mcpcache.GenerateUnifiedCacheKey(srvName, baseServerConfig)
+						cachedEntry, exists = cacheManager.Get(baseKey)
+					}
+				}
+				if exists && len(cachedEntry.Tools) > 0 {
+					logger.Info(fmt.Sprintf("💤 [LAZY] Cache hit for %s — deferring connection until first tool call (%d tools)", srvName, len(cachedEntry.Tools)))
+					for _, llmTool := range cachedEntry.Tools {
+						if llmTool.Function == nil {
+							continue
+						}
+						toolName := llmTool.Function.Name
+						if cachedEntry.ToolOwnership != nil {
+							if ownership, ok := cachedEntry.ToolOwnership[toolName]; ok && ownership == "duplicate" {
+								continue
+							}
+						}
+						result.tools = append(result.tools, llmTool)
+						result.toolNames = append(result.toolNames, toolName)
+					}
+					result.prompts = cachedEntry.Prompts
+					result.isLazy = true
+					// Store config so on-demand connect knows how to spawn the server
+					registry.StoreServerConfig(sessionID, srvName, serverConfig)
+					return
+				}
+			}
+
 			// Use global shared session for stateless MCP servers.
-			// Only stateful servers (e.g., playwright with browser state) need per-session connections.
+			// Only stateful browser servers (playwright, camofox) need per-session connections.
 			connSessionID := sessionID
-			if srvName != "playwright" && srvName != "agent-browser" {
+			if srvName != "playwright" && srvName != "camofox" {
 				connSessionID = "global"
 			}
 
@@ -286,11 +328,18 @@ func NewAgentConnectionWithSession(
 	seenTools := make(map[string]bool)
 
 	for _, result := range results {
-		if result.err != nil || result.client == nil {
+		if result.err != nil {
+			continue
+		}
+		// Lazy results have nil client but valid tools — include their tools but skip storing client.
+		// Eagerly-connected results with nil client (unexpected) are skipped entirely.
+		if result.client == nil && !result.isLazy {
 			continue
 		}
 
-		clients[result.serverName] = result.client
+		if !result.isLazy {
+			clients[result.serverName] = result.client
+		}
 		connectedServers = append(connectedServers, result.serverName)
 
 		// Merge tools with deduplication
@@ -312,7 +361,10 @@ func NewAgentConnectionWithSession(
 			resources[result.serverName] = result.resources
 		}
 
-		if result.wasCreated {
+		if result.isLazy {
+			logger.Info(fmt.Sprintf("💤 Lazy server %s (session=%s): %d tools registered, connection deferred",
+				result.serverName, sessionID, len(result.tools)))
+		} else if result.wasCreated {
 			logger.Info(fmt.Sprintf("New connection to %s (session=%s): %d tools discovered",
 				result.serverName, sessionID, result.mcpCount))
 		} else {

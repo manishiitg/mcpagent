@@ -320,10 +320,33 @@ func prepareToolExecution(
 				plan.isCustomTool = true
 			} else if a.Clients != nil {
 				a.clientsMu.RLock()
-				if c, exists := a.Clients[mapped]; exists {
-					plan.client = c
-				}
+				existingClient, exists := a.Clients[mapped]
 				a.clientsMu.RUnlock()
+				if exists {
+					plan.client = existingClient
+				} else {
+					// Lazy connect: server was deferred — connect on first tool call
+					registry := mcpclient.GetSessionRegistry()
+					if serverConfig, ok := registry.GetServerConfig(a.SessionID, mapped); ok {
+						connSessionID := a.SessionID
+						if mapped != "playwright" && mapped != "camofox" {
+							connSessionID = "global"
+						}
+						v2Logger.Info(fmt.Sprintf("⚡ [LAZY] First tool call to %s — connecting now", mapped))
+						lazyClient, _, lazyErr := registry.GetOrCreateConnection(ctx, connSessionID, mapped, serverConfig, v2Logger)
+						if lazyErr != nil {
+							v2Logger.Error(fmt.Sprintf("Lazy connect failed for server %s", mapped), lazyErr)
+						} else {
+							a.clientsMu.Lock()
+							if a.Clients == nil {
+								a.Clients = make(map[string]mcpclient.ClientInterface)
+							}
+							a.Clients[mapped] = lazyClient
+							a.clientsMu.Unlock()
+							plan.client = lazyClient
+						}
+					}
+				}
 			}
 		}
 	}
