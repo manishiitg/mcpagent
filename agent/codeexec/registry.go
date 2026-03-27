@@ -98,7 +98,9 @@ type ToolRegistry struct {
 	// Session-scoped tool allow lists for mode-based restriction.
 	// Key: sessionID, Value: set of allowed tool names (nil = no restriction).
 	// Set via SetSessionToolAllowList, checked in CallCustomToolWithSession.
+	// Protected by allowListMu (NOT registry.mu) to avoid blocking on long-running tool executions.
 	sessionToolAllowLists map[string]map[string]bool
+	allowListMu           sync.RWMutex
 }
 
 var (
@@ -605,17 +607,16 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 // When set, CallCustomToolWithSession will reject tools not in the list.
 // Pass nil to clear the restriction (all tools allowed).
 func SetSessionToolAllowList(sessionID string, allowList map[string]bool) {
-	// NOTE: Do NOT hold registryMu here. This function only mutates
-	// globalRegistry.sessionToolAllowLists which is protected by registry.mu.
-	// Holding registryMu while waiting on registry.mu.Lock() causes a deadlock
-	// when CallCustomToolWithSession holds registry.mu.RLock() for long-running
-	// tool executions (e.g., execute_shell_command).
+	// NOTE: Uses allowListMu (NOT registry.mu) to avoid deadlock.
+	// registry.mu.RLock() is held for the entire duration of tool execution in
+	// CallCustomToolWithSession. A registry.mu.Lock() here would block indefinitely
+	// while any long-running tool (e.g., execute_shell_command) is running.
 	registry := GetRegistry()
 	if registry == nil {
 		return
 	}
-	registry.mu.Lock()
-	defer registry.mu.Unlock()
+	registry.allowListMu.Lock()
+	defer registry.allowListMu.Unlock()
 	if registry.sessionToolAllowLists == nil {
 		registry.sessionToolAllowLists = make(map[string]map[string]bool)
 	}
@@ -635,12 +636,17 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 		return "", fmt.Errorf("tool registry not initialized")
 	}
 
-	registry.mu.RLock()
-	defer registry.mu.RUnlock()
-
-	// Check session-scoped tool allow list — reject blocked tools before execution
-	if sessionID != "" && registry.sessionToolAllowLists != nil {
-		if allowList, exists := registry.sessionToolAllowLists[sessionID]; exists && !allowList[toolName] {
+	// Check session-scoped tool allow list first (uses allowListMu, independent of registry.mu)
+	if sessionID != "" {
+		registry.allowListMu.RLock()
+		blocked := false
+		if registry.sessionToolAllowLists != nil {
+			if allowList, exists := registry.sessionToolAllowLists[sessionID]; exists && !allowList[toolName] {
+				blocked = true
+			}
+		}
+		registry.allowListMu.RUnlock()
+		if blocked {
 			if registry.logger != nil {
 				registry.logger.Info("🔒 [TOOL_ALLOW_LIST] Blocked code-exec HTTP call",
 					loggerv2.String("session_id", sessionID),
@@ -649,6 +655,9 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 			return "", fmt.Errorf("tool %q is not available in the current workshop mode", toolName)
 		}
 	}
+
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
 
 	// Priority 1: Check session-scoped tools first (if sessionID provided)
 	if sessionID != "" && registry.sessionCustomTools != nil {
@@ -723,10 +732,12 @@ func CleanupSession(sessionID string) {
 		}
 	}
 
-	// Clean up allow list too
+	// Clean up allow list (uses allowListMu, independent of registry.mu)
+	registry.allowListMu.Lock()
 	if registry.sessionToolAllowLists != nil {
 		delete(registry.sessionToolAllowLists, sessionID)
 	}
+	registry.allowListMu.Unlock()
 
 	if registry.logger != nil {
 		registry.logger.Info("Cleaned up session-scoped tools",
