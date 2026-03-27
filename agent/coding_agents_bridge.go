@@ -120,6 +120,10 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		"MCP_API_TOKEN": apiToken,
 		"MCP_TOOLS":     string(toolsJSON),
 	}
+	// Route mcpbridge stderr to a log file for debugging startup/crash issues.
+	// Claude Code swallows the subprocess stderr, so without this there is no
+	// record of why the bridge failed (e.g. empty MCP_TOOLS, parse errors, crashes).
+	bridgeEnv["MCP_BRIDGE_LOG"] = os.TempDir() + "/mcpbridge.log"
 	// Pass per-agent virtual tool scope so the bridge can route get_api_spec
 	// to the correct agent's handler (prevents parent/child overwrite)
 	if virtualScopeID := a.GetVirtualToolScopeID(); virtualScopeID != "" {

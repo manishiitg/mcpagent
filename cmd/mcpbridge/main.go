@@ -30,6 +30,15 @@ type ToolDef struct {
 }
 
 func main() {
+	// If MCP_BRIDGE_LOG is set, tee all log output to that file in addition to stderr.
+	// This lets the Go server capture mcpbridge startup/crash messages for debugging.
+	if logPath := os.Getenv("MCP_BRIDGE_LOG"); logPath != "" {
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err == nil {
+			log.SetOutput(io.MultiWriter(os.Stderr, f))
+		}
+	}
+
 	apiURL := os.Getenv("MCP_API_URL")
 	apiToken := os.Getenv("MCP_API_TOKEN")
 	toolsJSON := os.Getenv("MCP_TOOLS")
