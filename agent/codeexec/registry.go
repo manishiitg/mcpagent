@@ -603,20 +603,24 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 // When set, CallCustomToolWithSession will reject tools not in the list.
 // Pass nil to clear the restriction (all tools allowed).
 func SetSessionToolAllowList(sessionID string, allowList map[string]bool) {
-	registryLockDebug("SetSessionToolAllowList:" + sessionID)
-	defer registryUnlockDebug("SetSessionToolAllowList:" + sessionID)
-	if globalRegistry == nil {
+	// NOTE: Do NOT hold registryMu here. This function only mutates
+	// globalRegistry.sessionToolAllowLists which is protected by registry.mu.
+	// Holding registryMu while waiting on registry.mu.Lock() causes a deadlock
+	// when CallCustomToolWithSession holds registry.mu.RLock() for long-running
+	// tool executions (e.g., execute_shell_command).
+	registry := GetRegistry()
+	if registry == nil {
 		return
 	}
-	globalRegistry.mu.Lock()
-	defer globalRegistry.mu.Unlock()
-	if globalRegistry.sessionToolAllowLists == nil {
-		globalRegistry.sessionToolAllowLists = make(map[string]map[string]bool)
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if registry.sessionToolAllowLists == nil {
+		registry.sessionToolAllowLists = make(map[string]map[string]bool)
 	}
 	if allowList == nil {
-		delete(globalRegistry.sessionToolAllowLists, sessionID)
+		delete(registry.sessionToolAllowLists, sessionID)
 	} else {
-		globalRegistry.sessionToolAllowLists[sessionID] = allowList
+		registry.sessionToolAllowLists[sessionID] = allowList
 	}
 }
 
@@ -686,35 +690,44 @@ func CleanupSession(sessionID string) {
 		return
 	}
 
-	registryLockDebug("CleanupSession:" + sessionID)
-	defer registryUnlockDebug("CleanupSession:" + sessionID)
-
-	if globalRegistry == nil {
+	// NOTE: Use registry.mu (not registryMu) to avoid deadlock with
+	// CallCustomToolWithSession which holds registry.mu.RLock() during
+	// long-running tool executions.
+	registry := GetRegistry()
+	if registry == nil {
 		return
 	}
 
-	if globalRegistry.sessionCustomTools != nil {
-		if _, exists := globalRegistry.sessionCustomTools[sessionID]; exists {
-			delete(globalRegistry.sessionCustomTools, sessionID)
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+
+	if registry.sessionCustomTools != nil {
+		if _, exists := registry.sessionCustomTools[sessionID]; exists {
+			delete(registry.sessionCustomTools, sessionID)
 		}
 	}
 
-	if globalRegistry.sessionVirtualTools != nil {
+	if registry.sessionVirtualTools != nil {
 		// Clean up exact match (legacy: virtual tools keyed by sessionID)
-		if _, exists := globalRegistry.sessionVirtualTools[sessionID]; exists {
-			delete(globalRegistry.sessionVirtualTools, sessionID)
+		if _, exists := registry.sessionVirtualTools[sessionID]; exists {
+			delete(registry.sessionVirtualTools, sessionID)
 		}
 		// Clean up per-agent virtual tool scopes (keyed as "sessionID:vt:traceID")
 		prefix := sessionID + ":vt:"
-		for key := range globalRegistry.sessionVirtualTools {
+		for key := range registry.sessionVirtualTools {
 			if strings.HasPrefix(key, prefix) {
-				delete(globalRegistry.sessionVirtualTools, key)
+				delete(registry.sessionVirtualTools, key)
 			}
 		}
 	}
 
-	if globalRegistry.logger != nil {
-		globalRegistry.logger.Info("Cleaned up session-scoped tools",
+	// Clean up allow list too
+	if registry.sessionToolAllowLists != nil {
+		delete(registry.sessionToolAllowLists, sessionID)
+	}
+
+	if registry.logger != nil {
+		registry.logger.Info("Cleaned up session-scoped tools",
 			loggerv2.String("session_id", sessionID))
 	}
 }
