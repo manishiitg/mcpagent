@@ -194,9 +194,36 @@ func writeGeminiHookScripts(projectDir string, debugEnabled bool, enforceHTTPRou
 		enforcePath := filepath.Join(hooksDir, "enforce-http-tool-routing.py")
 		enforceScript := `#!/usr/bin/env python3
 import json
+import os
 import sys
+import datetime
 
-ALLOWED = {"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec", "google_web_search"}
+# Allowed tools — both bare names (Gemini built-ins) and MCP-prefixed names
+# (bridge tools exposed as mcp_api-bridge_<tool> by the api-bridge MCP server).
+# The server name "api-bridge" is hardcoded in BuildBridgeMCPConfig so these are stable.
+ALLOWED = {
+    # Gemini CLI built-in
+    "google_web_search",
+    # Bridge tools — bare name (for future direct calls)
+    "execute_shell_command",
+    "diff_patch_workspace_file",
+    "agent_browser",
+    "get_api_spec",
+    # Bridge tools — MCP-prefixed name (how Gemini CLI presents them from the api-bridge server)
+    "mcp_api-bridge_execute_shell_command",
+    "mcp_api-bridge_diff_patch_workspace_file",
+    "mcp_api-bridge_agent_browser",
+    "mcp_api-bridge_get_api_spec",
+}
+
+LOG_PATH = os.path.join(os.environ.get("TMPDIR", "/tmp"), "enforce-http-tool-routing.log")
+
+def log(msg):
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.datetime.utcnow().isoformat()}] {msg}\n")
+    except Exception:
+        pass
 
 raw = sys.stdin.read()
 payload = {}
@@ -204,15 +231,18 @@ payload = {}
 try:
     payload = json.loads(raw) if raw else {}
 except Exception:
-    payload = {}
+    pass
 
 tool_name = payload.get("tool_name", "")
 mcp_context = payload.get("mcp_context") or {}
 server_name = mcp_context.get("server_name")
 
 if tool_name in ALLOWED:
+    log(f"BeforeTool ALLOW: tool_name={tool_name!r} server_name={server_name!r}")
     sys.stdout.write("{}\n")
     raise SystemExit(0)
+
+log(f"BeforeTool DENY: tool_name={tool_name!r} server_name={server_name!r}")
 
 reason = (
     "Only execute_shell_command, diff_patch_workspace_file, agent_browser, get_api_spec, and google_web_search are allowed in this Gemini bridge session. "
@@ -220,9 +250,6 @@ reason = (
     "If you need another capability, call get_api_spec to discover the HTTP endpoint and "
     "use execute_shell_command to invoke it via MCP_API_URL/MCP_API_TOKEN."
 )
-
-if server_name == "api-bridge":
-    reason += " The blocked tool came through the api-bridge MCP server."
 
 sys.stdout.write(json.dumps({
     "decision": "deny",
