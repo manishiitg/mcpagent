@@ -7,6 +7,7 @@ import (
 	"log"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,9 +58,10 @@ func goroutineID() uint64 {
 	s := string(buf[:n])
 	s = strings.TrimPrefix(s, "goroutine ")
 	if idx := strings.IndexByte(s, ' '); idx > 0 {
-		var id uint64
-		fmt.Sscanf(s[:idx], "%d", &id)
-		return id
+		id, err := strconv.ParseUint(s[:idx], 10, 64)
+		if err == nil {
+			return id
+		}
 	}
 	return 0
 }
