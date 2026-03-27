@@ -135,11 +135,11 @@ func subTestTextResponse(ctx context.Context, agent interface{ Ask(context.Conte
 	return nil
 }
 
-// subTestAllowedToolCall asks the agent to call get_api_spec and verifies it
-// completes without the hook denying it.
+// subTestAllowedToolCall asks the model to use google_web_search — it is both
+// in the ALLOWED set of the enforce-http-tool-routing hook AND a real Gemini CLI
+// built-in, so the model can actually call it and the hook must pass it through.
 func subTestAllowedToolCall(ctx context.Context, agent interface{ Ask(context.Context, string) (string, error) }, log loggerv2.Logger) error {
-	// get_api_spec is in the ALLOWED set — hook should let it through.
-	prompt := "Call get_api_spec with server_name=\"test\" and tool_name=\"test\" and report back what you got."
+	prompt := "Use google_web_search to find the current year and tell me what it is in one sentence."
 	start := time.Now()
 	response, err := agent.Ask(ctx, prompt)
 	duration := time.Since(start)
@@ -154,19 +154,25 @@ func subTestAllowedToolCall(ctx context.Context, agent interface{ Ask(context.Co
 		return fmt.Errorf("empty response")
 	}
 
+	// Verify the hook actually let the tool through (model got a real answer).
+	if !strings.Contains(response, "2026") && !strings.Contains(response, "2025") {
+		log.Warn("Response may not contain a year — tool call may not have succeeded",
+			loggerv2.String("response", response))
+	}
+
 	log.Info("Got response",
 		loggerv2.String("response_preview", truncate(response, 200)),
 		loggerv2.String("duration", duration.String()))
 	return nil
 }
 
-// subTestDisallowedToolBlocked asks the model to use a built-in Gemini tool
+// subTestDisallowedToolBlocked asks the model to use a Gemini CLI built-in
 // that is NOT in the allowed set. The enforce-http-tool-routing BeforeTool hook
 // should deny it. The model should then recover with a text response.
 func subTestDisallowedToolBlocked(ctx context.Context, agent interface{ Ask(context.Context, string) (string, error) }, log loggerv2.Logger) error {
-	// google_search is a Gemini built-in not in our allowed set.
-	// The hook denies it with a message explaining only the bridge tools are allowed.
-	prompt := "Use google_search to look up the current weather in Mumbai. Do not use any other tool."
+	// read_file and grep_search are Gemini CLI built-ins not in our ALLOWED set.
+	// The hook must deny them; if the hook is removed/broken they would succeed.
+	prompt := "Use the read_file tool to read /etc/hostname and tell me its contents. Only use read_file."
 	start := time.Now()
 	response, err := agent.Ask(ctx, prompt)
 	duration := time.Since(start)
