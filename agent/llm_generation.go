@@ -980,12 +980,11 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		}
 		projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
 
-		// Build project settings with tool restriction + MCP bridge config
-		settings := map[string]interface{}{
-			"tools": map[string]interface{}{
-				"core": []string{"google_web_search"},
-			},
-		}
+		// Build project settings with MCP bridge config.
+		// Tool restriction is handled by the Policy Engine TOML rules only.
+		// Do NOT set tools.core here — it maps to allowed_function_names in the
+		// Gemini API which requires function_calling_mode=ANY and causes 400 errors.
+		settings := map[string]interface{}{}
 		debugHooksEnabled := geminiDebugHooksEnabled()
 		httpRoutingHooksEnabled := geminiHTTPRoutingHooksEnabled()
 		if debugHooksEnabled || httpRoutingHooksEnabled {

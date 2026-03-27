@@ -4,15 +4,65 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// registryLockDebug attempts to acquire registryMu with logging.
+// If the lock is not acquired within 10s, it logs a warning (potential deadlock).
+func registryLockDebug(caller string) {
+	if registryMu.TryLock() {
+		log.Printf("[REGISTRY_LOCK] %s: acquired lock immediately", caller)
+		return
+	}
+	// Lock is contended — log and wait
+	log.Printf("[REGISTRY_LOCK] ⚠️ %s: lock contended, waiting... (goroutine %d)", caller, goroutineID())
+	start := time.Now()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	done := make(chan struct{})
+	go func() {
+		registryMu.Lock()
+		close(done)
+	}()
+	for {
+		select {
+		case <-done:
+			log.Printf("[REGISTRY_LOCK] %s: acquired lock after %v (goroutine %d)", caller, time.Since(start), goroutineID())
+			return
+		case <-ticker.C:
+			log.Printf("[REGISTRY_LOCK] ⚠️ %s: STILL waiting for lock after %v — possible deadlock! (goroutine %d)", caller, time.Since(start), goroutineID())
+		}
+	}
+}
+
+func registryUnlockDebug(caller string) {
+	log.Printf("[REGISTRY_LOCK] %s: releasing lock (goroutine %d)", caller, goroutineID())
+	registryMu.Unlock()
+}
+
+func goroutineID() uint64 {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	// Parse "goroutine 123 [running]:" from stack trace
+	s := string(buf[:n])
+	s = strings.TrimPrefix(s, "goroutine ")
+	if idx := strings.IndexByte(s, ' '); idx > 0 {
+		var id uint64
+		fmt.Sscanf(s[:idx], "%d", &id)
+		return id
+	}
+	return 0
+}
 
 // GoBuildError is a custom error type for Go build/compilation errors
 type GoBuildError struct {
@@ -63,8 +113,8 @@ func InitRegistry(mcpClients map[string]mcpclient.ClientInterface, customTools m
 // If the registry already exists, it merges new tools/clients into the existing registry
 // This allows multiple agents with different servers to coexist
 func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger loggerv2.Logger) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
+	registryLockDebug("InitRegistryWithVirtualTools")
+	defer registryUnlockDebug("InitRegistryWithVirtualTools")
 
 	// Use logger directly (already v2.Logger)
 	if logger == nil {
@@ -407,8 +457,8 @@ func InitRegistryVirtualToolsForSession(sessionID string, virtualTools map[strin
 		return
 	}
 
-	registryMu.Lock()
-	defer registryMu.Unlock()
+	registryLockDebug("InitRegistryVirtualToolsForSession:" + sessionID)
+	defer registryUnlockDebug("InitRegistryVirtualToolsForSession:" + sessionID)
 
 	if logger == nil {
 		logger = loggerv2.NewNoop()
@@ -505,8 +555,8 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 		return
 	}
 
-	registryMu.Lock()
-	defer registryMu.Unlock()
+	registryLockDebug("InitRegistryForSession:" + sessionID)
+	defer registryUnlockDebug("InitRegistryForSession:" + sessionID)
 
 	if logger == nil {
 		logger = loggerv2.NewNoop()
@@ -553,8 +603,8 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 // When set, CallCustomToolWithSession will reject tools not in the list.
 // Pass nil to clear the restriction (all tools allowed).
 func SetSessionToolAllowList(sessionID string, allowList map[string]bool) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
+	registryLockDebug("SetSessionToolAllowList:" + sessionID)
+	defer registryUnlockDebug("SetSessionToolAllowList:" + sessionID)
 	if globalRegistry == nil {
 		return
 	}
@@ -636,8 +686,8 @@ func CleanupSession(sessionID string) {
 		return
 	}
 
-	registryMu.Lock()
-	defer registryMu.Unlock()
+	registryLockDebug("CleanupSession:" + sessionID)
+	defer registryUnlockDebug("CleanupSession:" + sessionID)
 
 	if globalRegistry == nil {
 		return
