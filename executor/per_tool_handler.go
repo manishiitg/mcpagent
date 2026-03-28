@@ -110,8 +110,10 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 	}
 	newReq.Header.Set("Content-Type", "application/json")
 
-	// Try the sanitized name first. If it fails with a server connection error
-	// and the name contains underscores, retry with hyphens (reverse of sanitization).
+	// URL path segments are sanitized (hyphens→underscores via SanitizePathSegment),
+	// but the session registry stores server configs under the ORIGINAL name (with hyphens).
+	// Try the desanitized (hyphenated) name first so we hit the session registry / lazy connect
+	// path instead of falling through to mcpcache (which spawns a new browser for Playwright).
 	desanitizedServer := strings.ReplaceAll(server, "_", "-")
 	if desanitizedServer == server {
 		// No underscores to desanitize — just delegate directly
@@ -119,26 +121,41 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Name has underscores that might be sanitized hyphens — try with recorder first
-	rec := httptest.NewRecorder()
-	h.HandleMCPExecute(rec, newReq)
+	// Name has underscores that might be sanitized hyphens — try desanitized name first
+	// (matches session registry keys), fall back to sanitized name if that fails.
+	h.logger.Info("Trying desanitized server name first (session registry uses original names)",
+		loggerv2.String("sanitized", server),
+		loggerv2.String("desanitized", desanitizedServer))
 
-	// Check if the response indicates a server-not-found error
+	wrappedBody.Server = desanitizedServer
+	desanitizedBytes, _ := json.Marshal(wrappedBody)
+	desanitizedReq, desanitizedErr := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(desanitizedBytes)))
+	if desanitizedErr != nil {
+		h.HandleMCPExecute(w, newReq)
+		return
+	}
+	desanitizedReq.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	h.HandleMCPExecute(rec, desanitizedReq)
+
+	// Check if the desanitized name worked
 	var resp MCPExecuteResponse
-	shouldRetry := false
+	shouldRetrySanitized := false
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
 		if !resp.Success && (strings.Contains(resp.Error, "Failed to connect to server") ||
 			strings.Contains(resp.Error, "is not available in this session's scope")) {
-			shouldRetry = true
+			shouldRetrySanitized = true
 		}
 	}
 
-	if shouldRetry {
-		h.logger.Info("Retrying per-tool MCP request with desanitized server name",
-			loggerv2.String("original", server),
-			loggerv2.String("desanitized", desanitizedServer))
+	if shouldRetrySanitized {
+		// Desanitized name failed — fall back to original sanitized name
+		h.logger.Info("Desanitized name failed, retrying with sanitized server name",
+			loggerv2.String("desanitized", desanitizedServer),
+			loggerv2.String("sanitized", server))
 
-		wrappedBody.Server = desanitizedServer
+		wrappedBody.Server = server
 		retryBytes, _ := json.Marshal(wrappedBody)
 		retryReq, retryErr := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(retryBytes)))
 		if retryErr == nil {
@@ -148,7 +165,7 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Write the original (first attempt) response
+	// Write the desanitized attempt's response
 	for k, v := range rec.Header() {
 		w.Header()[k] = v
 	}

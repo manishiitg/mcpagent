@@ -104,6 +104,7 @@ const (
 	MaxTurnsReachedEventType    EventType = "max_turns_reached"
 	ContextCancelledEventType   EventType = "context_cancelled"
 	FallbackAttemptEventType    EventType = "fallback_attempt"
+	BrokenPipeEventType         EventType = "broken_pipe"
 
 	// MCP server events
 	MCPServerConnection      EventType = "mcp_server_connection"

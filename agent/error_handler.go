@@ -238,55 +238,46 @@ func (h *BrokenPipeHandler) retryToolCall(
 
 // emitBrokenPipeEvent emits a broken pipe detection event
 func (h *BrokenPipeHandler) emitBrokenPipeEvent(ctx context.Context, toolCall *llmtypes.ToolCall, serverName string, originalErr error) {
-	brokenPipeEvent := &events.GenericEventData{
+	brokenPipeEvent := &events.BrokenPipeEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Data: map[string]interface{}{
-			"error_type":    "broken_pipe_detected",
-			"tool_name":     toolCall.FunctionCall.Name,
-			"server_name":   serverName,
-			"tool_call_id":  toolCall.ID,
-			"error_message": originalErr.Error(),
-			"operation":     "broken_pipe_connection_recreation",
-		},
+		Operation:  "broken_pipe_detected",
+		ToolName:   toolCall.FunctionCall.Name,
+		ServerName: serverName,
+		ToolCallID: toolCall.ID,
+		Error:      originalErr.Error(),
 	}
 	h.agent.EmitTypedEvent(ctx, brokenPipeEvent)
 }
 
 // emitRetrySuccessEvent emits a successful retry event
 func (h *BrokenPipeHandler) emitRetrySuccessEvent(ctx context.Context, toolCall *llmtypes.ToolCall, serverName string, duration time.Duration) {
-	retrySuccessEvent := &events.GenericEventData{
+	retrySuccessEvent := &events.BrokenPipeEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Data: map[string]interface{}{
-			"error_type":     "broken_pipe_retry_success",
-			"tool_name":      toolCall.FunctionCall.Name,
-			"server_name":    serverName,
-			"tool_call_id":   toolCall.ID,
-			"retry_duration": duration.String(),
-			"operation":      "broken_pipe_retry_success",
-		},
+		Operation:  "retry_success",
+		ToolName:   toolCall.FunctionCall.Name,
+		ServerName: serverName,
+		ToolCallID: toolCall.ID,
+		Duration:   duration.String(),
 	}
 	h.agent.EmitTypedEvent(ctx, retrySuccessEvent)
 }
 
 // emitRetryFailureEvent emits a failed retry event
 func (h *BrokenPipeHandler) emitRetryFailureEvent(ctx context.Context, toolCall *llmtypes.ToolCall, serverName string, retryErr error, duration time.Duration) {
-	retryFailureEvent := &events.GenericEventData{
+	retryFailureEvent := &events.BrokenPipeEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Data: map[string]interface{}{
-			"error_type":     "broken_pipe_retry_failure",
-			"tool_name":      toolCall.FunctionCall.Name,
-			"server_name":    serverName,
-			"tool_call_id":   toolCall.ID,
-			"retry_duration": duration.String(),
-			"retry_error":    retryErr.Error(),
-			"operation":      "broken_pipe_retry_failure",
-		},
+		Operation:  "retry_failure",
+		ToolName:   toolCall.FunctionCall.Name,
+		ServerName: serverName,
+		ToolCallID: toolCall.ID,
+		Duration:   duration.String(),
+		Error:      retryErr.Error(),
 	}
 	h.agent.EmitTypedEvent(ctx, retryFailureEvent)
 }
