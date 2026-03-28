@@ -975,7 +975,20 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// Tool restriction is handled by the Policy Engine TOML rules only.
 		// Do NOT set tools.core here — it maps to allowed_function_names in the
 		// Gemini API which requires function_calling_mode=ANY and causes 400 errors.
-		settings := map[string]interface{}{}
+		//
+		// We DO use tools.exclude to remove built-in file system and shell tools.
+		// These tools validate paths against Gemini CLI's temp workspace dir and throw
+		// during tool.build() (before hooks or the policy engine can run), returning
+		// INVALID_TOOL_PARAMS errors that confuse the model into retry loops.
+		// Excluding them prevents the model from seeing or calling them.
+		settings := map[string]interface{}{
+			"tools": map[string]interface{}{
+				"exclude": []string{
+					"read_file", "write_file", "grep_search", "list_directory",
+					"glob", "read_many_files", "replace", "run_shell_command",
+				},
+			},
+		}
 		debugHooksEnabled := geminiDebugHooksEnabled()
 		httpRoutingHooksEnabled := geminiHTTPRoutingHooksEnabled()
 		if debugHooksEnabled || httpRoutingHooksEnabled {

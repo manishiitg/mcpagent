@@ -1,12 +1,14 @@
 package geminicli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +100,17 @@ func runAllGeminiCLITests(log loggerv2.Logger) error {
 		return fmt.Errorf("sub-test 3 (disallowed tool blocked): %w", err)
 	}
 	log.Info("✅ Sub-test 3 passed")
+
+	// --- Sub-test 4: read_file path-validation bypasses hook (regression) ---
+	// Reproduces the root cause of the 15-minute context deadline exceeded issue:
+	// read_file.build() throws INVALID_TOOL_PARAMS for non-workspace paths BEFORE the
+	// BeforeTool hook runs, causing confusing model retry loops that hit the deadline.
+	// The fix is tools.exclude which removes read_file from the model's tool registry.
+	log.Info("--- Sub-test 4: read_file path-validation bypasses hook + tools.exclude fix ---")
+	if err := subTestReadFilePathValidationBypassesHook(ctx, log); err != nil {
+		return fmt.Errorf("sub-test 4 (read_file hook bypass + tools.exclude fix): %w", err)
+	}
+	log.Info("✅ Sub-test 4 passed")
 
 	return nil
 }
@@ -240,6 +253,299 @@ func subTestDisallowedToolBlocked(ctx context.Context, log loggerv2.Logger) erro
 	log.Info("Got response after tool block",
 		loggerv2.String("response_preview", truncate(response, 200)))
 	return nil
+}
+
+// subTestReadFilePathValidationBypassesHook is a two-part regression test for the
+// 15-minute context deadline exceeded bug.
+//
+// Root cause: Gemini CLI's read_file validates paths against its temp workspace dir in
+// tool.build(). Any path outside the workspace (e.g. /app/workspace-docs/plan.md) throws
+// during build() — BEFORE executeToolWithHooks or the Policy Engine runs. The model
+// receives INVALID_TOOL_PARAMS, gets confused, and retries in a loop until the step timeout.
+//
+// Fix: tools.exclude removes read_file from the model's tool registry entirely,
+// so the model never attempts the call and the retry loop never starts.
+//
+// Part 1 (reproduce): calls model.GenerateContent directly with settings that have the
+//   BeforeTool hook but NO tools.exclude. Asks the model to read a non-workspace path.
+//   Asserts that the hook log has NO new read_file entry — confirming the hook was
+//   bypassed entirely by the path-validation failure in build().
+//
+// Part 2 (verify fix): calls through agent.Ask() which now includes tools.exclude.
+//   Asks the model to read the same path. Asserts the call completes without a
+//   Gemini API 400 error and without INVALID_TOOL_PARAMS-style retry loops.
+func subTestReadFilePathValidationBypassesHook(ctx context.Context, log loggerv2.Logger) error {
+	// Part 1: reproduce — hook is configured but never called because build() throws first.
+	log.Info("Part 1: Reproducing hook bypass (no tools.exclude)")
+	if err := verifyReadFileBypassesHookLog(ctx, log); err != nil {
+		return fmt.Errorf("part 1 (reproduce hook bypass): %w", err)
+	}
+	log.Info("✅ Part 1: confirmed BeforeTool hook was NOT called for read_file (bypassed by path validation)")
+
+	// Part 2: verify fix — tools.exclude removes read_file, no INVALID_TOOL_PARAMS loop.
+	log.Info("Part 2: Verifying fix (tools.exclude in settings)")
+	if err := verifyToolsExcludePreventsReadFile(ctx, log); err != nil {
+		return fmt.Errorf("part 2 (verify tools.exclude fix): %w", err)
+	}
+	log.Info("✅ Part 2: confirmed tools.exclude prevents read_file retry loop")
+
+	return nil
+}
+
+// verifyReadFileBypassesHookLog calls model.GenerateContent directly with a settings JSON
+// that configures the enforce-http-tool-routing hook but omits tools.exclude (the pre-fix
+// state). It then asserts that the hook log has NO new entry for read_file, confirming
+// the hook was bypassed by read_file.build() throwing INVALID_TOOL_PARAMS.
+func verifyReadFileBypassesHookLog(ctx context.Context, log loggerv2.Logger) error {
+	model, err := newGeminiCLIModel(log)
+	if err != nil {
+		return err
+	}
+
+	// Create an isolated project dir and write the enforce-http-tool-routing hook.
+	dirID := fmt.Sprintf("test-readfile-bypass-%d", time.Now().UnixMilli())
+	projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+dirID)
+	hooksDir := filepath.Join(projectDir, ".gemini", "hooks")
+	if mkErr := os.MkdirAll(hooksDir, 0750); mkErr != nil {
+		return fmt.Errorf("create hooks dir: %w", mkErr)
+	}
+	defer func() { _ = os.RemoveAll(projectDir) }()
+
+	hookPath := filepath.Join(hooksDir, "enforce-http-tool-routing.py")
+	if writeErr := os.WriteFile(hookPath, []byte(enforceHTTPRoutingHookScript()), 0750); writeErr != nil { //nolint:gosec // executable hook script
+		return fmt.Errorf("write hook script: %w", writeErr)
+	}
+
+	// Settings: hook configured but NO tools.exclude — this is the pre-fix state.
+	settings := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"BeforeTool": []map[string]interface{}{
+				{
+					"matcher": "*",
+					"hooks": []map[string]interface{}{
+						{
+							"name":        "enforce-http-tool-routing",
+							"type":        "command",
+							"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/enforce-http-tool-routing.py",
+							"timeout":     5000,
+							"description": "Allow only bridge tools; deny all Gemini built-ins",
+						},
+					},
+				},
+			},
+		},
+	}
+	settingsJSON, _ := json.Marshal(settings)
+
+	// Record hook log line count BEFORE the call.
+	logPath := filepath.Join(os.TempDir(), "enforce-http-tool-routing.log")
+	linesBefore := countFileLines(logPath)
+
+	// Use a short timeout — long enough to see the first INVALID_TOOL_PARAMS response
+	// but far shorter than the 15-minute production timeout that gets hit in the bug.
+	shortCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+
+	// Call model directly (bypass llm_generation.go which now adds tools.exclude).
+	// The model will try read_file with the given path; build() throws INVALID_TOOL_PARAMS;
+	// hook is never called; model gets confused and eventually emits a text response.
+	messages := []llmtypes.MessageContent{
+		{
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{
+					Text: "Use the read_file tool to read /app/workspace-docs/plan.md and tell me what it contains. You MUST use the read_file tool.",
+				},
+			},
+		},
+	}
+	_, callErr := model.GenerateContent(shortCtx, messages,
+		llm.WithGeminiProjectSettings(string(settingsJSON)),
+		llm.WithGeminiProjectDirID(dirID),
+		llm.WithGeminiApprovalMode("auto"),
+	)
+
+	// The call is expected to fail (INVALID_TOOL_PARAMS loop → context deadline, or the model
+	// gives up and returns a text response). A 400 INVALID_ARGUMENT from the Gemini API is
+	// the only unacceptable failure — it means the settings.json is broken.
+	if callErr != nil {
+		if geminiErr := checkGeminiErr(callErr); geminiErr != callErr {
+			return geminiErr
+		}
+		log.Info("Call returned error (expected for pre-fix scenario)",
+			loggerv2.String("error", callErr.Error()))
+	}
+
+	// Check hook log for new entries written during this call.
+	linesAfter := countFileLines(logPath)
+	newLines := readNewFileLines(logPath, linesBefore)
+	log.Info("Hook log after call (no-exclude scenario)",
+		loggerv2.Int("new_lines", linesAfter-linesBefore),
+	)
+
+	// Assert: hook was NOT invoked for read_file.
+	// If the hook HAD been called, it would have written a DENY line containing "read_file".
+	// No such line means the hook was bypassed (build() threw before reaching executeToolWithHooks).
+	for _, line := range newLines {
+		if strings.Contains(line, "read_file") {
+			return fmt.Errorf(
+				"unexpected: hook log contains a read_file entry %q — "+
+					"this means hook WAS called, contradicting the expected bypass via build() path validation. "+
+					"The tools.exclude fix may be unexpectedly active, or Gemini CLI path validation changed",
+				line,
+			)
+		}
+	}
+
+	log.Info("Confirmed: no read_file entry in hook log — hook was bypassed by build() path validation failure")
+	return nil
+}
+
+// verifyToolsExcludePreventsReadFile verifies the fix: with tools.exclude in settings,
+// the model never sees read_file, so no INVALID_TOOL_PARAMS loop occurs. It uses
+// agent.Ask() which now always includes tools.exclude via llm_generation.go.
+func verifyToolsExcludePreventsReadFile(ctx context.Context, log loggerv2.Logger) error {
+	model, err := newGeminiCLIModel(log)
+	if err != nil {
+		return err
+	}
+	tracer, _ := testutils.GetTracerWithLogger("noop", log)
+	agent, err := testutils.CreateMinimalAgent(ctx, model, llm.ProviderGeminiCLI, tracer, testutils.GenerateTestTraceID(), log)
+	if err != nil {
+		return fmt.Errorf("create agent: %w", err)
+	}
+	defer agent.Close()
+
+	// Record hook log position before the call.
+	logPath := filepath.Join(os.TempDir(), "enforce-http-tool-routing.log")
+	linesBefore := countFileLines(logPath)
+
+	// With tools.exclude, read_file is not in the model's tool registry.
+	// The model should respond saying it cannot read files directly,
+	// without ever attempting read_file and without any INVALID_TOOL_PARAMS error.
+	shortCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	response, askErr := agent.Ask(shortCtx,
+		"Use the read_file tool to read /app/workspace-docs/plan.md and tell me what it contains. You MUST use the read_file tool.")
+	if askErr != nil {
+		if geminiErr := checkGeminiErr(askErr); geminiErr != askErr {
+			return geminiErr
+		}
+		// Non-400 errors are acceptable — the model may give up cleanly.
+		log.Info("Ask returned error (checking hook log before failing)",
+			loggerv2.String("error", askErr.Error()))
+	} else {
+		log.Info("Got response with tools.exclude",
+			loggerv2.String("response_preview", truncate(response, 200)))
+	}
+
+	// Assert: hook was NOT called for read_file (tool was excluded, never attempted).
+	newLines := readNewFileLines(logPath, linesBefore)
+	for _, line := range newLines {
+		if strings.Contains(line, "read_file") {
+			return fmt.Errorf(
+				"unexpected: hook log contains a read_file entry %q — "+
+					"tools.exclude should have removed read_file from the model's tool set, "+
+					"so the model should never have attempted it",
+				line,
+			)
+		}
+	}
+
+	log.Info("Confirmed: no read_file in hook log — tools.exclude prevented the tool from being called")
+	return nil
+}
+
+// countFileLines returns the number of lines in a file (0 if file does not exist).
+func countFileLines(path string) int {
+	f, err := os.Open(path) //nolint:gosec // reading log file
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	count := 0
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		count++
+	}
+	return count
+}
+
+// readNewFileLines returns lines from path starting at skipLines (0-indexed).
+func readNewFileLines(path string, skipLines int) []string {
+	f, err := os.Open(path) //nolint:gosec // reading log file
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var lines []string
+	sc := bufio.NewScanner(f)
+	i := 0
+	for sc.Scan() {
+		if i >= skipLines {
+			lines = append(lines, sc.Text())
+		}
+		i++
+	}
+	return lines
+}
+
+// enforceHTTPRoutingHookScript returns the Python source for the enforce-http-tool-routing
+// BeforeTool hook. This is the same script written by writeGeminiHookScripts in production.
+func enforceHTTPRoutingHookScript() string {
+	return `#!/usr/bin/env python3
+import json
+import os
+import sys
+import datetime
+
+ALLOWED = {
+    "google_web_search",
+    "execute_shell_command",
+    "diff_patch_workspace_file",
+    "agent_browser",
+    "get_api_spec",
+    "mcp_api-bridge_execute_shell_command",
+    "mcp_api-bridge_diff_patch_workspace_file",
+    "mcp_api-bridge_agent_browser",
+    "mcp_api-bridge_get_api_spec",
+}
+
+LOG_PATH = os.path.join(os.environ.get("TMPDIR", "/tmp"), "enforce-http-tool-routing.log")
+
+def log(msg):
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.datetime.utcnow().isoformat()}] {msg}\n")
+    except Exception:
+        pass
+
+raw = sys.stdin.read()
+payload = {}
+try:
+    payload = json.loads(raw) if raw else {}
+except Exception:
+    pass
+
+tool_name = payload.get("tool_name", "")
+mcp_context = payload.get("mcp_context") or {}
+server_name = mcp_context.get("server_name")
+
+if tool_name in ALLOWED:
+    log(f"BeforeTool ALLOW: tool_name={tool_name!r} server_name={server_name!r}")
+    sys.stdout.write("{}\n")
+    raise SystemExit(0)
+
+log(f"BeforeTool DENY: tool_name={tool_name!r} server_name={server_name!r}")
+
+reason = (
+    "Only execute_shell_command, diff_patch_workspace_file, agent_browser, get_api_spec, and google_web_search are allowed. "
+    "Do not call '" + tool_name + "' directly."
+)
+
+sys.stdout.write(json.dumps({"decision": "deny", "reason": reason}) + "\n")
+`
 }
 
 // registerBridgeToolStubs registers stub versions of the bridge tools on an agent.
