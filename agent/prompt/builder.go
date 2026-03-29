@@ -84,37 +84,39 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 
 	// Build core principles section based on mode
 	var corePrinciplesSection string
-	nonInteractiveNote := `
-**Non-Interactive Mode:** You are running autonomously without a human in the loop. Do NOT stop mid-task with a text message — always continue making tool calls until the task is fully complete or you determine it cannot be completed. Only generate a final text response when you are done.`
+	autonomousNote := `
+**Finish what you start this turn:** Do not stop mid-action — complete all tool calls you have initiated before generating a text response. If you delegated work, ending your turn IS the completion of your action for this turn.`
 
 	if useCodeExecutionMode {
 		corePrinciplesSection = `<core_principles>
-When answering questions:
-1. **Think** about what information/actions are needed
-2. **Write code** to gather information and perform actions
-3. **Provide helpful responses** based on execution results
-` + nonInteractiveNote + `
+**Your Goal:** Complete the user's request.
+
+**Operating Rules:**
+1. **Be Proactive:** Do not ask for permission to use tools. Just use them.
+2. **Chain Actions:** If a tool output leads to a next step, take it immediately.
+3. **Solve Fully:** Strive to reach the final answer or state before returning control.
+` + autonomousNote + `
 </core_principles>`
 	} else if useToolSearchMode {
 		corePrinciplesSection = `<core_principles>
-**Your Goal:** Complete the user's request autonomously using discovered tools.
+**Your Goal:** Complete the user's request using discovered tools.
 
 **Operating Rules:**
 1. **Search First:** Use search_tools to find relevant tools before attempting to use them.
 2. **Be Proactive:** Once tools are discovered, use them without asking for permission.
 3. **Chain Actions:** If a tool output leads to a next step, take it immediately.
 4. **Search Again:** If you need additional capabilities, search for more tools.
-` + nonInteractiveNote + `
+` + autonomousNote + `
 </core_principles>`
 	} else {
 		corePrinciplesSection = `<core_principles>
-**Your Goal:** Complete the user's request autonomously.
+**Your Goal:** Complete the user's request.
 
 **Operating Rules:**
 1. **Be Proactive:** Do not ask for permission to use tools. Just use them.
 2. **Chain Actions:** If a tool output leads to a next step, take it immediately. Do not stop to report intermediate progress unless asked.
 3. **Solve Fully:** Strive to reach the final answer or state before returning control.
-` + nonInteractiveNote + `
+` + autonomousNote + `
 </core_principles>`
 	}
 
@@ -138,8 +140,7 @@ When answering questions:
 				"```json\n" +
 				toolStructureJSON + "\n" +
 				"```\n\n" +
-				"Domain tools (MCP and custom) are accessible via HTTP API endpoints documented in the OpenAPI spec.\n" +
-				"System tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) are available as direct LLM calls.\n" +
+				"Domain tools (MCP and custom) are called via HTTP API. System tools (execute_shell_command, agent_browser) are called directly — see your provider's tool list for exact names.\n" +
 				"</available_tools>\n" +
 				preDiscoveredToolSpecs
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
@@ -348,13 +349,8 @@ func buildVirtualToolsSection(useCodeExecutionMode bool, useToolSearchMode bool,
 		return `AVAILABLE FUNCTIONS:
 
 - **get_api_spec** - Get the full OpenAPI spec for specific tool(s). Skip this for tools whose specs are already pre-loaded in the system prompt.
-  Usage: get_api_spec(server_name="google_sheets", tool_name="get_document")
-  Multiple tools: get_api_spec(server_name="google_sheets", tool_name=["create_spreadsheet", "update_values"])
-
-Domain tools (MCP and custom) are accessed via HTTP endpoints documented in the OpenAPI spec.
-System tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) are available as direct LLM function calls.
-Custom domain tools use: POST /tools/custom/{tool}
-MCP tools use: POST /tools/mcp/{server}/{tool}`
+  Usage: get_api_spec(server_name="<server>", tool_name="<tool>")
+  Multiple tools: get_api_spec(server_name="<server>", tool_name=["<tool1>", "<tool2>"])`
 	}
 
 	if useToolSearchMode {
