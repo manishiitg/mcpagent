@@ -129,7 +129,7 @@ func (h *BrokenPipeHandler) recreateViaRegistry(ctx context.Context, serverName 
 	// Compute the connection session ID — stateless servers share "global",
 	// matching the logic in connection_session.go:170-175.
 	connSessionID := h.agent.SessionID
-	if serverName != "playwright" && serverName != "agent-browser" {
+	if serverName != "playwright" && serverName != "camofox" {
 		connSessionID = "global"
 	}
 
@@ -242,7 +242,7 @@ func (h *BrokenPipeHandler) emitBrokenPipeEvent(ctx context.Context, toolCall *l
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Operation:  "broken_pipe_detected",
+		Operation:  events.BrokenPipeOpDetected,
 		ToolName:   toolCall.FunctionCall.Name,
 		ServerName: serverName,
 		ToolCallID: toolCall.ID,
@@ -257,7 +257,7 @@ func (h *BrokenPipeHandler) emitRetrySuccessEvent(ctx context.Context, toolCall 
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Operation:  "retry_success",
+		Operation:  events.BrokenPipeOpRetrySuccess,
 		ToolName:   toolCall.FunctionCall.Name,
 		ServerName: serverName,
 		ToolCallID: toolCall.ID,
@@ -272,7 +272,7 @@ func (h *BrokenPipeHandler) emitRetryFailureEvent(ctx context.Context, toolCall 
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Operation:  "retry_failure",
+		Operation:  events.BrokenPipeOpRetryFailure,
 		ToolName:   toolCall.FunctionCall.Name,
 		ServerName: serverName,
 		ToolCallID: toolCall.ID,

@@ -1215,25 +1215,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							continue
 						}
 
-						// Try session registry first (reuses existing connection or lazy-connects)
-						// before falling back to GetFreshConnection which spawns a new process.
-						var onDemandClient mcpclient.ClientInterface
-						var err error
-						if a.SessionID != "" {
-							registry := mcpclient.GetSessionRegistry()
-							if serverConfig, hasConfig := registry.GetServerConfig(a.SessionID, serverName); hasConfig {
-								v2Logger.Info(fmt.Sprintf("⚡ [ON-DEMAND] Using session registry lazy connect for server '%s' (session=%s)", serverName, a.SessionID))
-								connSessionID := a.SessionID
-								if serverName != "playwright" && serverName != "camofox" {
-									connSessionID = "global"
-								}
-								onDemandClient, _, err = registry.GetOrCreateConnection(ctx, connSessionID, serverName, serverConfig, v2Logger)
-							}
-						}
-						if onDemandClient == nil && err == nil {
-							// Fall back to fresh connection if session registry doesn't have this server
-							onDemandClient, err = mcpcache.GetFreshConnection(ctx, serverName, a.configPath, v2Logger)
-						}
+						onDemandClient, err := a.resolveOnDemandMCPClient(ctx, serverName, v2Logger)
 						if err != nil {
 							v2Logger.Error("AskWithHistory Early return: failed to create on-demand connection",
 								err,
@@ -2047,7 +2029,9 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) {
 				agentMode = header
 			}
 		}
-		if a.UseCodeExecutionMode {
+		if a.UseLearnCodeMode {
+			agentMode += "_learn-code"
+		} else if a.UseCodeExecutionMode {
 			agentMode += "_code-exec"
 		}
 

@@ -70,15 +70,21 @@ func (e *GenericEventData) GetEventType() EventType {
 	return FallbackAttemptEventType // Use fallback type for generic events
 }
 
+const (
+	BrokenPipeOpDetected     = "broken_pipe_detected"
+	BrokenPipeOpRetrySuccess = "retry_success"
+	BrokenPipeOpRetryFailure = "retry_failure"
+)
+
 // BrokenPipeEvent represents MCP connection broken pipe detection and retry events
 type BrokenPipeEvent struct {
 	BaseEventData
-	Operation   string `json:"operation"`             // "broken_pipe_detected", "retry_success", "retry_failure"
-	ToolName    string `json:"tool_name"`
-	ServerName  string `json:"server_name"`
-	ToolCallID  string `json:"tool_call_id"`
-	Error       string `json:"error,omitempty"`
-	Duration    string `json:"duration,omitempty"`
+	Operation  string `json:"operation"` // BrokenPipeOp* constants
+	ToolName   string `json:"tool_name"`
+	ServerName string `json:"server_name"`
+	ToolCallID string `json:"tool_call_id"`
+	Error      string `json:"error,omitempty"`
+	Duration   string `json:"duration,omitempty"`
 }
 
 func (e *BrokenPipeEvent) GetEventType() EventType {

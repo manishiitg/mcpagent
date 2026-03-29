@@ -500,6 +500,17 @@ func WithCodeExecutionMode(enabled bool) AgentOption {
 	}
 }
 
+// WithLearnCodeMode enables Learn Code mode. The LLM writes main.py once; the controller
+// caches and re-executes it on future runs (0 LLM tokens). Implies code execution mode.
+func WithLearnCodeMode(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.UseLearnCodeMode = enabled
+		if enabled {
+			a.UseCodeExecutionMode = true // learn_code uses the same code-exec tool infrastructure
+		}
+	}
+}
+
 // WithToolSearchMode enables the Tool Search mode.
 //
 // In this mode, instead of exposing all tools upfront, only the "search_tools"
@@ -847,6 +858,10 @@ type Agent struct {
 	// MCP server tools are accessed via HTTP API (documented in OpenAPI specs from get_api_spec)
 	// When disabled (default): All MCP tools are added directly as LLM tools
 	UseCodeExecutionMode bool
+
+	// Learn code mode: LLM writes main.py once, controller caches and re-executes it (0 tokens on future runs).
+	// Implies UseCodeExecutionMode=true for the initial LLM write phase.
+	UseLearnCodeMode bool
 
 	// Tool search mode configuration
 	// When enabled: Only search_tools virtual tool is initially exposed to the LLM

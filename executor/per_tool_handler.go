@@ -141,15 +141,15 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 
 	// Check if the desanitized name worked
 	var resp MCPExecuteResponse
-	shouldRetrySanitized := false
+	desanitizedFailed := false
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
 		if !resp.Success && (strings.Contains(resp.Error, "Failed to connect to server") ||
 			strings.Contains(resp.Error, "is not available in this session's scope")) {
-			shouldRetrySanitized = true
+			desanitizedFailed = true
 		}
 	}
 
-	if shouldRetrySanitized {
+	if desanitizedFailed {
 		// Desanitized name failed — fall back to original sanitized name
 		h.logger.Info("Desanitized name failed, retrying with sanitized server name",
 			loggerv2.String("desanitized", desanitizedServer),

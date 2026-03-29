@@ -370,6 +370,53 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	// Convert result to string
 	resultStr := ConvertMCPResultToString(result)
 
+	// 🔧 BROKEN PIPE DETECTION IN RESULT CONTENT
+	// MCP servers sometimes return broken pipe errors as text content (success=true, err=nil).
+	// The err != nil check above won't catch these — check the result text too.
+	if err == nil && mcpclient.IsBrokenPipeInContent(resultStr) {
+		// Same guards as above: skip retry if context canceled or session stopped
+		if ctx.Err() != nil {
+			h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Skipping retry — context canceled",
+				loggerv2.String("tool", req.Tool),
+				loggerv2.String("server", req.Server))
+		} else if req.SessionID != "" && mcpclient.GetSessionRegistry().IsSessionStopped(req.SessionID) {
+			h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Skipping retry — session stopped",
+				loggerv2.String("tool", req.Tool),
+				loggerv2.String("server", req.Server))
+		} else {
+			h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Detected broken pipe in result text, closing and retrying...",
+				loggerv2.String("tool", req.Tool),
+				loggerv2.String("server", req.Server),
+				loggerv2.String("result_snippet", resultStr[:min(len(resultStr), 200)]))
+
+			if client != nil {
+				_ = client.Close()
+			}
+			if req.SessionID != "" {
+				mcpclient.GetSessionRegistry().CloseSessionServer(req.SessionID, req.Server)
+			}
+
+			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			if freshErr == nil {
+				defer freshClient.Close() //nolint:errcheck
+				h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Retrying with fresh connection...",
+					loggerv2.String("tool", req.Tool))
+				retryResult, retryErr := freshClient.CallTool(ctx, req.Tool, req.Args)
+				if retryErr == nil {
+					resultStr = ConvertMCPResultToString(retryResult)
+					h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Retry successful",
+						loggerv2.String("tool", req.Tool))
+				} else {
+					h.logger.Error("🔧 [BROKEN PIPE IN CONTENT] Retry failed", retryErr,
+						loggerv2.String("tool", req.Tool))
+				}
+			} else {
+				h.logger.Error("🔧 [BROKEN PIPE IN CONTENT] Failed to get fresh connection", freshErr,
+					loggerv2.String("server", req.Server))
+			}
+		}
+	}
+
 	h.logger.Info("✅ Tool executed successfully",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.Int("result_length", len(resultStr)))

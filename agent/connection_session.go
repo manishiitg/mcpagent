@@ -413,3 +413,25 @@ func NewAgentConnectionWithSession(
 
 	return clients, toolToServer, allTools, connectedServers, prompts, resources, systemPrompt, nil
 }
+
+// resolveOnDemandMCPClient returns the MCP client for an on-demand server connection.
+// It prefers the session registry (lazy-connect, reuses existing connections) over
+// spawning a fresh process — critical for stateful servers like Playwright and camofox.
+func (a *Agent) resolveOnDemandMCPClient(ctx context.Context, serverName string, logger loggerv2.Logger) (mcpclient.ClientInterface, error) {
+	if a.SessionID != "" {
+		registry := mcpclient.GetSessionRegistry()
+		if serverConfig, hasConfig := registry.GetServerConfig(a.SessionID, serverName); hasConfig {
+			logger.Info(fmt.Sprintf("⚡ [ON-DEMAND] Using session registry lazy connect for server '%s' (session=%s)", serverName, a.SessionID))
+			connSessionID := a.SessionID
+			if serverName != "playwright" && serverName != "camofox" {
+				connSessionID = "global"
+			}
+			client, _, err := registry.GetOrCreateConnection(ctx, connSessionID, serverName, serverConfig, logger)
+			if client != nil || err != nil {
+				return client, err
+			}
+			// client nil, err nil — fall through to fresh connection
+		}
+	}
+	return mcpcache.GetFreshConnection(ctx, serverName, a.configPath, logger)
+}
