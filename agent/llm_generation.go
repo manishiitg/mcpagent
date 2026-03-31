@@ -554,6 +554,21 @@ func classifyLLMError(err error) string {
 	return ""
 }
 
+// shouldSkipSameModelRetry prefers fast fallback for providers where same-model
+// retries are unlikely to improve UX or recover quickly.
+func shouldSkipSameModelRetry(provider, errorType string) bool {
+	if provider != string(llm.ProviderOpenRouter) {
+		return false
+	}
+
+	switch errorType {
+	case "throttling_error", "internal_error", "connection_error", "stream_error":
+		return true
+	default:
+		return false
+	}
+}
+
 // streamingManager handles streaming state and goroutine management
 type streamingManager struct {
 	streamChan        chan llmtypes.StreamChunk
@@ -1326,7 +1341,10 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// For zero_candidates errors: limit to 3 retries before fallback
 			// For throttling/internal errors: use full 5 retries
 			shouldRetrySameModel := false
-			if errorType == "quota_exhausted_error" {
+			if shouldSkipSameModelRetry(model.Provider, errorType) {
+				logger.Info(fmt.Sprintf("⏭️ [FAST_FALLBACK] Skipping same-model retry for %s/%s on %s; moving directly to fallback chain",
+					model.Provider, model.ModelID, errorType))
+			} else if errorType == "quota_exhausted_error" {
 				// Permanent quota exhaustion (daily/monthly) — retrying same model is pointless.
 				// Remember this model so future turns skip it immediately.
 				if a.quotaExhaustedModels == nil {
