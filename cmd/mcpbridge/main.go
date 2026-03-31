@@ -29,6 +29,18 @@ type ToolDef struct {
 	Type        string          `json:"type"`   // "mcp", "custom", or "virtual"
 }
 
+func isLongRunningDelegationTool(toolType, toolName string) bool {
+	if toolType != "custom" {
+		return false
+	}
+	switch toolName {
+	case "call_sub_agent", "call_generic_agent":
+		return true
+	default:
+		return false
+	}
+}
+
 func main() {
 	// If MCP_BRIDGE_LOG is set, tee all log output to that file in addition to stderr.
 	// This lets the Go server capture mcpbridge startup/crash messages for debugging.
@@ -58,7 +70,8 @@ func main() {
 		server.WithToolCapabilities(false),
 	)
 
-	httpClient := &http.Client{Timeout: 5 * time.Minute}
+	defaultHTTPClient := &http.Client{Timeout: 5 * time.Minute}
+	longRunningHTTPClient := &http.Client{Timeout: 90 * time.Minute}
 
 	for _, td := range toolDefs {
 		def := td // capture loop variable
@@ -98,6 +111,11 @@ func main() {
 			httpReq.Header.Set("Content-Type", "application/json")
 			if def.Type == "virtual" && virtualScopeID != "" {
 				httpReq.Header.Set("X-Virtual-Scope-ID", virtualScopeID)
+			}
+
+			httpClient := defaultHTTPClient
+			if isLongRunningDelegationTool(def.Type, def.Name) {
+				httpClient = longRunningHTTPClient
 			}
 
 			resp, err := httpClient.Do(httpReq)

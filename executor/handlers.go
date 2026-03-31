@@ -15,6 +15,28 @@ import (
 	"github.com/manishiitg/mcpagent/toolcalllog"
 )
 
+func isLongRunningDelegationTool(tool string) bool {
+	switch tool {
+	case "call_sub_agent", "call_generic_agent":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveCustomToolTimeout(tool string) time.Duration {
+	toolTimeout := 10 * time.Minute
+	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
+		if d, err := time.ParseDuration(envVal); err == nil && d > 0 {
+			toolTimeout = d
+		}
+	}
+	if isLongRunningDelegationTool(tool) && toolTimeout < 90*time.Minute {
+		return 90 * time.Minute
+	}
+	return toolTimeout
+}
+
 // --- REQUEST/RESPONSE TYPES ---
 
 // MCPExecuteRequest represents a request to execute an MCP tool
@@ -146,14 +168,18 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Create context with timeout (respects TOOL_EXECUTION_TIMEOUT env var, default 10 min)
-	toolTimeout := 10 * time.Minute
-	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
-		if d, err := time.ParseDuration(envVal); err == nil && d > 0 {
-			toolTimeout = d
-		}
+	// Long-running workflow delegation tools must not inherit cancellation from the
+	// caller's HTTP connection. A bridge/client timeout should not kill the delegated
+	// workflow after it has already started.
+	toolTimeout := resolveCustomToolTimeout(req.Tool)
+	baseCtx := r.Context()
+	if isLongRunningDelegationTool(req.Tool) {
+		baseCtx = context.Background()
+		h.logger.Info("⏱️ Using detached long-running context for delegation custom tool",
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("timeout", toolTimeout.String()))
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), toolTimeout)
+	ctx, cancel := context.WithTimeout(baseCtx, toolTimeout)
 	defer cancel()
 
 	// Apply tool argument transformers before ANY execution path (session registry, codeexec, mcpcache).
