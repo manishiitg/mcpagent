@@ -87,8 +87,8 @@ type VirtualExecuteResponse struct {
 // ExecutorHandlers provides HTTP handlers for tool execution endpoints.
 // Use NewExecutorHandlers to create and attach to your HTTP mux.
 type ExecutorHandlers struct {
-	configPath          string
-	logger              loggerv2.Logger
+	configPath string
+	logger     loggerv2.Logger
 	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
 	// before execution. This is the HTTP handler path (backup) — the primary interception
 	// happens in agent/conversation.go for agent-internal tool calls.
@@ -206,15 +206,17 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	// This is the primary mechanism for connection reuse (e.g., Playwright browser sharing)
 	if req.SessionID != "" {
 		registry := mcpclient.GetSessionRegistry()
+		connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
 
 		// Debug: List all available sessions
 		allSessions := registry.ListSessions()
 		h.logger.Info("🔍 [SESSION DEBUG] Available sessions in registry",
 			loggerv2.String("requested_session_id", req.SessionID),
+			loggerv2.String("resolved_connection_session_id", connSessionID),
 			loggerv2.Any("all_sessions", allSessions),
 			loggerv2.Int("session_count", len(allSessions)))
 
-		sessionConns := registry.GetSessionConnections(req.SessionID)
+		sessionConns := registry.GetSessionConnections(connSessionID)
 
 		// Debug: List all connections for this session
 		var connServers []string
@@ -222,7 +224,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			connServers = append(connServers, serverName)
 		}
 		h.logger.Info("🔍 [SESSION DEBUG] Connections for session",
-			loggerv2.String("session_id", req.SessionID),
+			loggerv2.String("session_id", connSessionID),
 			loggerv2.Any("available_servers", connServers),
 			loggerv2.String("requested_server", req.Server))
 
@@ -235,10 +237,6 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			// Lazy connect: first actual tool call to this server — connect now
 			h.logger.Info("⚡ [LAZY] First tool call to "+req.Server+" — connecting now",
 				loggerv2.String("session_id", req.SessionID))
-			connSessionID := req.SessionID
-			if req.Server != "playwright" && req.Server != "camofox" {
-				connSessionID = "global"
-			}
 			lazyClient, _, lazyErr := registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
 			if lazyErr != nil {
 				h.logger.Error("Lazy connect failed for server "+req.Server, lazyErr)
@@ -312,10 +310,11 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		// instead of spawning a new process (critical for Playwright browser reuse).
 		if req.SessionID != "" {
 			registry := mcpclient.GetSessionRegistry()
-			registry.StoreConnection(req.SessionID, req.Server, client)
+			connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
+			registry.StoreConnection(connSessionID, req.Server, client)
 			h.logger.Info("✅ [SESSION MISS] Stored mcpcache connection in session registry for reuse",
 				loggerv2.String("server", req.Server),
-				loggerv2.String("session_id", req.SessionID))
+				loggerv2.String("session_id", connSessionID))
 		}
 	}
 
@@ -358,7 +357,8 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			// Also close via session registry if session-scoped (stateful servers like playwright)
 			if req.SessionID != "" {
 				registry := mcpclient.GetSessionRegistry()
-				registry.CloseSessionServer(req.SessionID, req.Server)
+				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
+				registry.CloseSessionServer(connSessionID, req.Server)
 			}
 
 			// Get fresh connection using shared function (bypasses cache by invalidating)
@@ -419,7 +419,9 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				_ = client.Close()
 			}
 			if req.SessionID != "" {
-				mcpclient.GetSessionRegistry().CloseSessionServer(req.SessionID, req.Server)
+				registry := mcpclient.GetSessionRegistry()
+				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
+				registry.CloseSessionServer(connSessionID, req.Server)
 			}
 
 			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)

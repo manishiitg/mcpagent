@@ -145,6 +145,20 @@ func RegisterHTTPSession(httpSessionID, mcpSessionID string) {
 	registry.RegisterHTTPSession(httpSessionID, mcpSessionID)
 }
 
+// RegisterBrowserSessionOverride binds a logical tool session to a stable browser
+// session identity for stateful browser servers such as Playwright and camofox.
+func RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
+	registry := mcpclient.GetSessionRegistry()
+	registry.RegisterBrowserSessionOverride(sessionID, browserSessionID)
+}
+
+// ResolveConnectionSessionID returns the actual connection-session key used by the
+// session registry for the given logical session + server combination.
+func ResolveConnectionSessionID(sessionID, serverName string) string {
+	registry := mcpclient.GetSessionRegistry()
+	return registry.ResolveConnectionSessionID(sessionID, serverName)
+}
+
 // CloseHTTPSession closes all MCP sessions registered under the given HTTP session ID.
 // Call this in the workflow stop handler and on workflow completion to immediately
 // free browser processes and other MCP server resources.

@@ -327,10 +327,7 @@ func prepareToolExecution(
 					// Lazy connect: server was deferred — connect on first tool call
 					registry := mcpclient.GetSessionRegistry()
 					if serverConfig, ok := registry.GetServerConfig(a.SessionID, mapped); ok {
-						connSessionID := a.SessionID
-						if mapped != "playwright" && mapped != "camofox" {
-							connSessionID = "global"
-						}
+						connSessionID := registry.ResolveConnectionSessionID(a.SessionID, mapped)
 						v2Logger.Info(fmt.Sprintf("⚡ [LAZY] First tool call to %s — connecting now", mapped))
 						lazyClient, _, lazyErr := registry.GetOrCreateConnection(ctx, connSessionID, mapped, serverConfig, v2Logger)
 						if lazyErr != nil {
@@ -643,4 +640,3 @@ func executeToolCall(
 	}}
 	return result
 }
-

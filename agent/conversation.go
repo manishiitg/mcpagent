@@ -1716,13 +1716,22 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			continue
 		} else {
 			// No tool calls - add the assistant response to conversation history
-			// This is CRITICAL to prevent conversation loops
+			// This is CRITICAL to prevent conversation loops.
+			//
+			// Also handle a race where the user sends a steer while the model is already
+			// streaming its final answer: keep the assistant message we just produced,
+			// inject the steer as a follow-up user turn, and continue instead of
+			// dropping the steer on conversation exit.
 			if choice.Content != "" {
 				assistantMessage := llmtypes.MessageContent{
 					Role:  llmtypes.ChatMessageTypeAI,
 					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: choice.Content}},
 				}
 				messages = append(messages, assistantMessage)
+			}
+			if steerMsgs := a.DrainSteerMessages(); len(steerMsgs) > 0 {
+				messages = injectSteerMessages(ctx, a, messages, steerMsgs, turn, "Injected steer message after final assistant response")
+				continue
 			}
 
 			// Simple agent - return immediately when no tool calls

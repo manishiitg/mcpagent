@@ -126,14 +126,8 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 // creates a fresh one that the registry tracks. This prevents connection leaks
 // because CloseAllSessions will close the replacement connection at shutdown.
 func (h *BrokenPipeHandler) recreateViaRegistry(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
-	// Compute the connection session ID — stateless servers share "global",
-	// matching the logic in connection_session.go:170-175.
-	connSessionID := h.agent.SessionID
-	if serverName != "playwright" && serverName != "camofox" {
-		connSessionID = "global"
-	}
-
 	registry := mcpclient.GetSessionRegistry()
+	connSessionID := registry.ResolveConnectionSessionID(h.agent.SessionID, serverName)
 
 	// Atomically close AND remove the stale entry from the registry.
 	h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Closing stale registry entry for server: %s (session=%s)", serverName, connSessionID),

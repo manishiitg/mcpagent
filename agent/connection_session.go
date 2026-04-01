@@ -225,12 +225,9 @@ func NewAgentConnectionWithSession(
 				}
 			}
 
-			// Use global shared session for stateless MCP servers.
-			// Only stateful browser servers (playwright, camofox) need per-session connections.
-			connSessionID := sessionID
-			if srvName != "playwright" && srvName != "camofox" {
-				connSessionID = "global"
-			}
+			// Browser-capable servers can be remapped onto a stable browser session
+			// identity, while non-browser servers use the shared global session.
+			connSessionID := registry.ResolveConnectionSessionID(sessionID, srvName)
 
 			// Get or create connection via registry
 			client, wasCreated, err := registry.GetOrCreateConnection(ctx, connSessionID, srvName, serverConfig, logger)
@@ -422,10 +419,7 @@ func (a *Agent) resolveOnDemandMCPClient(ctx context.Context, serverName string,
 		registry := mcpclient.GetSessionRegistry()
 		if serverConfig, hasConfig := registry.GetServerConfig(a.SessionID, serverName); hasConfig {
 			logger.Info(fmt.Sprintf("⚡ [ON-DEMAND] Using session registry lazy connect for server '%s' (session=%s)", serverName, a.SessionID))
-			connSessionID := a.SessionID
-			if serverName != "playwright" && serverName != "camofox" {
-				connSessionID = "global"
-			}
+			connSessionID := registry.ResolveConnectionSessionID(a.SessionID, serverName)
 			client, _, err := registry.GetOrCreateConnection(ctx, connSessionID, serverName, serverConfig, logger)
 			if client != nil || err != nil {
 				return client, err

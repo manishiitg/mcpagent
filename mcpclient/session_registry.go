@@ -13,11 +13,11 @@ import (
 // SessionConnectionRegistry manages MCP connections scoped to session lifecycle.
 //
 // Design principles:
-// - Connections are created once per (sessionID, serverName) pair
-// - Multiple agents in same session share connections
-// - Connections persist until CloseSession() is explicitly called
-// - Per-key mutexes prevent duplicate subprocess spawns when concurrent goroutines
-//   request the same server connection simultaneously
+//   - Connections are created once per (sessionID, serverName) pair
+//   - Multiple agents in same session share connections
+//   - Connections persist until CloseSession() is explicitly called
+//   - Per-key mutexes prevent duplicate subprocess spawns when concurrent goroutines
+//     request the same server connection simultaneously
 //
 // Usage:
 //
@@ -28,6 +28,10 @@ import (
 type SessionConnectionRegistry struct {
 	// sessionID -> *sessionConnections
 	sessions sync.Map
+	// tool session ID -> browser session ID override for stateful browser servers.
+	// This lets tool routing stay scoped to the caller session while browser reuse
+	// can intentionally converge on a stable workflow/group browser identity.
+	browserSessionOverrides sync.Map
 	// Per-key mutexes to serialize connection creation for the same (session, server) pair.
 	// Prevents N goroutines from spawning N subprocesses for the same server.
 	connLocks   map[string]*sync.Mutex
@@ -59,7 +63,7 @@ var globalHTTPSessionTracker = &httpSessionTracker{
 type httpSessionTracker struct {
 	mu              sync.Mutex
 	sessions        map[string]map[string]struct{} // httpSessionID -> set of mcpSessionIDs
-	stoppedSessions map[string]struct{}             // set of stopped MCP session IDs (prevents broken pipe reconnection)
+	stoppedSessions map[string]struct{}            // set of stopped MCP session IDs (prevents broken pipe reconnection)
 }
 
 func (t *httpSessionTracker) register(httpSessionID, mcpSessionID string) {
@@ -112,6 +116,50 @@ func (t *httpSessionTracker) isStopped(mcpSessionID string) bool {
 // GetSessionRegistry returns the global session connection registry
 func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry
+}
+
+func isBrowserScopedServer(serverName string) bool {
+	switch serverName {
+	case "playwright", "camofox":
+		return true
+	default:
+		return false
+	}
+}
+
+// ResolveConnectionSessionID returns the actual registry session key that should be
+// used for the given logical tool session + server combination.
+//
+// Browser servers can be remapped onto a shared browser session identity, while
+// non-browser servers continue to use the global shared session.
+func (r *SessionConnectionRegistry) ResolveConnectionSessionID(sessionID, serverName string) string {
+	if isBrowserScopedServer(serverName) {
+		if override, ok := r.browserSessionOverrides.Load(sessionID); ok {
+			if browserSessionID, ok := override.(string); ok && browserSessionID != "" {
+				return browserSessionID
+			}
+		}
+		return sessionID
+	}
+	return "global"
+}
+
+// RegisterBrowserSessionOverride binds a logical tool session to a stable browser
+// session identity for stateful browser servers like Playwright and camofox.
+func (r *SessionConnectionRegistry) RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
+	if sessionID == "" || browserSessionID == "" {
+		return
+	}
+	r.browserSessionOverrides.Store(sessionID, browserSessionID)
+}
+
+// ClearBrowserSessionOverride removes any browser-session override for the given
+// logical tool session.
+func (r *SessionConnectionRegistry) ClearBrowserSessionOverride(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	r.browserSessionOverrides.Delete(sessionID)
 }
 
 // getConnLock returns a mutex for the given (session, server) key, creating one if needed.
@@ -286,6 +334,7 @@ func (r *SessionConnectionRegistry) GetServerConfig(sessionID, serverName string
 // This is the ONLY way connections get closed when using sessions.
 // Agent.Close() does NOT close connections when SessionID is set.
 func (r *SessionConnectionRegistry) CloseSession(sessionID string) {
+	r.ClearBrowserSessionOverride(sessionID)
 	sessionConnsRaw, ok := r.sessions.LoadAndDelete(sessionID)
 	if !ok {
 		return
