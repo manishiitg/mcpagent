@@ -2038,11 +2038,9 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) {
 				agentMode = header
 			}
 		}
-		if a.UseLearnCodeMode {
-			agentMode += "_learn-code"
-		} else if a.UseCodeExecutionMode {
-			agentMode += "_code-exec"
-		}
+			if a.UseCodeExecutionMode {
+				agentMode += "_code-exec"
+			}
 
 		baseName := fmt.Sprintf("%03d_%s_%s_%s_%s",
 			seq,
