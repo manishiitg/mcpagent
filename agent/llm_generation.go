@@ -1262,17 +1262,13 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// So streaming on fallback is fine if the frontend can handle it.
 			// However, the original code used "non-streaming approach for all agents during fallback".
 			// Let's stick to that for safety: only stream on primary model (modelIndex == 0).
-			var sm *streamingManager
-			if modelIndex == 0 {
-				sm = a.startStreaming(ctx, attempt, turn, &currentOpts)
-			}
+			// Enable streaming for all models (primary + fallback) so tool_call events are emitted
+			sm := a.startStreaming(ctx, attempt, turn, &currentOpts)
 
 			// Execute LLM
 			resp, err := a.executeLLM(ctx, model, messages, currentOpts)
 
-			if modelIndex == 0 {
-				a.finishStreaming(ctx, sm, resp)
-			}
+			a.finishStreaming(ctx, sm, resp)
 
 			if err == nil {
 				usage = extractUsageMetricsWithMessages(resp, messages)
