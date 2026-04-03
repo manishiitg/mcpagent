@@ -234,6 +234,9 @@ except Exception:
     pass
 
 tool_name = payload.get("tool_name", "")
+# Strip 'default_api:' prefix that some Gemini models add to MCP tool names
+if tool_name.startswith("default_api:"):
+    tool_name = tool_name[len("default_api:"):]
 mcp_context = payload.get("mcp_context") or {}
 server_name = mcp_context.get("server_name")
 

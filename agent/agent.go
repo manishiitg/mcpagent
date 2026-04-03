@@ -1934,7 +1934,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.\n\nCRITICAL: When calling MCP tools, use the EXACT tool name as declared (e.g. mcp_api-bridge_execute_shell_command). Do NOT add any prefix like 'default_api:' — calling 'default_api:mcp_api-bridge_execute_shell_command' will fail with tool_not_registered. Always use the bare tool name without namespace prefixes.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2922,7 +2922,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.\n\nCRITICAL: When calling MCP tools, use the EXACT tool name as declared (e.g. mcp_api-bridge_execute_shell_command). Do NOT add any prefix like 'default_api:' — calling 'default_api:mcp_api-bridge_execute_shell_command' will fail with tool_not_registered. Always use the bare tool name without namespace prefixes.")
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
