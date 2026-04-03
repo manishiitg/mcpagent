@@ -194,10 +194,29 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// 🛑 STOPPED SESSION GUARD: If this session was stopped (workflow ended/failed),
+	// refuse requests for browser-scoped servers immediately. This prevents in-flight
+	// curl calls from code-exec agents (still running in Docker) from spawning new
+	// browser processes after the session's connections have been torn down.
+	if req.SessionID != "" && mcpclient.IsBrowserScopedServer(req.Server) {
+		registry := mcpclient.GetSessionRegistry()
+		if registry.IsSessionStopped(req.SessionID) {
+			h.logger.Info("🛑 [STOPPED SESSION] Refusing browser tool call for stopped session",
+				loggerv2.String("session_id", req.SessionID),
+				loggerv2.String("server", req.Server),
+				loggerv2.String("tool", req.Tool))
+			_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec
+				Success: false,
+				Error:   fmt.Sprintf("Session %s was stopped — refusing to create new %s connection", req.SessionID, req.Server),
+			})
+			return
+		}
+	}
+
 	// 🔧 STRATEGY: Try multiple connection sources in priority order
 	// 1. Session registry (if session_id provided) - enables Playwright browser reuse
 	// 2. Codeexec global registry - has session-aware connections from agent initialization
-	// 3. mcpcache - creates new connection as fallback
+	// 3. mcpcache - creates new connection as fallback (NOT for browser-scoped servers)
 
 	var client mcpclient.ClientInterface
 	var err error
@@ -290,9 +309,21 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	}
 
 	// PRIORITY 3: Fall back to mcpcache (creates new connection)
-	// ⚠️ WARNING: This creates a NEW connection which opens a NEW browser for Playwright!
+	// 🛑 BLOCK for browser-scoped servers: playwright/camofox must ONLY be created via
+	// the session registry (Priority 1). mcpcache creates standalone connections with
+	// default config (wrong --output-dir, no session tracking), causing extra browsers.
+	if client == nil && mcpclient.IsBrowserScopedServer(req.Server) {
+		h.logger.Warn("🛑 [BROWSER BLOCK] Refusing mcpcache fallback for browser-scoped server — must use session registry",
+			loggerv2.String("server", req.Server),
+			loggerv2.String("session_id", req.SessionID))
+		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec
+			Success: false,
+			Error:   fmt.Sprintf("No session connection found for browser server %s (session=%s). Browser servers can only be accessed through their owning session.", req.Server, req.SessionID),
+		})
+		return
+	}
 	if client == nil {
-		h.logger.Warn("⚠️ [SESSION MISS] Falling back to mcpcache - will create NEW connection (new browser for Playwright!)",
+		h.logger.Warn("⚠️ [SESSION MISS] Falling back to mcpcache - creating new connection",
 			loggerv2.String("server", req.Server),
 			loggerv2.String("session_id", req.SessionID))
 		client, err = GetOrCreateMCPClient(ctx, req.Server, h.configPath, h.logger)
@@ -307,7 +338,6 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		h.logger.Warn("⚠️ [SESSION MISS] Created new connection via mcpcache",
 			loggerv2.String("server", req.Server))
 		// Store the new connection in the session registry so future requests reuse it
-		// instead of spawning a new process (critical for Playwright browser reuse).
 		if req.SessionID != "" {
 			registry := mcpclient.GetSessionRegistry()
 			connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
@@ -361,8 +391,27 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				registry.CloseSessionServer(connSessionID, req.Server)
 			}
 
-			// Get fresh connection using shared function (bypasses cache by invalidating)
-			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			// For browser-scoped servers, use session registry to recreate the connection.
+			// This ensures the correct runtime overrides (--output-dir) are applied and
+			// the connection is tracked. GetFreshConnection creates standalone connections
+			// with default config which spawns extra browsers with wrong output paths.
+			var freshClient mcpclient.ClientInterface
+			var freshErr error
+			if req.SessionID != "" && mcpclient.IsBrowserScopedServer(req.Server) {
+				registry := mcpclient.GetSessionRegistry()
+				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
+				if serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server); hasConfig {
+					freshClient, _, freshErr = registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
+				} else {
+					h.logger.Warn("🔧 [BROKEN PIPE] No stored config for browser server, cannot retry via registry",
+						loggerv2.String("server", req.Server),
+						loggerv2.String("session_id", req.SessionID))
+					freshErr = fmt.Errorf("no stored config for browser server %s in session %s", req.Server, req.SessionID)
+				}
+			} else {
+				// Non-browser servers: use mcpcache as before
+				freshClient, freshErr = mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			}
 			if freshErr == nil {
 				h.logger.Info("🔧 [BROKEN PIPE] Retrying with fresh connection...",
 					loggerv2.String("tool", req.Tool))
@@ -424,9 +473,27 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				registry.CloseSessionServer(connSessionID, req.Server)
 			}
 
-			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			// Same browser-scoped logic as the main broken pipe handler:
+			// use session registry for browser servers to preserve runtime overrides.
+			var freshClient mcpclient.ClientInterface
+			var freshErr error
+			closeFreshClient := false
+			if req.SessionID != "" && mcpclient.IsBrowserScopedServer(req.Server) {
+				registry := mcpclient.GetSessionRegistry()
+				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
+				if serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server); hasConfig {
+					freshClient, _, freshErr = registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
+				} else {
+					freshErr = fmt.Errorf("no stored config for browser server %s in session %s", req.Server, req.SessionID)
+				}
+			} else {
+				freshClient, freshErr = mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+				closeFreshClient = true // non-registry connections need explicit close
+			}
 			if freshErr == nil {
-				defer freshClient.Close() //nolint:errcheck
+				if closeFreshClient {
+					defer freshClient.Close() //nolint:errcheck
+				}
 				h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Retrying with fresh connection...",
 					loggerv2.String("tool", req.Tool))
 				retryResult, retryErr := freshClient.CallTool(ctx, req.Tool, req.Args)
@@ -502,14 +569,18 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Create context with timeout (respects TOOL_EXECUTION_TIMEOUT env var, default 10 min)
-	toolTimeout := 10 * time.Minute
-	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
-		if d, err := time.ParseDuration(envVal); err == nil && d > 0 {
-			toolTimeout = d
-		}
+	// Create context with timeout — reuse resolveCustomToolTimeout so delegation
+	// custom tools (call_sub_agent, call_generic_agent) get the same 90-min
+	// detached context as their MCP-handler counterparts.
+	toolTimeout := resolveCustomToolTimeout(req.Tool)
+	baseCtx := r.Context()
+	if isLongRunningDelegationTool(req.Tool) {
+		baseCtx = context.Background()
+		h.logger.Info("⏱️ Using detached long-running context for delegation custom tool",
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("timeout", toolTimeout.String()))
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), toolTimeout)
+	ctx, cancel := context.WithTimeout(baseCtx, toolTimeout)
 	defer cancel()
 
 	// Execute custom tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
@@ -587,14 +658,18 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Create context with timeout (respects TOOL_EXECUTION_TIMEOUT env var, default 10 min)
-	toolTimeout := 10 * time.Minute
-	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
-		if d, err := time.ParseDuration(envVal); err == nil && d > 0 {
-			toolTimeout = d
-		}
+	// Create context with timeout — reuse resolveCustomToolTimeout so delegation
+	// virtual tools (call_sub_agent, call_generic_agent) get the same 90-min
+	// detached context as their custom-tool counterparts.
+	toolTimeout := resolveCustomToolTimeout(req.Tool)
+	baseCtx := r.Context()
+	if isLongRunningDelegationTool(req.Tool) {
+		baseCtx = context.Background()
+		h.logger.Info("⏱️ Using detached long-running context for delegation virtual tool",
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("timeout", toolTimeout.String()))
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), toolTimeout)
+	ctx, cancel := context.WithTimeout(baseCtx, toolTimeout)
 	defer cancel()
 
 	// Execute virtual tool using codeexec registry (session-scoped to prevent cross-workflow contamination)

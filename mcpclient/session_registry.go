@@ -118,7 +118,9 @@ func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry
 }
 
-func isBrowserScopedServer(serverName string) bool {
+// IsBrowserScopedServer returns true for stateful browser servers (playwright, camofox)
+// that require dedicated per-session connections and should never be created via mcpcache fallback.
+func IsBrowserScopedServer(serverName string) bool {
 	switch serverName {
 	case "playwright", "camofox":
 		return true
@@ -133,7 +135,7 @@ func isBrowserScopedServer(serverName string) bool {
 // Browser servers can be remapped onto a shared browser session identity, while
 // non-browser servers continue to use the global shared session.
 func (r *SessionConnectionRegistry) ResolveConnectionSessionID(sessionID, serverName string) string {
-	if isBrowserScopedServer(serverName) {
+	if IsBrowserScopedServer(serverName) {
 		if override, ok := r.browserSessionOverrides.Load(sessionID); ok {
 			if browserSessionID, ok := override.(string); ok && browserSessionID != "" {
 				return browserSessionID
@@ -440,6 +442,14 @@ func (r *SessionConnectionRegistry) CloseHTTPSession(httpSessionID string) {
 // Used by broken pipe handlers to avoid reconnecting zombie sub-agents.
 func (r *SessionConnectionRegistry) IsSessionStopped(mcpSessionID string) bool {
 	return globalHTTPSessionTracker.isStopped(mcpSessionID)
+}
+
+// MarkSessionsStopped marks the given MCP session IDs as stopped so that broken
+// pipe handlers and per-tool handlers will refuse to create new connections for them.
+// Call this BEFORE CloseSession to prevent races where in-flight tool calls
+// resurrect connections that are being torn down.
+func (r *SessionConnectionRegistry) MarkSessionsStopped(sessionIDs []string) {
+	globalHTTPSessionTracker.markStopped(sessionIDs)
 }
 
 // CloseAllSessions closes all sessions and their connections.

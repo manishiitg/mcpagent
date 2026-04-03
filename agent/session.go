@@ -159,6 +159,22 @@ func ResolveConnectionSessionID(sessionID, serverName string) string {
 	return registry.ResolveConnectionSessionID(sessionID, serverName)
 }
 
+// MarkSessionsStopped marks the given MCP session IDs as stopped so that broken
+// pipe handlers and per-tool handlers will refuse to create new connections for them.
+// Call this BEFORE CloseSession to prevent races where in-flight tool calls
+// resurrect connections that are being torn down.
+//
+// Example usage:
+//
+//	// Before closing group sessions after batch failure
+//	mcpagent.MarkSessionsStopped([]string{"session-group-1", "session-group-2"})
+//	mcpagent.CloseSession("session-group-1")
+//	mcpagent.CloseSession("session-group-2")
+func MarkSessionsStopped(sessionIDs []string) {
+	registry := mcpclient.GetSessionRegistry()
+	registry.MarkSessionsStopped(sessionIDs)
+}
+
 // CloseHTTPSession closes all MCP sessions registered under the given HTTP session ID.
 // Call this in the workflow stop handler and on workflow completion to immediately
 // free browser processes and other MCP server resources.
