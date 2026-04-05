@@ -55,32 +55,15 @@ type Config struct {
 	APIKeys *ProviderAPIKeys
 }
 
-// ProviderAPIKeys holds API keys for different providers
-type ProviderAPIKeys struct {
-	OpenRouter        *string
-	OpenAI            *string
-	Anthropic         *string
-	Vertex            *string
-	GeminiCLI         *string
-	CodexCLI          *string
-	MiniMax           *string
-	MiniMaxCodingPlan *string
-	Bedrock           *BedrockConfig
-	Azure             *AzureAPIConfig
-}
+// ProviderAPIKeys is the canonical API key holder — aliased from multi-llm-provider-go.
+// Add new provider fields to llmproviders.ProviderAPIKeys, not here.
+type ProviderAPIKeys = llmproviders.ProviderAPIKeys
 
-// AzureAPIConfig holds Azure-specific configuration
-type AzureAPIConfig struct {
-	Endpoint   string // Azure AI endpoint URL
-	APIKey     string // Azure API key
-	APIVersion string // API version (optional, defaults to 2024-10-21)
-	Region     string // Azure region (optional, for logging)
-}
+// AzureAPIConfig is aliased from multi-llm-provider-go.
+type AzureAPIConfig = llmproviders.AzureAPIConfig
 
-// BedrockConfig holds Bedrock-specific configuration
-type BedrockConfig struct {
-	Region string
-}
+// BedrockConfig is aliased from multi-llm-provider-go.
+type BedrockConfig = llmproviders.BedrockConfig
 
 // LoggerAdapter adapts v2.Logger to interfaces.Logger
 type LoggerAdapter struct {
@@ -136,33 +119,8 @@ func convertConfig(config Config) llmproviders.Config {
 		logger = NewLoggerAdapter(nil)
 	}
 
-	// Convert API keys if provided
-	var providerAPIKeys *llmproviders.ProviderAPIKeys
-	if config.APIKeys != nil {
-		providerAPIKeys = &llmproviders.ProviderAPIKeys{
-			OpenRouter:        config.APIKeys.OpenRouter,
-			OpenAI:            config.APIKeys.OpenAI,
-			Anthropic:         config.APIKeys.Anthropic,
-			Vertex:            config.APIKeys.Vertex,
-			GeminiCLI:         config.APIKeys.GeminiCLI,
-			CodexCLI:          config.APIKeys.CodexCLI,
-			MiniMax:           config.APIKeys.MiniMax,
-			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
-		}
-		if config.APIKeys.Bedrock != nil {
-			providerAPIKeys.Bedrock = &llmproviders.BedrockConfig{
-				Region: config.APIKeys.Bedrock.Region,
-			}
-		}
-		if config.APIKeys.Azure != nil {
-			providerAPIKeys.Azure = &llmproviders.AzureAPIConfig{
-				Endpoint:   config.APIKeys.Azure.Endpoint,
-				APIKey:     config.APIKeys.Azure.APIKey,
-				APIVersion: config.APIKeys.Azure.APIVersion,
-				Region:     config.APIKeys.Azure.Region,
-			}
-		}
-	}
+	// API keys — same underlying type (alias), so clone directly.
+	providerAPIKeys := config.APIKeys.Clone()
 
 	return llmproviders.Config{
 		Provider:       llmproviders.Provider(config.Provider),

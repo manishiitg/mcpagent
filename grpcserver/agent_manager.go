@@ -229,31 +229,7 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 	}
 
 	// Build API keys config
-	var apiKeys *llm.ProviderAPIKeys
-	if config.APIKeys != nil {
-		apiKeys = &llm.ProviderAPIKeys{
-			OpenAI:     config.APIKeys.OpenAI,
-			Anthropic:  config.APIKeys.Anthropic,
-			OpenRouter: config.APIKeys.OpenRouter,
-			Vertex:     config.APIKeys.Vertex,
-			GeminiCLI:  config.APIKeys.GeminiCLI,
-			MiniMax:           config.APIKeys.MiniMax,
-			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
-		}
-		if config.APIKeys.Bedrock != nil {
-			apiKeys.Bedrock = &llm.BedrockConfig{
-				Region: config.APIKeys.Bedrock.Region,
-			}
-		}
-		if config.APIKeys.Azure != nil {
-			apiKeys.Azure = &llm.AzureAPIConfig{
-				Endpoint:   config.APIKeys.Azure.Endpoint,
-				APIKey:     config.APIKeys.Azure.APIKey,
-				APIVersion: config.APIKeys.Azure.APIVersion,
-				Region:     config.APIKeys.Azure.Region,
-			}
-		}
-	}
+	apiKeys := config.APIKeys.ToLLMKeys()
 
 	llmConfig := llm.Config{
 		Provider:    provider,

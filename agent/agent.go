@@ -977,31 +977,15 @@ type CrossProviderFallback struct {
 	Models   []string `json:"models"`
 }
 
-// AgentAPIKeys holds API keys for different providers (for Agent struct)
-type AgentAPIKeys struct {
-	OpenRouter *string
-	OpenAI     *string
-	Anthropic  *string
-	Vertex     *string
-	GeminiCLI  *string
-	MiniMax           *string
-	MiniMaxCodingPlan *string
-	Bedrock    *AgentBedrockConfig
-	Azure      *AgentAzureConfig
-}
+// AgentAPIKeys is an alias for llm.ProviderAPIKeys (canonical type).
+// Add new provider fields to the canonical struct, not here.
+type AgentAPIKeys = llm.ProviderAPIKeys
 
-// AgentBedrockConfig holds Bedrock-specific configuration (for Agent struct)
-type AgentBedrockConfig struct {
-	Region string
-}
+// AgentBedrockConfig is an alias for llm.BedrockConfig (canonical type).
+type AgentBedrockConfig = llm.BedrockConfig
 
-// AgentAzureConfig holds Azure-specific configuration (for Agent struct)
-type AgentAzureConfig struct {
-	Endpoint   string
-	APIKey     string
-	APIVersion string
-	Region     string
-}
+// AgentAzureConfig is an alias for llm.AzureAPIConfig (canonical type).
+type AgentAzureConfig = llm.AzureAPIConfig
 
 // AddSteerMessage queues a user message to be injected into the conversation
 // between tool results and the next LLM call. Thread-safe — called by HTTP handlers.

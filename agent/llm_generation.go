@@ -829,53 +829,15 @@ func dedupeFallbacks(fallbacks []LLMModel) []LLMModel {
 
 // executeLLM creates an LLM instance and executes it
 func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
-	// Create LLM instance with model's own auth
-	apiKeys := &llm.ProviderAPIKeys{}
-
-	// First, set up agent-level keys as base (so Azure and Bedrock configs are always available)
-	if a.APIKeys != nil {
-		apiKeys = &llm.ProviderAPIKeys{
-			OpenRouter:        a.APIKeys.OpenRouter,
-			OpenAI:            a.APIKeys.OpenAI,
-			Anthropic:         a.APIKeys.Anthropic,
-			Vertex:            a.APIKeys.Vertex,
-			GeminiCLI:         a.APIKeys.GeminiCLI,
-			MiniMax:           a.APIKeys.MiniMax,
-			MiniMaxCodingPlan: a.APIKeys.MiniMaxCodingPlan,
-		}
-		if a.APIKeys.Bedrock != nil {
-			apiKeys.Bedrock = &llm.BedrockConfig{
-				Region: a.APIKeys.Bedrock.Region,
-			}
-		}
-		if a.APIKeys.Azure != nil {
-			apiKeys.Azure = &llm.AzureAPIConfig{
-				Endpoint:   a.APIKeys.Azure.Endpoint,
-				APIKey:     a.APIKeys.Azure.APIKey,
-				APIVersion: a.APIKeys.Azure.APIVersion,
-				Region:     a.APIKeys.Azure.Region,
-			}
-		}
+	// Clone agent-level keys as base (so Azure and Bedrock configs are always available)
+	apiKeys := a.APIKeys.Clone()
+	if apiKeys == nil {
+		apiKeys = &llm.ProviderAPIKeys{}
 	}
 
 	// Override with model-specific key if available (for simple API key providers)
 	if model.APIKey != nil {
-		switch llmproviders.Provider(model.Provider) {
-		case llmproviders.ProviderOpenRouter:
-			apiKeys.OpenRouter = model.APIKey
-		case llmproviders.ProviderOpenAI:
-			apiKeys.OpenAI = model.APIKey
-		case llmproviders.ProviderAnthropic:
-			apiKeys.Anthropic = model.APIKey
-		case llmproviders.ProviderVertex:
-			apiKeys.Vertex = model.APIKey
-		case llmproviders.ProviderMiniMax:
-			apiKeys.MiniMax = model.APIKey
-		case llmproviders.ProviderGeminiCLI:
-			apiKeys.GeminiCLI = model.APIKey
-		case llmproviders.ProviderCodexCLI:
-			apiKeys.CodexCLI = model.APIKey
-		}
+		apiKeys.SetKeyForProvider(llmproviders.Provider(model.Provider), model.APIKey)
 	}
 
 	if model.Region != nil && llmproviders.Provider(model.Provider) == llmproviders.ProviderBedrock {

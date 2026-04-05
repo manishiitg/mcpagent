@@ -1,6 +1,10 @@
 package grpcserver
 
-import "time"
+import (
+	"time"
+
+	"github.com/manishiitg/mcpagent/llm"
+)
 
 // CreateAgentRequest represents the request to create a new agent
 type CreateAgentRequest struct {
@@ -27,15 +31,16 @@ type AgentConfig struct {
 
 // ProviderAPIKeys holds API keys for different providers
 type ProviderAPIKeys struct {
-	OpenAI     *string         `json:"openai,omitempty"`
-	Anthropic  *string         `json:"anthropic,omitempty"`
-	OpenRouter *string         `json:"openrouter,omitempty"`
-	Vertex     *string         `json:"vertex,omitempty"`
-	GeminiCLI  *string         `json:"gemini_cli,omitempty"`
+	OpenAI            *string         `json:"openai,omitempty"`
+	Anthropic         *string         `json:"anthropic,omitempty"`
+	OpenRouter        *string         `json:"openrouter,omitempty"`
+	Vertex            *string         `json:"vertex,omitempty"`
+	GeminiCLI         *string         `json:"gemini_cli,omitempty"`
+	CodexCLI          *string         `json:"codex_cli,omitempty"`
 	MiniMax           *string         `json:"minimax,omitempty"`
 	MiniMaxCodingPlan *string         `json:"minimax-coding-plan,omitempty"`
-	Bedrock    *BedrockConfig  `json:"bedrock,omitempty"`
-	Azure      *AzureAPIConfig `json:"azure,omitempty"`
+	Bedrock           *BedrockConfig  `json:"bedrock,omitempty"`
+	Azure             *AzureAPIConfig `json:"azure,omitempty"`
 }
 
 // BedrockConfig holds AWS Bedrock-specific configuration
@@ -49,6 +54,36 @@ type AzureAPIConfig struct {
 	APIKey     string `json:"api_key"`
 	APIVersion string `json:"api_version,omitempty"`
 	Region     string `json:"region,omitempty"`
+}
+
+// ToLLMKeys converts grpcserver ProviderAPIKeys to the canonical llm.ProviderAPIKeys.
+// Use this instead of field-by-field copies to avoid missing new fields.
+func (k *ProviderAPIKeys) ToLLMKeys() *llm.ProviderAPIKeys {
+	if k == nil {
+		return nil
+	}
+	out := &llm.ProviderAPIKeys{
+		OpenRouter:        k.OpenRouter,
+		OpenAI:            k.OpenAI,
+		Anthropic:         k.Anthropic,
+		Vertex:            k.Vertex,
+		GeminiCLI:         k.GeminiCLI,
+		CodexCLI:          k.CodexCLI,
+		MiniMax:           k.MiniMax,
+		MiniMaxCodingPlan: k.MiniMaxCodingPlan,
+	}
+	if k.Bedrock != nil {
+		out.Bedrock = &llm.BedrockConfig{Region: k.Bedrock.Region}
+	}
+	if k.Azure != nil {
+		out.Azure = &llm.AzureAPIConfig{
+			Endpoint:   k.Azure.Endpoint,
+			APIKey:     k.Azure.APIKey,
+			APIVersion: k.Azure.APIVersion,
+			Region:     k.Azure.Region,
+		}
+	}
+	return out
 }
 
 // CustomToolDefinition represents a custom tool (for gRPC, callbacks are handled via the stream)
