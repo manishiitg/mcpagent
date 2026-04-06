@@ -777,6 +777,13 @@ type Agent struct {
 	pendingSteerMessages []string
 	steerMu              sync.Mutex
 
+	// Tool call log: accumulated tool call entries for prompt logging.
+	// Populated by EmitTypedEvent for tool_call_start/end events (works for ALL providers
+	// including gemini-cli where tool calls happen inside the CLI).
+	// Cleared at start of AskWithHistory, dumped by logConversationEnd.
+	ToolCallLog   []string
+	toolCallLogMu sync.Mutex
+
 	// Dynamic tool allow list: when non-nil, only tools whose names appear in this set
 	// are included in filteredTools (and the code-exec tool index). Updated per-turn via
 	// SetToolAllowList / ClearToolAllowList so the workshop builder can restrict tools
@@ -3125,6 +3132,30 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	// Add correlation ID for start/end event pairs
 	if isStartOrEndEvent(events.EventType(eventData.GetEventType())) {
 		event.CorrelationID = fmt.Sprintf("%s_%d", string(eventData.GetEventType()), time.Now().UnixNano())
+	}
+
+	// Collect tool call events for prompt logging (works for ALL providers including gemini-cli)
+	if os.Getenv("LOG_AGENT_PROMPTS") == "true" {
+		switch e := eventData.(type) {
+		case *events.ToolCallStartEvent:
+			args := e.ToolParams.Arguments
+			if len(args) > 2000 {
+				args = args[:2000] + fmt.Sprintf("... (truncated, %d chars)", len(e.ToolParams.Arguments))
+			}
+			entry := fmt.Sprintf("**Tool Call**: `%s` (server: %s, turn: %d)\n```json\n%s\n```\n", e.ToolName, e.ServerName, e.Turn, args)
+			a.toolCallLogMu.Lock()
+			a.ToolCallLog = append(a.ToolCallLog, entry)
+			a.toolCallLogMu.Unlock()
+		case *events.ToolCallEndEvent:
+			result := e.Result
+			if len(result) > 3000 {
+				result = result[:3000] + fmt.Sprintf("\n... (truncated, %d chars)", len(e.Result))
+			}
+			entry := fmt.Sprintf("**Tool Result**: `%s` (duration: %v)\n```\n%s\n```\n", e.ToolName, e.Duration, result)
+			a.toolCallLogMu.Lock()
+			a.ToolCallLog = append(a.ToolCallLog, entry)
+			a.toolCallLogMu.Unlock()
+		}
 	}
 
 	// Send to all tracers (multiple tracer support)

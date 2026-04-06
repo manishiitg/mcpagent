@@ -306,9 +306,25 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Ensure system prompt is included in messages
 	messages = ensureSystemPrompt(a, messages)
 
-	// Log final prompts to disk when LOG_AGENT_PROMPTS is enabled
+	// Log prompts to disk when LOG_AGENT_PROMPTS is enabled:
+	// - Start: system prompt + user message (written now)
+	// - End: tool calls + responses (written when function returns via defer)
+	var promptLog *promptLogInfo
+	startMsgCount := len(messages)
 	if os.Getenv("LOG_AGENT_PROMPTS") == "true" {
-		logFinalPrompts(a, messages)
+		// Clear tool call log from previous turns
+		a.toolCallLogMu.Lock()
+		a.ToolCallLog = nil
+		a.toolCallLogMu.Unlock()
+
+		promptLog = logFinalPrompts(a, messages)
+		defer func() {
+			a.toolCallLogMu.Lock()
+			toolLog := make([]string, len(a.ToolCallLog))
+			copy(toolLog, a.ToolCallLog)
+			a.toolCallLogMu.Unlock()
+			logConversationEnd(promptLog, messages, startMsgCount, toolLog)
+		}()
 	}
 
 	// NEW: Set current query for hierarchy tracking (will be set later when lastUserMessage is extracted)
@@ -1978,7 +1994,16 @@ func nextPromptLogCounter() uint64 {
 //	logs/agent_prompts/{session_id}/001_{timestamp}_{provider}_{model}.{json,md}
 //
 // Runs in a goroutine to avoid blocking.
-func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) {
+// promptLogInfo holds the file path info computed at start, shared with the end logger.
+type promptLogInfo struct {
+	Dir      string
+	BaseName string
+	Seq      uint64
+}
+
+// logFinalPrompts writes the system prompt + user message to disk at LLM call start.
+// Returns path info so logConversationEnd can append tool calls to the same directory.
+func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInfo {
 	// Extract system prompt and last user message from the finalized messages
 	var systemPrompt, userMessage string
 	for _, msg := range messages {
@@ -2005,52 +2030,54 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) {
 
 	seq := nextPromptLogCounter()
 
-	go func() {
-		// Organize by session ID
-		sessionDir := "no-session"
-		if a.SessionID != "" {
-			sessionDir = strings.ReplaceAll(a.SessionID, "/", "_")
+	// Compute dir + baseName synchronously so the caller can pass them to the end logger
+	sessionDir := "no-session"
+	if a.SessionID != "" {
+		sessionDir = strings.ReplaceAll(a.SessionID, "/", "_")
+	}
+	dir := filepath.Join("logs", "agent_prompts", sessionDir)
+
+	ts := time.Now()
+	sanitize := func(s string) string {
+		s = strings.ReplaceAll(s, "/", "_")
+		s = strings.ReplaceAll(s, ":", "_")
+		s = strings.ReplaceAll(s, " ", "-")
+		s = strings.ToLower(s)
+		return s
+	}
+	agentMode := a.PromptLogLabel
+	if agentMode == "" {
+		agentMode = "agent"
+		if idx := strings.Index(systemPrompt, "\n"); idx > 0 && strings.HasPrefix(systemPrompt, "# ") {
+			header := strings.TrimPrefix(systemPrompt[:idx], "# ")
+			header = strings.ToLower(strings.TrimSpace(header))
+			header = strings.ReplaceAll(header, " ", "-")
+			if len(header) > 30 {
+				header = header[:30]
+			}
+			agentMode = header
 		}
-		dir := filepath.Join("logs", "agent_prompts", sessionDir)
+	}
+	if a.UseCodeExecutionMode {
+		agentMode += "_code-exec"
+	}
+
+	baseName := fmt.Sprintf("%03d_%s_%s_%s_%s",
+		seq,
+		ts.Format("15-04-05"),
+		sanitize(agentMode),
+		sanitize(string(a.provider)),
+		sanitize(a.ModelID),
+	)
+
+	info := &promptLogInfo{Dir: dir, BaseName: baseName, Seq: seq}
+
+	go func() {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return
 		}
 
-		ts := time.Now()
-		sanitize := func(s string) string {
-			s = strings.ReplaceAll(s, "/", "_")
-			s = strings.ReplaceAll(s, ":", "_")
-			s = strings.ReplaceAll(s, " ", "-")
-			s = strings.ToLower(s)
-			return s
-		}
-		// Use PromptLogLabel if set by orchestrator, otherwise derive from system prompt header
-		agentMode := a.PromptLogLabel
-		if agentMode == "" {
-			agentMode = "agent"
-			if idx := strings.Index(systemPrompt, "\n"); idx > 0 && strings.HasPrefix(systemPrompt, "# ") {
-				header := strings.TrimPrefix(systemPrompt[:idx], "# ")
-				header = strings.ToLower(strings.TrimSpace(header))
-				header = strings.ReplaceAll(header, " ", "-")
-				if len(header) > 30 {
-					header = header[:30]
-				}
-				agentMode = header
-			}
-		}
-			if a.UseCodeExecutionMode {
-				agentMode += "_code-exec"
-			}
-
-		baseName := fmt.Sprintf("%03d_%s_%s_%s_%s",
-			seq,
-			ts.Format("15-04-05"),
-			sanitize(agentMode),
-			sanitize(string(a.provider)),
-			sanitize(a.ModelID),
-		)
-
-		// Write Markdown
+		// Write Markdown (system prompt + user message only — logged at start)
 		var md strings.Builder
 		md.WriteString(fmt.Sprintf("# Prompt #%d\n\n", seq))
 		md.WriteString(fmt.Sprintf("- **Timestamp**: %s\n", ts.Format(time.RFC3339)))
@@ -2064,5 +2091,39 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) {
 		md.WriteString(userMessage)
 		md.WriteString("\n")
 		_ = os.WriteFile(filepath.Join(dir, baseName+".md"), []byte(md.String()), 0600)
+	}()
+
+	return info
+}
+
+// logConversationEnd writes tool calls and responses to a separate file after the LLM turn completes.
+// Uses the same directory and naming as logFinalPrompts with a "_conversation" suffix.
+// toolLog contains tool call entries collected via EmitTypedEvent (works for ALL providers including gemini-cli).
+func logConversationEnd(info *promptLogInfo, messages []llmtypes.MessageContent, startMsgCount int, toolLog []string) {
+	if info == nil {
+		return
+	}
+	go func() {
+		_ = os.MkdirAll(info.Dir, 0700)
+
+		var md strings.Builder
+		md.WriteString(fmt.Sprintf("# Conversation #%d — Tool Calls & Responses\n\n", info.Seq))
+		md.WriteString(fmt.Sprintf("- **Messages at start**: %d\n", startMsgCount))
+		md.WriteString(fmt.Sprintf("- **Messages at end**: %d\n", len(messages)))
+		md.WriteString(fmt.Sprintf("- **New messages**: %d\n", len(messages)-startMsgCount))
+		md.WriteString(fmt.Sprintf("- **Tool events**: %d\n\n", len(toolLog)))
+		md.WriteString("---\n\n")
+
+		// Write tool call events (collected via EmitTypedEvent — works for ALL providers)
+		if len(toolLog) > 0 {
+			for _, entry := range toolLog {
+				md.WriteString(entry)
+				md.WriteString("\n")
+			}
+		} else {
+			md.WriteString("*(no tool calls recorded)*\n")
+		}
+
+		_ = os.WriteFile(filepath.Join(info.Dir, info.BaseName+"_conversation.md"), []byte(md.String()), 0600)
 	}()
 }
