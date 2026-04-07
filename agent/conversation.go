@@ -1241,6 +1241,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							return "", messages, fmt.Errorf("failed to create on-demand connection for server %s: %w", serverName, err)
 						}
 
+						// Store the on-demand client back into a.Clients so subsequent tool calls
+						// reuse this connection instead of spawning a new MCP process each time.
+						// Without this, every tool call sees len(a.Clients)==0 and creates a duplicate
+						// connection (e.g. 10+ Playwright browser instances for a single workflow).
+						a.clientsMu.Lock()
+						if a.Clients == nil {
+							a.Clients = make(map[string]mcpclient.ClientInterface)
+						}
+						a.Clients[serverName] = onDemandClient
+						a.clientsMu.Unlock()
+
 						// Use the on-demand client
 						client = onDemandClient
 					} else {

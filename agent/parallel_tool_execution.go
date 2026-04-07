@@ -386,6 +386,16 @@ func prepareToolExecution(
 				plan.preErrorMessage = &msg
 				return plan
 			}
+			// Store the on-demand client back into a.Clients so subsequent tool calls
+			// reuse this connection instead of spawning a new MCP process each time.
+			// Without this, every tool call sees len(a.Clients)==0 and creates a duplicate
+			// connection (e.g. 10+ Playwright browser instances for a single workflow).
+			a.clientsMu.Lock()
+			if a.Clients == nil {
+				a.Clients = make(map[string]mcpclient.ClientInterface)
+			}
+			a.Clients[serverName] = onDemandClient
+			a.clientsMu.Unlock()
 			plan.client = onDemandClient
 		} else {
 			v2Logger.Error("No MCP client found for tool", nil,
