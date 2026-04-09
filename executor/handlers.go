@@ -262,6 +262,25 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			} else {
 				client = lazyClient
 			}
+		} else if connSessionID != req.SessionID {
+			// Fallback: config may be stored under the shared browser session ID
+			// (e.g. chat session calling playwright — config was primed under browser session)
+			if serverConfig, hasConfig := registry.GetServerConfig(connSessionID, req.Server); hasConfig {
+				h.logger.Info("⚡ [LAZY] First tool call to "+req.Server+" — connecting via shared browser session config",
+					loggerv2.String("session_id", req.SessionID),
+					loggerv2.String("browser_session_id", connSessionID))
+				lazyClient, _, lazyErr := registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
+				if lazyErr != nil {
+					h.logger.Error("Lazy connect failed for server "+req.Server+" (shared browser config)", lazyErr)
+				} else {
+					client = lazyClient
+				}
+			} else {
+				h.logger.Info("🔄 Session registry miss, trying codeexec registry",
+					loggerv2.String("session_id", req.SessionID),
+					loggerv2.String("server", req.Server),
+					loggerv2.Any("available_servers", connServers))
+			}
 		} else {
 			h.logger.Info("🔄 Session registry miss, trying codeexec registry",
 				loggerv2.String("session_id", req.SessionID),
@@ -400,7 +419,11 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			if req.SessionID != "" && mcpclient.IsBrowserScopedServer(req.Server) {
 				registry := mcpclient.GetSessionRegistry()
 				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
-				if serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server); hasConfig {
+				serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server)
+				if !hasConfig && connSessionID != req.SessionID {
+					serverConfig, hasConfig = registry.GetServerConfig(connSessionID, req.Server)
+				}
+				if hasConfig {
 					freshClient, _, freshErr = registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
 				} else {
 					h.logger.Warn("🔧 [BROKEN PIPE] No stored config for browser server, cannot retry via registry",
@@ -481,7 +504,11 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			if req.SessionID != "" && mcpclient.IsBrowserScopedServer(req.Server) {
 				registry := mcpclient.GetSessionRegistry()
 				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
-				if serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server); hasConfig {
+				serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server)
+				if !hasConfig && connSessionID != req.SessionID {
+					serverConfig, hasConfig = registry.GetServerConfig(connSessionID, req.Server)
+				}
+				if hasConfig {
 					freshClient, _, freshErr = registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
 				} else {
 					freshErr = fmt.Errorf("no stored config for browser server %s in session %s", req.Server, req.SessionID)
