@@ -113,6 +113,17 @@ func (t *httpSessionTracker) isStopped(mcpSessionID string) bool {
 	return ok
 }
 
+// clearStopped removes the given MCP session IDs from the stopped set so they
+// can accept new connections again. This is needed when a deterministic session
+// ID (e.g. browser session based on workspace+group hash) is reused across runs.
+func (t *httpSessionTracker) clearStopped(mcpSessionIDs []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, id := range mcpSessionIDs {
+		delete(t.stoppedSessions, id)
+	}
+}
+
 // GetSessionRegistry returns the global session connection registry
 func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry
@@ -442,6 +453,15 @@ func (r *SessionConnectionRegistry) CloseHTTPSession(httpSessionID string) {
 // Used by broken pipe handlers to avoid reconnecting zombie sub-agents.
 func (r *SessionConnectionRegistry) IsSessionStopped(mcpSessionID string) bool {
 	return globalHTTPSessionTracker.isStopped(mcpSessionID)
+}
+
+// ClearSessionsStopped removes the given MCP session IDs from the stopped set,
+// allowing new connections to be created for them. This is needed when a
+// deterministic session ID (e.g. browser session derived from workspace+group
+// hash) is reused across workflow runs — without this, the zombie prevention
+// logic would permanently block the reused session ID.
+func (r *SessionConnectionRegistry) ClearSessionsStopped(sessionIDs []string) {
+	globalHTTPSessionTracker.clearStopped(sessionIDs)
 }
 
 // MarkSessionsStopped marks the given MCP session IDs as stopped so that broken

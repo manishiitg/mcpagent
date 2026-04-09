@@ -175,6 +175,14 @@ func MarkSessionsStopped(sessionIDs []string) {
 	registry.MarkSessionsStopped(sessionIDs)
 }
 
+// ClearSessionsStopped removes the given MCP session IDs from the stopped set,
+// allowing new connections. Use this when reusing a deterministic session ID
+// (e.g. browser session derived from workspace+group hash) across workflow runs.
+func ClearSessionsStopped(sessionIDs []string) {
+	registry := mcpclient.GetSessionRegistry()
+	registry.ClearSessionsStopped(sessionIDs)
+}
+
 // CloseHTTPSession closes all MCP sessions registered under the given HTTP session ID.
 // Call this in the workflow stop handler and on workflow completion to immediately
 // free browser processes and other MCP server resources.
