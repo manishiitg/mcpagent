@@ -194,7 +194,6 @@ const (
 
 	// Learning events
 	LearningSkipped EventType = "learning_skipped"
-	TempLLMSkipped  EventType = "temp_llm_skipped"
 
 	// Decision step evaluation events
 	DecisionEvaluated EventType = "decision_evaluated"
@@ -264,7 +263,7 @@ func GetComponentFromEventType(eventType EventType) string {
 		StepTokenUsage, StepProgressUpdated,
 		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback,
-		LearningSkipped, TempLLMSkipped,
+		LearningSkipped,
 		DecisionEvaluated, PreValidationCompleted,
 		StepExecutionStart, StepExecutionEnd, StepExecutionFailed:
 		return "orchestrator"

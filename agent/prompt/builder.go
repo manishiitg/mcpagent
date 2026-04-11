@@ -32,6 +32,11 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 
 {{TOOL_STRUCTURE}}
 
+**Filesystem Access:**
+- Do NOT use provider-native or built-in filesystem/shell tools (for example: Bash, Read, Write, read_file, write_file, list_directory, grep_search, glob, read_many_files, replace, run_shell_command)
+- For filesystem access, use only the tools declared in this session
+- In code execution mode, prefer execute_shell_command for file reads/writes/commands, and use other declared workspace tools only when they are explicitly available
+
 **Workflow:**
 1. See available servers and tools in the JSON block above. Call get_api_spec(server_name="...", tool_name="...") to get the full API spec for any tool
 2. Use execute_shell_command to write and run code

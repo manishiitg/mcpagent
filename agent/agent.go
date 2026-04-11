@@ -1956,7 +1956,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2944,7 +2944,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
