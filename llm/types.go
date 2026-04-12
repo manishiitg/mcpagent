@@ -27,6 +27,7 @@ type ToolChoice = llmtypes.ToolChoice
 type FunctionName = llmtypes.FunctionName
 type CallOptions = llmtypes.CallOptions
 type CallOption = llmtypes.CallOption
+type WebSearchModel = llmtypes.WebSearchModel
 
 // Re-export constants
 const (

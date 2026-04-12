@@ -224,6 +224,14 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 	return p.Model.GenerateContent(ctx, messages, options...)
 }
 
+// SearchWeb calls a model's native web search capability when available.
+func SearchWeb(ctx context.Context, model llmtypes.Model, query string, options ...CallOption) (string, error) {
+	if wrapped, ok := model.(*ProviderAwareLLM); ok {
+		return llmproviders.SearchWeb(ctx, wrapped.Model, query, options...)
+	}
+	return llmproviders.SearchWeb(ctx, model, query, options...)
+}
+
 // WithOpenRouterUsage enables usage parameter for OpenRouter requests to get cache token information
 func WithOpenRouterUsage() CallOption {
 	return func(opts *CallOptions) {
