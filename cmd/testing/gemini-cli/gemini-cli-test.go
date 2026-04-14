@@ -195,7 +195,7 @@ func subTestAllowedToolCallViaBridge(ctx context.Context, log loggerv2.Logger) e
 	response, askErr := agent.Ask(ctx, prompt)
 	if askErr != nil {
 		// Surface 400 INVALID_ARGUMENT errors immediately — they indicate broken hook/settings config.
-		if geminiErr := checkGeminiErr(askErr); geminiErr != askErr {
+		if geminiErr := checkGeminiErr(askErr); geminiErr != nil {
 			return geminiErr
 		}
 		log.Info("Ask returned error (checking mock before failing)",
@@ -369,7 +369,7 @@ func verifyReadFileBypassesHookLog(ctx context.Context, log loggerv2.Logger) err
 	// gives up and returns a text response). A 400 INVALID_ARGUMENT from the Gemini API is
 	// the only unacceptable failure — it means the settings.json is broken.
 	if callErr != nil {
-		if geminiErr := checkGeminiErr(callErr); geminiErr != callErr {
+		if geminiErr := checkGeminiErr(callErr); geminiErr != nil {
 			return geminiErr
 		}
 		log.Info("Call returned error (expected for pre-fix scenario)",
@@ -429,7 +429,7 @@ func verifyToolsExcludePreventsReadFile(ctx context.Context, log loggerv2.Logger
 	response, askErr := agent.Ask(shortCtx,
 		"Use the read_file tool to read /app/workspace-docs/plan.md and tell me what it contains. You MUST use the read_file tool.")
 	if askErr != nil {
-		if geminiErr := checkGeminiErr(askErr); geminiErr != askErr {
+		if geminiErr := checkGeminiErr(askErr); geminiErr != nil {
 			return geminiErr
 		}
 		// Non-400 errors are acceptable — the model may give up cleanly.
@@ -626,7 +626,7 @@ func checkGeminiErr(err error) error {
 	if strings.Contains(err.Error(), "allowed_function_names") {
 		return fmt.Errorf("❌ Gemini API 400 INVALID_ARGUMENT: hook or settings.json sets allowed_function_names with wrong mode — %w", err)
 	}
-	return err
+	return nil
 }
 
 // --- mock HTTP API server ---

@@ -103,6 +103,13 @@ fi
 # Run golangci-lint on Go files
 echo -e "${BLUE}🔍 Running golangci-lint...${NC}"
 
+# Only lint when staged changes could affect Go analysis.
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+if ! echo "$STAGED_FILES" | grep -Eq '(^|/)(.*\.go|go\.mod|go\.sum|\.golangci\.yml)$'; then
+    echo -e "${GREEN}✅ No staged Go changes. Skipping golangci-lint.${NC}"
+    exit 0
+fi
+
 # Add GOPATH/bin to PATH early so golangci-lint can be found
 if [ -d "$(go env GOPATH)/bin" ]; then
     export PATH="$PATH:$(go env GOPATH)/bin"
@@ -115,75 +122,23 @@ if command -v golangci-lint &> /dev/null; then
 elif [ -f "$(go env GOPATH)/bin/golangci-lint" ]; then
     GOLANGCI_LINT_CMD="$(go env GOPATH)/bin/golangci-lint"
 else
-    echo -e "${YELLOW}⚠️  golangci-lint not found. Skipping lint check.${NC}"
+    echo -e "${RED}❌ golangci-lint not found. Commit blocked.${NC}"
     echo "Run 'make install-linter' to install golangci-lint."
-    exit 0
+    exit 1
 fi
 
-# Run linter - show output directly to terminal
+# Run the same lint command GitHub Actions uses and block on any failure.
 echo ""
-# Run golangci-lint and capture output
-# Filter out errors from output directories (tool_output_folder, cache, bin, etc.)
-# to focus on main code only
-set +e  # Temporarily disable exit on error so we can capture exit code
-LINT_OUTPUT_FULL=$($GOLANGCI_LINT_CMD run ./... 2>&1)
-# Filter out errors from output directories
-LINT_OUTPUT=$(echo "$LINT_OUTPUT_FULL" | grep -v -E "(tool_output_folder|tool_output/|cache/|bin/|generated/)")
-# Show filtered output to user
-echo "$LINT_OUTPUT"
-# Determine exit code: if filtered output has any errors, exit 1; otherwise 0
-# Check for actual error patterns (file:line:column format or "issues found")
-if echo "$LINT_OUTPUT" | grep -qE "(^[^:]+:[0-9]+:[0-9]+:.*(error|expected|found))|issues found"; then
-    LINT_EXIT=1
-else
-    LINT_EXIT=0
-fi
-set -e  # Re-enable exit on error
-
-# If linting passed, proceed
-if [ $LINT_EXIT -eq 0 ]; then
+if $GOLANGCI_LINT_CMD run --timeout=5m; then
     echo ""
     echo -e "${GREEN}✅ Linting passed. Proceeding with commit.${NC}"
     exit 0
-else
-    # Linting found issues - check severity
-    # Use the already filtered output (from above) for analysis
-    # LINT_OUTPUT is already filtered and available from the previous run
-    
-    # Count issues to decide if we should block or warn
-    ISSUE_COUNT=$(echo "$LINT_OUTPUT" | grep -E "issues:" | grep -oE "[0-9]+ issues" | grep -oE "[0-9]+" || echo "0")
-    
-    # Check for truly critical security issues (G201/G202 SQL injection, G204 command injection, G304 path traversal)
-    # Exclude test files from critical checks (G304 in test files are usually test fixtures)
-    CRITICAL_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | grep -v "_test.go" | grep -v "/testing/" | wc -l | tr -d ' ')
-    
-    if [ "$CRITICAL_ISSUES" -gt 0 ]; then
-        echo ""
-        echo -e "${RED}❌ Critical security issues detected ($CRITICAL_ISSUES critical)! Commit blocked.${NC}"
-        echo ""
-        echo "Critical issues found: SQL injection (G201/G202), Command injection (G204), Path traversal (G304)"
-        echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | head -10
-        echo ""
-        echo "Please fix these security issues before committing."
-        exit 1
-    elif [ "$ISSUE_COUNT" -gt 200 ]; then
-        # Too many issues - block commit
-        echo ""
-        echo -e "${RED}❌ Too many linting issues ($ISSUE_COUNT)! Commit blocked.${NC}"
-        echo ""
-        echo "Please fix linting errors before committing."
-        echo "You can run 'make lint-fix' to auto-fix some issues."
-        exit 1
-    else
-        # Non-critical issues - warn but allow commit
-        echo ""
-        echo -e "${YELLOW}⚠️  Linting found $ISSUE_COUNT issues (non-blocking).${NC}"
-        echo "Most are low-priority gosec checks (G104, G301, etc.)"
-        echo "Run 'make lint' to see all issues."
-        echo -e "${YELLOW}Proceeding with commit...${NC}"
-        exit 0
-    fi
 fi
+
+echo ""
+echo -e "${RED}❌ golangci-lint found issues. Commit blocked.${NC}"
+echo "Fix the reported issues or run 'make lint' for the same check used in CI."
+exit 1
 EOF
 
 # Make the pre-commit hook executable
@@ -271,4 +226,3 @@ echo "  • Edit '.gitleaks.toml' to customize secret detection rules"
 echo "  • Edit '.golangci.yml' to customize linting rules"
 echo ""
 echo -e "${GREEN}Your repository is now protected against accidental secret commits and linting issues! 🔒${NC}"
-
