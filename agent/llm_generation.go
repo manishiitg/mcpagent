@@ -580,6 +580,10 @@ type streamingManager struct {
 	totalChunks       int
 	startTime         time.Time
 	turn              int // conversation turn for event emission
+	// CLIToolCalls accumulates completed tool call chunks from CLI providers (Gemini CLI,
+	// Claude Code, Codex CLI). Used by AskWithHistory to reconstruct conversation history
+	// with tool calls that ran inside the CLI subprocess.
+	CLIToolCalls []llmtypes.StreamChunk
 }
 
 // startStreaming initializes streaming if enabled and on the first attempt
@@ -665,6 +669,9 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			)
 			toolEndEvent.ToolCallID = chunk.ToolCallID
 			a.EmitTypedEvent(ctx, toolEndEvent)
+
+			// Accumulate for conversation history reconstruction (all CLI providers).
+			sm.CLIToolCalls = append(sm.CLIToolCalls, chunk)
 
 			// Forward to StreamingCallback so wrappers (e.g. LLMAgentWrapper) can track
 			// completed tool calls for history reconstruction on cancellation.
@@ -1239,6 +1246,23 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			resp, err := a.executeLLM(ctx, model, messages, currentOpts)
 
 			a.finishStreaming(ctx, sm, resp)
+
+			// After finishStreaming, processChunks has fully drained — sm.CLIToolCalls is
+			// complete. Attach the collected tool calls to the response so AskWithHistory
+			// can reconstruct a proper conversation history for CLI providers (Gemini CLI,
+			// Claude Code, Codex CLI) where tools run inside the subprocess.
+			if sm != nil && len(sm.CLIToolCalls) > 0 && resp != nil && len(resp.Choices) > 0 {
+				choice := resp.Choices[0]
+				if choice.GenerationInfo == nil {
+					choice.GenerationInfo = &llmtypes.GenerationInfo{}
+				}
+				if choice.GenerationInfo.Additional == nil {
+					choice.GenerationInfo.Additional = make(map[string]interface{})
+				}
+				if histJSON, err2 := json.Marshal(sm.CLIToolCalls); err2 == nil {
+					choice.GenerationInfo.Additional["cli_tool_call_chunks"] = string(histJSON)
+				}
+			}
 
 			if err == nil {
 				usage = extractUsageMetricsWithMessages(resp, messages)

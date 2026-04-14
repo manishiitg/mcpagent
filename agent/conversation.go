@@ -1749,6 +1749,48 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// streaming its final answer: keep the assistant message we just produced,
 			// inject the steer as a follow-up user turn, and continue instead of
 			// dropping the steer on conversation exit.
+
+			// For CLI providers (Gemini CLI, Claude Code, Codex CLI): tool calls happen
+			// inside the subprocess and are not returned as ToolCalls in the response.
+			// GenerateContentWithRetry attaches completed StreamChunkTypeToolCallEnd chunks
+			// (collected by processChunks via streamingManager.CLIToolCalls) to
+			// GenerationInfo.Additional["cli_tool_call_chunks"]. Reconstruct synthetic
+			// messages here so the saved conversation history reflects what actually ran.
+			if choice.GenerationInfo != nil {
+				if chunksJSON, ok := choice.GenerationInfo.Additional["cli_tool_call_chunks"].(string); ok && chunksJSON != "" {
+					var chunks []llmtypes.StreamChunk
+					if err := json.Unmarshal([]byte(chunksJSON), &chunks); err == nil {
+						for _, c := range chunks {
+							// Skip flushed-but-incomplete tool calls (subprocess exited mid-flight)
+							if c.ToolResult == "" {
+								continue
+							}
+							// AI message: one ToolCall part per completed tool invocation
+							messages = append(messages, llmtypes.MessageContent{
+								Role: llmtypes.ChatMessageTypeAI,
+								Parts: []llmtypes.ContentPart{llmtypes.ToolCall{
+									ID:   c.ToolCallID,
+									Type: "function",
+									FunctionCall: &llmtypes.FunctionCall{
+										Name:      c.ToolName,
+										Arguments: c.ToolArgs,
+									},
+								}},
+							})
+							// Tool result message
+							messages = append(messages, llmtypes.MessageContent{
+								Role: llmtypes.ChatMessageTypeTool,
+								Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{
+									ToolCallID: c.ToolCallID,
+									Name:       c.ToolName,
+									Content:    c.ToolResult,
+								}},
+							})
+						}
+					}
+				}
+			}
+
 			if choice.Content != "" {
 				assistantMessage := llmtypes.MessageContent{
 					Role:  llmtypes.ChatMessageTypeAI,
