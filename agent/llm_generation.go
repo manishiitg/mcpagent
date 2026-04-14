@@ -1083,6 +1083,11 @@ deny_message = "Use only the declared tools available in this session or google_
 							}
 						}
 
+						// Set a generous tool timeout so long-running shell commands
+						// (web searches, sub-agent calls, analysis scripts) are not
+						// killed by the Codex CLI default of 60s.
+						configOverrides = append(configOverrides, "mcp_servers.api-bridge.tool_timeout_sec=5400")
+
 						if len(configOverrides) > 0 {
 							opts = append(opts, llm.WithCodexConfigOverrides(configOverrides))
 							a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge with %d config overrides", len(configOverrides)))
