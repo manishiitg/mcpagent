@@ -28,12 +28,12 @@ install-linter:
 # Run linter
 lint: install-linter
 	@echo "Running golangci-lint..."
-	@golangci-lint run ./...
+	@golangci-lint run --timeout=5m
 
 # Run linter with auto-fix
 lint-fix: install-linter
 	@echo "Running golangci-lint with auto-fix..."
-	@golangci-lint run --fix ./...
+	@golangci-lint run --timeout=5m --fix
 
 # Run tests
 test:
@@ -137,4 +137,3 @@ proto-ts:
 	else \
 		echo "⚠️  sdk-node directory not found, skipping TypeScript generation"; \
 	fi
-
