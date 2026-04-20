@@ -23,6 +23,7 @@ const (
 	ProviderOpenRouter        = llmproviders.ProviderOpenRouter
 	ProviderVertex            = llmproviders.ProviderVertex
 	ProviderAzure             = llmproviders.ProviderAzure
+	ProviderZAI               = llmproviders.ProviderZAI
 	ProviderClaudeCode        = llmproviders.ProviderClaudeCode
 	ProviderGeminiCLI         = llmproviders.ProviderGeminiCLI
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI

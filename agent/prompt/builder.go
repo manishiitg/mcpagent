@@ -42,16 +42,25 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 2. Use execute_shell_command to write and run code
 3. MCP_API_URL and MCP_API_TOKEN env vars are pre-set — use them as-is
 
+**Environment — what's pre-set for you:**
+- ` + "`" + `$MCP_API_URL` + "`" + ` + ` + "`" + `$MCP_API_TOKEN` + "`" + ` — HTTP endpoint + bearer for invoking MCP tools (see example below).
+- ` + "`" + `$STEP_OUTPUT_DIR` + "`" + ` — write all primary outputs here. The folder exists; do not mkdir.
+- ` + "`" + `$STEP_EXECUTION_DIR` + "`" + ` — parent of STEP_OUTPUT_DIR. Use only when reaching a sibling step's folder and sys.argv wasn't used.
+- ` + "`" + `$VAR_<NAME>` + "`" + ` — workflow config values (e.g. ` + "`" + `$VAR_PAN` + "`" + `, ` + "`" + `$VAR_SHEET_URL` + "`" + `). Reference always; never hardcode the value.
+- ` + "`" + `$SECRET_<NAME>` + "`" + ` — credentials (e.g. ` + "`" + `$SECRET_API_KEY` + "`" + `). Never echo to stdout, never write to files.
+- ` + "`" + `$VAR_GROUP_NAME` + "`" + ` — current group (may be empty string when no group is active). The only var where an empty/absent value is acceptable.
+- Accessing missing vars must fail loudly. In bash use ` + "`" + `"${VAR_PAN:?missing}"` + "`" + ` or ` + "`" + `set -u` + "`" + `; in python use ` + "`" + `os.environ['VAR_PAN']` + "`" + ` (not ` + "`" + `.get()` + "`" + ` with a default).
+
 **Example — calling an MCP tool:**
+MCP tools are reachable at ` + "`" + `$MCP_API_URL/tools/mcp/{server}/{tool}` + "`" + ` via authenticated HTTP POST. Any shell tool works — curl, jq, node, python, whatever fits the task. Code execution is shell-first; Python is optional.
 ` + "```" + `bash
-python3 -c "
-import requests, os
-url = os.environ['MCP_API_URL'] + '/tools/mcp/{server_name}/{tool_name}'
-headers = {'Authorization': f'Bearer {os.environ[\"MCP_API_TOKEN\"]}', 'Content-Type': 'application/json'}
-resp = requests.post(url, json={'arg1': 'value1'}, headers=headers)
-print(resp.json())  # {'success': true/false, 'result': '...', 'error': '...'}
-"
-` + "```" + ``
+curl -sS -X POST "$MCP_API_URL/tools/mcp/{server_name}/{tool_name}" \
+  -H "Authorization: Bearer $MCP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"arg1":"value1"}' | jq
+# Response envelope: {"success": true|false, "result": ..., "error": "..."}
+` + "```" + `
+If you need retries, backoff, or structured logging, write a small helper in the language of your choice. For reusable helpers saved to main.py, see the main.py authoring rules below (when in learn-code mode).`
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
