@@ -393,6 +393,12 @@ func GetDefaultFallbackModels(provider Provider) []string {
 	return llmproviders.GetDefaultFallbackModels(llmproviders.Provider(provider))
 }
 
+// GetDefaultFallbackModelsForModel returns fallback models for a provider while
+// considering the current primary model when provider-specific defaults need it.
+func GetDefaultFallbackModelsForModel(provider Provider, modelID string) []string {
+	return llmproviders.GetDefaultFallbackModelsForModel(llmproviders.Provider(provider), modelID)
+}
+
 // GetCrossProviderFallbackModels returns cross-provider fallback models (e.g., OpenAI for Bedrock)
 func GetCrossProviderFallbackModels(provider Provider) []string {
 	return llmproviders.GetCrossProviderFallbackModels(llmproviders.Provider(provider))

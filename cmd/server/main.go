@@ -9,11 +9,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/manishiitg/mcpagent/grpcserver"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 func main() {
+	// Load .env from the current working directory when present so provider
+	// credentials are available for direct `go run` usage and SDK-launched servers.
+	if _, err := os.Stat(".env"); err == nil {
+		_ = godotenv.Load(".env")
+	}
+
 	// Parse command line flags
 	socketPath := flag.String("socket", "", "gRPC Unix domain socket path (required)")
 	configPath := flag.String("config", "mcp_servers.json", "Path to MCP servers configuration file")

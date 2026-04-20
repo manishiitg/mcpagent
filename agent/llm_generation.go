@@ -768,7 +768,7 @@ func (a *Agent) getEffectiveLLMConfig() AgentLLMConfiguration {
 	// This keeps behavior aligned with older initialization paths that used
 	// default same-provider and cross-provider fallback env configuration.
 	if len(config.Fallbacks) == 0 && config.Primary.Provider != "" {
-		defaultFallbackRefs := append([]string{}, llm.GetDefaultFallbackModels(llm.Provider(config.Primary.Provider))...)
+		defaultFallbackRefs := append([]string{}, llm.GetDefaultFallbackModelsForModel(llm.Provider(config.Primary.Provider), config.Primary.ModelID)...)
 		defaultFallbackRefs = append(defaultFallbackRefs, llm.GetCrossProviderFallbackModels(llm.Provider(config.Primary.Provider))...)
 
 		for _, fallbackRef := range defaultFallbackRefs {

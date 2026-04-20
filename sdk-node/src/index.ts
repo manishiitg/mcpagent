@@ -66,6 +66,7 @@ export type {
 // Types
 export type {
   Provider,
+  AgentAPIKeys,
   AgentConfig,
   Message,
   TokenUsage,

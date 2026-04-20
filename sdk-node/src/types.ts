@@ -7,7 +7,33 @@ export type Provider =
   | 'anthropic'
   | 'openrouter'
   | 'vertex'
-  | 'gemini-cli';
+  | 'z-ai'
+  | 'claude-code'
+  | 'gemini-cli'
+  | 'codex-cli'
+  | 'minimax'
+  | 'minimax-coding-plan';
+
+export interface AgentAPIKeys {
+  openai?: string;
+  anthropic?: string;
+  openrouter?: string;
+  'z-ai'?: string;
+  vertex?: string;
+  'gemini-cli'?: string;
+  'codex-cli'?: string;
+  minimax?: string;
+  'minimax-coding-plan'?: string;
+  bedrock?: {
+    region: string;
+  };
+  azure?: {
+    endpoint: string;
+    apiKey: string;
+    apiVersion?: string;
+    region?: string;
+  };
+}
 
 /**
  * Configuration for creating an agent
@@ -35,6 +61,8 @@ export interface AgentConfig {
   enableContextOffloading?: boolean;
   /** Enable streaming responses */
   enableStreaming?: boolean;
+  /** Provider credentials injected into the spawned Go server environment */
+  apiKeys?: AgentAPIKeys;
 }
 
 /**

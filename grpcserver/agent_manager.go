@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -187,40 +188,18 @@ func (m *AgentManager) GetCapabilities(agentID string) (*Capabilities, error) {
 func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (llmtypes.Model, error) {
 	// Determine provider
 	provider := llm.ProviderOpenAI // default
-	switch llm.Provider(config.Provider) {
-	case llm.ProviderBedrock:
-		provider = llm.ProviderBedrock
-	case llm.ProviderOpenAI:
-		provider = llm.ProviderOpenAI
-	case llm.ProviderAnthropic:
-		provider = llm.ProviderAnthropic
-	case llm.ProviderOpenRouter:
-		provider = llm.ProviderOpenRouter
-	case llm.ProviderVertex:
-		provider = llm.ProviderVertex
-	case llm.ProviderGeminiCLI:
-		provider = llm.ProviderGeminiCLI
-	case llm.ProviderAzure:
-		provider = llm.ProviderAzure
+	if strings.TrimSpace(config.Provider) != "" {
+		validatedProvider, err := llm.ValidateProvider(config.Provider)
+		if err != nil {
+			return nil, err
+		}
+		provider = validatedProvider
 	}
 
 	// Default model IDs per provider
 	modelID := config.ModelID
 	if modelID == "" {
-		switch provider {
-		case llm.ProviderOpenAI:
-			modelID = "gpt-4o"
-		case llm.ProviderBedrock:
-			modelID = "anthropic.claude-sonnet-4-20250514-v1:0"
-		case llm.ProviderAnthropic:
-			modelID = "claude-sonnet-4-20250514"
-		case llm.ProviderGeminiCLI:
-			modelID = "flash-lite"
-		case llm.ProviderAzure:
-			modelID = "gpt-4o"
-		default:
-			modelID = "gpt-4o"
-		}
+		modelID = llm.GetDefaultModel(provider)
 	}
 
 	temperature := 0.0
@@ -247,21 +226,10 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 func (m *AgentManager) buildAgentOptions(config AgentConfig, sessionID string) []mcpagent.AgentOption {
 	// Determine provider
 	provider := llm.ProviderOpenAI // default
-	switch llm.Provider(config.Provider) {
-	case llm.ProviderBedrock:
-		provider = llm.ProviderBedrock
-	case llm.ProviderOpenAI:
-		provider = llm.ProviderOpenAI
-	case llm.ProviderAnthropic:
-		provider = llm.ProviderAnthropic
-	case llm.ProviderOpenRouter:
-		provider = llm.ProviderOpenRouter
-	case llm.ProviderVertex:
-		provider = llm.ProviderVertex
-	case llm.ProviderGeminiCLI:
-		provider = llm.ProviderGeminiCLI
-	case llm.ProviderAzure:
-		provider = llm.ProviderAzure
+	if strings.TrimSpace(config.Provider) != "" {
+		if validatedProvider, err := llm.ValidateProvider(config.Provider); err == nil {
+			provider = validatedProvider
+		}
 	}
 
 	options := []mcpagent.AgentOption{

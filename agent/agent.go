@@ -788,8 +788,8 @@ type Agent struct {
 	// are included in filteredTools (and the code-exec tool index). Updated per-turn via
 	// SetToolAllowList / ClearToolAllowList so the workshop builder can restrict tools
 	// based on the current mode (build/optimize/debug/run/eval/output).
-	toolAllowList    map[string]bool // nil = no restriction (all tools allowed)
-	toolAllowListMu  sync.RWMutex
+	toolAllowList   map[string]bool // nil = no restriction (all tools allowed)
+	toolAllowListMu sync.RWMutex
 
 	// Store prompts and resources for system prompt rebuilding
 	prompts   map[string][]mcp.Prompt
@@ -859,11 +859,11 @@ type Agent struct {
 	// When enabled: Only search_tools virtual tool is initially exposed to the LLM
 	// LLM must search for tools using regex patterns, discovered tools become available
 	// When disabled (default): All tools are exposed directly
-	UseToolSearchMode  bool                     // Enable tool search mode
-	discoveredTools    map[string]llmtypes.Tool // Tools discovered during this session
-	allDeferredTools       []llmtypes.Tool   // All available tools (hidden until discovered), may include duplicates
-	allDeferredToolServers []string          // Parallel slice: server name for each entry in allDeferredTools
-	preDiscoveredTools   []string                 // Tool names that are always available without searching
+	UseToolSearchMode      bool                     // Enable tool search mode
+	discoveredTools        map[string]llmtypes.Tool // Tools discovered during this session
+	allDeferredTools       []llmtypes.Tool          // All available tools (hidden until discovered), may include duplicates
+	allDeferredToolServers []string                 // Parallel slice: server name for each entry in allDeferredTools
+	preDiscoveredTools     []string                 // Tool names that are always available without searching
 
 	// Cache configuration
 	// When enabled: Skips cache lookup and always performs fresh connections
@@ -968,7 +968,7 @@ type LLMModel struct {
 	Region *string `json:"region,omitempty"`  // For Bedrock
 
 	// Model-specific options
-	Temperature *float64                `json:"temperature,omitempty"` // Override default temperature (0.0-1.0)
+	Temperature *float64               `json:"temperature,omitempty"` // Override default temperature (0.0-1.0)
 	Options     map[string]interface{} `json:"options,omitempty"`     // Provider-specific options (reasoning_effort, thinking_level, etc.)
 }
 
@@ -1066,6 +1066,16 @@ func (a *Agent) GetLLMModelConfig() LLMModel {
 			config.APIKey = a.APIKeys.OpenRouter
 		case llm.ProviderVertex:
 			config.APIKey = a.APIKeys.Vertex
+		case llm.ProviderZAI:
+			config.APIKey = a.APIKeys.ZAI
+		case llm.ProviderGeminiCLI:
+			config.APIKey = a.APIKeys.GeminiCLI
+		case llm.ProviderCodexCLI:
+			config.APIKey = a.APIKeys.CodexCLI
+		case llm.ProviderMiniMax:
+			config.APIKey = a.APIKeys.MiniMax
+		case llm.ProviderMiniMaxCodingPlan:
+			config.APIKey = a.APIKeys.MiniMaxCodingPlan
 		}
 	}
 	return config
@@ -1129,11 +1139,13 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 		}
 		// Convert llm.ProviderAPIKeys to AgentAPIKeys
 		agentKeys := &AgentAPIKeys{
-			OpenRouter: providerKeys.OpenRouter,
-			OpenAI:     providerKeys.OpenAI,
-			Anthropic:  providerKeys.Anthropic,
-			Vertex:     providerKeys.Vertex,
-			GeminiCLI:  providerKeys.GeminiCLI,
+			OpenRouter:        providerKeys.OpenRouter,
+			OpenAI:            providerKeys.OpenAI,
+			Anthropic:         providerKeys.Anthropic,
+			ZAI:               providerKeys.ZAI,
+			Vertex:            providerKeys.Vertex,
+			GeminiCLI:         providerKeys.GeminiCLI,
+			CodexCLI:          providerKeys.CodexCLI,
 			MiniMax:           providerKeys.MiniMax,
 			MiniMaxCodingPlan: providerKeys.MiniMaxCodingPlan,
 		}
@@ -4029,6 +4041,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 //   - parameters: JSON schema defining the tool's expected arguments.
 //   - executionFunc: The Go function to execute when the tool is called.
 //   - timeout: Per-tool timeout. 0 = no timeout (tool runs indefinitely). -1 = use agent default.
+//
 // ReplaceCustomToolExecutor replaces the execution function for an already-registered custom tool.
 // Used to swap in session-aware executors (with ExtraEnv like _DEFAULT_WORKING_DIR) after agent creation.
 func (a *Agent) ReplaceCustomToolExecutor(name string, executor func(ctx context.Context, args map[string]interface{}) (string, error)) {

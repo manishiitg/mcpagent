@@ -20,6 +20,8 @@ export interface ServerManagerOptions {
   startupTimeout?: number;
 }
 
+export type ServerEnvOverrides = Record<string, string>;
+
 /**
  * Manages the lifecycle of the Go gRPC server.
  * Automatically starts/stops the Go server as needed.
@@ -46,14 +48,28 @@ export class ServerManager {
     this.logLevel = options.logLevel ?? 'info';
     this.startupTimeout = options.startupTimeout ?? 30000;
 
-    // Load .env file from nodejs directory
-    const envPath = path.join(__dirname, '..', '.env');
-    if (existsSync(envPath)) {
-      loadEnv({ path: envPath });
-    }
+    this.loadEnvironmentFiles();
 
     // Register cleanup handlers to kill Go server when Node.js exits
     this.registerCleanupHandlers();
+  }
+
+  /**
+   * Load .env files from the caller project first, then fall back to package-local defaults.
+   * This matches user expectations that SDK consumers can keep credentials in their app root.
+   */
+  private loadEnvironmentFiles(): void {
+    const envPaths = [
+      path.join(process.cwd(), '.env'),
+      path.join(this.goProjectPath, '.env'),
+      path.join(__dirname, '..', '.env'),
+    ];
+
+    for (const envPath of envPaths) {
+      if (existsSync(envPath)) {
+        loadEnv({ path: envPath, override: false });
+      }
+    }
   }
 
   /**
@@ -112,7 +128,7 @@ export class ServerManager {
    * Start the Go gRPC server
    * @returns The gRPC socket path
    */
-  async start(): Promise<string> {
+  async start(envOverrides: ServerEnvOverrides = {}): Promise<string> {
     if (this.isRunning) {
       return this.socketPath;
     }
@@ -161,7 +177,7 @@ export class ServerManager {
         cwd: this.goProjectPath,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
-        env: { ...process.env }, // Inherit environment variables
+        env: { ...process.env, ...envOverrides }, // Inherit env and allow per-agent provider auth overrides
       });
 
       let startupOutput = '';

@@ -3,6 +3,7 @@ import { StreamHandler, AnyConversationEvent, ToolHandler } from './stream-handl
 import { ServerManager, ServerManagerOptions } from './server-manager';
 import type {
   AgentConfig,
+  AgentAPIKeys,
   Message,
   AskResponse,
   AskWithHistoryResponse,
@@ -170,7 +171,7 @@ export class MCPAgent {
   async initialize(config: AgentConfig = {}): Promise<CreateAgentResponse> {
     // Auto-start Go server if not running
     const wasRunning = await this.serverManager.isServerHealthy();
-    const socketPath = await this.serverManager.start();
+    const socketPath = await this.serverManager.start(this.buildServerEnvOverrides(config.apiKeys));
     this.serverStartedByUs = !wasRunning;
 
     // Create gRPC client
@@ -198,6 +199,42 @@ export class MCPAgent {
     this.capabilities = response.capabilities;
 
     return response;
+  }
+
+  private buildServerEnvOverrides(apiKeys?: AgentAPIKeys): Record<string, string> {
+    if (!apiKeys) {
+      return {};
+    }
+
+    const env: Record<string, string> = {};
+    const setIfPresent = (name: string, value?: string) => {
+      if (value && value.trim() !== '') {
+        env[name] = value;
+      }
+    };
+
+    setIfPresent('OPENAI_API_KEY', apiKeys.openai);
+    setIfPresent('ANTHROPIC_API_KEY', apiKeys.anthropic);
+    setIfPresent('OPENROUTER_API_KEY', apiKeys.openrouter);
+    setIfPresent('ZAI_API_KEY', apiKeys['z-ai']);
+    setIfPresent('VERTEX_API_KEY', apiKeys.vertex);
+    setIfPresent('GEMINI_API_KEY', apiKeys['gemini-cli']);
+    setIfPresent('CODEX_API_KEY', apiKeys['codex-cli']);
+    setIfPresent('MINIMAX_API_KEY', apiKeys.minimax);
+    setIfPresent('MINIMAX_CODING_PLAN_API_KEY', apiKeys['minimax-coding-plan']);
+
+    if (apiKeys.bedrock) {
+      setIfPresent('BEDROCK_REGION', apiKeys.bedrock.region);
+    }
+
+    if (apiKeys.azure) {
+      setIfPresent('AZURE_AI_ENDPOINT', apiKeys.azure.endpoint);
+      setIfPresent('AZURE_AI_API_KEY', apiKeys.azure.apiKey);
+      setIfPresent('AZURE_AI_API_VERSION', apiKeys.azure.apiVersion);
+      setIfPresent('AZURE_AI_REGION', apiKeys.azure.region);
+    }
+
+    return env;
   }
 
   /**
