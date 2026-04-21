@@ -125,6 +125,7 @@ func WithProvider(provider llm.Provider) AgentOption {
 //
 // Parameters:
 //   - maxTurns: The specific limit to set.
+//     Use a negative value to disable the turn cap.
 //
 // Default: Value returned by GetDefaultMaxTurns(SimpleAgent)
 func WithMaxTurns(maxTurns int) AgentOption {

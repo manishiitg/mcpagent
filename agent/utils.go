@@ -21,7 +21,7 @@ import (
 )
 
 // GetDefaultMaxTurns returns the default max turns for a given agent mode.
-// Checks MAX_TURNS environment variable, falls back to 100 if not set or invalid.
+// Checks MAX_TURNS environment variable, falls back to 500 if not set or invalid.
 func GetDefaultMaxTurns(mode AgentMode) int {
 	// Check MAX_TURNS environment variable
 	if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
@@ -29,8 +29,8 @@ func GetDefaultMaxTurns(mode AgentMode) int {
 			return maxTurns
 		}
 	}
-	// Default to 100 if env var not set or invalid
-	return 100
+	// Default to 500 if env var not set or invalid
+	return 500
 }
 
 // ConvertToolChoice converts a tool choice string to *llmtypes.ToolChoice.

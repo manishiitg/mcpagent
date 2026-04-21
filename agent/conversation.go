@@ -275,18 +275,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	if len(a.Tracers) == 0 {
 		a.Tracers = []observability.Tracer{observability.NoopTracer{}}
 	}
-	if a.MaxTurns <= 0 {
-		// Get default from environment variable, fallback to 100
+	if a.MaxTurns == 0 {
+		// Get default from environment variable, fallback to 500
 		if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
 			if maxTurns, err := strconv.Atoi(envVal); err == nil && maxTurns > 0 {
 				a.MaxTurns = maxTurns
 			} else {
-				// Fallback to 100 if env var is invalid
-				a.MaxTurns = 100
+				// Fallback to 500 if env var is invalid
+				a.MaxTurns = 500
 			}
 		} else {
-			// Fallback to 100 if env var not set
-			a.MaxTurns = 100
+			// Fallback to 500 if env var not set
+			a.MaxTurns = 500
 		}
 	}
 
@@ -537,7 +537,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	loopDetector := NewToolLoopDetector(DefaultLoopDetectionThreshold)
 
 	var lastResponse string
-	for turn := 0; turn < a.MaxTurns; turn++ {
+	for turn := 0; ; turn++ {
+		if a.MaxTurns > 0 && turn >= a.MaxTurns {
+			break
+		}
+
 		// NEW: Start turn for hierarchy tracking
 		a.StartTurn(ctx, turn+1)
 
