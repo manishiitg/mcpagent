@@ -31,6 +31,7 @@ func (m *providerKeyCarrierModel) GetAPIKeys() *llm.ProviderAPIKeys {
 
 func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 	zaiKey := "zai-key"
+	kimiKey := "kimi-key"
 	minimaxKey := "minimax-key"
 
 	tests := []struct {
@@ -55,6 +56,14 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 			},
 			want: &minimaxKey,
 		},
+		{
+			name:     "kimi",
+			provider: llm.ProviderKimi,
+			keys: &llm.ProviderAPIKeys{
+				Kimi: &kimiKey,
+			},
+			want: &kimiKey,
+		},
 	}
 
 	for _, tt := range tests {
@@ -73,13 +82,15 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 	}
 }
 
-func TestExtractAPIKeysFromLLMPreservesZAIAndCodexCLI(t *testing.T) {
+func TestExtractAPIKeysFromLLMPreservesZAIKimiAndCodexCLI(t *testing.T) {
 	zaiKey := "zai-key"
+	kimiKey := "kimi-key"
 	codexKey := "codex-key"
 
 	model := &providerKeyCarrierModel{
 		keys: &llm.ProviderAPIKeys{
 			ZAI:      &zaiKey,
+			Kimi:     &kimiKey,
 			CodexCLI: &codexKey,
 		},
 	}
@@ -90,6 +101,9 @@ func TestExtractAPIKeysFromLLMPreservesZAIAndCodexCLI(t *testing.T) {
 	}
 	if keys.ZAI == nil || *keys.ZAI != zaiKey {
 		t.Fatalf("expected ZAI key %q, got %#v", zaiKey, keys.ZAI)
+	}
+	if keys.Kimi == nil || *keys.Kimi != kimiKey {
+		t.Fatalf("expected Kimi key %q, got %#v", kimiKey, keys.Kimi)
 	}
 	if keys.CodexCLI == nil || *keys.CodexCLI != codexKey {
 		t.Fatalf("expected Codex CLI key %q, got %#v", codexKey, keys.CodexCLI)

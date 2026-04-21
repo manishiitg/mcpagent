@@ -8,6 +8,7 @@ export type Provider =
   | 'openrouter'
   | 'vertex'
   | 'z-ai'
+  | 'kimi'
   | 'claude-code'
   | 'gemini-cli'
   | 'codex-cli'
@@ -19,6 +20,7 @@ export interface AgentAPIKeys {
   anthropic?: string;
   openrouter?: string;
   'z-ai'?: string;
+  kimi?: string;
   vertex?: string;
   'gemini-cli'?: string;
   'codex-cli'?: string;

@@ -11,9 +11,9 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// isCLIProvider returns true if the provider is a CLI wrapper (claude-code or gemini-cli).
+// isCLIProvider returns true if the provider is a CLI wrapper.
 func isCLIProvider(provider llm.Provider) bool {
-	return provider == llm.ProviderClaudeCode || provider == llm.ProviderGeminiCLI || provider == llm.ProviderCodexCLI
+	return provider == llm.ProviderClaudeCode || provider == llm.ProviderKimi || provider == llm.ProviderGeminiCLI || provider == llm.ProviderCodexCLI
 }
 
 // buildCLIStructuredOutputInstruction builds an instruction string that tells the LLM

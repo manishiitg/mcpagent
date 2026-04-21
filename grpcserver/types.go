@@ -35,6 +35,7 @@ type ProviderAPIKeys struct {
 	Anthropic         *string         `json:"anthropic,omitempty"`
 	OpenRouter        *string         `json:"openrouter,omitempty"`
 	ZAI               *string         `json:"z-ai,omitempty"`
+	Kimi              *string         `json:"kimi,omitempty"`
 	Vertex            *string         `json:"vertex,omitempty"`
 	GeminiCLI         *string         `json:"gemini_cli,omitempty"`
 	CodexCLI          *string         `json:"codex_cli,omitempty"`
@@ -68,6 +69,7 @@ func (k *ProviderAPIKeys) ToLLMKeys() *llm.ProviderAPIKeys {
 		OpenAI:            k.OpenAI,
 		Anthropic:         k.Anthropic,
 		ZAI:               k.ZAI,
+		Kimi:              k.Kimi,
 		Vertex:            k.Vertex,
 		GeminiCLI:         k.GeminiCLI,
 		CodexCLI:          k.CodexCLI,

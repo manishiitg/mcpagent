@@ -24,6 +24,7 @@ const (
 	ProviderVertex            = llmproviders.ProviderVertex
 	ProviderAzure             = llmproviders.ProviderAzure
 	ProviderZAI               = llmproviders.ProviderZAI
+	ProviderKimi              = llmproviders.ProviderKimi
 	ProviderClaudeCode        = llmproviders.ProviderClaudeCode
 	ProviderGeminiCLI         = llmproviders.ProviderGeminiCLI
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
