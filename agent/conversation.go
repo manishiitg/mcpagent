@@ -818,33 +818,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			loggerv2.Int("total_messages", len(llmMessages)),
 			loggerv2.Int("compacted_messages_found", compactedInLLMMessages))
 
-		// PRE-FLIGHT CHECK: Verify total context doesn't exceed API limits
-		// This prevents "prompt is too long" errors from cumulative tool results
-		// Uses 80% of model context window, or 800k fallback if unknown
-		if a.toolOutputHandler != nil {
-			contextLimit := GetMaxContextTokenLimit(a.modelContextWindow)
-			exceeds, totalTokens := a.toolOutputHandler.ExceedsContextLimit(llmMessages, a.ModelID, contextLimit)
-			if exceeds {
-				v2Logger.Error("Context exceeds maximum token limit", fmt.Errorf("context overflow: %d tokens > %d limit", totalTokens, contextLimit),
-					loggerv2.Int("total_tokens", totalTokens),
-					loggerv2.Int("max_tokens", contextLimit),
-					loggerv2.Int("model_context_window", a.modelContextWindow),
-					loggerv2.Int("turn", turn+1),
-					loggerv2.Int("message_count", len(llmMessages)))
-
-				contextErrorEvent := events.NewConversationErrorEvent(
-					lastUserMessage,
-					fmt.Sprintf("context overflow: %d tokens exceeds %d limit", totalTokens, contextLimit),
-					turn+1,
-					"context_overflow",
-					time.Since(conversationStartTime),
-				)
-				a.EmitTypedEvent(ctx, contextErrorEvent)
-
-				return "", messages, fmt.Errorf("context overflow: total messages contain %d tokens which exceeds the maximum limit of %d tokens. The cumulative tool results are too large. Consider using more targeted queries, pagination, or breaking the task into smaller steps", totalTokens, contextLimit)
-			}
-		}
-
 		tools := events.ConvertToolsToToolInfo(a.filteredTools, a.toolToServer)
 		conversationTurnEvent := events.NewConversationTurnEvent(turn+1, lastMessage, len(llmMessages), false, 0, tools, llmMessages)
 		a.EmitTypedEvent(ctx, conversationTurnEvent)
