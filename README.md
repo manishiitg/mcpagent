@@ -37,6 +37,7 @@ If you are evaluating the project for the first time, these are the best first e
 - **[basic_gemini_cli_fallback_claude_code/](examples/basic_gemini_cli_fallback_claude_code/)** - Gemini CLI with Claude Code fallback
 - **[multi-turn/](examples/multi-turn/)** - Conversation history and cumulative token tracking
 - **[nodejs-sdk/](examples/nodejs-sdk/)** - JavaScript/TypeScript SDK examples over gRPC
+- **[youdotcom_search_custom_tool/](examples/youdotcom_search_custom_tool/)** - Add a you.com Search API custom tool with env setup and fallback behavior
 
 If you want a broader multi-tool demo, use **[multi-mcp-server/](examples/multi-mcp-server/)** after the basics.
 
@@ -120,6 +121,7 @@ See [examples/](examples/) for complete working examples:
   - **[fixed/](examples/structured_output/fixed/)** - Fixed conversion model (2 LLM calls)
   - **[tool/](examples/structured_output/tool/)** - Tool-based model (1 LLM call)
 - **[custom_tools/](examples/custom_tools/)** - Register and use custom tools
+- **[youdotcom_search_custom_tool/](examples/youdotcom_search_custom_tool/)** - Custom tool integration for you.com Search API (direct HTTP + fallback handling)
 - **[code_execution/](examples/code_execution/)** - Code execution mode examples
   - **[simple/](examples/code_execution/simple/)** - Basic code execution (no folder guards)
   - **[browser-automation/](examples/code_execution/browser-automation/)** - Code execution with browser automation
