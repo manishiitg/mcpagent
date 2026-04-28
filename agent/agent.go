@@ -3787,27 +3787,28 @@ func (a *Agent) SetToolArgTransformer(toolName string, fn func(args map[string]i
 //   - parameters: JSON schema defining the tool's expected arguments.
 //   - executionFunc: The Go function to execute when the tool is called.
 //   - category: REQUIRED. The tool's category (e.g., "workspace", "human", "virtual").
+//     Compile-time required (was previously variadic with a runtime check; the
+//     runtime check turned silent registration failures into a category of bug
+//     that only surfaced in server_debug.log — making it required enforces
+//     correctness at the call site).
 //
 // Returns:
-//   - error: An error if registration fails (e.g., missing category).
-func (a *Agent) RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category ...string) error {
+//   - error: An error if registration fails (e.g., empty category).
+func (a *Agent) RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category string) error {
 	if a.customTools == nil {
 		a.customTools = make(map[string]CustomTool)
 	}
 
-	// Determine category - REQUIRED, no default
-	// All tools must have a category from ToolCategories map
-	var toolCategory string
-	if len(category) > 0 && category[0] != "" {
-		toolCategory = category[0]
-	} else {
-		// Category is required - return error
-		err := fmt.Errorf("tool %s registered without category - category is REQUIRED for all tools", name)
+	// Category is required at compile time, but still validate non-empty in case
+	// a caller passes an empty literal.
+	if category == "" {
+		err := fmt.Errorf("tool %s registered with empty category - category is REQUIRED for all tools", name)
 		if a.Logger != nil {
-			a.Logger.Error("❌ [DISCOVERY] Tool registered without category", err)
+			a.Logger.Error("❌ [DISCOVERY] Tool registered with empty category", err)
 		}
 		return err
 	}
+	toolCategory := category
 
 	// Create the tool definition
 	tool := llmtypes.Tool{
@@ -4067,9 +4068,9 @@ func (a *Agent) GetCustomToolExecutor(name string) func(ctx context.Context, arg
 //
 // Returns:
 //   - error: An error if registration fails (e.g., missing category).
-func (a *Agent) RegisterCustomToolWithTimeout(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), timeout time.Duration, category ...string) error {
+func (a *Agent) RegisterCustomToolWithTimeout(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), timeout time.Duration, category string) error {
 	// First register the tool using the standard method
-	err := a.RegisterCustomTool(name, description, parameters, executionFunc, category...)
+	err := a.RegisterCustomTool(name, description, parameters, executionFunc, category)
 	if err != nil {
 		return err
 	}
