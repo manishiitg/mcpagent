@@ -30,6 +30,8 @@ const (
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
 	ProviderMiniMax           = llmproviders.ProviderMiniMax
 	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
+	ProviderElevenLabs        = llmproviders.ProviderElevenLabs
+	ProviderDeepgram          = llmproviders.ProviderDeepgram
 )
 
 const (
@@ -60,6 +62,13 @@ type Config struct {
 // ProviderAPIKeys is the canonical API key holder — aliased from multi-llm-provider-go.
 // Add new provider fields to llmproviders.ProviderAPIKeys, not here.
 type ProviderAPIKeys = llmproviders.ProviderAPIKeys
+
+// Music generation types are re-exported for agent packages that depend on mcpagent/llm.
+type MusicGenerationModel = llmtypes.MusicGenerationModel
+type MusicGenerationResponse = llmtypes.MusicGenerationResponse
+type GeneratedMusic = llmtypes.GeneratedMusic
+type MusicGenerationOptions = llmtypes.MusicGenerationOptions
+type MusicGenerationOption = llmtypes.MusicGenerationOption
 
 // AzureAPIConfig is aliased from multi-llm-provider-go.
 type AzureAPIConfig = llmproviders.AzureAPIConfig

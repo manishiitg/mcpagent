@@ -22,9 +22,6 @@ func TestResolveConnectionSessionID(t *testing.T) {
 	if got := registry.ResolveConnectionSessionID("tool-session", "playwright"); got != "browser-session" {
 		t.Fatalf("browser override not applied for playwright: got %q", got)
 	}
-	if got := registry.ResolveConnectionSessionID("tool-session", "camofox"); got != "browser-session" {
-		t.Fatalf("browser override not applied for camofox: got %q", got)
-	}
 
 	registry.ClearBrowserSessionOverride("tool-session")
 	if got := registry.ResolveConnectionSessionID("tool-session", "playwright"); got != "tool-session" {

@@ -328,7 +328,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	}
 
 	// PRIORITY 3: Fall back to mcpcache (creates new connection)
-	// 🛑 BLOCK for browser-scoped servers: playwright/camofox must ONLY be created via
+	// 🛑 BLOCK for browser-scoped servers: playwright must ONLY be created via
 	// the session registry (Priority 1). mcpcache creates standalone connections with
 	// default config (wrong --output-dir, no session tracking), causing extra browsers.
 	if client == nil && mcpclient.IsBrowserScopedServer(req.Server) {

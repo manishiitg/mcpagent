@@ -129,11 +129,11 @@ func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry
 }
 
-// IsBrowserScopedServer returns true for stateful browser servers (playwright, camofox)
+// IsBrowserScopedServer returns true for stateful browser servers (playwright)
 // that require dedicated per-session connections and should never be created via mcpcache fallback.
 func IsBrowserScopedServer(serverName string) bool {
 	switch serverName {
-	case "playwright", "camofox":
+	case "playwright":
 		return true
 	default:
 		return false
@@ -158,7 +158,7 @@ func (r *SessionConnectionRegistry) ResolveConnectionSessionID(sessionID, server
 }
 
 // RegisterBrowserSessionOverride binds a logical tool session to a stable browser
-// session identity for stateful browser servers like Playwright and camofox.
+// session identity for stateful browser servers like Playwright.
 func (r *SessionConnectionRegistry) RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
 	if sessionID == "" || browserSessionID == "" {
 		return

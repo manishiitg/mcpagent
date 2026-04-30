@@ -1454,7 +1454,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// CLI providers always need code execution mode (tools accessed via HTTP bridge).
 	// Without this, the tool filtering below would take the UseToolSearchMode path instead of
 	// UseCodeExecutionMode, leaving allMCPToolDefs empty and breaking get_api_spec.
-	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderKimi || ag.provider == llmproviders.ProviderGeminiCLI || ag.provider == llmproviders.ProviderCodexCLI {
+	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI || ag.provider == llmproviders.ProviderCodexCLI {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
 			logger.Debug("[BRIDGE_DEBUG] Pre-set UseCodeExecutionMode for CLI provider before MCP tool filtering",
@@ -1707,7 +1707,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Safety net: Ensure CLI provider modes are correct before virtual tool filtering.
 	// The primary pre-detection is above (before MCP tool filtering at allMCPToolDefs).
 	// This block is a safety net in case code is reordered in the future.
-	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderKimi || ag.provider == llmproviders.ProviderGeminiCLI || ag.provider == llmproviders.ProviderCodexCLI {
+	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI || ag.provider == llmproviders.ProviderCodexCLI {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
 			logger.Warn("[BRIDGE_DEBUG] CLI provider UseCodeExecutionMode was not pre-set — enforcing before virtual tool filtering (safety net)",
@@ -1899,7 +1899,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.String("claude_code_provider", string(llmproviders.ProviderClaudeCode)),
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
-	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderKimi {
+	if ag.provider == llmproviders.ProviderClaudeCode {
 		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
@@ -2888,7 +2888,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		loggerv2.String("claude_code_provider", string(llmproviders.ProviderClaudeCode)),
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
-	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderKimi {
+	if ag.provider == llmproviders.ProviderClaudeCode {
 		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 

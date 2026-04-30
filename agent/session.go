@@ -146,7 +146,7 @@ func RegisterHTTPSession(httpSessionID, mcpSessionID string) {
 }
 
 // RegisterBrowserSessionOverride binds a logical tool session to a stable browser
-// session identity for stateful browser servers such as Playwright and camofox.
+// session identity for stateful browser servers such as Playwright.
 func RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
 	registry := mcpclient.GetSessionRegistry()
 	registry.RegisterBrowserSessionOverride(sessionID, browserSessionID)

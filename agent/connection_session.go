@@ -197,7 +197,7 @@ func NewAgentConnectionWithSession(
 					// Playwright: runtime overrides change --output-dir which affects the
 					// cache key hash, but tool schemas are identical. Fall back to base
 					// config cache key so the startup-populated cache entry is reused.
-					if srvName == "playwright" || srvName == "camofox" {
+					if srvName == "playwright" {
 						baseKey := mcpcache.GenerateUnifiedCacheKey(srvName, baseServerConfig)
 						cachedEntry, exists = cacheManager.Get(baseKey)
 					}
@@ -413,7 +413,7 @@ func NewAgentConnectionWithSession(
 
 // resolveOnDemandMCPClient returns the MCP client for an on-demand server connection.
 // It prefers the session registry (lazy-connect, reuses existing connections) over
-// spawning a fresh process — critical for stateful servers like Playwright and camofox.
+// spawning a fresh process — critical for stateful servers like Playwright.
 func (a *Agent) resolveOnDemandMCPClient(ctx context.Context, serverName string, logger loggerv2.Logger) (mcpclient.ClientInterface, error) {
 	if a.SessionID != "" {
 		registry := mcpclient.GetSessionRegistry()

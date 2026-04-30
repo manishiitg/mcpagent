@@ -877,7 +877,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 	// 🔧 CLAUDE CODE INTEGRATION: Inject MCP Config via bridge
 	// Claude Code always uses code execution mode — tools are accessed via the
 	// mcpbridge stdio binary which forwards calls to the HTTP API endpoints.
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderClaudeCode || llmproviders.Provider(model.Provider) == llmproviders.ProviderKimi {
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderClaudeCode {
 		claudeHTTPHooksEnabled := claudeHTTPRoutingHooksEnabled()
 
 		// Use restricted permissions instead of skipping them entirely
