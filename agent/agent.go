@@ -667,6 +667,13 @@ func WithUserID(userID string) AgentOption {
 	}
 }
 
+func isCodingCLIProvider(provider llm.Provider, modelID string) bool {
+	return provider == llm.ProviderClaudeCode ||
+		provider == llm.ProviderGeminiCLI ||
+		provider == llm.ProviderCodexCLI ||
+		(provider == llm.ProviderKimi && kimiCodeCLITransportEnabled(modelID))
+}
+
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
 // It is the central component that orchestrates interactions between the Large Language Model (LLM),
 // Model Context Protocol (MCP) servers, and various tools.
@@ -1450,11 +1457,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		logger,
 	)
 
-	// Pre-detect CLI providers (Claude Code, Gemini CLI) to set correct modes BEFORE MCP tool filtering.
+	// Pre-detect coding CLI providers to set correct modes BEFORE MCP tool filtering.
 	// CLI providers always need code execution mode (tools accessed via HTTP bridge).
 	// Without this, the tool filtering below would take the UseToolSearchMode path instead of
 	// UseCodeExecutionMode, leaving allMCPToolDefs empty and breaking get_api_spec.
-	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI || ag.provider == llmproviders.ProviderCodexCLI {
+	if isCodingCLIProvider(ag.provider, ag.ModelID) {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
 			logger.Debug("[BRIDGE_DEBUG] Pre-set UseCodeExecutionMode for CLI provider before MCP tool filtering",
@@ -1707,7 +1714,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Safety net: Ensure CLI provider modes are correct before virtual tool filtering.
 	// The primary pre-detection is above (before MCP tool filtering at allMCPToolDefs).
 	// This block is a safety net in case code is reordered in the future.
-	if ag.provider == llmproviders.ProviderClaudeCode || ag.provider == llmproviders.ProviderGeminiCLI || ag.provider == llmproviders.ProviderCodexCLI {
+	if isCodingCLIProvider(ag.provider, ag.ModelID) {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
 			logger.Warn("[BRIDGE_DEBUG] CLI provider UseCodeExecutionMode was not pre-set — enforcing before virtual tool filtering (safety net)",
