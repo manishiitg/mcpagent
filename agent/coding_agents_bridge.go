@@ -176,6 +176,15 @@ func (a *Agent) lookupBridgeTool(name, toolType string, logger loggerv2.Logger) 
 				return marshalBridgeToolDef(name, tool.Function.Description, tool.Function.Parameters, toolType, logger)
 			}
 		}
+		// Coding-agent bridges must always be able to discover HTTP-backed tools,
+		// even when the current provider path filtered virtual tools out of a.Tools.
+		// Recreate virtual definitions here so get_api_spec remains available while
+		// advanced/custom tools stay behind API discovery.
+		for _, tool := range a.CreateVirtualTools() {
+			if tool.Function != nil && tool.Function.Name == name {
+				return marshalBridgeToolDef(name, tool.Function.Description, tool.Function.Parameters, toolType, logger)
+			}
+		}
 		return nil
 
 	default:
