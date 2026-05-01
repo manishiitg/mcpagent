@@ -267,6 +267,7 @@ func compactStaleToolResponses(a *Agent, ctx context.Context, messages []llmtype
 						ToolCallID: tr.ToolCallID,
 						Name:       tr.Name,
 						Content:    compactedContent,
+						IsError:    tr.IsError,
 					})
 				} else {
 					newParts = append(newParts, part)

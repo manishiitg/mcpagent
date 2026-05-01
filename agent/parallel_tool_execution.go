@@ -278,7 +278,7 @@ func prepareToolExecution(
 
 		msg := llmtypes.MessageContent{
 			Role:  llmtypes.ChatMessageTypeTool,
-			Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+			Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
 		}
 		plan.skipExecution = true
 		plan.preErrorMessage = &msg
@@ -296,7 +296,7 @@ func prepareToolExecution(
 
 		msg := llmtypes.MessageContent{
 			Role:  llmtypes.ChatMessageTypeTool,
-			Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+			Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
 		}
 		plan.skipExecution = true
 		plan.preErrorMessage = &msg
@@ -363,7 +363,7 @@ func prepareToolExecution(
 
 				msg := llmtypes.MessageContent{
 					Role:  llmtypes.ChatMessageTypeTool,
-					Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+					Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
 				}
 				plan.skipExecution = true
 				plan.preErrorMessage = &msg
@@ -381,7 +381,7 @@ func prepareToolExecution(
 				plan.skipExecution = true
 				msg := llmtypes.MessageContent{
 					Role:  llmtypes.ChatMessageTypeTool,
-					Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: fmt.Sprintf("Error: failed to create on-demand connection for server %s: %v", serverName, err)}},
+					Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: fmt.Sprintf("Error: failed to create on-demand connection for server %s: %v", serverName, err), IsError: true}},
 				}
 				plan.preErrorMessage = &msg
 				return plan
@@ -406,7 +406,7 @@ func prepareToolExecution(
 
 			msg := llmtypes.MessageContent{
 				Role:  llmtypes.ChatMessageTypeTool,
-				Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: fmt.Sprintf("Error: no MCP client found for tool %s", tc.FunctionCall.Name)}},
+				Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: fmt.Sprintf("Error: no MCP client found for tool %s", tc.FunctionCall.Name), IsError: true}},
 			}
 			plan.skipExecution = true
 			plan.preErrorMessage = &msg
@@ -574,7 +574,7 @@ func executeToolCall(
 			result.resultText = errorResultText
 			result.messages = []llmtypes.MessageContent{{
 				Role:  llmtypes.ChatMessageTypeTool,
-				Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: errorResultText}},
+				Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: errorResultText, IsError: true}},
 			}}
 			return result
 		}
@@ -646,7 +646,7 @@ func executeToolCall(
 	result.resultText = resultText
 	result.messages = []llmtypes.MessageContent{{
 		Role:  llmtypes.ChatMessageTypeTool,
-		Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: resultText}},
+		Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: resultText, IsError: mcpResult != nil && mcpResult.IsError}},
 	}}
 	return result
 }

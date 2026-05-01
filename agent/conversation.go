@@ -1096,7 +1096,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					}
 					messages = append(messages, llmtypes.MessageContent{
 						Role:  llmtypes.ChatMessageTypeTool,
-						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: toolName, Content: feedbackMessage}},
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: toolName, Content: feedbackMessage, IsError: true}},
 					})
 
 					continue
@@ -1116,7 +1116,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Add feedback to conversation so LLM can correct itself
 					messages = append(messages, llmtypes.MessageContent{
 						Role:  llmtypes.ChatMessageTypeTool,
-						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
 					})
 
 					continue
@@ -1202,7 +1202,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							// Add feedback to conversation so LLM can correct itself
 							messages = append(messages, llmtypes.MessageContent{
 								Role:  llmtypes.ChatMessageTypeTool,
-								Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+								Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
 							})
 
 							continue
@@ -1526,7 +1526,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						// Add the error result to the conversation so the LLM can continue
 						messages = append(messages, llmtypes.MessageContent{
 							Role:  llmtypes.ChatMessageTypeTool, // Use "tool" role for tool responses
-							Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: errorResultText}},
+							Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: errorResultText, IsError: true}},
 						})
 
 						// Continue to next turn instead of returning error
@@ -1652,7 +1652,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Use the exact tool call ID from the LLM response
 					messages = append(messages, llmtypes.MessageContent{
 						Role:  llmtypes.ChatMessageTypeTool, // Use "tool" role for tool responses
-						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: resultText}},
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: resultText, IsError: result != nil && result.IsError}},
 					})
 				}()
 

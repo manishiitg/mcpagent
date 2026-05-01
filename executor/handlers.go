@@ -368,6 +368,12 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Execute tool
+	var argsJSON []byte
+	var toolCallID string
+	if req.SessionID != "" {
+		argsJSON, _ = json.Marshal(req.Args)
+		toolCallID = toolcalllog.RecordStart(req.SessionID, req.Tool, string(argsJSON))
+	}
 	h.logger.Info("🚀 Executing tool via direct connection",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.String("server", req.Server))
@@ -458,6 +464,9 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		h.logger.Error("Tool execution failed", err,
 			loggerv2.String("tool", req.Tool),
 			loggerv2.String("server", req.Server))
+		if req.SessionID != "" {
+			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), fmt.Sprintf("Tool execution failed: %v", err), mcpToolStartTime)
+		}
 		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Tool execution failed: %v", err),
@@ -545,8 +554,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 
 	// Record completed call so LLMAgentWrapper can reconstruct history on cancellation.
 	if req.SessionID != "" {
-		argsJSON, _ := json.Marshal(req.Args)
-		toolcalllog.Record(req.SessionID, req.Tool, string(argsJSON), resultStr)
+		toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), resultStr, mcpToolStartTime)
 	}
 
 	// Return success response
@@ -611,6 +619,14 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	defer cancel()
 
 	// Execute custom tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
+	var argsJSON []byte
+	var toolCallID string
+	var toolStartedAt time.Time
+	if req.SessionID != "" {
+		argsJSON, _ = json.Marshal(req.Args)
+		toolStartedAt = time.Now()
+		toolCallID = toolcalllog.RecordStart(req.SessionID, req.Tool, string(argsJSON))
+	}
 	h.logger.Info("🚀 Executing custom tool",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.String("session_id", req.SessionID))
@@ -621,6 +637,9 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION END - Time: %s, Tool: %s, Duration: %v", time.Now().Format(time.RFC3339), req.Tool, toolDuration))
 	if err != nil {
 		h.logger.Error("Custom tool execution failed", err, loggerv2.String("tool", req.Tool))
+		if req.SessionID != "" {
+			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), fmt.Sprintf("Custom tool execution failed: %v", err), toolStartedAt)
+		}
 		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
 			Error:   fmt.Sprintf("Custom tool execution failed: %v", err),
@@ -634,8 +653,7 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 
 	// Record completed call so LLMAgentWrapper can reconstruct history on cancellation.
 	if req.SessionID != "" {
-		argsJSON, _ := json.Marshal(req.Args)
-		toolcalllog.Record(req.SessionID, req.Tool, string(argsJSON), result)
+		toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), result, toolStartedAt)
 	}
 
 	// Return success response

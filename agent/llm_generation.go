@@ -55,6 +55,22 @@ func geminiHTTPRoutingHooksEnabled() bool {
 		strings.EqualFold(v, "on")
 }
 
+func kimiCodeCLITransportEnabled(modelID string) bool {
+	if strings.TrimSpace(modelID) != "" && strings.TrimSpace(modelID) != "kimi-code" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("KIMI_CODE_TRANSPORT"))) {
+	case "":
+		return true
+	case "cli", "native", "kimi-cli", "kimi-code-cli":
+		return true
+	case "http", "api", "anthropic", "anthropic-http", "off", "false", "0":
+		return false
+	default:
+		return true
+	}
+}
+
 func claudeHTTPRoutingHooksEnabled() bool {
 	v := strings.TrimSpace(os.Getenv("MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING"))
 	if v == "" {
@@ -934,6 +950,19 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 				a.Logger.Info(fmt.Sprintf("🧠 [CLAUDE_CODE] Effort level set to: %s", effort))
 			}
 		}
+	}
+
+	// 🔧 KIMI CLI INTEGRATION: MCP bridge + restricted internal tools
+	// Kimi's kimi-code model defaults to the native CLI transport. Pass the same
+	// MCP bridge config used by Claude Code so Kimi sees our workspace/browser/custom
+	// tools instead of relying only on its internal tools.
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderKimi && kimiCodeCLITransportEnabled(model.ModelID) {
+		bridgeConfig, err := a.BuildBridgeMCPConfig()
+		if err != nil {
+			return nil, fmt.Errorf("Kimi Code CLI requires the MCP bridge: %w", err)
+		}
+		opts = append(opts, llm.WithMCPConfig(bridgeConfig))
+		a.Logger.Info("🌉 Using MCP bridge for Kimi Code CLI tool access via HTTP API")
 	}
 
 	// 🔧 GEMINI CLI INTEGRATION: Project settings + MCP bridge
