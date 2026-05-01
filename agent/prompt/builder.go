@@ -155,6 +155,9 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 				toolStructureJSON + "\n" +
 				"```\n\n" +
 				"Domain tools (MCP and custom) are called via HTTP API. System tools (execute_shell_command, agent_browser) are called directly — see your provider's tool list for exact names.\n" +
+				"Do not conclude a workspace tool is unavailable just because it is absent from your provider's native tool list. First inspect this tool index or call get_api_spec.\n" +
+				"Workspace media, search, and analysis tools live under server_name=\"workspace_advanced\". Examples include generate_music, text_to_speech, speech_to_text, generate_video, search_web_llm, image_gen, image_edit, read_image, and read_video.\n" +
+				"For those tools, call get_api_spec(server_name=\"workspace_advanced\", tool_name=\"<tool>\") before reporting that the capability is unavailable.\n" +
 				"</available_tools>\n" +
 				preDiscoveredToolSpecs
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
@@ -162,6 +165,7 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 			toolStructureSection := "\n\n<available_tools>\n" +
 				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
 				"Tool index is being built. Use get_api_spec(server_name=\"...\", tool_name=\"...\") to discover endpoints.\n" +
+				"Workspace media, search, and analysis tools are normally discoverable under server_name=\"workspace_advanced\"; check there before reporting that a capability such as generate_music is unavailable.\n" +
 				"</available_tools>\n"
 			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
 		}
