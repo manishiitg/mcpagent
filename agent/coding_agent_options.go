@@ -8,19 +8,21 @@ import (
 )
 
 func (a *Agent) appendCodingAgentInteractiveOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
-	opts = a.appendCodingAgentWorkingDirOption(opts)
+	return a.appendCodingAgentInteractiveOptionsForProvider(opts, a.provider, a.ModelID)
+}
+
+func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
+	opts = a.appendCodingAgentWorkingDirOptionForProvider(opts, provider, modelID)
 
 	sessionID := strings.TrimSpace(a.SessionID)
-	if sessionID == "" {
+	if sessionID == "" || !codingAgentPersistentInteractiveEnabledForProvider(provider, sessionID) {
 		return opts
 	}
 
-	switch a.provider {
+	switch provider {
 	case llm.ProviderClaudeCode:
 		opts = append(opts, llm.WithClaudeCodeInteractiveSessionID(sessionID))
-		if a.ClaudeCodePersistentInteractiveSession {
-			opts = append(opts, llm.WithClaudeCodePersistentInteractiveSession(true))
-		}
+		opts = append(opts, llm.WithClaudeCodePersistentInteractiveSession(true))
 	case llm.ProviderCodexCLI:
 		opts = append(opts, llm.WithCodexInteractiveSessionID(sessionID))
 		if strings.TrimSpace(a.CodingAgentWorkingDir) == "" {
@@ -28,25 +30,37 @@ func (a *Agent) appendCodingAgentInteractiveOptions(opts []llmtypes.CallOption) 
 				opts = append(opts, llm.WithCodexProjectDirID(legacyDir))
 			}
 		}
-		if a.CodexPersistentInteractiveSession {
-			opts = append(opts, llm.WithCodexPersistentInteractiveSession(true))
-		}
+		opts = append(opts, llm.WithCodexPersistentInteractiveSession(true))
 	case llm.ProviderGeminiCLI:
 		opts = append(opts, llm.WithGeminiInteractiveSessionID(sessionID))
-		if a.GeminiPersistentInteractiveSession {
-			opts = append(opts, llm.WithGeminiPersistentInteractiveSession(true))
-		}
+		opts = append(opts, llm.WithGeminiPersistentInteractiveSession(true))
 	}
 
 	return opts
 }
 
-func (a *Agent) appendCodingAgentWorkingDirOption(opts []llmtypes.CallOption) []llmtypes.CallOption {
+func (a *Agent) codingAgentPersistentInteractiveEnabled() bool {
+	return codingAgentPersistentInteractiveEnabledForProvider(a.provider, a.SessionID)
+}
+
+func codingAgentPersistentInteractiveEnabledForProvider(provider llm.Provider, sessionID string) bool {
+	if strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+	switch provider {
+	case llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderGeminiCLI:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
 	workingDir := strings.TrimSpace(a.CodingAgentWorkingDir)
 	if workingDir == "" {
 		return opts
 	}
-	option, ok := codingAgentWorkingDirOptionForProvider(a.provider, a.ModelID)
+	option, ok := codingAgentWorkingDirOptionForProvider(provider, modelID)
 	if !ok {
 		return opts
 	}

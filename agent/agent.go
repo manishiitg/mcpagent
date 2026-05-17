@@ -118,9 +118,10 @@ func WithProvider(provider llm.Provider) AgentOption {
 	}
 }
 
-// WithClaudeCodePersistentInteractiveSession keeps Claude Code experimental
-// tmux sessions alive across completed chat turns. Use only for interactive
-// chat; workflow steps should keep the default per-turn lifecycle.
+// WithClaudeCodePersistentInteractiveSession keeps Claude Code tmux sessions
+// alive across completed turns. Coding CLI providers now use this interactive
+// path whenever an owner session id is available; this option remains for
+// callers that set metadata explicitly.
 func WithClaudeCodePersistentInteractiveSession(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.ClaudeCodePersistentInteractiveSession = enabled
@@ -128,8 +129,8 @@ func WithClaudeCodePersistentInteractiveSession(enabled bool) AgentOption {
 }
 
 // WithClaudeCodeTransport selects the Claude Code transport for this agent.
-// Use llm.ClaudeCodeTransportExperimental for interactive tmux/no -p chat, or
-// llm.ClaudeCodeTransportPrint for the legacy claude -p stream-json path.
+// Use llm.ClaudeCodeTransportExperimental for the normal interactive tmux/no
+// -p path. llm.ClaudeCodeTransportPrint is a legacy test-only stream-json path.
 func WithClaudeCodeTransport(transport string) AgentOption {
 	return func(a *Agent) {
 		a.ClaudeCodeTransport = transport
@@ -145,8 +146,9 @@ func WithCodingAgentWorkingDir(dir string) AgentOption {
 }
 
 // WithCodexPersistentInteractiveSession keeps Codex CLI tmux sessions alive
-// across completed chat turns. Use only for interactive chat; workflow steps
-// should keep the default exec-json lifecycle.
+// across completed turns. Coding CLI providers now use this interactive path
+// whenever an owner session id is available; this option remains for callers
+// that set metadata explicitly.
 func WithCodexPersistentInteractiveSession(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.CodexPersistentInteractiveSession = enabled
@@ -154,8 +156,9 @@ func WithCodexPersistentInteractiveSession(enabled bool) AgentOption {
 }
 
 // WithGeminiPersistentInteractiveSession keeps Gemini CLI tmux sessions alive
-// across completed chat turns. Use only for interactive chat; workflow steps
-// should keep the default stream-json lifecycle.
+// across completed turns. Coding CLI providers now use this interactive path
+// whenever an owner session id is available; this option remains for callers
+// that set metadata explicitly.
 func WithGeminiPersistentInteractiveSession(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.GeminiPersistentInteractiveSession = enabled
@@ -789,10 +792,10 @@ type Agent struct {
 	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
 	CodexProjectDirID string
 
-	// Codex CLI thread ID for exec-json resume on subsequent turns
+	// Codex CLI thread ID for legacy exec-json resume on subsequent turns
 	CodexSessionID string
 
-	// Codex CLI persistent tmux mode for interactive chat
+	// Codex CLI persistent tmux mode
 	CodexPersistentInteractiveSession bool
 
 	// Context offloading: handles offloading large tool outputs to filesystem

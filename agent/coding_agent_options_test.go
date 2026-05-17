@@ -3,7 +3,9 @@ package mcpagent
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
@@ -79,7 +81,7 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantWorkingDir: "/tmp/kimi-chat",
 		},
 		{
-			name: "codex workflow keeps non-persistent lifecycle",
+			name: "codex workflow uses persistent interactive lifecycle",
 			agent: &Agent{
 				provider:                          llm.ProviderCodexCLI,
 				SessionID:                         "workflow-session",
@@ -88,7 +90,7 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantSessionKey:  codexcli.MetadataKeyInteractiveSessionID,
 			wantPersistKey:  codexcli.MetadataKeyPersistentInteractive,
 			wantSessionID:   "workflow-session",
-			wantPersistence: false,
+			wantPersistence: true,
 		},
 		{
 			name: "missing owner session produces no coding-agent metadata",
@@ -157,6 +159,46 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 				t.Fatalf("metadata %q = %#v, want /tmp/workdir", tc.metadataKey, got[tc.metadataKey])
 			}
 		})
+	}
+}
+
+func TestAppendCodingAgentInteractiveOptionsForActualFallbackProvider(t *testing.T) {
+	agent := &Agent{
+		provider:              llm.ProviderOpenAI,
+		SessionID:             "fallback-session",
+		CodingAgentWorkingDir: "/tmp/fallback-workdir",
+	}
+
+	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptionsForProvider(nil, llm.ProviderGeminiCLI, "gemini-3.1-flash-lite"))
+
+	if got[geminicli.MetadataKeyInteractiveSessionID] != "fallback-session" {
+		t.Fatalf("Gemini fallback session metadata = %#v, want fallback-session", got[geminicli.MetadataKeyInteractiveSessionID])
+	}
+	if got[geminicli.MetadataKeyPersistentInteractive] != true {
+		t.Fatalf("Gemini fallback persistent metadata = %#v, want true", got[geminicli.MetadataKeyPersistentInteractive])
+	}
+	if got[geminicli.MetadataKeyWorkingDir] != "/tmp/fallback-workdir" {
+		t.Fatalf("Gemini fallback working dir = %#v, want /tmp/fallback-workdir", got[geminicli.MetadataKeyWorkingDir])
+	}
+}
+
+func TestAnnotateUnifiedCompletionEventMarksCodingAgentTerminalFormat(t *testing.T) {
+	agent := &Agent{
+		provider: llm.ProviderCodexCLI,
+		ModelID:  "gpt-5.3-codex-spark",
+	}
+	event := events.NewUnifiedCompletionEvent("simple", "simple", "question", "answer", "completed", time.Second, 1)
+
+	agent.annotateUnifiedCompletionEvent(event)
+
+	if event.Metadata["provider"] != string(llm.ProviderCodexCLI) {
+		t.Fatalf("provider metadata = %#v, want %q", event.Metadata["provider"], llm.ProviderCodexCLI)
+	}
+	if event.Metadata["model_id"] != "gpt-5.3-codex-spark" {
+		t.Fatalf("model_id metadata = %#v, want gpt-5.3-codex-spark", event.Metadata["model_id"])
+	}
+	if event.Metadata["coding_agent_terminal_format"] != true {
+		t.Fatalf("coding_agent_terminal_format metadata = %#v, want true", event.Metadata["coding_agent_terminal_format"])
 	}
 }
 

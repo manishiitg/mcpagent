@@ -954,8 +954,11 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		temperature = *model.Temperature
 	}
 
+	modelProvider := llm.Provider(model.Provider)
+	opts = a.appendCodingAgentInteractiveOptionsForProvider(opts, modelProvider, model.ModelID)
+
 	llmInstance, err := llm.InitializeLLM(llm.Config{
-		Provider:            llm.Provider(model.Provider),
+		Provider:            modelProvider,
 		ModelID:             model.ModelID,
 		Temperature:         temperature,
 		Logger:              a.Logger,
@@ -1149,7 +1152,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		opts = append(opts, llm.WithCodexDisableShellTool())
 		// Auto-approve all tool calls (no interactive prompts)
 		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
-		if a.CodexSessionID != "" && !a.CodexPersistentInteractiveSession {
+		if a.CodexSessionID != "" && !a.codingAgentPersistentInteractiveEnabled() {
 			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 		}
 

@@ -72,6 +72,20 @@ func injectSteerMessages(ctx context.Context, a *Agent, messages []llmtypes.Mess
 	return messages
 }
 
+func (a *Agent) annotateUnifiedCompletionEvent(event *events.UnifiedCompletionEvent) {
+	if event == nil {
+		return
+	}
+	if event.Metadata == nil {
+		event.Metadata = make(map[string]interface{})
+	}
+	event.Metadata["provider"] = string(a.provider)
+	event.Metadata["model_id"] = a.ModelID
+	if isCodingCLIProvider(a.provider, a.ModelID) {
+		event.Metadata["coding_agent_terminal_format"] = true
+	}
+}
+
 // isVirtualTool checks if a tool name is a virtual tool
 func isVirtualTool(toolName string) bool {
 	// Check hardcoded virtual tools (includes all possible virtual tools)
@@ -852,7 +866,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			}
 		}
 
-		// Capture Codex CLI thread ID for exec-json resume on next turn.
+		// Capture Codex CLI thread ID for legacy exec-json resume on next turn.
 		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
 			if sid, ok := resp.Choices[0].GenerationInfo.Additional["codex_thread_id"].(string); ok && sid != "" {
 				a.CodexSessionID = sid
@@ -1801,6 +1815,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				time.Since(conversationStartTime), // duration
 				turn+1,                            // turns
 			)
+			a.annotateUnifiedCompletionEvent(unifiedCompletionEvent)
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
@@ -1939,6 +1954,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				time.Since(conversationStartTime), // duration
 				a.MaxTurns+1,                      // turns (+1 for the final turn)
 			)
+			a.annotateUnifiedCompletionEvent(unifiedCompletionEvent)
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
@@ -1995,6 +2011,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		time.Since(conversationStartTime), // duration
 		a.MaxTurns+1,                      // turns (+1 for the final turn)
 	)
+	a.annotateUnifiedCompletionEvent(unifiedCompletionEvent)
 	a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 	// NEW: End agent session for hierarchy tracking
