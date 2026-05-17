@@ -118,6 +118,50 @@ func WithProvider(provider llm.Provider) AgentOption {
 	}
 }
 
+// WithClaudeCodePersistentInteractiveSession keeps Claude Code experimental
+// tmux sessions alive across completed chat turns. Use only for interactive
+// chat; workflow steps should keep the default per-turn lifecycle.
+func WithClaudeCodePersistentInteractiveSession(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.ClaudeCodePersistentInteractiveSession = enabled
+	}
+}
+
+// WithClaudeCodeTransport selects the Claude Code transport for this agent.
+// Use llm.ClaudeCodeTransportExperimental for interactive tmux/no -p chat, or
+// llm.ClaudeCodeTransportPrint for the legacy claude -p stream-json path.
+func WithClaudeCodeTransport(transport string) AgentOption {
+	return func(a *Agent) {
+		a.ClaudeCodeTransport = transport
+	}
+}
+
+// WithCodingAgentWorkingDir sets the process working directory for interactive
+// coding CLI providers. The caller owns choosing the right user/workspace path.
+func WithCodingAgentWorkingDir(dir string) AgentOption {
+	return func(a *Agent) {
+		a.CodingAgentWorkingDir = strings.TrimSpace(dir)
+	}
+}
+
+// WithCodexPersistentInteractiveSession keeps Codex CLI tmux sessions alive
+// across completed chat turns. Use only for interactive chat; workflow steps
+// should keep the default exec-json lifecycle.
+func WithCodexPersistentInteractiveSession(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.CodexPersistentInteractiveSession = enabled
+	}
+}
+
+// WithGeminiPersistentInteractiveSession keeps Gemini CLI tmux sessions alive
+// across completed chat turns. Use only for interactive chat; workflow steps
+// should keep the default stream-json lifecycle.
+func WithGeminiPersistentInteractiveSession(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.GeminiPersistentInteractiveSession = enabled
+	}
+}
+
 // WithMaxTurns sets the maximum number of conversation turns allowed.
 //
 // A turn consists of one user message and one agent response (which may include multiple tool calls).
@@ -668,10 +712,8 @@ func WithUserID(userID string) AgentOption {
 }
 
 func isCodingCLIProvider(provider llm.Provider, modelID string) bool {
-	return provider == llm.ProviderClaudeCode ||
-		provider == llm.ProviderGeminiCLI ||
-		provider == llm.ProviderCodexCLI ||
-		(provider == llm.ProviderKimi && kimiCodeCLITransportEnabled(modelID))
+	_, ok := codingAgentWorkingDirOptionForProvider(provider, modelID)
+	return ok
 }
 
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
@@ -726,14 +768,32 @@ type Agent struct {
 	// Claude Code CLI session ID for --resume on subsequent turns
 	ClaudeCodeSessionID string
 
+	// Claude Code experimental persistent tmux mode for interactive chat
+	ClaudeCodePersistentInteractiveSession bool
+
+	// Claude Code transport override for this agent.
+	ClaudeCodeTransport string
+
+	// Process working directory for interactive coding CLI providers.
+	CodingAgentWorkingDir string
+
 	// Gemini CLI session ID for --resume on subsequent turns
 	GeminiSessionID string
 
 	// Gemini CLI project directory ID for per-invocation isolation
 	GeminiProjectDirID string
 
+	// Gemini CLI persistent tmux mode for interactive chat
+	GeminiPersistentInteractiveSession bool
+
 	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
 	CodexProjectDirID string
+
+	// Codex CLI thread ID for exec-json resume on subsequent turns
+	CodexSessionID string
+
+	// Codex CLI persistent tmux mode for interactive chat
+	CodexPersistentInteractiveSession bool
 
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler

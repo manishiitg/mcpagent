@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -48,5 +49,28 @@ func TestIsCodingCLIProviderIncludesKimiCodeOnly(t *testing.T) {
 				t.Fatalf("isCodingCLIProvider(%q, %q) = %v, want %v", tt.provider, tt.modelID, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGeminiRestrictToolsPolicyUsesCurrentMCPToolSyntax(t *testing.T) {
+	policy := geminiRestrictToolsPolicyContent()
+
+	for _, want := range []string{
+		`toolName = "mcp_api-bridge_*"`,
+		`toolName = "google_web_search"`,
+		`toolName = "*"`,
+	} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("policy missing %q:\n%s", want, policy)
+		}
+	}
+
+	for _, deprecated := range []string{
+		"mcp__api-bridge__",
+		"tools.exclude",
+	} {
+		if strings.Contains(policy, deprecated) {
+			t.Fatalf("policy contains deprecated syntax %q:\n%s", deprecated, policy)
+		}
 	}
 }

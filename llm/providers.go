@@ -35,10 +35,79 @@ const (
 )
 
 const (
+	ClaudeCodeTransportExperimental = llmproviders.ClaudeCodeTransportExperimental
+	ClaudeCodeTransportPrint        = llmproviders.ClaudeCodeTransportPrint
+)
+
+const (
 	MetadataKeyMCPConfig                  = "mcp_config"
 	MetadataKeyDangerouslySkipPermissions = "dangerously_skip_permissions"
 	MetadataKeyTools                      = "claude_code_tools"
 )
+
+// SendClaudeCodeExperimentalInput sends user input to a live Claude Code
+// experimental session registered for the owning application session.
+func SendClaudeCodeExperimentalInput(ctx context.Context, sessionID, message string) error {
+	return llmproviders.SendClaudeCodeExperimentalInput(ctx, sessionID, message)
+}
+
+// SendCodexCLIInteractiveInput sends user input to a live Codex CLI interactive
+// session registered for the owning application session.
+func SendCodexCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
+	return llmproviders.SendCodexCLIInteractiveInput(ctx, sessionID, message)
+}
+
+// SendGeminiCLIInteractiveInput sends user input to a live Gemini CLI
+// interactive session registered for the owning application session.
+func SendGeminiCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
+	return llmproviders.SendGeminiCLIInteractiveInput(ctx, sessionID, message)
+}
+
+// WithClaudeCodeInteractiveSessionID links a Claude Code experimental run to
+// the owning application session so live follow-up input can be sent to it.
+func WithClaudeCodeInteractiveSessionID(id string) llmtypes.CallOption {
+	return llmproviders.WithClaudeCodeInteractiveSessionID(id)
+}
+
+// WithClaudeCodePersistentInteractiveSession keeps the Claude Code experimental
+// tmux session alive across completed interactive chat turns.
+func WithClaudeCodePersistentInteractiveSession(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithClaudeCodePersistentInteractiveSession(enabled)
+}
+
+// WithClaudeCodeWorkingDir sets the process working directory for Claude Code.
+func WithClaudeCodeWorkingDir(dir string) llmtypes.CallOption {
+	return llmproviders.WithClaudeCodeWorkingDir(dir)
+}
+
+// WithKimiWorkingDir sets the process working directory for Kimi Code CLI.
+func WithKimiWorkingDir(dir string) llmtypes.CallOption {
+	return llmproviders.WithKimiWorkingDir(dir)
+}
+
+// WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning
+// application session so live follow-up input can be sent to it.
+func WithCodexInteractiveSessionID(id string) llmtypes.CallOption {
+	return llmproviders.WithCodexInteractiveSessionID(id)
+}
+
+// WithCodexPersistentInteractiveSession keeps Codex CLI interactive tmux
+// sessions alive across completed chat turns.
+func WithCodexPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithCodexPersistentInteractiveSession(enabled)
+}
+
+// WithGeminiInteractiveSessionID links a Gemini CLI interactive run to the
+// owning application session so live follow-up input can be sent to it.
+func WithGeminiInteractiveSessionID(id string) llmtypes.CallOption {
+	return llmproviders.WithGeminiInteractiveSessionID(id)
+}
+
+// WithGeminiPersistentInteractiveSession keeps Gemini CLI interactive tmux
+// sessions alive across completed chat turns.
+func WithGeminiPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithGeminiPersistentInteractiveSession(enabled)
+}
 
 // Config holds configuration for LLM initialization (agent_go version)
 // This is kept for backward compatibility and converted to llm-providers Config internally
@@ -57,6 +126,9 @@ type Config struct {
 	Context context.Context
 	// API keys for providers (optional, falls back to environment variables if not provided)
 	APIKeys *ProviderAPIKeys
+	// ClaudeCodeTransport optionally overrides CLAUDE_CODE_TRANSPORT for this
+	// initialized Claude Code model.
+	ClaudeCodeTransport string
 }
 
 // ProviderAPIKeys is the canonical API key holder — aliased from multi-llm-provider-go.
@@ -134,16 +206,17 @@ func convertConfig(config Config) llmproviders.Config {
 	providerAPIKeys := config.APIKeys.Clone()
 
 	return llmproviders.Config{
-		Provider:       llmproviders.Provider(config.Provider),
-		ModelID:        config.ModelID,
-		Temperature:    config.Temperature,
-		EventEmitter:   eventEmitter,
-		TraceID:        interfaces.TraceID(config.TraceID),
-		FallbackModels: config.FallbackModels,
-		MaxRetries:     config.MaxRetries,
-		Logger:         logger,
-		Context:        config.Context,
-		APIKeys:        providerAPIKeys,
+		Provider:            llmproviders.Provider(config.Provider),
+		ModelID:             config.ModelID,
+		Temperature:         config.Temperature,
+		EventEmitter:        eventEmitter,
+		TraceID:             interfaces.TraceID(config.TraceID),
+		FallbackModels:      config.FallbackModels,
+		MaxRetries:          config.MaxRetries,
+		Logger:              logger,
+		Context:             config.Context,
+		APIKeys:             providerAPIKeys,
+		ClaudeCodeTransport: config.ClaudeCodeTransport,
 	}
 }
 
@@ -330,6 +403,21 @@ func WithGeminiSystemPromptFile(path string) CallOption {
 // and runs the Gemini CLI from there. Controls tool restrictions and MCP bridge config.
 func WithGeminiProjectSettings(settingsJSON string) CallOption {
 	return llmproviders.WithGeminiProjectSettings(settingsJSON)
+}
+
+// WithGeminiPolicyPath passes --policy to the Gemini CLI.
+func WithGeminiPolicyPath(path string) CallOption {
+	return llmproviders.WithGeminiPolicyPath(path)
+}
+
+// WithGeminiAdminPolicyPath passes --admin-policy to the Gemini CLI.
+func WithGeminiAdminPolicyPath(path string) CallOption {
+	return llmproviders.WithGeminiAdminPolicyPath(path)
+}
+
+// WithGeminiWorkingDir sets the Gemini CLI process working directory.
+func WithGeminiWorkingDir(dir string) CallOption {
+	return llmproviders.WithGeminiWorkingDir(dir)
 }
 
 // WithGeminiAllowedTools sets the deprecated --allowed-tools flag for the Gemini CLI.

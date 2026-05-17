@@ -32,6 +32,7 @@ If you only need MCP, the library does that well. If you need a broader agent ru
 If you are evaluating the project for the first time, these are the best first examples:
 
 - **[basic/](examples/basic/)** - Smallest working MCP-backed agent example
+- **[workflow_model_routing/](examples/workflow_model_routing/)** - Compare Kimi, MiniMax M2.7, and GLM-5.1 on the same MCP-backed workflow task
 - **[basic_claude_code/](examples/basic_claude_code/)** - Coding-agent CLI flow through the MCP bridge
 - **[basic_gemini_cli/](examples/basic_gemini_cli/)** - Fast Gemini CLI bridge example
 - **[basic_gemini_cli_fallback_claude_code/](examples/basic_gemini_cli_fallback_claude_code/)** - Gemini CLI with Claude Code fallback
@@ -109,6 +110,7 @@ func main() {
 See [examples/](examples/) for complete working examples:
 
 - **[basic/](examples/basic/)** - Basic agent setup with single MCP server
+- **[workflow_model_routing/](examples/workflow_model_routing/)** - Run the same MCP-backed prompt against Kimi, MiniMax M2.7, or GLM-5.1
 - **[basic_claude_code/](examples/basic_claude_code/)** - Basic Claude Code setup using the MCP bridge layer (defaults to `claude-haiku-4-5`)
 - **[basic_gemini_cli/](examples/basic_gemini_cli/)** - Basic Gemini CLI setup using the MCP bridge layer (defaults to `flash-lite`)
 - **[basic_gemini_cli_fallback_claude_code/](examples/basic_gemini_cli_fallback_claude_code/)** - Gemini CLI primary with Claude Code fallback (supports `FORCE_FALLBACK=1`)

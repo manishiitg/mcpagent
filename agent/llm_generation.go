@@ -55,6 +55,26 @@ func geminiHTTPRoutingHooksEnabled() bool {
 		strings.EqualFold(v, "on")
 }
 
+func geminiRestrictToolsPolicyContent() string {
+	return `# Gemini CLI tool approvals are handled entirely by the Policy Engine.
+[[rule]]
+toolName = "mcp_api-bridge_*"
+decision = "allow"
+priority = 999
+
+[[rule]]
+toolName = "google_web_search"
+decision = "allow"
+priority = 997
+
+[[rule]]
+toolName = "*"
+decision = "deny"
+priority = 996
+deny_message = "Use only the declared tools available in this session or google_web_search. Do not switch to blocked built-in tools."
+`
+}
+
 func kimiCodeCLITransportEnabled(modelID string) bool {
 	if strings.TrimSpace(modelID) != "" && strings.TrimSpace(modelID) != "kimi-code" {
 		return false
@@ -167,34 +187,20 @@ func buildClaudeHTTPRoutingSettings(hookPath string) (string, error) {
 	return string(settingsBytes), nil
 }
 
-func buildGeminiEnforcementHooks(debugEnabled bool) map[string]interface{} {
-	beforeToolHooks := []map[string]interface{}{
-		{
-			"name":        "enforce-http-tool-routing",
-			"type":        "command",
-			"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/enforce-http-tool-routing.py",
-			"timeout":     5000,
-			"description": "Allow only execute_shell_command and get_api_spec; deny all other Gemini tool calls",
-		},
-	}
-	if debugEnabled {
-		beforeToolHooks = append(beforeToolHooks, map[string]interface{}{
-			"name":        "log-before-tool",
-			"type":        "command",
-			"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/log-before-tool.py",
-			"timeout":     5000,
-			"description": "Log Gemini BeforeTool payloads to stderr for MCP bridge diagnostics",
-		})
-	}
-
-	// Note: BeforeToolSelection hook removed — it required allowedFunctionNames which
-	// is only valid with mode=ANY (forces tool calls every turn). Tool restriction is
-	// handled by BeforeTool hook (enforce-http-tool-routing) + Policy Engine TOML.
+func buildGeminiDebugHooks() map[string]interface{} {
 	return map[string]interface{}{
 		"BeforeTool": []map[string]interface{}{
 			{
 				"matcher": "*",
-				"hooks":   beforeToolHooks,
+				"hooks": []map[string]interface{}{
+					{
+						"name":        "log-before-tool",
+						"type":        "command",
+						"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/log-before-tool.py",
+						"timeout":     5000,
+						"description": "Log Gemini BeforeTool payloads to stderr for MCP bridge diagnostics",
+					},
+				},
 			},
 		},
 	}
@@ -652,6 +658,30 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				}
 			}
 
+		case llmtypes.StreamChunkTypeTerminal:
+			if chunk.Content != "" {
+				sm.contentChunkIndex++
+				sm.totalChunks++
+
+				a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+					BaseEventData: events.BaseEventData{
+						Timestamp: time.Now(),
+						Metadata: map[string]interface{}{
+							"kind":     "terminal",
+							"replace":  true,
+							"provider": string(a.provider),
+						},
+					},
+					Content:    chunk.Content,
+					ChunkIndex: sm.contentChunkIndex,
+					IsToolCall: false,
+				})
+
+				if a.StreamingCallback != nil {
+					a.StreamingCallback(chunk)
+				}
+			}
+
 		case llmtypes.StreamChunkTypeToolCallStart:
 			// Determine source label from provider
 			sourceLabel := string(a.provider)
@@ -877,14 +907,15 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 	}
 
 	llmInstance, err := llm.InitializeLLM(llm.Config{
-		Provider:    llm.Provider(model.Provider),
-		ModelID:     model.ModelID,
-		Temperature: temperature,
-		Logger:      a.Logger,
-		APIKeys:     apiKeys,
-		Tracers:     a.Tracers,
-		TraceID:     a.TraceID,
-		Context:     ctx,
+		Provider:            llm.Provider(model.Provider),
+		ModelID:             model.ModelID,
+		Temperature:         temperature,
+		Logger:              a.Logger,
+		APIKeys:             apiKeys,
+		Tracers:             a.Tracers,
+		TraceID:             a.TraceID,
+		Context:             ctx,
+		ClaudeCodeTransport: a.ClaudeCodeTransport,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
@@ -988,27 +1019,16 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
 
 		// Build project settings with MCP bridge config.
-		// Tool restriction is handled by the Policy Engine TOML rules only.
-		// Do NOT set tools.core here — it maps to allowed_function_names in the
-		// Gemini API which requires function_calling_mode=ANY and causes 400 errors.
-		//
-		// We DO use tools.exclude to remove built-in file system and shell tools.
-		// These tools validate paths against Gemini CLI's temp workspace dir and throw
-		// during tool.build() (before hooks or the policy engine can run), returning
-		// INVALID_TOOL_PARAMS errors that confuse the model into retry loops.
-		// Excluding them prevents the model from seeing or calling them.
-		settings := map[string]interface{}{
-			"tools": map[string]interface{}{
-				"exclude": []string{
-					"read_file", "write_file", "grep_search", "list_directory",
-					"glob", "read_many_files", "replace", "run_shell_command",
-				},
-			},
-		}
+		// Tool restriction is handled by a per-run --admin-policy TOML file. Do
+		// not write tools.exclude here: Gemini CLI deprecates it and warns on
+		// startup. Do not install enforcement hooks by default: Gemini warns
+		// about project hooks in interactive mode, and Policy Engine can hide
+		// denied tools from the model without hook noise.
+		settings := map[string]interface{}{}
 		debugHooksEnabled := geminiDebugHooksEnabled()
 		httpRoutingHooksEnabled := geminiHTTPRoutingHooksEnabled()
-		if debugHooksEnabled || httpRoutingHooksEnabled {
-			settings["hooks"] = buildGeminiEnforcementHooks(debugHooksEnabled)
+		if debugHooksEnabled {
+			settings["hooks"] = buildGeminiDebugHooks()
 		}
 		if debugHooksEnabled {
 			a.Logger.Info("🪝 Gemini CLI BeforeTool debug hook enabled",
@@ -1016,7 +1036,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 				loggerv2.String("project_dir", projectDir))
 		}
 		if httpRoutingHooksEnabled {
-			a.Logger.Info("🪝 Gemini CLI HTTP tool routing enforcement enabled",
+			a.Logger.Info("🔒 Gemini CLI HTTP tool routing policy enabled",
 				loggerv2.String("env", "MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING"),
 				loggerv2.String("project_dir", projectDir))
 		}
@@ -1037,40 +1057,26 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		settingsBytes, _ := json.Marshal(settings)
 		opts = append(opts, llm.WithGeminiProjectSettings(string(settingsBytes)))
 
-		// Pre-create project dir with policy files to restrict built-in tools.
-		// Policy Engine: .gemini/policies/*.toml overrides yolo mode defaults.
-		// Workspace-tier policies (priority base 3) beat Default-tier yolo (priority base 1).
+		// Pre-create a policy file and pass it explicitly with --admin-policy.
+		// Workspace .gemini/policies is not enough on current Gemini CLI builds
+		// because project-level policies are disabled/non-functional.
 		policiesDir := filepath.Join(projectDir, ".gemini", "policies")
 		if err := os.MkdirAll(policiesDir, 0750); err != nil {
 			a.Logger.Warn("Failed to create Gemini CLI policies directory", loggerv2.Error(err))
 		} else {
-			policyContent := `# Gemini CLI tool approvals are handled entirely by the Policy Engine.
-[[rule]]
-toolName = "mcp__api-bridge__*"
-decision = "allow"
-priority = 999
-
-[[rule]]
-toolName = "google_web_search"
-decision = "allow"
-priority = 998
-
-[[rule]]
-toolName = "*"
-decision = "deny"
-priority = 997
-deny_message = "Use only the declared tools available in this session or google_web_search. Do not switch to blocked built-in tools."
-`
-			if err := os.WriteFile(filepath.Join(policiesDir, "restrict-tools.toml"), []byte(policyContent), 0600); err != nil {
+			policyContent := geminiRestrictToolsPolicyContent()
+			policyPath := filepath.Join(policiesDir, "restrict-tools.toml")
+			if err := os.WriteFile(policyPath, []byte(policyContent), 0600); err != nil {
 				a.Logger.Warn("Failed to write Gemini CLI policy file", loggerv2.Error(err))
 			} else {
-				a.Logger.Info(fmt.Sprintf("📋 Wrote Gemini CLI policy file to %s", policiesDir))
+				opts = append(opts, llm.WithGeminiAdminPolicyPath(policyPath))
+				a.Logger.Info(fmt.Sprintf("📋 Wrote Gemini CLI admin policy file to %s", policyPath))
 			}
 		}
-		if debugHooksEnabled || httpRoutingHooksEnabled {
-			if err := writeGeminiHookScripts(projectDir, debugHooksEnabled, httpRoutingHooksEnabled); err != nil {
+		if debugHooksEnabled {
+			if err := writeGeminiHookScripts(projectDir, true, false); err != nil {
 				a.Logger.Warn("Failed to write Gemini CLI hook scripts", loggerv2.Error(err))
-			} else if debugHooksEnabled {
+			} else {
 				a.Logger.Info("🪝 Gemini CLI BeforeTool debug hook script ready",
 					loggerv2.String("path", filepath.Join(projectDir, ".gemini", "hooks", "log-before-tool.py")))
 			}
@@ -1083,9 +1089,18 @@ deny_message = "Use only the declared tools available in this session or google_
 			opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
 		}
 
-		// Pass project dir ID so adapter reuses our pre-created directory
-		opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
-		a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
+		// When a coding-agent working directory is configured, it is the source
+		// of truth for both Gemini's cwd and MCP shell cwd. Do not expose the
+		// temp policy/settings helper directory as the Gemini project dir.
+		if strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
+			opts = append(opts, llm.WithGeminiWorkingDir(a.CodingAgentWorkingDir))
+			a.GeminiProjectDirID = ""
+			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using working dir: %s (session: %s)", a.CodingAgentWorkingDir, a.GeminiSessionID))
+		} else {
+			// Pass project dir ID so adapter reuses our pre-created directory.
+			opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
+			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
+		}
 	}
 
 	// 🔧 CODEX CLI INTEGRATION: MCP bridge + disable shell + auto-approve
@@ -1094,6 +1109,9 @@ deny_message = "Use only the declared tools available in this session or google_
 		opts = append(opts, llm.WithCodexDisableShellTool())
 		// Auto-approve all tool calls (no interactive prompts)
 		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
+		if a.CodexSessionID != "" && !a.CodexPersistentInteractiveSession {
+			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
+		}
 
 		// Build MCP bridge config and pass as Codex CLI config overrides
 		// Codex CLI uses config.toml format: mcp_servers.<name>.command, .args, .env

@@ -772,6 +772,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		if a.provider == "codex-cli" {
 			opts = append(opts, codexcli.WithDisableShellTool())
 		}
+		opts = a.appendCodingAgentInteractiveOptions(opts)
 
 		// Use proper LLM function calling via llmtypes.WithTools()
 		// Use the pre-filtered tools that were determined at conversation start
@@ -848,6 +849,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			if dirID, ok := resp.Choices[0].GenerationInfo.Additional["gemini_project_dir_id"].(string); ok && dirID != "" {
 				a.GeminiProjectDirID = dirID
 				a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Captured project dir ID: %s (session: %s)", dirID, a.GeminiSessionID))
+			}
+		}
+
+		// Capture Codex CLI thread ID for exec-json resume on next turn.
+		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+			if sid, ok := resp.Choices[0].GenerationInfo.Additional["codex_thread_id"].(string); ok && sid != "" {
+				a.CodexSessionID = sid
 			}
 		}
 
@@ -1838,6 +1846,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	if !llm.IsO3O4Model(a.ModelID) {
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
+	finalOpts = a.appendCodingAgentInteractiveOptions(finalOpts)
 
 	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1)
 
