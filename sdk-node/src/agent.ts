@@ -221,6 +221,7 @@ export class MCPAgent {
     setIfPresent('VERTEX_API_KEY', apiKeys.vertex);
     setIfPresent('GEMINI_API_KEY', apiKeys['gemini-cli']);
     setIfPresent('CODEX_API_KEY', apiKeys['codex-cli']);
+    setIfPresent('OPENCODE_API_KEY', apiKeys['opencode-cli']);
     setIfPresent('MINIMAX_API_KEY', apiKeys.minimax);
     setIfPresent('MINIMAX_CODING_PLAN_API_KEY', apiKeys['minimax-coding-plan']);
 

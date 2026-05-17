@@ -39,6 +39,11 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 		if a.CursorPersistentInteractiveSession {
 			opts = append(opts, llm.WithCursorPersistentInteractiveSession(true))
 		}
+	case llm.ProviderOpenCodeCLI:
+		opts = append(opts, llm.WithOpenCodeInteractiveSessionID(sessionID))
+		if a.OpenCodePersistentInteractiveSession {
+			opts = append(opts, llm.WithOpenCodePersistentInteractiveSession(true))
+		}
 	}
 
 	return opts
@@ -77,6 +82,8 @@ func codingAgentWorkingDirOptionForProvider(provider llm.Provider, modelID strin
 		return llm.WithGeminiWorkingDir, true
 	case llm.ProviderCursorCLI:
 		return llm.WithCursorWorkingDir, true
+	case llm.ProviderOpenCodeCLI:
+		return llm.WithOpenCodeWorkingDir, true
 	}
 	return nil, false
 }

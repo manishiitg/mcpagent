@@ -174,6 +174,14 @@ func WithCursorPersistentInteractiveSession(enabled bool) AgentOption {
 	}
 }
 
+// WithOpenCodePersistentInteractiveSession keeps OpenCode CLI tmux sessions
+// alive across completed chat turns.
+func WithOpenCodePersistentInteractiveSession(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.OpenCodePersistentInteractiveSession = enabled
+	}
+}
+
 // WithMaxTurns sets the maximum number of conversation turns allowed.
 //
 // A turn consists of one user message and one agent response (which may include multiple tool calls).
@@ -809,6 +817,9 @@ type Agent struct {
 	// Cursor CLI persistent tmux mode for interactive chat
 	CursorPersistentInteractiveSession bool
 
+	// OpenCode CLI persistent tmux mode for interactive chat
+	OpenCodePersistentInteractiveSession bool
+
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 
@@ -1158,6 +1169,8 @@ func (a *Agent) GetLLMModelConfig() LLMModel {
 			config.APIKey = a.APIKeys.CodexCLI
 		case llm.ProviderCursorCLI:
 			config.APIKey = a.APIKeys.CursorCLI
+		case llm.ProviderOpenCodeCLI:
+			config.APIKey = a.APIKeys.OpenCodeCLI
 		case llm.ProviderMiniMax:
 			config.APIKey = a.APIKeys.MiniMax
 		case llm.ProviderMiniMaxCodingPlan:
@@ -1233,6 +1246,7 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 			Vertex:            providerKeys.Vertex,
 			GeminiCLI:         providerKeys.GeminiCLI,
 			CodexCLI:          providerKeys.CodexCLI,
+			OpenCodeCLI:       providerKeys.OpenCodeCLI,
 			MiniMax:           providerKeys.MiniMax,
 			MiniMaxCodingPlan: providerKeys.MiniMaxCodingPlan,
 		}
@@ -2112,6 +2126,37 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.EnableStreaming {
 			ag.EnableStreaming = true
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
+	// Auto-configure OpenCode CLI provider (same constraints as the other CLI coding agents)
+	if ag.provider == llmproviders.ProviderOpenCodeCLI {
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		logger.Debug("🔧 [OPENCODE_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [OPENCODE_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [OPENCODE_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 
@@ -3131,6 +3176,37 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		if !ag.EnableStreaming {
 			ag.EnableStreaming = true
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
+	// Auto-configure OpenCode CLI provider (same constraints as the other CLI coding agents)
+	if ag.provider == llmproviders.ProviderOpenCodeCLI {
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		logger.Debug("🔧 [OPENCODE_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [OPENCODE_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [OPENCODE_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 

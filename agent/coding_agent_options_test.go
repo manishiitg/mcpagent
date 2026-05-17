@@ -12,6 +12,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
 )
 
 func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
@@ -98,6 +99,20 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantPersistence: true,
 		},
 		{
+			name: "opencode persistent chat",
+			agent: &Agent{
+				provider:              llm.ProviderOpenCodeCLI,
+				SessionID:             "chat-session-5",
+				CodingAgentWorkingDir: "/tmp/opencode-chat",
+			},
+			wantSessionKey:  opencodecli.MetadataKeyInteractiveSessionID,
+			wantPersistKey:  opencodecli.MetadataKeyPersistentInteractive,
+			wantSessionID:   "chat-session-5",
+			wantPersistence: true,
+			wantWorkingKey:  opencodecli.MetadataKeyWorkingDir,
+			wantWorkingDir:  "/tmp/opencode-chat",
+		},
+		{
 			name: "missing owner session produces no coding-agent metadata",
 			agent: &Agent{
 				provider:                          llm.ProviderCodexCLI,
@@ -148,6 +163,7 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 		{name: "codex cli", provider: llm.ProviderCodexCLI, metadataKey: codexcli.MetadataKeyProjectDirID},
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI, metadataKey: geminicli.MetadataKeyWorkingDir},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, metadataKey: cursorcli.MetadataKeyWorkingDir},
+		{name: "opencode cli", provider: llm.ProviderOpenCodeCLI, metadataKey: opencodecli.MetadataKeyWorkingDir},
 	}
 
 	for _, tc := range cases {

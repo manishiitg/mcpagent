@@ -12,6 +12,7 @@ export type Provider =
   | 'claude-code'
   | 'gemini-cli'
   | 'codex-cli'
+  | 'opencode-cli'
   | 'minimax'
   | 'minimax-coding-plan';
 
@@ -24,6 +25,7 @@ export interface AgentAPIKeys {
   vertex?: string;
   'gemini-cli'?: string;
   'codex-cli'?: string;
+  'opencode-cli'?: string;
   minimax?: string;
   'minimax-coding-plan'?: string;
   bedrock?: {

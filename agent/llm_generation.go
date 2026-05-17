@@ -1193,9 +1193,27 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and live input support")
 	}
 
+	// 🔧 OPENCODE CLI INTEGRATION: MCP bridge + tmux live input
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderOpenCodeCLI {
+		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
+		if bridgeErr == nil {
+			opts = append(opts, llm.WithOpenCodeMCPConfig(bridgeConfig))
+			a.Logger.Info("🌉 [OPENCODE_CLI] Configured MCP bridge through opencode.jsonc")
+		} else {
+			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for OpenCode CLI (tools may be limited): %v", bridgeErr))
+		}
+		if model.Options != nil {
+			if agent, ok := model.Options["agent"].(string); ok && agent != "" {
+				opts = append(opts, llm.WithOpenCodeAgent(agent))
+				a.Logger.Info(fmt.Sprintf("🤖 [OPENCODE_CLI] Agent set to: %s", agent))
+			}
+		}
+		a.Logger.Info("🌉 Using OpenCode CLI in tmux mode with MCP bridge and live input support")
+	}
+
 	// Apply model options for all providers (reasoning_effort, thinking_level, etc.)
 	if model.Options != nil {
-		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" && llmproviders.Provider(model.Provider) != llmproviders.ProviderCodexCLI && llmproviders.Provider(model.Provider) != llmproviders.ProviderCursorCLI {
+		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" && llmproviders.Provider(model.Provider) != llmproviders.ProviderCodexCLI && llmproviders.Provider(model.Provider) != llmproviders.ProviderCursorCLI && llmproviders.Provider(model.Provider) != llmproviders.ProviderOpenCodeCLI {
 			opts = append(opts, llmtypes.WithReasoningEffort(effort))
 		}
 		if level, ok := model.Options["thinking_level"].(string); ok && level != "" {

@@ -33,6 +33,7 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 	zaiKey := "zai-key"
 	kimiKey := "kimi-key"
 	minimaxKey := "minimax-key"
+	opencodeKey := "opencode-key"
 
 	tests := []struct {
 		name     string
@@ -64,6 +65,14 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 			},
 			want: &kimiKey,
 		},
+		{
+			name:     "opencode-cli",
+			provider: llm.ProviderOpenCodeCLI,
+			keys: &llm.ProviderAPIKeys{
+				OpenCodeCLI: &opencodeKey,
+			},
+			want: &opencodeKey,
+		},
 	}
 
 	for _, tt := range tests {
@@ -82,16 +91,18 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 	}
 }
 
-func TestExtractAPIKeysFromLLMPreservesZAIKimiAndCodexCLI(t *testing.T) {
+func TestExtractAPIKeysFromLLMPreservesZAIKimiCodexAndOpenCodeCLI(t *testing.T) {
 	zaiKey := "zai-key"
 	kimiKey := "kimi-key"
 	codexKey := "codex-key"
+	opencodeKey := "opencode-key"
 
 	model := &providerKeyCarrierModel{
 		keys: &llm.ProviderAPIKeys{
-			ZAI:      &zaiKey,
-			Kimi:     &kimiKey,
-			CodexCLI: &codexKey,
+			ZAI:         &zaiKey,
+			Kimi:        &kimiKey,
+			CodexCLI:    &codexKey,
+			OpenCodeCLI: &opencodeKey,
 		},
 	}
 
@@ -107,6 +118,9 @@ func TestExtractAPIKeysFromLLMPreservesZAIKimiAndCodexCLI(t *testing.T) {
 	}
 	if keys.CodexCLI == nil || *keys.CodexCLI != codexKey {
 		t.Fatalf("expected Codex CLI key %q, got %#v", codexKey, keys.CodexCLI)
+	}
+	if keys.OpenCodeCLI == nil || *keys.OpenCodeCLI != opencodeKey {
+		t.Fatalf("expected OpenCode CLI key %q, got %#v", opencodeKey, keys.OpenCodeCLI)
 	}
 }
 

@@ -37,6 +37,7 @@ func TestIsCodingCLIProviderExcludesKimiAPIProvider(t *testing.T) {
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI, want: true},
 		{name: "codex cli", provider: llm.ProviderCodexCLI, want: true},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, want: true},
+		{name: "opencode cli", provider: llm.ProviderOpenCodeCLI, want: true},
 		{name: "kimi api model", provider: llm.ProviderKimi, modelID: "kimi-k2.6", want: false},
 		{name: "anthropic", provider: llm.ProviderAnthropic, want: false},
 	}

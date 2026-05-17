@@ -29,6 +29,7 @@ const (
 	ProviderGeminiCLI         = llmproviders.ProviderGeminiCLI
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
 	ProviderCursorCLI         = llmproviders.ProviderCursorCLI
+	ProviderOpenCodeCLI       = llmproviders.ProviderOpenCodeCLI
 	ProviderMiniMax           = llmproviders.ProviderMiniMax
 	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
 	ProviderElevenLabs        = llmproviders.ProviderElevenLabs
@@ -92,6 +93,12 @@ func SendGeminiCLIInteractiveInput(ctx context.Context, sessionID, message strin
 // interactive session registered for the owning application session.
 func SendCursorCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
 	return llmproviders.SendCursorCLIInteractiveInput(ctx, sessionID, message)
+}
+
+// SendOpenCodeCLIInteractiveInput sends user input to a live OpenCode CLI
+// interactive session registered for the owning application session.
+func SendOpenCodeCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
+	return llmproviders.SendOpenCodeCLIInteractiveInput(ctx, sessionID, message)
 }
 
 // WithClaudeCodeInteractiveSessionID links a Claude Code experimental run to
@@ -170,6 +177,38 @@ func WithCursorForce() llmtypes.CallOption {
 // WithCursorApproveMCPs enables Cursor Agent CLI's --approve-mcps flag.
 func WithCursorApproveMCPs() llmtypes.CallOption {
 	return llmproviders.WithCursorApproveMCPs()
+}
+
+// WithOpenCodeInteractiveSessionID links an OpenCode CLI interactive run to
+// the owning application session so live follow-up input can be sent to it.
+func WithOpenCodeInteractiveSessionID(id string) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeInteractiveSessionID(id)
+}
+
+// WithOpenCodePersistentInteractiveSession keeps OpenCode CLI interactive tmux
+// sessions alive across completed chat turns.
+func WithOpenCodePersistentInteractiveSession(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithOpenCodePersistentInteractiveSession(enabled)
+}
+
+// WithOpenCodeWorkingDir sets the OpenCode CLI workspace/cwd.
+func WithOpenCodeWorkingDir(dir string) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeWorkingDir(dir)
+}
+
+// WithOpenCodeMCPConfig writes a temporary/restored opencode.jsonc for OpenCode.
+func WithOpenCodeMCPConfig(config string) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeMCPConfig(config)
+}
+
+// WithOpenCodeProjectConfig writes a temporary/restored opencode.jsonc for OpenCode.
+func WithOpenCodeProjectConfig(config string) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeProjectConfig(config)
+}
+
+// WithOpenCodeAgent sets the OpenCode --agent flag.
+func WithOpenCodeAgent(agent string) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeAgent(agent)
 }
 
 // Config holds configuration for LLM initialization (agent_go version)
