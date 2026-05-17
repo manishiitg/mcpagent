@@ -724,8 +724,7 @@ func WithUserID(userID string) AgentOption {
 }
 
 func isCodingCLIProvider(provider llm.Provider, modelID string) bool {
-	_, ok := codingAgentWorkingDirOptionForProvider(provider, modelID)
-	return ok
+	return llm.IsCodingAgentProvider(provider, modelID)
 }
 
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.

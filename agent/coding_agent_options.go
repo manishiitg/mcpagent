@@ -15,7 +15,7 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 	opts = a.appendCodingAgentWorkingDirOptionForProvider(opts, provider, modelID)
 
 	sessionID := strings.TrimSpace(a.SessionID)
-	if sessionID == "" || !codingAgentPersistentInteractiveEnabledForProvider(provider, sessionID) {
+	if sessionID == "" || !codingAgentPersistentInteractiveEnabledForProvider(provider, modelID, sessionID) {
 		return opts
 	}
 
@@ -45,19 +45,14 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 }
 
 func (a *Agent) codingAgentPersistentInteractiveEnabled() bool {
-	return codingAgentPersistentInteractiveEnabledForProvider(a.provider, a.SessionID)
+	return codingAgentPersistentInteractiveEnabledForProvider(a.provider, a.ModelID, a.SessionID)
 }
 
-func codingAgentPersistentInteractiveEnabledForProvider(provider llm.Provider, sessionID string) bool {
+func codingAgentPersistentInteractiveEnabledForProvider(provider llm.Provider, modelID, sessionID string) bool {
 	if strings.TrimSpace(sessionID) == "" {
 		return false
 	}
-	switch provider {
-	case llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderGeminiCLI, llm.ProviderCursorCLI:
-		return true
-	default:
-		return false
-	}
+	return llm.IsTmuxCodingAgentProvider(provider, modelID)
 }
 
 func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {

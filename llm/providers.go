@@ -40,6 +40,30 @@ const (
 	ClaudeCodeTransportPrint        = llmproviders.ClaudeCodeTransportPrint
 )
 
+type CodingAgentTransport = llmproviders.CodingAgentTransport
+type CodingAgentProviderContract = llmproviders.CodingAgentProviderContract
+
+const (
+	CodingAgentTransportTmux       = llmproviders.CodingAgentTransportTmux
+	CodingAgentTransportStructured = llmproviders.CodingAgentTransportStructured
+)
+
+func GetCodingAgentProviderContract(provider Provider, modelID string) (CodingAgentProviderContract, bool) {
+	return llmproviders.GetCodingAgentProviderContract(provider, modelID)
+}
+
+func IsCodingAgentProvider(provider Provider, modelID string) bool {
+	return llmproviders.IsCodingAgentProvider(provider, modelID)
+}
+
+func IsTmuxCodingAgentProvider(provider Provider, modelID string) bool {
+	return llmproviders.IsTmuxCodingAgentProvider(provider, modelID)
+}
+
+func CodingAgentProviderContracts() []CodingAgentProviderContract {
+	return llmproviders.CodingAgentProviderContracts()
+}
+
 const (
 	MetadataKeyMCPConfig                  = "mcp_config"
 	MetadataKeyDangerouslySkipPermissions = "dangerously_skip_permissions"
