@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -156,6 +157,29 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 				t.Fatalf("metadata %q = %#v, want /tmp/workdir", tc.metadataKey, got[tc.metadataKey])
 			}
 		})
+	}
+}
+
+func TestEnsureGeminiProjectDirIDStableFromSession(t *testing.T) {
+	first := &Agent{SessionID: " chat/session 123 "}
+	second := &Agent{SessionID: "chat/session 123"}
+
+	firstID := first.ensureGeminiProjectDirID()
+	secondID := second.ensureGeminiProjectDirID()
+
+	if firstID == "" {
+		t.Fatal("Gemini project dir ID should not be empty")
+	}
+	if firstID != secondID {
+		t.Fatalf("Gemini project dir ID should be deterministic for the same session, got %q and %q", firstID, secondID)
+	}
+	if strings.ContainsAny(firstID, "/ ") {
+		t.Fatalf("Gemini project dir ID %q should be filesystem-safe", firstID)
+	}
+
+	existing := &Agent{SessionID: "different-session", GeminiProjectDirID: "existing-project-dir"}
+	if got := existing.ensureGeminiProjectDirID(); got != "existing-project-dir" {
+		t.Fatalf("existing Gemini project dir ID changed to %q", got)
 	}
 }
 

@@ -75,6 +75,54 @@ deny_message = "Use only the declared tools available in this session or google_
 `
 }
 
+func (a *Agent) ensureGeminiProjectDirID() string {
+	if strings.TrimSpace(a.GeminiProjectDirID) != "" {
+		return a.GeminiProjectDirID
+	}
+
+	if sessionID := strings.TrimSpace(a.SessionID); sessionID != "" {
+		a.GeminiProjectDirID = "session-" + sanitizeGeminiProjectDirID(sessionID)
+		return a.GeminiProjectDirID
+	}
+
+	projectSuffix, randErr := cryptorand.Int(cryptorand.Reader, big.NewInt(100000))
+	if randErr != nil {
+		if a.Logger != nil {
+			a.Logger.Warn("Failed to generate cryptographic random Gemini project suffix; using timestamp-only fallback", loggerv2.Error(randErr))
+		}
+		a.GeminiProjectDirID = fmt.Sprintf("%d-00000", time.Now().UnixMilli())
+		return a.GeminiProjectDirID
+	}
+	a.GeminiProjectDirID = fmt.Sprintf("%d-%05d", time.Now().UnixMilli(), projectSuffix.Int64())
+	return a.GeminiProjectDirID
+}
+
+func sanitizeGeminiProjectDirID(raw string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.TrimSpace(raw) {
+		allowed := (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '-' ||
+			r == '_'
+		if allowed {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "default"
+	}
+	return out
+}
+
 func kimiCodeCLITransportEnabled(modelID string) bool {
 	if strings.TrimSpace(modelID) != "" && strings.TrimSpace(modelID) != "kimi-code" {
 		return false
@@ -1007,15 +1055,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		// "allow" decisions auto-approve MCP tools, "deny" blocks built-in tools.
 		// Yolo mode bypasses the policy engine entirely, so we must NOT use it.
 
-		if a.GeminiProjectDirID == "" {
-			projectSuffix, randErr := cryptorand.Int(cryptorand.Reader, big.NewInt(100000))
-			if randErr != nil {
-				a.Logger.Warn("Failed to generate cryptographic random Gemini project suffix; using timestamp-only fallback", loggerv2.Error(randErr))
-				a.GeminiProjectDirID = fmt.Sprintf("%d-00000", time.Now().UnixMilli())
-			} else {
-				a.GeminiProjectDirID = fmt.Sprintf("%d-%05d", time.Now().UnixMilli(), projectSuffix.Int64())
-			}
-		}
+		a.ensureGeminiProjectDirID()
 		projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
 
 		// Build project settings with MCP bridge config.
@@ -1090,11 +1130,11 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		}
 
 		// When a coding-agent working directory is configured, it is the source
-		// of truth for both Gemini's cwd and MCP shell cwd. Do not expose the
-		// temp policy/settings helper directory as the Gemini project dir.
+		// of truth for both Gemini's cwd and MCP shell cwd. Keep the helper
+		// project dir ID stable for policy/settings files, but do not pass it as
+		// Gemini's cwd.
 		if strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
 			opts = append(opts, llm.WithGeminiWorkingDir(a.CodingAgentWorkingDir))
-			a.GeminiProjectDirID = ""
 			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using working dir: %s (session: %s)", a.CodingAgentWorkingDir, a.GeminiSessionID))
 		} else {
 			// Pass project dir ID so adapter reuses our pre-created directory.
