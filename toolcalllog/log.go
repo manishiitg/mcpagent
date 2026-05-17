@@ -5,6 +5,8 @@ package toolcalllog
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 // StartedCall records a single tool call when it starts.
 type StartedCall struct {
+	SessionID string
 	ID        string
 	Name      string
 	ArgsJSON  string
@@ -20,10 +23,23 @@ type StartedCall struct {
 
 // CompletedCall records a single tool call that finished.
 type CompletedCall struct {
+	SessionID   string
 	ID          string // synthetic ID — consistent between ToolUse and ToolResult messages
 	Name        string
 	ArgsJSON    string // raw JSON string of the arguments
 	Result      string
+	StartedAt   time.Time
+	CompletedAt time.Time
+}
+
+// SnapshotCall is a non-destructive view of a tool call, used by live monitors.
+type SnapshotCall struct {
+	SessionID   string
+	ID          string
+	Name        string
+	ArgsJSON    string
+	Result      string
+	Status      string // "running" or "done"
 	StartedAt   time.Time
 	CompletedAt time.Time
 }
@@ -37,7 +53,8 @@ type Hook struct {
 var (
 	mu       sync.Mutex
 	registry = make(map[string][]CompletedCall) // sessionID → calls
-	hooks    = make(map[string]Hook)            // sessionID → real-time event hook
+	running  = make(map[string]map[string]StartedCall)
+	hooks    = make(map[string]Hook) // sessionID → real-time event hook
 	idSeq    uint64
 )
 
@@ -62,12 +79,17 @@ func RegisterHook(sessionID string, hook Hook) func() {
 func RecordStart(sessionID, name, argsJSON string) string {
 	id := fmt.Sprintf("toolu_%d", atomic.AddUint64(&idSeq, 1))
 	start := StartedCall{
+		SessionID: sessionID,
 		ID:        id,
 		Name:      name,
 		ArgsJSON:  argsJSON,
 		StartedAt: time.Now(),
 	}
 	mu.Lock()
+	if running[sessionID] == nil {
+		running[sessionID] = make(map[string]StartedCall)
+	}
+	running[sessionID][id] = start
 	hook := hooks[sessionID]
 	mu.Unlock()
 	if hook.OnStart != nil {
@@ -87,6 +109,7 @@ func Record(sessionID, name, argsJSON, result string) string {
 // RecordEnd records a completed tool call and notifies any session hook.
 func RecordEnd(sessionID, id, name, argsJSON, result string, startedAt time.Time) {
 	completed := CompletedCall{
+		SessionID:   sessionID,
 		ID:          id,
 		Name:        name,
 		ArgsJSON:    argsJSON,
@@ -95,6 +118,23 @@ func RecordEnd(sessionID, id, name, argsJSON, result string, startedAt time.Time
 		CompletedAt: time.Now(),
 	}
 	mu.Lock()
+	if byID := running[sessionID]; byID != nil {
+		if started, ok := byID[id]; ok {
+			if completed.StartedAt.IsZero() {
+				completed.StartedAt = started.StartedAt
+			}
+			if completed.Name == "" {
+				completed.Name = started.Name
+			}
+			if completed.ArgsJSON == "" {
+				completed.ArgsJSON = started.ArgsJSON
+			}
+			delete(byID, id)
+			if len(byID) == 0 {
+				delete(running, sessionID)
+			}
+		}
+	}
 	registry[sessionID] = append(registry[sessionID], completed)
 	hook := hooks[sessionID]
 	mu.Unlock()
@@ -103,11 +143,94 @@ func RecordEnd(sessionID, id, name, argsJSON, result string, startedAt time.Time
 	}
 }
 
+// Snapshot returns a non-destructive view of completed and currently running
+// calls for a session.
+func Snapshot(sessionID string) []SnapshotCall {
+	mu.Lock()
+	defer mu.Unlock()
+	return snapshotSessionLocked(sessionID)
+}
+
+// SnapshotBySessionPrefix returns a non-destructive view of calls for every
+// session whose id starts with prefix.
+func SnapshotBySessionPrefix(prefix string) []SnapshotCall {
+	if prefix == "" {
+		return nil
+	}
+	mu.Lock()
+	defer mu.Unlock()
+
+	sessionIDs := make(map[string]struct{})
+	for sessionID := range registry {
+		if strings.HasPrefix(sessionID, prefix) {
+			sessionIDs[sessionID] = struct{}{}
+		}
+	}
+	for sessionID := range running {
+		if strings.HasPrefix(sessionID, prefix) {
+			sessionIDs[sessionID] = struct{}{}
+		}
+	}
+
+	calls := make([]SnapshotCall, 0)
+	for sessionID := range sessionIDs {
+		calls = append(calls, snapshotSessionLocked(sessionID)...)
+	}
+	sortSnapshotCalls(calls)
+	return calls
+}
+
+func snapshotSessionLocked(sessionID string) []SnapshotCall {
+	calls := make([]SnapshotCall, 0, len(registry[sessionID])+len(running[sessionID]))
+	for _, call := range registry[sessionID] {
+		calls = append(calls, SnapshotCall{
+			SessionID:   sessionID,
+			ID:          call.ID,
+			Name:        call.Name,
+			ArgsJSON:    call.ArgsJSON,
+			Result:      call.Result,
+			Status:      "done",
+			StartedAt:   call.StartedAt,
+			CompletedAt: call.CompletedAt,
+		})
+	}
+	for _, call := range running[sessionID] {
+		calls = append(calls, SnapshotCall{
+			SessionID: sessionID,
+			ID:        call.ID,
+			Name:      call.Name,
+			ArgsJSON:  call.ArgsJSON,
+			Status:    "running",
+			StartedAt: call.StartedAt,
+		})
+	}
+	sortSnapshotCalls(calls)
+	return calls
+}
+
+func sortSnapshotCalls(calls []SnapshotCall) {
+	sort.SliceStable(calls, func(i, j int) bool {
+		left := calls[i].StartedAt
+		if left.IsZero() {
+			left = calls[i].CompletedAt
+		}
+		right := calls[j].StartedAt
+		if right.IsZero() {
+			right = calls[j].CompletedAt
+		}
+		if left.Equal(right) {
+			return calls[i].ID < calls[j].ID
+		}
+		return left.Before(right)
+	})
+}
+
 // GetAndClear returns all recorded calls for the session and removes them.
 func GetAndClear(sessionID string) []CompletedCall {
 	mu.Lock()
 	calls := registry[sessionID]
 	delete(registry, sessionID)
+	delete(running, sessionID)
 	mu.Unlock()
 	return calls
 }
@@ -116,5 +239,6 @@ func GetAndClear(sessionID string) []CompletedCall {
 func Clear(sessionID string) {
 	mu.Lock()
 	delete(registry, sessionID)
+	delete(running, sessionID)
 	mu.Unlock()
 }
