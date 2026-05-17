@@ -16,6 +16,8 @@ func TestIsCLIProvider(t *testing.T) {
 	}{
 		{llm.ProviderClaudeCode, true},
 		{llm.ProviderGeminiCLI, true},
+		{llm.ProviderCodexCLI, true},
+		{llm.ProviderCursorCLI, true},
 		{llm.ProviderAnthropic, false},
 		{llm.ProviderOpenAI, false},
 		{llm.Provider("unknown"), false},

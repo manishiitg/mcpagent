@@ -26,9 +26,7 @@ func TestLookupBridgeToolSynthesizesGetAPISpecWhenFilteredFromTools(t *testing.T
 	}
 }
 
-func TestIsCodingCLIProviderIncludesKimiCodeOnly(t *testing.T) {
-	t.Setenv("KIMI_CODE_TRANSPORT", "")
-
+func TestIsCodingCLIProviderExcludesKimiAPIProvider(t *testing.T) {
 	tests := []struct {
 		name     string
 		provider llm.Provider
@@ -38,7 +36,7 @@ func TestIsCodingCLIProviderIncludesKimiCodeOnly(t *testing.T) {
 		{name: "claude code", provider: llm.ProviderClaudeCode, want: true},
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI, want: true},
 		{name: "codex cli", provider: llm.ProviderCodexCLI, want: true},
-		{name: "kimi code", provider: llm.ProviderKimi, modelID: "kimi-code", want: true},
+		{name: "cursor cli", provider: llm.ProviderCursorCLI, want: true},
 		{name: "kimi api model", provider: llm.ProviderKimi, modelID: "kimi-k2.6", want: false},
 		{name: "anthropic", provider: llm.ProviderAnthropic, want: false},
 	}

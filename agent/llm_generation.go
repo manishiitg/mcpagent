@@ -123,22 +123,6 @@ func sanitizeGeminiProjectDirID(raw string) string {
 	return out
 }
 
-func kimiCodeCLITransportEnabled(modelID string) bool {
-	if strings.TrimSpace(modelID) != "" && strings.TrimSpace(modelID) != "kimi-code" {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("KIMI_CODE_TRANSPORT"))) {
-	case "":
-		return true
-	case "cli", "native", "kimi-cli", "kimi-code-cli":
-		return true
-	case "http", "api", "anthropic", "anthropic-http", "off", "false", "0":
-		return false
-	default:
-		return true
-	}
-}
-
 func claudeHTTPRoutingHooksEnabled() bool {
 	v := strings.TrimSpace(os.Getenv("MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING"))
 	if v == "" {
@@ -1034,19 +1018,6 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		}
 	}
 
-	// 🔧 KIMI CLI INTEGRATION: MCP bridge + restricted internal tools
-	// Kimi's kimi-code model defaults to the native CLI transport. Pass the same
-	// MCP bridge config used by Claude Code so Kimi sees our workspace/browser/custom
-	// tools instead of relying only on its internal tools.
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderKimi && kimiCodeCLITransportEnabled(model.ModelID) {
-		bridgeConfig, err := a.BuildBridgeMCPConfig()
-		if err != nil {
-			return nil, fmt.Errorf("Kimi Code CLI requires the MCP bridge: %w", err)
-		}
-		opts = append(opts, llm.WithMCPConfig(bridgeConfig))
-		a.Logger.Info("🌉 Using MCP bridge for Kimi Code CLI tool access via HTTP API")
-	}
-
 	// 🔧 GEMINI CLI INTEGRATION: Project settings + MCP bridge
 	// Gemini CLI reads .gemini/settings.json from its working directory. We create
 	// a temp directory with settings that:
@@ -1207,9 +1178,24 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		a.Logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
 	}
 
+	// 🔧 CURSOR CLI INTEGRATION: MCP bridge + tmux live input
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderCursorCLI {
+		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
+		if bridgeErr == nil {
+			opts = append(opts, llm.WithCursorMCPConfig(bridgeConfig))
+			opts = append(opts, llm.WithCursorApproveMCPs())
+			a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json")
+		} else {
+			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Cursor CLI (tools may be limited): %v", bridgeErr))
+		}
+
+		opts = append(opts, llm.WithCursorForce())
+		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and live input support")
+	}
+
 	// Apply model options for all providers (reasoning_effort, thinking_level, etc.)
 	if model.Options != nil {
-		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" && llmproviders.Provider(model.Provider) != llmproviders.ProviderCodexCLI {
+		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" && llmproviders.Provider(model.Provider) != llmproviders.ProviderCodexCLI && llmproviders.Provider(model.Provider) != llmproviders.ProviderCursorCLI {
 			opts = append(opts, llmtypes.WithReasoningEffort(effort))
 		}
 		if level, ok := model.Options["thinking_level"].(string); ok && level != "" {

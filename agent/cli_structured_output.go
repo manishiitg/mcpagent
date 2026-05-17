@@ -13,7 +13,7 @@ import (
 
 // isCLIProvider returns true if the provider is a CLI wrapper.
 func isCLIProvider(provider llm.Provider) bool {
-	return provider == llm.ProviderClaudeCode || provider == llm.ProviderGeminiCLI || provider == llm.ProviderCodexCLI
+	return provider == llm.ProviderClaudeCode || provider == llm.ProviderGeminiCLI || provider == llm.ProviderCodexCLI || provider == llm.ProviderCursorCLI
 }
 
 // buildCLIStructuredOutputInstruction builds an instruction string that tells the LLM

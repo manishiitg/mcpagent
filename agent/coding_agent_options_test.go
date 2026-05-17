@@ -10,8 +10,8 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/kimi"
 )
 
 func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
@@ -71,14 +71,19 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantWorkingDir:  "/tmp/gemini-chat",
 		},
 		{
-			name: "kimi code cli working dir without interactive session",
+			name: "cursor persistent chat",
 			agent: &Agent{
-				provider:              llm.ProviderKimi,
-				ModelID:               "kimi-code",
-				CodingAgentWorkingDir: "/tmp/kimi-chat",
+				provider:                           llm.ProviderCursorCLI,
+				SessionID:                          "chat-session-4",
+				CursorPersistentInteractiveSession: true,
+				CodingAgentWorkingDir:              "/tmp/cursor-chat",
 			},
-			wantWorkingKey: kimi.MetadataKeyWorkingDir,
-			wantWorkingDir: "/tmp/kimi-chat",
+			wantSessionKey:  cursorcli.MetadataKeyInteractiveSessionID,
+			wantPersistKey:  cursorcli.MetadataKeyPersistentInteractive,
+			wantSessionID:   "chat-session-4",
+			wantPersistence: true,
+			wantWorkingKey:  cursorcli.MetadataKeyWorkingDir,
+			wantWorkingDir:  "/tmp/cursor-chat",
 		},
 		{
 			name: "codex workflow uses persistent interactive lifecycle",
@@ -142,7 +147,7 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 		{name: "claude code", provider: llm.ProviderClaudeCode, metadataKey: claudecode.MetadataKeyWorkingDir},
 		{name: "codex cli", provider: llm.ProviderCodexCLI, metadataKey: codexcli.MetadataKeyProjectDirID},
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI, metadataKey: geminicli.MetadataKeyWorkingDir},
-		{name: "kimi code cli", provider: llm.ProviderKimi, modelID: "kimi-code", metadataKey: kimi.MetadataKeyWorkingDir},
+		{name: "cursor cli", provider: llm.ProviderCursorCLI, metadataKey: cursorcli.MetadataKeyWorkingDir},
 	}
 
 	for _, tc := range cases {

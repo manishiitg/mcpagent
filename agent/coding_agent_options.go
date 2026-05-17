@@ -34,6 +34,11 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 	case llm.ProviderGeminiCLI:
 		opts = append(opts, llm.WithGeminiInteractiveSessionID(sessionID))
 		opts = append(opts, llm.WithGeminiPersistentInteractiveSession(true))
+	case llm.ProviderCursorCLI:
+		opts = append(opts, llm.WithCursorInteractiveSessionID(sessionID))
+		if a.CursorPersistentInteractiveSession {
+			opts = append(opts, llm.WithCursorPersistentInteractiveSession(true))
+		}
 	}
 
 	return opts
@@ -48,7 +53,7 @@ func codingAgentPersistentInteractiveEnabledForProvider(provider llm.Provider, s
 		return false
 	}
 	switch provider {
-	case llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderGeminiCLI:
+	case llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderGeminiCLI, llm.ProviderCursorCLI:
 		return true
 	default:
 		return false
@@ -75,10 +80,8 @@ func codingAgentWorkingDirOptionForProvider(provider llm.Provider, modelID strin
 		return llm.WithCodexProjectDirID, true
 	case llm.ProviderGeminiCLI:
 		return llm.WithGeminiWorkingDir, true
-	case llm.ProviderKimi:
-		if kimiCodeCLITransportEnabled(modelID) {
-			return llm.WithKimiWorkingDir, true
-		}
+	case llm.ProviderCursorCLI:
+		return llm.WithCursorWorkingDir, true
 	}
 	return nil, false
 }

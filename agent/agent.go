@@ -165,6 +165,15 @@ func WithGeminiPersistentInteractiveSession(enabled bool) AgentOption {
 	}
 }
 
+// WithCursorPersistentInteractiveSession keeps Cursor CLI tmux sessions alive
+// across completed chat turns. Use only for interactive chat; workflow steps
+// should keep the default per-turn lifecycle.
+func WithCursorPersistentInteractiveSession(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.CursorPersistentInteractiveSession = enabled
+	}
+}
+
 // WithMaxTurns sets the maximum number of conversation turns allowed.
 //
 // A turn consists of one user message and one agent response (which may include multiple tool calls).
@@ -798,6 +807,9 @@ type Agent struct {
 	// Codex CLI persistent tmux mode
 	CodexPersistentInteractiveSession bool
 
+	// Cursor CLI persistent tmux mode for interactive chat
+	CursorPersistentInteractiveSession bool
+
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 
@@ -1145,6 +1157,8 @@ func (a *Agent) GetLLMModelConfig() LLMModel {
 			config.APIKey = a.APIKeys.GeminiCLI
 		case llm.ProviderCodexCLI:
 			config.APIKey = a.APIKeys.CodexCLI
+		case llm.ProviderCursorCLI:
+			config.APIKey = a.APIKeys.CursorCLI
 		case llm.ProviderMiniMax:
 			config.APIKey = a.APIKeys.MiniMax
 		case llm.ProviderMiniMaxCodingPlan:
@@ -2068,6 +2082,37 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.EnableStreaming {
 			ag.EnableStreaming = true
 			logger.Debug("🔧 [CODEX_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
+	// Auto-configure Cursor CLI provider (same constraints as the other CLI coding agents)
+	if ag.provider == llmproviders.ProviderCursorCLI {
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 
@@ -3056,6 +3101,37 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		if !ag.EnableStreaming {
 			ag.EnableStreaming = true
 			logger.Debug("🔧 [CODEX_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
+	// Auto-configure Cursor CLI provider (same constraints as the other CLI coding agents)
+	if ag.provider == llmproviders.ProviderCursorCLI {
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 

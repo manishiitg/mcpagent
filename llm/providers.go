@@ -28,6 +28,7 @@ const (
 	ProviderClaudeCode        = llmproviders.ProviderClaudeCode
 	ProviderGeminiCLI         = llmproviders.ProviderGeminiCLI
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
+	ProviderCursorCLI         = llmproviders.ProviderCursorCLI
 	ProviderMiniMax           = llmproviders.ProviderMiniMax
 	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
 	ProviderElevenLabs        = llmproviders.ProviderElevenLabs
@@ -63,6 +64,12 @@ func SendGeminiCLIInteractiveInput(ctx context.Context, sessionID, message strin
 	return llmproviders.SendGeminiCLIInteractiveInput(ctx, sessionID, message)
 }
 
+// SendCursorCLIInteractiveInput sends user input to a live Cursor CLI
+// interactive session registered for the owning application session.
+func SendCursorCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
+	return llmproviders.SendCursorCLIInteractiveInput(ctx, sessionID, message)
+}
+
 // WithClaudeCodeInteractiveSessionID links a Claude Code experimental run to
 // the owning application session so live follow-up input can be sent to it.
 func WithClaudeCodeInteractiveSessionID(id string) llmtypes.CallOption {
@@ -78,11 +85,6 @@ func WithClaudeCodePersistentInteractiveSession(enabled bool) llmtypes.CallOptio
 // WithClaudeCodeWorkingDir sets the process working directory for Claude Code.
 func WithClaudeCodeWorkingDir(dir string) llmtypes.CallOption {
 	return llmproviders.WithClaudeCodeWorkingDir(dir)
-}
-
-// WithKimiWorkingDir sets the process working directory for Kimi Code CLI.
-func WithKimiWorkingDir(dir string) llmtypes.CallOption {
-	return llmproviders.WithKimiWorkingDir(dir)
 }
 
 // WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning
@@ -107,6 +109,43 @@ func WithGeminiInteractiveSessionID(id string) llmtypes.CallOption {
 // sessions alive across completed chat turns.
 func WithGeminiPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithGeminiPersistentInteractiveSession(enabled)
+}
+
+// WithCursorInteractiveSessionID links a Cursor CLI interactive run to the
+// owning application session so live follow-up input can be sent to it.
+func WithCursorInteractiveSessionID(id string) llmtypes.CallOption {
+	return llmproviders.WithCursorInteractiveSessionID(id)
+}
+
+// WithCursorPersistentInteractiveSession keeps Cursor CLI interactive tmux
+// sessions alive across completed chat turns.
+func WithCursorPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithCursorPersistentInteractiveSession(enabled)
+}
+
+// WithCursorWorkingDir sets the Cursor Agent CLI workspace/cwd.
+func WithCursorWorkingDir(dir string) llmtypes.CallOption {
+	return llmproviders.WithCursorWorkingDir(dir)
+}
+
+// WithCursorMCPConfig writes a temporary/restored .cursor/mcp.json for Cursor.
+func WithCursorMCPConfig(config string) llmtypes.CallOption {
+	return llmproviders.WithCursorMCPConfig(config)
+}
+
+// WithCursorProjectConfig writes a temporary/restored .cursor/cli.json for Cursor.
+func WithCursorProjectConfig(config string) llmtypes.CallOption {
+	return llmproviders.WithCursorProjectConfig(config)
+}
+
+// WithCursorForce enables Cursor Agent CLI's --force flag.
+func WithCursorForce() llmtypes.CallOption {
+	return llmproviders.WithCursorForce()
+}
+
+// WithCursorApproveMCPs enables Cursor Agent CLI's --approve-mcps flag.
+func WithCursorApproveMCPs() llmtypes.CallOption {
+	return llmproviders.WithCursorApproveMCPs()
 }
 
 // Config holds configuration for LLM initialization (agent_go version)
