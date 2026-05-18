@@ -1307,8 +1307,21 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		if level, ok := model.Options["thinking_level"].(string); ok && level != "" {
 			opts = append(opts, llmtypes.WithThinkingLevel(level))
 		}
-		if budget, ok := model.Options["thinking_budget"].(float64); ok && budget > 0 {
+		if budget, ok := numericOption(model.Options["thinking_budget"]); ok && budget > 0 {
 			opts = append(opts, llmtypes.WithThinkingBudget(int(budget)))
+		}
+		// Sampling controls. Provider-agnostic; adapters only forward
+		// to the wire when they accept the field. JSON unmarshals
+		// numeric values into float64, so we accept either int or
+		// float types via numericOption.
+		if topP, ok := numericOption(model.Options["top_p"]); ok && topP > 0 {
+			opts = append(opts, llmtypes.WithTopP(topP))
+		}
+		if topK, ok := numericOption(model.Options["top_k"]); ok && topK > 0 {
+			opts = append(opts, llmtypes.WithTopK(int(topK)))
+		}
+		if stops, ok := stringSliceOption(model.Options["stop_sequences"]); ok && len(stops) > 0 {
+			opts = append(opts, llmtypes.WithStopSequences(stops))
 		}
 	}
 
