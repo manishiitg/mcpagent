@@ -284,8 +284,9 @@ func TestStreamingManagerForwardsTerminalChunks(t *testing.T) {
 	go sm.processChunks(context.Background(), agent)
 
 	sm.streamChan <- llmtypes.StreamChunk{
-		Type:    llmtypes.StreamChunkTypeTerminal,
-		Content: "Codex CLI screen snapshot",
+		Type:     llmtypes.StreamChunkTypeTerminal,
+		Content:  "Codex CLI screen snapshot",
+		Metadata: map[string]interface{}{"tmux_session": "codex-pane-1"},
 	}
 	close(sm.streamChan)
 	<-sm.streamingDone
@@ -309,6 +310,9 @@ func TestStreamingManagerForwardsTerminalChunks(t *testing.T) {
 	}
 	if got := chunkEvent.Metadata["kind"]; got != "terminal" {
 		t.Fatalf("metadata kind = %v, want terminal", got)
+	}
+	if got := chunkEvent.Metadata["tmux_session"]; got != "codex-pane-1" {
+		t.Fatalf("metadata tmux_session = %v, want codex-pane-1", got)
 	}
 	if sm.totalChunks != 1 {
 		t.Fatalf("totalChunks = %d, want 1", sm.totalChunks)

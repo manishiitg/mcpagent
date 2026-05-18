@@ -696,15 +696,19 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				sm.sawTerminal = true
 				sm.contentChunkIndex++
 				sm.totalChunks++
+				metadata := map[string]interface{}{
+					"kind":     "terminal",
+					"replace":  true,
+					"provider": string(a.provider),
+				}
+				for key, value := range chunk.Metadata {
+					metadata[key] = value
+				}
 
 				a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
 					BaseEventData: events.BaseEventData{
 						Timestamp: time.Now(),
-						Metadata: map[string]interface{}{
-							"kind":     "terminal",
-							"replace":  true,
-							"provider": string(a.provider),
-						},
+						Metadata:  metadata,
 					},
 					Content:    chunk.Content,
 					ChunkIndex: sm.contentChunkIndex,
