@@ -222,6 +222,30 @@ func WithOpenCodeAgent(agent string) llmtypes.CallOption {
 	return llmproviders.WithOpenCodeAgent(agent)
 }
 
+// WithOpenCodeSubProvider scopes a single OpenCode CLI call to one
+// sub-provider tile (e.g. "opencode-cli-kimi"). Adapters that were built
+// for a tile via the sub-provider constructor inherit this scope by
+// default; the call-time option lets dispatchers override the scope per
+// call without rebuilding the adapter.
+func WithOpenCodeSubProvider(id string) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeSubProvider(id)
+}
+
+// WithOpenCodeSubProviderAPIKey attaches a credential for a single
+// OpenCode-backed sub-provider, keyed by the env-var name the OpenCode
+// bundled SDK reads (KIMI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY,
+// MINIMAX_API_KEY, ZHIPU_API_KEY).
+func WithOpenCodeSubProviderAPIKey(envVar, apiKey string) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeSubProviderAPIKey(envVar, apiKey)
+}
+
+// WithOpenCodeSubProviderAPIKeys replaces the whole per-sub-provider key
+// map in one call. Useful when the caller already loaded the full
+// credential set from a workspace store.
+func WithOpenCodeSubProviderAPIKeys(keys map[string]string) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeSubProviderAPIKeys(keys)
+}
+
 // Config holds configuration for LLM initialization (agent_go version)
 // This is kept for backward compatibility and converted to llm-providers Config internally
 type Config struct {

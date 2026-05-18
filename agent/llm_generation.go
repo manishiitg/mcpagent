@@ -1260,8 +1260,12 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and live input support")
 	}
 
-	// 🔧 OPENCODE CLI INTEGRATION: MCP bridge + structured JSON transport
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderOpenCodeCLI {
+	// 🔧 OPENCODE CLI INTEGRATION: MCP bridge + structured JSON transport.
+	// All sub-provider tiles (opencode-cli-kimi / -deepseek / -qwen /
+	// -minimax / -glm / -free) share this path; the sub-provider scope
+	// itself is baked into the adapter via NewOpenCodeCLIAdapterForSub-
+	// Provider during InitializeLLM.
+	if llmproviders.IsOpenCodeCLIProvider(llmproviders.Provider(model.Provider)) {
 		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
 		if bridgeErr == nil {
 			opts = append(opts, llm.WithOpenCodeMCPConfig(bridgeConfig))
@@ -1275,7 +1279,24 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 				a.Logger.Info(fmt.Sprintf("🤖 [OPENCODE_CLI] Agent set to: %s", agent))
 			}
 		}
-		a.Logger.Info("🌉 Using OpenCode CLI structured JSON mode with MCP bridge")
+		// Sub-provider tiles may also carry per-call overrides for the
+		// sub-provider scope. The adapter inherits its construction-
+		// time defaults when no override is present, so passing these
+		// only matters when a dispatcher wants to swap credentials at
+		// runtime (e.g. multi-tenant proxy).
+		if model.Options != nil {
+			if id, ok := model.Options["opencode_sub_provider_id"].(string); ok && id != "" {
+				opts = append(opts, llm.WithOpenCodeSubProvider(id))
+			}
+			if rawKeys, ok := model.Options["opencode_sub_provider_api_keys"].(map[string]string); ok && len(rawKeys) > 0 {
+				opts = append(opts, llm.WithOpenCodeSubProviderAPIKeys(rawKeys))
+			}
+		}
+		if llmproviders.IsOpenCodeSubProvider(llmproviders.Provider(model.Provider)) {
+			a.Logger.Info(fmt.Sprintf("🌉 Using OpenCode CLI sub-provider tile %s with MCP bridge", model.Provider))
+		} else {
+			a.Logger.Info("🌉 Using OpenCode CLI structured JSON mode with MCP bridge")
+		}
 	}
 
 	// Apply model options for all providers (reasoning_effort, thinking_level, etc.)
