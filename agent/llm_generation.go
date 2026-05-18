@@ -632,6 +632,7 @@ type streamingManager struct {
 	streamingDone     chan bool
 	contentChunkIndex int
 	totalChunks       int
+	sawTerminal       bool
 	startTime         time.Time
 	turn              int // conversation turn for event emission
 	// CLIToolCalls accumulates completed tool call chunks from CLI providers (Gemini CLI,
@@ -692,6 +693,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 
 		case llmtypes.StreamChunkTypeTerminal:
 			if chunk.Content != "" {
+				sm.sawTerminal = true
 				sm.contentChunkIndex++
 				sm.totalChunks++
 
@@ -781,6 +783,12 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 		TotalChunks:   sm.totalChunks,
 		Duration:      time.Since(sm.startTime).String(),
 	}
+	if sm.sawTerminal {
+		endEvent.Metadata = map[string]interface{}{
+			"kind":     "terminal",
+			"provider": string(a.provider),
+		}
+	}
 
 	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
 		genInfo := resp.Choices[0].GenerationInfo
@@ -792,6 +800,14 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 		}
 		// Extract provider-specific metadata (Gemini CLI / Claude Code)
 		if additional := genInfo.Additional; additional != nil {
+			if sm.sawTerminal && endEvent.Metadata != nil {
+				if retentionSeconds := terminalRetentionSecondsFromGenerationInfo(additional); retentionSeconds > 0 {
+					endEvent.Metadata["terminal_retention_seconds"] = retentionSeconds
+				}
+				if tmuxSession := terminalTmuxSessionFromGenerationInfo(additional); tmuxSession != "" {
+					endEvent.Metadata["tmux_session"] = tmuxSession
+				}
+			}
 			// Gemini CLI metadata
 			if model, ok := additional["gemini_model"].(string); ok {
 				endEvent.ResolvedModel = model
@@ -810,6 +826,58 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 		}
 	}
 	a.EmitTypedEvent(ctx, endEvent)
+}
+
+func terminalRetentionSecondsFromGenerationInfo(additional map[string]interface{}) int {
+	for _, key := range []string{
+		"terminal_retention_seconds",
+		"claude_code_interactive_retention_seconds",
+		"codex_interactive_retention_seconds",
+		"gemini_interactive_retention_seconds",
+		"cursor_interactive_retention_seconds",
+	} {
+		if seconds := generationInfoIntValue(additional[key]); seconds > 0 {
+			return seconds
+		}
+	}
+	return 0
+}
+
+func terminalTmuxSessionFromGenerationInfo(additional map[string]interface{}) string {
+	for _, key := range []string{
+		"claude_code_session",
+		"codex_interactive_session",
+		"gemini_interactive_session",
+		"cursor_interactive_session",
+	} {
+		if value := strings.TrimSpace(fmt.Sprint(additional[key])); value != "" && value != "<nil>" {
+			return value
+		}
+	}
+	return ""
+}
+
+func generationInfoIntValue(value interface{}) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case json.Number:
+		i, _ := typed.Int64()
+		return int(i)
+	case string:
+		i, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return i
+	default:
+		return 0
+	}
 }
 
 // getEffectiveLLMConfig returns a unified LLM configuration, compatible with legacy settings

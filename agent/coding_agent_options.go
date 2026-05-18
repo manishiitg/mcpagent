@@ -15,14 +15,16 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 	opts = a.appendCodingAgentWorkingDirOptionForProvider(opts, provider, modelID)
 
 	sessionID := strings.TrimSpace(a.SessionID)
-	if sessionID == "" || !codingAgentPersistentInteractiveEnabledForProvider(provider, modelID, sessionID) {
+	if sessionID == "" || !codingAgentInteractiveEnabledForProvider(provider, modelID, sessionID) {
 		return opts
 	}
 
 	switch provider {
 	case llm.ProviderClaudeCode:
 		opts = append(opts, llm.WithClaudeCodeInteractiveSessionID(sessionID))
-		opts = append(opts, llm.WithClaudeCodePersistentInteractiveSession(true))
+		if a.ClaudeCodePersistentInteractiveSession {
+			opts = append(opts, llm.WithClaudeCodePersistentInteractiveSession(true))
+		}
 	case llm.ProviderCodexCLI:
 		opts = append(opts, llm.WithCodexInteractiveSessionID(sessionID))
 		if strings.TrimSpace(a.CodingAgentWorkingDir) == "" {
@@ -30,10 +32,14 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 				opts = append(opts, llm.WithCodexProjectDirID(legacyDir))
 			}
 		}
-		opts = append(opts, llm.WithCodexPersistentInteractiveSession(true))
+		if a.CodexPersistentInteractiveSession {
+			opts = append(opts, llm.WithCodexPersistentInteractiveSession(true))
+		}
 	case llm.ProviderGeminiCLI:
 		opts = append(opts, llm.WithGeminiInteractiveSessionID(sessionID))
-		opts = append(opts, llm.WithGeminiPersistentInteractiveSession(true))
+		if a.GeminiPersistentInteractiveSession {
+			opts = append(opts, llm.WithGeminiPersistentInteractiveSession(true))
+		}
 	case llm.ProviderCursorCLI:
 		opts = append(opts, llm.WithCursorInteractiveSessionID(sessionID))
 		if a.CursorPersistentInteractiveSession {
@@ -48,10 +54,24 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 }
 
 func (a *Agent) codingAgentPersistentInteractiveEnabled() bool {
-	return codingAgentPersistentInteractiveEnabledForProvider(a.provider, a.ModelID, a.SessionID)
+	if strings.TrimSpace(a.SessionID) == "" || !llm.IsTmuxCodingAgentProvider(a.provider, a.ModelID) {
+		return false
+	}
+	switch a.provider {
+	case llm.ProviderClaudeCode:
+		return a.ClaudeCodePersistentInteractiveSession
+	case llm.ProviderCodexCLI:
+		return a.CodexPersistentInteractiveSession
+	case llm.ProviderGeminiCLI:
+		return a.GeminiPersistentInteractiveSession
+	case llm.ProviderCursorCLI:
+		return a.CursorPersistentInteractiveSession
+	default:
+		return false
+	}
 }
 
-func codingAgentPersistentInteractiveEnabledForProvider(provider llm.Provider, modelID, sessionID string) bool {
+func codingAgentInteractiveEnabledForProvider(provider llm.Provider, modelID, sessionID string) bool {
 	if strings.TrimSpace(sessionID) == "" {
 		return false
 	}

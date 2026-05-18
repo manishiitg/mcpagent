@@ -87,7 +87,7 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantWorkingDir:  "/tmp/cursor-chat",
 		},
 		{
-			name: "codex workflow uses persistent interactive lifecycle",
+			name: "codex workflow uses bounded interactive lifecycle",
 			agent: &Agent{
 				provider:                          llm.ProviderCodexCLI,
 				SessionID:                         "workflow-session",
@@ -96,7 +96,7 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantSessionKey:  codexcli.MetadataKeyInteractiveSessionID,
 			wantPersistKey:  codexcli.MetadataKeyPersistentInteractive,
 			wantSessionID:   "workflow-session",
-			wantPersistence: true,
+			wantPersistence: false,
 		},
 		{
 			name: "opencode structured chat gets working dir only",
@@ -181,9 +181,10 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 
 func TestAppendCodingAgentInteractiveOptionsForActualFallbackProvider(t *testing.T) {
 	agent := &Agent{
-		provider:              llm.ProviderOpenAI,
-		SessionID:             "fallback-session",
-		CodingAgentWorkingDir: "/tmp/fallback-workdir",
+		provider:                           llm.ProviderOpenAI,
+		SessionID:                          "fallback-session",
+		CodingAgentWorkingDir:              "/tmp/fallback-workdir",
+		GeminiPersistentInteractiveSession: true,
 	}
 
 	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptionsForProvider(nil, llm.ProviderGeminiCLI, "gemini-3.1-flash-lite"))

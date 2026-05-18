@@ -129,7 +129,9 @@ func TestBuildBridgeMCPConfigNoSessionID(t *testing.T) {
 	}
 
 	var config map[string]interface{}
-	json.Unmarshal([]byte(configJSON), &config)
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatalf("json.Unmarshal() error: %v", err)
+	}
 	servers := config["mcpServers"].(map[string]interface{})
 	bridge := servers["api-bridge"].(map[string]interface{})
 	env := bridge["env"].(map[string]interface{})
@@ -153,7 +155,9 @@ func TestBuildBridgeMCPConfigBridgeURLOverride(t *testing.T) {
 	}
 
 	var config map[string]interface{}
-	json.Unmarshal([]byte(configJSON), &config)
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatalf("json.Unmarshal() error: %v", err)
+	}
 	servers := config["mcpServers"].(map[string]interface{})
 	bridge := servers["api-bridge"].(map[string]interface{})
 	env := bridge["env"].(map[string]interface{})
@@ -202,7 +206,9 @@ func TestBuildBridgeMCPConfigAPIBaseURLPriority(t *testing.T) {
 	}
 
 	var config map[string]interface{}
-	json.Unmarshal([]byte(configJSON), &config)
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatalf("json.Unmarshal() error: %v", err)
+	}
 	servers := config["mcpServers"].(map[string]interface{})
 	bridge := servers["api-bridge"].(map[string]interface{})
 	env := bridge["env"].(map[string]interface{})

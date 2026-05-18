@@ -501,6 +501,59 @@ func TestFinishStreamingEmitsEndEvent(t *testing.T) {
 	}
 }
 
+func TestFinishStreamingTerminalEndIncludesRetentionMetadata(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		SessionID: "session-terminal-retention-test",
+		provider:  "codex-cli",
+		listeners: []AgentEventListener{listener},
+	}
+
+	sm := &streamingManager{
+		streamChan:    make(chan llmtypes.StreamChunk, 2),
+		streamingDone: make(chan bool, 1),
+		startTime:     time.Now(),
+	}
+	go sm.processChunks(context.Background(), agent)
+
+	sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeTerminal, Content: "terminal screen"}
+	resp := &llmtypes.ContentResponse{
+		Choices: []*llmtypes.ContentChoice{
+			{
+				Content: "done",
+				GenerationInfo: &llmtypes.GenerationInfo{
+					Additional: map[string]interface{}{
+						"codex_interactive_session":           "tmux-codex-123",
+						"terminal_retention_seconds":          300,
+						"codex_interactive_retention_seconds": 300,
+					},
+				},
+			},
+		},
+	}
+
+	agent.finishStreaming(context.Background(), sm, resp)
+
+	var endEvent *events.StreamingEndEvent
+	for _, e := range listener.events {
+		if ee, ok := e.Data.(*events.StreamingEndEvent); ok {
+			endEvent = ee
+		}
+	}
+	if endEvent == nil {
+		t.Fatal("StreamingEndEvent not emitted")
+	}
+	if endEvent.Metadata["kind"] != "terminal" {
+		t.Fatalf("metadata kind = %v, want terminal", endEvent.Metadata["kind"])
+	}
+	if endEvent.Metadata["terminal_retention_seconds"] != 300 {
+		t.Fatalf("retention metadata = %v, want 300", endEvent.Metadata["terminal_retention_seconds"])
+	}
+	if endEvent.Metadata["tmux_session"] != "tmux-codex-123" {
+		t.Fatalf("tmux_session metadata = %v", endEvent.Metadata["tmux_session"])
+	}
+}
+
 func TestFinishStreamingSafeDoubleClose(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
