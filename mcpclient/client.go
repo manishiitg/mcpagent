@@ -371,12 +371,8 @@ func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 	// Call ListTools directly without goroutine wrapper
 	c.logger.Debug("About to make the actual ListTools call")
 
-	// Add a timeout wrapper to see if it's the call itself
-	callCtx, callCancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer callCancel()
-
-	c.logger.Debug("Making ListTools call with 5m timeout")
-	result, err := c.mcpClient.ListTools(callCtx, mcp.ListToolsRequest{})
+	c.logger.Debug("Making ListTools call without an added timeout")
+	result, err := c.mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
 
 	if err != nil {
 		c.logger.Debug("ListTools call returned with error", loggerv2.Error(err))

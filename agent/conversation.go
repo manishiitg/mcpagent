@@ -105,7 +105,8 @@ func isVirtualTool(toolName string) bool {
 	return false
 }
 
-// getToolExecutionTimeout returns the tool execution timeout duration
+// getToolExecutionTimeout returns the tool execution timeout duration.
+// A return value <= 0 means no agent-level tool timeout.
 func getToolExecutionTimeout(a *Agent) time.Duration {
 	// First check if agent has a specific timeout configured
 	if a.ToolTimeout > 0 {
@@ -115,14 +116,12 @@ func getToolExecutionTimeout(a *Agent) time.Duration {
 	// Fall back to environment variable
 	timeoutStr := os.Getenv("TOOL_EXECUTION_TIMEOUT")
 	if timeoutStr == "" {
-		return 5 * time.Minute // Default 5 minutes (changed from 10 seconds)
+		return 0
 	}
 
 	timeout, err := time.ParseDuration(timeoutStr)
 	if err != nil {
-		// Log parsing error - this function doesn't have access to agent logger
-		// so we'll just return the default without logging (or could use fmt.Printf for debugging)
-		return 5 * time.Minute // Default 5 minutes (changed from 10 seconds)
+		return 0
 	}
 
 	return timeout
@@ -1286,7 +1285,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Create timeout context for tool execution
 				// Check if this is a custom tool with a per-tool timeout
 				toolTimeout := getToolExecutionTimeout(a)
-				hasNoTimeout := false
+				hasNoTimeout := toolTimeout <= 0
 				if isCustomTool {
 					if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists && customTool.Timeout != -1 {
 						if customTool.Timeout == 0 {
@@ -1296,6 +1295,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 								loggerv2.String("tool_name", tc.FunctionCall.Name))
 						} else if customTool.Timeout > 0 {
 							// Custom per-tool timeout
+							hasNoTimeout = false
 							toolTimeout = customTool.Timeout
 							v2Logger.Debug("🔧 [TOOL_TIMEOUT] Custom tool has per-tool timeout",
 								loggerv2.String("tool_name", tc.FunctionCall.Name),

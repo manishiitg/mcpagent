@@ -401,8 +401,9 @@ func WithContextEditingTurnThreshold(turns int) AgentOption {
 // WithToolTimeout sets a global timeout for tool execution.
 //
 // If a tool takes longer than this duration, it will be cancelled.
+// A timeout <= 0 means no agent-level tool timeout.
 //
-// Default: 5 minutes
+// Default: no timeout
 func WithToolTimeout(timeout time.Duration) AgentOption {
 	return func(a *Agent) {
 		a.ToolTimeout = timeout

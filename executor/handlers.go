@@ -25,16 +25,26 @@ func isLongRunningDelegationTool(tool string) bool {
 }
 
 func resolveCustomToolTimeout(tool string) time.Duration {
-	toolTimeout := 10 * time.Minute
 	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
-		if d, err := time.ParseDuration(envVal); err == nil && d > 0 {
-			toolTimeout = d
+		if d, err := time.ParseDuration(envVal); err == nil {
+			return d
 		}
 	}
-	if isLongRunningDelegationTool(tool) && toolTimeout < 90*time.Minute {
-		return 90 * time.Minute
+	return 0
+}
+
+func toolTimeoutString(timeout time.Duration) string {
+	if timeout <= 0 {
+		return "none"
 	}
-	return toolTimeout
+	return timeout.String()
+}
+
+func contextWithOptionalTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return parent, func() {}
+	}
+	return context.WithTimeout(parent, timeout)
 }
 
 // --- REQUEST/RESPONSE TYPES ---
@@ -177,9 +187,9 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		baseCtx = context.Background()
 		h.logger.Info("⏱️ Using detached long-running context for delegation custom tool",
 			loggerv2.String("tool", req.Tool),
-			loggerv2.String("timeout", toolTimeout.String()))
+			loggerv2.String("timeout", toolTimeoutString(toolTimeout)))
 	}
-	ctx, cancel := context.WithTimeout(baseCtx, toolTimeout)
+	ctx, cancel := contextWithOptionalTimeout(baseCtx, toolTimeout)
 	defer cancel()
 
 	// Apply tool argument transformers before ANY execution path (session registry, codeexec, mcpcache).
@@ -613,9 +623,9 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		baseCtx = context.Background()
 		h.logger.Info("⏱️ Using detached long-running context for delegation custom tool",
 			loggerv2.String("tool", req.Tool),
-			loggerv2.String("timeout", toolTimeout.String()))
+			loggerv2.String("timeout", toolTimeoutString(toolTimeout)))
 	}
-	ctx, cancel := context.WithTimeout(baseCtx, toolTimeout)
+	ctx, cancel := contextWithOptionalTimeout(baseCtx, toolTimeout)
 	defer cancel()
 
 	// Execute custom tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
@@ -712,9 +722,9 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 		baseCtx = context.Background()
 		h.logger.Info("⏱️ Using detached long-running context for delegation virtual tool",
 			loggerv2.String("tool", req.Tool),
-			loggerv2.String("timeout", toolTimeout.String()))
+			loggerv2.String("timeout", toolTimeoutString(toolTimeout)))
 	}
-	ctx, cancel := context.WithTimeout(baseCtx, toolTimeout)
+	ctx, cancel := contextWithOptionalTimeout(baseCtx, toolTimeout)
 	defer cancel()
 
 	// Execute virtual tool using codeexec registry (session-scoped to prevent cross-workflow contamination)

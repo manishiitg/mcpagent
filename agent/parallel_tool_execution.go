@@ -416,11 +416,13 @@ func prepareToolExecution(
 
 	// Determine tool timeout
 	plan.toolTimeout = getToolExecutionTimeout(a)
+	plan.hasNoTimeout = plan.toolTimeout <= 0
 	if plan.isCustomTool {
 		if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists && customTool.Timeout != -1 {
 			if customTool.Timeout == 0 {
 				plan.hasNoTimeout = true
 			} else if customTool.Timeout > 0 {
+				plan.hasNoTimeout = false
 				plan.toolTimeout = customTool.Timeout
 			}
 		}
