@@ -99,18 +99,14 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantPersistence: true,
 		},
 		{
-			name: "opencode persistent chat",
+			name: "opencode structured chat gets working dir only",
 			agent: &Agent{
 				provider:              llm.ProviderOpenCodeCLI,
 				SessionID:             "chat-session-5",
 				CodingAgentWorkingDir: "/tmp/opencode-chat",
 			},
-			wantSessionKey:  opencodecli.MetadataKeyInteractiveSessionID,
-			wantPersistKey:  opencodecli.MetadataKeyPersistentInteractive,
-			wantSessionID:   "chat-session-5",
-			wantPersistence: true,
-			wantWorkingKey:  opencodecli.MetadataKeyWorkingDir,
-			wantWorkingDir:  "/tmp/opencode-chat",
+			wantWorkingKey: opencodecli.MetadataKeyWorkingDir,
+			wantWorkingDir: "/tmp/opencode-chat",
 		},
 		{
 			name: "missing owner session produces no coding-agent metadata",

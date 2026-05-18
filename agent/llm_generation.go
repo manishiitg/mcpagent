@@ -1103,16 +1103,15 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 			opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
 		}
 
-		// When a coding-agent working directory is configured, it is the source
-		// of truth for both Gemini's cwd and MCP shell cwd. Keep the helper
-		// project dir ID stable for policy/settings files, but do not pass it as
-		// Gemini's cwd.
+		// When a coding-agent working directory is configured, it remains the
+		// source of truth for MCP shell cwd and caller-visible workspace access.
+		// The Gemini adapter may still launch the CLI from an isolated project
+		// settings dir because Gemini discovers .gemini/settings.json from cwd.
+		opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
 		if strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
 			opts = append(opts, llm.WithGeminiWorkingDir(a.CodingAgentWorkingDir))
-			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using working dir: %s (session: %s)", a.CodingAgentWorkingDir, a.GeminiSessionID))
+			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using working dir: %s and isolated project dir ID: %s (session: %s)", a.CodingAgentWorkingDir, a.GeminiProjectDirID, a.GeminiSessionID))
 		} else {
-			// Pass project dir ID so adapter reuses our pre-created directory.
-			opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
 			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
 		}
 	}
@@ -1193,7 +1192,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and live input support")
 	}
 
-	// 🔧 OPENCODE CLI INTEGRATION: MCP bridge + tmux live input
+	// 🔧 OPENCODE CLI INTEGRATION: MCP bridge + structured JSON transport
 	if llmproviders.Provider(model.Provider) == llmproviders.ProviderOpenCodeCLI {
 		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
 		if bridgeErr == nil {
@@ -1208,7 +1207,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 				a.Logger.Info(fmt.Sprintf("🤖 [OPENCODE_CLI] Agent set to: %s", agent))
 			}
 		}
-		a.Logger.Info("🌉 Using OpenCode CLI in tmux mode with MCP bridge and live input support")
+		a.Logger.Info("🌉 Using OpenCode CLI structured JSON mode with MCP bridge")
 	}
 
 	// Apply model options for all providers (reasoning_effort, thinking_level, etc.)

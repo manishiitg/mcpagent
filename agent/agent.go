@@ -183,8 +183,8 @@ func WithCursorBridgeToolsMode(enabled bool) AgentOption {
 	}
 }
 
-// WithOpenCodePersistentInteractiveSession keeps OpenCode CLI tmux sessions
-// alive across completed chat turns.
+// WithOpenCodePersistentInteractiveSession is retained for API compatibility.
+// OpenCode CLI currently uses structured JSON invocations, not tmux sessions.
 func WithOpenCodePersistentInteractiveSession(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.OpenCodePersistentInteractiveSession = enabled
@@ -832,7 +832,7 @@ type Agent struct {
 	// when MCP bridge tools handle filesystem and shell operations.
 	CursorBridgeToolsMode bool
 
-	// OpenCode CLI persistent tmux mode for interactive chat
+	// Retained for API compatibility; OpenCode CLI uses structured JSON mode.
 	OpenCodePersistentInteractiveSession bool
 
 	// Context offloading: handles offloading large tool outputs to filesystem
