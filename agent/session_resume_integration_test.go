@@ -118,18 +118,20 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 
 func TestSessionIDResumeOptionsInjected(t *testing.T) {
 	tests := []struct {
-		name                string
-		provider            llm.Provider
-		claudeSessionID     string
-		geminiSessionID     string
-		geminiProjectDirID  string
-		codexSessionID      string
-		sessionID           string
-		wantResumeKey       string
-		wantResumeValue     string
-		wantProjectDirKey   string
-		wantProjectDirValue string
-		wantSkipResume      bool
+		name                              string
+		provider                          llm.Provider
+		modelID                           string
+		claudeSessionID                   string
+		geminiSessionID                   string
+		geminiProjectDirID                string
+		codexSessionID                    string
+		sessionID                         string
+		codexPersistentInteractiveSession bool
+		wantResumeKey                     string
+		wantResumeValue                   string
+		wantProjectDirKey                 string
+		wantProjectDirValue               string
+		wantSkipResume                    bool
 	}{
 		{
 			name:            "claude code passes resume session ID",
@@ -163,11 +165,20 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			wantResumeValue: "codex-thread-id",
 		},
 		{
-			name:           "codex skips resume when persistent interactive enabled",
-			provider:       llm.ProviderCodexCLI,
-			codexSessionID: "codex-thread-id",
-			sessionID:      "app-session-id",
-			wantSkipResume: true,
+			// Codex CLI uses the persistent tmux session for resume, so
+			// when persistent interactive is fully wired up
+			// (SessionID + tmux-capable model + explicit
+			// CodexPersistentInteractiveSession flag),
+			// buildStructuredResumeOptions must NOT emit a
+			// MetadataKeyResumeSessionID — the tmux session itself
+			// carries continuity.
+			name:                              "codex skips resume when persistent interactive enabled",
+			provider:                          llm.ProviderCodexCLI,
+			modelID:                           "gpt-5.3-codex-spark",
+			codexSessionID:                    "codex-thread-id",
+			sessionID:                         "app-session-id",
+			codexPersistentInteractiveSession: true,
+			wantSkipResume:                    true,
 		},
 		{
 			name:     "claude code no resume when session ID empty",
@@ -186,12 +197,14 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := &Agent{
-				provider:           tt.provider,
-				SessionID:          tt.sessionID,
-				ClaudeCodeSessionID: tt.claudeSessionID,
-				GeminiSessionID:    tt.geminiSessionID,
-				GeminiProjectDirID: tt.geminiProjectDirID,
-				CodexSessionID:     tt.codexSessionID,
+				provider:                          tt.provider,
+				ModelID:                           tt.modelID,
+				SessionID:                         tt.sessionID,
+				ClaudeCodeSessionID:               tt.claudeSessionID,
+				GeminiSessionID:                   tt.geminiSessionID,
+				GeminiProjectDirID:                tt.geminiProjectDirID,
+				CodexSessionID:                    tt.codexSessionID,
+				CodexPersistentInteractiveSession: tt.codexPersistentInteractiveSession,
 			}
 
 			opts := agent.buildStructuredResumeOptions()
