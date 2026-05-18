@@ -70,6 +70,50 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	return append(opts, option(workingDir))
 }
 
+func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
+	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].GenerationInfo == nil {
+		return
+	}
+	additional := resp.Choices[0].GenerationInfo.Additional
+	if additional == nil {
+		return
+	}
+	if sid, ok := additional["claude_code_session_id"].(string); ok && sid != "" {
+		a.ClaudeCodeSessionID = sid
+	}
+	if sid, ok := additional["gemini_session_id"].(string); ok && sid != "" {
+		a.GeminiSessionID = sid
+	}
+	if dirID, ok := additional["gemini_project_dir_id"].(string); ok && dirID != "" {
+		a.GeminiProjectDirID = dirID
+	}
+	if sid, ok := additional["codex_thread_id"].(string); ok && sid != "" {
+		a.CodexSessionID = sid
+	}
+}
+
+func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
+	var opts []llmtypes.CallOption
+	switch a.provider {
+	case llm.ProviderClaudeCode:
+		if a.ClaudeCodeSessionID != "" {
+			opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
+		}
+	case llm.ProviderGeminiCLI:
+		if a.GeminiSessionID != "" {
+			opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
+		}
+		if strings.TrimSpace(a.CodingAgentWorkingDir) == "" && a.GeminiProjectDirID != "" {
+			opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
+		}
+	case llm.ProviderCodexCLI:
+		if a.CodexSessionID != "" && !a.codingAgentPersistentInteractiveEnabled() {
+			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
+		}
+	}
+	return opts
+}
+
 func codingAgentWorkingDirOptionForProvider(provider llm.Provider, modelID string) (func(string) llmtypes.CallOption, bool) {
 	switch provider {
 	case llm.ProviderClaudeCode:

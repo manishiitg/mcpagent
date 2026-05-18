@@ -846,31 +846,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | LLM API responded | llm_duration=%dms err=%v",
 			turn+1, time.Since(conversationStartTime).Milliseconds(), time.Since(llmStartTime).Milliseconds(), genErr)
 
-		// Capture Claude Code session ID for --resume on next turn
-		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
-			if sid, ok := resp.Choices[0].GenerationInfo.Additional["claude_code_session_id"].(string); ok && sid != "" {
-				a.ClaudeCodeSessionID = sid
-			}
-		}
-
-		// Capture Gemini CLI session ID for --resume on next turn
-		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
-			if sid, ok := resp.Choices[0].GenerationInfo.Additional["gemini_session_id"].(string); ok && sid != "" {
-				a.GeminiSessionID = sid
-			}
-			// Capture Gemini CLI project dir ID for per-invocation isolation
-			if dirID, ok := resp.Choices[0].GenerationInfo.Additional["gemini_project_dir_id"].(string); ok && dirID != "" {
-				a.GeminiProjectDirID = dirID
-				a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Captured project dir ID: %s (session: %s)", dirID, a.GeminiSessionID))
-			}
-		}
-
-		// Capture Codex CLI thread ID for legacy exec-json resume on next turn.
-		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
-			if sid, ok := resp.Choices[0].GenerationInfo.Additional["codex_thread_id"].(string); ok && sid != "" {
-				a.CodexSessionID = sid
-			}
-		}
+		// Capture provider-specific session IDs for --resume on next turn
+		extractCodingAgentSessionIDs(a, resp)
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {

@@ -1,6 +1,8 @@
 package mcpagent
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -70,6 +72,167 @@ func TestGeminiRestrictToolsPolicyUsesCurrentMCPToolSyntax(t *testing.T) {
 	} {
 		if strings.Contains(policy, deprecated) {
 			t.Fatalf("policy contains deprecated syntax %q:\n%s", deprecated, policy)
+		}
+	}
+}
+
+func bridgeTestAgent() *Agent {
+	return &Agent{Logger: loggerv2.NewDefault()}
+}
+
+func TestBuildBridgeMCPConfigSessionURLEmbedding(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token-123")
+
+	agent := bridgeTestAgent()
+	agent.SessionID = "sess-abc-123"
+
+	configJSON, err := agent.BuildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	servers := config["mcpServers"].(map[string]interface{})
+	bridge := servers["api-bridge"].(map[string]interface{})
+	env := bridge["env"].(map[string]interface{})
+
+	apiURL := env["MCP_API_URL"].(string)
+	if apiURL != "http://localhost:8080/s/sess-abc-123" {
+		t.Fatalf("MCP_API_URL = %q, want session-scoped URL", apiURL)
+	}
+	if env["MCP_API_TOKEN"].(string) != "test-token-123" {
+		t.Fatalf("MCP_API_TOKEN mismatch")
+	}
+	if bridge["command"].(string) != "/usr/local/bin/mcpbridge" {
+		t.Fatalf("command mismatch")
+	}
+	if bridge["trust"] != true {
+		t.Fatal("trust should be true")
+	}
+}
+
+func TestBuildBridgeMCPConfigNoSessionID(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	configJSON, err := agent.BuildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
+	}
+
+	var config map[string]interface{}
+	json.Unmarshal([]byte(configJSON), &config)
+	servers := config["mcpServers"].(map[string]interface{})
+	bridge := servers["api-bridge"].(map[string]interface{})
+	env := bridge["env"].(map[string]interface{})
+
+	if env["MCP_API_URL"].(string) != "http://localhost:8080" {
+		t.Fatalf("MCP_API_URL should not have session prefix when SessionID empty")
+	}
+}
+
+func TestBuildBridgeMCPConfigBridgeURLOverride(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_BRIDGE_API_URL", "http://host-reachable:9090")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	agent.SessionID = "s1"
+	configJSON, err := agent.BuildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
+	}
+
+	var config map[string]interface{}
+	json.Unmarshal([]byte(configJSON), &config)
+	servers := config["mcpServers"].(map[string]interface{})
+	bridge := servers["api-bridge"].(map[string]interface{})
+	env := bridge["env"].(map[string]interface{})
+
+	if env["MCP_API_URL"].(string) != "http://host-reachable:9090/s/s1" {
+		t.Fatalf("MCP_BRIDGE_API_URL should take priority over MCP_API_URL, got %q", env["MCP_API_URL"])
+	}
+}
+
+func TestBuildBridgeMCPConfigMissingURL(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	os.Unsetenv("MCP_API_URL")
+	os.Unsetenv("MCP_BRIDGE_API_URL")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	_, err := agent.BuildBridgeMCPConfig()
+	if err == nil {
+		t.Fatal("expected error when API URL not configured")
+	}
+}
+
+func TestBuildBridgeMCPConfigMissingToken(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	os.Unsetenv("MCP_API_TOKEN")
+
+	agent := bridgeTestAgent()
+	_, err := agent.BuildBridgeMCPConfig()
+	if err == nil {
+		t.Fatal("expected error when API token not configured")
+	}
+}
+
+func TestBuildBridgeMCPConfigAPIBaseURLPriority(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://env-url:9090")
+	t.Setenv("MCP_API_TOKEN", "env-token")
+
+	agent := bridgeTestAgent()
+	agent.APIBaseURL = "http://agent-url:7070"
+	agent.APIToken = "agent-token"
+	configJSON, err := agent.BuildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
+	}
+
+	var config map[string]interface{}
+	json.Unmarshal([]byte(configJSON), &config)
+	servers := config["mcpServers"].(map[string]interface{})
+	bridge := servers["api-bridge"].(map[string]interface{})
+	env := bridge["env"].(map[string]interface{})
+
+	if env["MCP_API_URL"].(string) != "http://agent-url:7070" {
+		t.Fatalf("APIBaseURL should take priority, got %q", env["MCP_API_URL"])
+	}
+	if env["MCP_API_TOKEN"].(string) != "agent-token" {
+		t.Fatalf("APIToken should take priority, got %q", env["MCP_API_TOKEN"])
+	}
+}
+
+func TestBridgeToolsList(t *testing.T) {
+	expected := map[string]string{
+		"execute_shell_command":     "custom",
+		"diff_patch_workspace_file": "custom",
+		"agent_browser":             "custom",
+		"get_api_spec":              "virtual",
+	}
+
+	if len(bridgeTools) != len(expected) {
+		t.Fatalf("bridgeTools count = %d, want %d", len(bridgeTools), len(expected))
+	}
+	for _, bt := range bridgeTools {
+		wantType, ok := expected[bt.name]
+		if !ok {
+			t.Fatalf("unexpected bridge tool %q", bt.name)
+		}
+		if bt.toolType != wantType {
+			t.Fatalf("bridge tool %q type = %q, want %q", bt.name, bt.toolType, wantType)
 		}
 	}
 }
