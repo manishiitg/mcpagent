@@ -39,6 +39,9 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 		if a.CursorPersistentInteractiveSession {
 			opts = append(opts, llm.WithCursorPersistentInteractiveSession(true))
 		}
+		if a.CursorBridgeToolsMode {
+			opts = append(opts, llm.WithCursorMode("ask"))
+		}
 	case llm.ProviderOpenCodeCLI:
 		opts = append(opts, llm.WithOpenCodeInteractiveSessionID(sessionID))
 		if a.OpenCodePersistentInteractiveSession {

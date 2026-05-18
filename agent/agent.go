@@ -174,6 +174,15 @@ func WithCursorPersistentInteractiveSession(enabled bool) AgentOption {
 	}
 }
 
+// WithCursorBridgeToolsMode passes --mode ask to cursor-agent, blocking its
+// built-in Write/Shell tools at the CLI level so that filesystem and shell
+// operations are routed through MCP bridge tools instead.
+func WithCursorBridgeToolsMode(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.CursorBridgeToolsMode = enabled
+	}
+}
+
 // WithOpenCodePersistentInteractiveSession keeps OpenCode CLI tmux sessions
 // alive across completed chat turns.
 func WithOpenCodePersistentInteractiveSession(enabled bool) AgentOption {
@@ -816,6 +825,11 @@ type Agent struct {
 
 	// Cursor CLI persistent tmux mode for interactive chat
 	CursorPersistentInteractiveSession bool
+
+	// CursorBridgeToolsMode when true passes --mode ask to cursor-agent,
+	// which blocks built-in Write/Shell tools at the CLI level. Use this
+	// when MCP bridge tools handle filesystem and shell operations.
+	CursorBridgeToolsMode bool
 
 	// OpenCode CLI persistent tmux mode for interactive chat
 	OpenCodePersistentInteractiveSession bool
@@ -2098,9 +2112,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 	}
 
-	// Auto-configure Cursor CLI provider (same constraints as the other CLI coding agents)
+	// Auto-configure Cursor CLI provider
+	// NOTE: Cursor's built-in tools cannot be disabled via system prompt.
+	// Use --mode ask (via CursorBridgeToolsMode) to block Write/Shell at CLI level.
+	// No custom system prompt injected — the user's own prompt passes through unchanged.
 	if ag.provider == llmproviders.ProviderCursorCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -3148,9 +3164,11 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		}
 	}
 
-	// Auto-configure Cursor CLI provider (same constraints as the other CLI coding agents)
+	// Auto-configure Cursor CLI provider
+	// NOTE: Cursor's built-in tools cannot be disabled via system prompt.
+	// Use --mode ask (via CursorBridgeToolsMode) to block Write/Shell at CLI level.
+	// No custom system prompt injected — the user's own prompt passes through unchanged.
 	if ag.provider == llmproviders.ProviderCursorCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {

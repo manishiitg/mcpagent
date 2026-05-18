@@ -179,6 +179,17 @@ func WithCursorApproveMCPs() llmtypes.CallOption {
 	return llmproviders.WithCursorApproveMCPs()
 }
 
+// WithCursorMode sets Cursor Agent CLI's --mode flag. "ask" blocks built-in
+// Write/Shell at the CLI level, "plan" is analyze-only.
+func WithCursorMode(mode string) llmtypes.CallOption {
+	return llmproviders.WithCursorMode(mode)
+}
+
+// WithCursorSandbox sets Cursor Agent CLI's --sandbox flag ("enabled"/"disabled").
+func WithCursorSandbox(mode string) llmtypes.CallOption {
+	return llmproviders.WithCursorSandbox(mode)
+}
+
 // WithOpenCodeInteractiveSessionID links an OpenCode CLI interactive run to
 // the owning application session so live follow-up input can be sent to it.
 func WithOpenCodeInteractiveSessionID(id string) llmtypes.CallOption {
