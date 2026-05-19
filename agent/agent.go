@@ -155,6 +155,18 @@ func WithCodexPersistentInteractiveSession(enabled bool) AgentOption {
 	}
 }
 
+// WithForceStructuredCodingAgent forces the coding-agent CLI providers
+// (claude-code, codex-cli, cursor-cli, gemini-cli) to use the structured
+// JSON transport (--print/--exec/stream-json) even when a session ID is
+// present. Without this, the adapter dispatcher defaults to tmux interactive
+// for these providers whenever a session ID is set. Used per workflow step
+// when the step config specifies transport="structured".
+func WithForceStructuredCodingAgent(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.ForceStructuredCodingAgent = enabled
+	}
+}
+
 // WithGeminiPersistentInteractiveSession keeps Gemini CLI tmux sessions alive
 // across completed turns. Coding CLI providers now use this interactive path
 // whenever an owner session id is available; this option remains for callers
@@ -848,6 +860,17 @@ type Agent struct {
 
 	// Retained for API compatibility; OpenCode CLI uses structured JSON mode.
 	OpenCodePersistentInteractiveSession bool
+
+	// ForceStructuredCodingAgent forces the structured (JSON / --print /
+	// --exec) transport for coding-agent CLI providers even when a session
+	// ID is present and the provider is tmux-capable. When true,
+	// appendCodingAgentInteractiveOptionsForProvider skips appending the
+	// interactive-session-id option, which makes the adapter dispatcher
+	// fall through to its structured path.
+	//
+	// Set per-step from the workflow config field
+	// AgentConfigs.Transport == "structured".
+	ForceStructuredCodingAgent bool
 
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler

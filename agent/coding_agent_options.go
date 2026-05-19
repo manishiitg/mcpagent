@@ -18,6 +18,13 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 	if sessionID == "" || !codingAgentInteractiveEnabledForProvider(provider, modelID, sessionID) {
 		return opts
 	}
+	// Per-step override: when ForceStructuredCodingAgent is set (from
+	// the workflow step config's transport="structured" field), skip
+	// the interactive-session-id option entirely. The CLI adapter's
+	// dispatcher then falls through to the structured JSON path.
+	if a.ForceStructuredCodingAgent {
+		return opts
+	}
 
 	switch provider {
 	case llm.ProviderClaudeCode:

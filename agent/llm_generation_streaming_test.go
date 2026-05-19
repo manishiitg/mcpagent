@@ -319,6 +319,211 @@ func TestStreamingManagerForwardsTerminalChunks(t *testing.T) {
 	}
 }
 
+// TestStreamingManagerEmitsTerminalChunkEventEvenWhenSuppressEventsTrue
+// locks in the regression for the production-config bug fixed in this
+// commit's parent change.
+//
+// Background: the agentwrapper in mcp-agent-builder-go calls
+// WithGenerationStreamingEvents(false) (i.e. SuppressGenerationStreamingEvents
+// = true) to keep per-token text-generation streaming events out of the
+// chat event store. But terminal pane snapshots (StreamChunkTypeTerminal)
+// are NOT generation events — they're a separate UX channel that the
+// builder's terminal-pane store depends on. Without this gate carve-out,
+// the terminal panel goes empty for every tmux-backed coding-agent call.
+//
+// This test fixes the production config to suppressEvents=true and
+// proves a terminal chunk still produces a StreamingChunkEvent
+// downstream. If anyone ever re-introduces a global suppressEvents gate
+// over the terminal branch, this test fails loudly.
+func TestStreamingManagerEmitsTerminalChunkEventEvenWhenSuppressEventsTrue(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		SessionID: "session-terminal-suppress-events-test",
+		listeners: []AgentEventListener{listener},
+	}
+
+	sm := &streamingManager{
+		streamChan:     make(chan llmtypes.StreamChunk, 1),
+		streamingDone:  make(chan bool, 1),
+		startTime:      time.Now(),
+		suppressEvents: true, // production wrapper config
+	}
+	go sm.processChunks(context.Background(), agent)
+
+	sm.streamChan <- llmtypes.StreamChunk{
+		Type:    llmtypes.StreamChunkTypeTerminal,
+		Content: "Codex CLI pane snapshot",
+		Metadata: map[string]interface{}{
+			"tmux_session": "codex-pane-suppress-test",
+		},
+	}
+	close(sm.streamChan)
+	<-sm.streamingDone
+
+	if len(listener.events) != 1 {
+		t.Fatalf("expected 1 event with suppressEvents=true (terminal chunks must bypass the gate); got %d", len(listener.events))
+	}
+	chunkEvent, ok := listener.events[0].Data.(*events.StreamingChunkEvent)
+	if !ok {
+		t.Fatalf("event data type = %T, want *events.StreamingChunkEvent", listener.events[0].Data)
+	}
+	if chunkEvent.Content != "Codex CLI pane snapshot" {
+		t.Fatalf("content = %q, want %q", chunkEvent.Content, "Codex CLI pane snapshot")
+	}
+	if got := chunkEvent.Metadata["kind"]; got != "terminal" {
+		t.Fatalf("metadata kind = %v, want terminal", got)
+	}
+	if got := chunkEvent.Metadata["tmux_session"]; got != "codex-pane-suppress-test" {
+		t.Fatalf("metadata tmux_session = %v, want codex-pane-suppress-test", got)
+	}
+}
+
+// TestStreamingManagerSuppressesContentChunksWhenSuppressEventsTrue is
+// the inverse assertion: text-content chunks ARE still suppressed when
+// the flag is on. Together with the terminal-bypass test above, this
+// pins down exactly what the suppressEvents gate covers.
+func TestStreamingManagerSuppressesContentChunksWhenSuppressEventsTrue(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		SessionID: "session-content-suppress-events-test",
+		listeners: []AgentEventListener{listener},
+	}
+
+	sm := &streamingManager{
+		streamChan:     make(chan llmtypes.StreamChunk, 1),
+		streamingDone:  make(chan bool, 1),
+		startTime:      time.Now(),
+		suppressEvents: true,
+	}
+	go sm.processChunks(context.Background(), agent)
+
+	sm.streamChan <- llmtypes.StreamChunk{
+		Type:    llmtypes.StreamChunkTypeContent,
+		Content: "this should be suppressed",
+	}
+	close(sm.streamChan)
+	<-sm.streamingDone
+
+	for _, ev := range listener.events {
+		if _, ok := ev.Data.(*events.StreamingChunkEvent); ok {
+			t.Fatalf("expected no StreamingChunkEvent for content chunks under suppressEvents=true; got %+v", ev)
+		}
+	}
+}
+
+// TestStreamingManagerChunkRoutingMatrixProductionConfig is the
+// canonical, single-source-of-truth pin for what suppressEvents=true
+// (the production wrapper config) does to each chunk type. Every chunk
+// type is fed through processChunks, and the test asserts:
+//
+//   - Content   → callback fires; NO StreamingChunkEvent
+//   - Terminal  → callback fires; StreamingChunkEvent IS emitted (bypass)
+//   - ToolStart → callback does NOT fire; ToolCallStartEvent IS emitted
+//   - ToolEnd   → callback fires; ToolCallEndEvent IS emitted
+//
+// This matrix is what was missed by the 100+ tests when the
+// terminal-snapshot regression (commit 298c1b66) shipped. Any future
+// change to the chunk routing must update this test or break it loudly.
+func TestStreamingManagerChunkRoutingMatrixProductionConfig(t *testing.T) {
+	cases := []struct {
+		name              string
+		chunk             llmtypes.StreamChunk
+		wantCallback      bool
+		wantChunkEvent    bool   // StreamingChunkEvent expected?
+		wantToolStartEvt  bool   // ToolCallStartEvent expected?
+		wantToolEndEvt    bool   // ToolCallEndEvent expected?
+		wantChunkKind     string // metadata["kind"] check (if wantChunkEvent)
+	}{
+		{
+			name:           "content_suppressed_under_production_config",
+			chunk:          llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeContent, Content: "hi"},
+			wantCallback:   true,
+			wantChunkEvent: false,
+		},
+		{
+			name:           "terminal_bypasses_suppress_gate",
+			chunk:          llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeTerminal, Content: "pane snapshot"},
+			wantCallback:   true,
+			wantChunkEvent: true,
+			wantChunkKind:  "terminal",
+		},
+		{
+			name:             "tool_call_start_unaffected_by_suppress",
+			chunk:            llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeToolCallStart, ToolName: "Bash", ToolCallID: "t1", ToolArgs: "{}"},
+			wantCallback:     false,
+			wantToolStartEvt: true,
+		},
+		{
+			name:           "tool_call_end_unaffected_by_suppress",
+			chunk:          llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeToolCallEnd, ToolName: "Bash", ToolCallID: "t1", ToolArgs: "{}", ToolResult: "ok"},
+			wantCallback:   true,
+			wantToolEndEvt: true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			listener := &recordingAgentEventListener{}
+			var callbackChunks []llmtypes.StreamChunk
+			agent := &Agent{
+				SessionID: "session-chunk-routing-matrix-" + tc.name,
+				listeners: []AgentEventListener{listener},
+				StreamingCallback: func(c llmtypes.StreamChunk) {
+					callbackChunks = append(callbackChunks, c)
+				},
+			}
+
+			sm := &streamingManager{
+				streamChan:     make(chan llmtypes.StreamChunk, 1),
+				streamingDone:  make(chan bool, 1),
+				startTime:      time.Now(),
+				suppressEvents: true, // production wrapper config
+			}
+			go sm.processChunks(context.Background(), agent)
+
+			sm.streamChan <- tc.chunk
+			close(sm.streamChan)
+			<-sm.streamingDone
+
+			gotCallback := len(callbackChunks) > 0
+			if gotCallback != tc.wantCallback {
+				t.Fatalf("callback fired = %v, want %v (chunks=%+v)", gotCallback, tc.wantCallback, callbackChunks)
+			}
+
+			var gotChunkEvt, gotToolStart, gotToolEnd bool
+			var chunkKind string
+			for _, ev := range listener.events {
+				switch d := ev.Data.(type) {
+				case *events.StreamingChunkEvent:
+					gotChunkEvt = true
+					if d.Metadata != nil {
+						if k, ok := d.Metadata["kind"].(string); ok {
+							chunkKind = k
+						}
+					}
+				case *events.ToolCallStartEvent:
+					gotToolStart = true
+				case *events.ToolCallEndEvent:
+					gotToolEnd = true
+				}
+			}
+			if gotChunkEvt != tc.wantChunkEvent {
+				t.Fatalf("StreamingChunkEvent emitted = %v, want %v", gotChunkEvt, tc.wantChunkEvent)
+			}
+			if gotToolStart != tc.wantToolStartEvt {
+				t.Fatalf("ToolCallStartEvent emitted = %v, want %v", gotToolStart, tc.wantToolStartEvt)
+			}
+			if gotToolEnd != tc.wantToolEndEvt {
+				t.Fatalf("ToolCallEndEvent emitted = %v, want %v", gotToolEnd, tc.wantToolEndEvt)
+			}
+			if tc.wantChunkKind != "" && chunkKind != tc.wantChunkKind {
+				t.Fatalf("StreamingChunkEvent metadata kind = %q, want %q", chunkKind, tc.wantChunkKind)
+			}
+		})
+	}
+}
+
 func TestStreamingManagerDrainsAfterContextCancel(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{

@@ -711,6 +711,13 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					metadata[key] = value
 				}
 
+				// Terminal pane snapshots are NOT generation streaming
+				// events — they're a separate UX channel that the
+				// builder's terminal store consumes. Emit them even
+				// when suppressEvents (set via WithGenerationStreamingEvents(false))
+				// disables per-token chat-content streaming. Without
+				// this, the terminal panel goes empty for every tmux
+				// coding-agent call.
 				a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
 					BaseEventData: events.BaseEventData{
 						Timestamp: time.Now(),
@@ -787,6 +794,12 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 	}()
 
 	<-sm.streamingDone
+
+	// Under production config (suppressEvents=true) we still need to
+	// fire the StreamingEndEvent for terminal streams — the terminals
+	// store reads it to flip terminal panes from active to inactive.
+	// Without this carve-out, cancelled workflow steps leave their
+	// terminal entries permanently "active" in the frontend.
 	if sm.suppressEvents && !sm.sawTerminal {
 		return
 	}
