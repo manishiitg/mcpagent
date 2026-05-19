@@ -663,8 +663,10 @@ func WithStreaming(enabled bool) AgentOption {
 	}
 }
 
-// WithGenerationStreamingEvents controls whether provider stream chunks emit
-// StreamingStartEvent, StreamingChunkEvent, and StreamingEndEvent.
+// WithGenerationStreamingEvents controls whether provider text chunks emit
+// generation streaming events. Terminal snapshot chunks may still emit
+// StreamingChunkEvent/StreamingEndEvent because they drive terminal
+// observability, not chat text generation.
 //
 // Default: true (emit generation streaming events when streaming is enabled)
 func WithGenerationStreamingEvents(enabled bool) AgentOption {

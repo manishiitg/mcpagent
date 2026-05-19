@@ -711,17 +711,15 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					metadata[key] = value
 				}
 
-				if !sm.suppressEvents {
-					a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-							Metadata:  metadata,
-						},
-						Content:    chunk.Content,
-						ChunkIndex: sm.contentChunkIndex,
-						IsToolCall: false,
-					})
-				}
+				a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+					BaseEventData: events.BaseEventData{
+						Timestamp: time.Now(),
+						Metadata:  metadata,
+					},
+					Content:    chunk.Content,
+					ChunkIndex: sm.contentChunkIndex,
+					IsToolCall: false,
+				})
 
 				if a.StreamingCallback != nil {
 					a.StreamingCallback(chunk)
@@ -789,7 +787,7 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 	}()
 
 	<-sm.streamingDone
-	if sm.suppressEvents {
+	if sm.suppressEvents && !sm.sawTerminal {
 		return
 	}
 
