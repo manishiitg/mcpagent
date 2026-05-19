@@ -651,13 +651,25 @@ func WithRuntimeOverrides(overrides mcpclient.RuntimeOverrides) AgentOption {
 
 // WithStreaming enables streaming for LLM text responses.
 //
-// When enabled, text content is streamed incrementally with StreamingChunkEvent events.
-// Tool calls are processed normally (no streaming events).
+// When enabled, provider stream chunks are consumed by the agent. Generation
+// streaming events can be independently disabled with
+// WithGenerationStreamingEvents while still keeping provider stream chunks for
+// CLI tool observability.
 //
 // Default: false (Streaming disabled)
 func WithStreaming(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.EnableStreaming = enabled
+	}
+}
+
+// WithGenerationStreamingEvents controls whether provider stream chunks emit
+// StreamingStartEvent, StreamingChunkEvent, and StreamingEndEvent.
+//
+// Default: true (emit generation streaming events when streaming is enabled)
+func WithGenerationStreamingEvents(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.SuppressGenerationStreamingEvents = !enabled
 	}
 }
 
@@ -1013,10 +1025,11 @@ type Agent struct {
 	UserID string
 
 	// Streaming configuration
-	// When enabled: LLM text responses are streamed incrementally with events
-	// Tool calls are processed normally (no streaming events)
-	EnableStreaming   bool                             // Enable streaming for LLM text responses (default: false)
-	StreamingCallback func(chunk llmtypes.StreamChunk) // Optional callback for streaming chunks
+	// EnableStreaming consumes provider stream chunks. SuppressGenerationStreamingEvents
+	// controls whether those chunks are hidden from streaming_start/chunk/end events.
+	EnableStreaming                   bool                             // Enable provider streaming (default: false)
+	SuppressGenerationStreamingEvents bool                             // Suppress generation streaming events (default: false)
+	StreamingCallback                 func(chunk llmtypes.StreamChunk) // Optional callback for streaming chunks
 
 	// Folder guard paths for code execution mode
 	// These paths are validated at AST level before code execution
@@ -1374,9 +1387,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		// Initialize cache (default: false - caching enabled by default)
 		DisableCache: false,
 
-		// Initialize streaming (default: false - streaming disabled)
-		EnableStreaming:   false,
-		StreamingCallback: nil,
+		// Initialize streaming (default: provider streaming disabled, event emission enabled if streaming is turned on)
+		EnableStreaming:                   false,
+		SuppressGenerationStreamingEvents: false,
+		StreamingCallback:                 nil,
 
 		// Initialize server name (default: AllServers - connect to all servers)
 		serverName: mcpclient.AllServers,
@@ -2903,34 +2917,35 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	// Create agent with default values first to apply options
 	ag := &Agent{
-		ctx:                           ctx,
-		LLM:                           llm,
-		Tracers:                       []observability.Tracer{}, // Default: empty tracers array
-		MaxTurns:                      GetDefaultMaxTurns(SimpleAgent),
-		Temperature:                   0.0,
-		ToolChoice:                    "auto",
-		ModelID:                       modelID,
-		AgentMode:                     SimpleAgent,
-		TraceID:                       "", // Will be generated if not set via options
-		EnableContextOffloading:       true,
-		ToolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
-		CleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
-		cleanupDone:                   make(chan bool),                  // Initialize cleanup done channel
-		EnableContextSummarization:    false,                            // Default to disabled
-		SummarizeOnTokenThreshold:     false,                            // Default to disabled
-		TokenThresholdPercent:         0.8,                              // Default to 80% if enabled
-		SummaryKeepLastMessages:       0,                                // Default: 0 means use default (4 messages)
-		SummarizationCooldownTurns:    0,                                // Default: 0 means use default (3 turns)
-		lastSummarizationTurn:         -1,                               // Default: -1 means never summarized
-		Logger:                        loggerv2.NewDefault(),            // Default logger
-		customTools:                   make(map[string]CustomTool),
-		EnableSmartRouting:            false,
-		DiscoverResource:              true,
-		DiscoverPrompt:                true,
-		DisableCache:                  false,                // Default: cache enabled
-		EnableStreaming:               false,                // Default: streaming disabled
-		StreamingCallback:             nil,                  // Default: no callback
-		serverName:                    mcpclient.AllServers, // Default: all servers
+		ctx:                               ctx,
+		LLM:                               llm,
+		Tracers:                           []observability.Tracer{}, // Default: empty tracers array
+		MaxTurns:                          GetDefaultMaxTurns(SimpleAgent),
+		Temperature:                       0.0,
+		ToolChoice:                        "auto",
+		ModelID:                           modelID,
+		AgentMode:                         SimpleAgent,
+		TraceID:                           "", // Will be generated if not set via options
+		EnableContextOffloading:           true,
+		ToolOutputRetentionPeriod:         DefaultToolOutputRetentionPeriod, // Default: 7 days
+		CleanupToolOutputOnSessionEnd:     false,                            // Default: false means files persist after session
+		cleanupDone:                       make(chan bool),                  // Initialize cleanup done channel
+		EnableContextSummarization:        false,                            // Default to disabled
+		SummarizeOnTokenThreshold:         false,                            // Default to disabled
+		TokenThresholdPercent:             0.8,                              // Default to 80% if enabled
+		SummaryKeepLastMessages:           0,                                // Default: 0 means use default (4 messages)
+		SummarizationCooldownTurns:        0,                                // Default: 0 means use default (3 turns)
+		lastSummarizationTurn:             -1,                               // Default: -1 means never summarized
+		Logger:                            loggerv2.NewDefault(),            // Default logger
+		customTools:                       make(map[string]CustomTool),
+		EnableSmartRouting:                false,
+		DiscoverResource:                  true,
+		DiscoverPrompt:                    true,
+		DisableCache:                      false,                // Default: cache enabled
+		EnableStreaming:                   false,                // Default: streaming disabled
+		SuppressGenerationStreamingEvents: false,                // Default: emit events when streaming is enabled
+		StreamingCallback:                 nil,                  // Default: no callback
+		serverName:                        mcpclient.AllServers, // Default: all servers
 	}
 
 	// Apply all options

@@ -633,6 +633,7 @@ type streamingManager struct {
 	contentChunkIndex int
 	totalChunks       int
 	sawTerminal       bool
+	suppressEvents    bool
 	startTime         time.Time
 	turn              int // conversation turn for event emission
 	// CLIToolCalls accumulates completed tool call chunks from CLI providers (Gemini CLI,
@@ -648,19 +649,22 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 	}
 
 	sm := &streamingManager{
-		streamChan:    make(chan llmtypes.StreamChunk, 100),
-		streamingDone: make(chan bool, 1),
-		startTime:     time.Now(),
-		turn:          turn,
+		streamChan:     make(chan llmtypes.StreamChunk, 100),
+		streamingDone:  make(chan bool, 1),
+		startTime:      time.Now(),
+		turn:           turn,
+		suppressEvents: a.SuppressGenerationStreamingEvents,
 	}
 
 	*opts = append(*opts, llmtypes.WithStreamingChan(sm.streamChan))
 
-	a.EmitTypedEvent(ctx, &events.StreamingStartEvent{
-		BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-		Model:         a.ModelID,
-		Provider:      string(a.provider),
-	})
+	if !sm.suppressEvents {
+		a.EmitTypedEvent(ctx, &events.StreamingStartEvent{
+			BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+			Model:         a.ModelID,
+			Provider:      string(a.provider),
+		})
+	}
 
 	go sm.processChunks(ctx, a)
 	return sm
@@ -679,12 +683,14 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				sm.contentChunkIndex++
 				sm.totalChunks++
 
-				a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
-					BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-					Content:       chunk.Content,
-					ChunkIndex:    sm.contentChunkIndex,
-					IsToolCall:    false,
-				})
+				if !sm.suppressEvents {
+					a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+						Content:       chunk.Content,
+						ChunkIndex:    sm.contentChunkIndex,
+						IsToolCall:    false,
+					})
+				}
 
 				if a.StreamingCallback != nil {
 					a.StreamingCallback(chunk)
@@ -705,15 +711,17 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					metadata[key] = value
 				}
 
-				a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-						Metadata:  metadata,
-					},
-					Content:    chunk.Content,
-					ChunkIndex: sm.contentChunkIndex,
-					IsToolCall: false,
-				})
+				if !sm.suppressEvents {
+					a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+						BaseEventData: events.BaseEventData{
+							Timestamp: time.Now(),
+							Metadata:  metadata,
+						},
+						Content:    chunk.Content,
+						ChunkIndex: sm.contentChunkIndex,
+						IsToolCall: false,
+					})
+				}
 
 				if a.StreamingCallback != nil {
 					a.StreamingCallback(chunk)
@@ -781,6 +789,9 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 	}()
 
 	<-sm.streamingDone
+	if sm.suppressEvents {
+		return
+	}
 
 	endEvent := &events.StreamingEndEvent{
 		BaseEventData: events.BaseEventData{Timestamp: time.Now()},
