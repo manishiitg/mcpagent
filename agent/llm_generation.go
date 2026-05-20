@@ -811,8 +811,9 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 	}
 	if sm.sawTerminal {
 		endEvent.Metadata = map[string]interface{}{
-			"kind":     "terminal",
-			"provider": string(a.provider),
+			"kind":        "terminal",
+			"provider":    string(a.provider),
+			"duration_ms": time.Since(sm.startTime).Milliseconds(),
 		}
 	}
 
@@ -823,6 +824,29 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 		}
 		if resp.Choices[0].StopReason != "" {
 			endEvent.FinishReason = resp.Choices[0].StopReason
+		}
+		// Surface per-call tokens + cost on the streaming_end metadata
+		// so the terminals store can populate Status.{InputTokens,
+		// OutputTokens, CostUSD} without needing to regex-parse a
+		// "[done · X in · Y out · $Z]" trailer out of pane content.
+		// This is the structured replacement for the synthetic terminal
+		// summary line we suppressed for tmux transports.
+		if sm.sawTerminal && endEvent.Metadata != nil {
+			if genInfo.PromptTokens != nil {
+				endEvent.Metadata["input_tokens"] = *genInfo.PromptTokens
+			} else if genInfo.InputTokens != nil {
+				endEvent.Metadata["input_tokens"] = *genInfo.InputTokens
+			}
+			if genInfo.CompletionTokens != nil {
+				endEvent.Metadata["output_tokens"] = *genInfo.CompletionTokens
+			} else if genInfo.OutputTokens != nil {
+				endEvent.Metadata["output_tokens"] = *genInfo.OutputTokens
+			}
+			if genInfo.Additional != nil {
+				if cost, ok := genInfo.Additional["cost_usd_estimated"].(float64); ok && cost > 0 {
+					endEvent.Metadata["cost_usd_estimated"] = cost
+				}
+			}
 		}
 		// Extract provider-specific metadata (Gemini CLI / Claude Code)
 		if additional := genInfo.Additional; additional != nil {
