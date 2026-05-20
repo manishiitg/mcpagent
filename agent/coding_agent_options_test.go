@@ -179,6 +179,27 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 	}
 }
 
+func TestForceStructuredCodingAgentSuppressesGeminiInteractiveSessionMetadata(t *testing.T) {
+	agent := &Agent{
+		provider:                           llm.ProviderGeminiCLI,
+		SessionID:                          "workflow-step-session",
+		GeminiPersistentInteractiveSession: true,
+		ForceStructuredCodingAgent:         true,
+		CodingAgentWorkingDir:              "/tmp/workflow-step",
+	}
+
+	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptions(nil))
+	if _, ok := got[geminicli.MetadataKeyInteractiveSessionID]; ok {
+		t.Fatalf("Gemini interactive session metadata present despite ForceStructuredCodingAgent: %#v", got)
+	}
+	if _, ok := got[geminicli.MetadataKeyPersistentInteractive]; ok {
+		t.Fatalf("Gemini persistent interactive metadata present despite ForceStructuredCodingAgent: %#v", got)
+	}
+	if got[geminicli.MetadataKeyWorkingDir] != "/tmp/workflow-step" {
+		t.Fatalf("Gemini working dir metadata = %#v, want /tmp/workflow-step", got[geminicli.MetadataKeyWorkingDir])
+	}
+}
+
 func TestAppendCodingAgentInteractiveOptionsForActualFallbackProvider(t *testing.T) {
 	agent := &Agent{
 		provider:                           llm.ProviderOpenAI,
