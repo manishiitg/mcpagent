@@ -1240,7 +1240,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		opts = append(opts, llm.WithCodexDisableShellTool())
 		// Auto-approve all tool calls (no interactive prompts)
 		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
-		if a.CodexSessionID != "" && !a.codingAgentPersistentInteractiveEnabled() {
+		if a.CodexSessionID != "" {
 			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 		}
 
@@ -1375,7 +1375,47 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		}
 	}
 
+	if continuationHandle, ok := a.codingProviderContinuationHandleForModel(modelProvider, model.ModelID); ok {
+		latestMessage, msgOK := latestHumanMessageTextForProviderContinuation(messages)
+		if !msgOK {
+			return nil, fmt.Errorf("cannot continue coding-agent session: latest human message not found")
+		}
+		a.Logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Continuing %s with native session %s", model.Provider, continuationHandle.NativeSessionID))
+		return llm.ContinueCodingAgentSession(ctx, llmInstance, continuationHandle, latestMessage, opts...)
+	}
+
 	return llmInstance.GenerateContent(ctx, messages, opts...)
+}
+
+func latestHumanMessageTextForProviderContinuation(messages []llmtypes.MessageContent) (string, bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != llmtypes.ChatMessageTypeHuman {
+			continue
+		}
+		var parts []string
+		for _, part := range messages[i].Parts {
+			switch typed := part.(type) {
+			case llmtypes.TextContent:
+				if strings.TrimSpace(typed.Text) != "" {
+					parts = append(parts, typed.Text)
+				}
+			case *llmtypes.TextContent:
+				if typed != nil && strings.TrimSpace(typed.Text) != "" {
+					parts = append(parts, typed.Text)
+				}
+			case string:
+				if strings.TrimSpace(typed) != "" {
+					parts = append(parts, typed)
+				}
+			}
+		}
+		text := strings.TrimSpace(strings.Join(parts, "\n"))
+		if text != "" {
+			return text, true
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic and tiered fallback

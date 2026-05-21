@@ -820,6 +820,11 @@ type Agent struct {
 	// Provider information
 	provider llm.Provider
 
+	// Latest provider-native continuation handle returned by a coding-agent
+	// adapter. This is the typed replacement for provider-specific session ID
+	// fields below; the legacy fields remain while callers migrate.
+	CodingProviderSessionHandle llmtypes.CodingProviderSessionHandle
+
 	// Claude Code CLI session ID for --resume on subsequent turns
 	ClaudeCodeSessionID string
 

@@ -65,6 +65,23 @@ func CodingAgentProviderContracts() []CodingAgentProviderContract {
 	return llmproviders.CodingAgentProviderContracts()
 }
 
+type CodingAgentContinuationError = llmproviders.CodingAgentContinuationError
+type CodingAgentContinuationErrorKind = llmproviders.CodingAgentContinuationErrorKind
+
+const (
+	CodingAgentContinuationErrorNonApplicable  = llmproviders.CodingAgentContinuationErrorNonApplicable
+	CodingAgentContinuationErrorNonContinuable = llmproviders.CodingAgentContinuationErrorNonContinuable
+	CodingAgentContinuationErrorStaleHandle    = llmproviders.CodingAgentContinuationErrorStaleHandle
+)
+
+func ContinueCodingAgentSession(ctx context.Context, model llmtypes.Model, handle llmtypes.CodingProviderSessionHandle, message string, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
+	return llmproviders.ContinueCodingAgentSession(ctx, model, handle, message, options...)
+}
+
+func IsCodingAgentContinuationError(err error, kind CodingAgentContinuationErrorKind) bool {
+	return llmproviders.IsCodingAgentContinuationError(err, kind)
+}
+
 const (
 	MetadataKeyMCPConfig                  = "mcp_config"
 	MetadataKeyDangerouslySkipPermissions = "dangerously_skip_permissions"

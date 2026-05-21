@@ -60,24 +60,6 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 	return opts
 }
 
-func (a *Agent) codingAgentPersistentInteractiveEnabled() bool {
-	if strings.TrimSpace(a.SessionID) == "" || !llm.IsTmuxCodingAgentProvider(a.provider, a.ModelID) {
-		return false
-	}
-	switch a.provider {
-	case llm.ProviderClaudeCode:
-		return a.ClaudeCodePersistentInteractiveSession
-	case llm.ProviderCodexCLI:
-		return a.CodexPersistentInteractiveSession
-	case llm.ProviderGeminiCLI:
-		return a.GeminiPersistentInteractiveSession
-	case llm.ProviderCursorCLI:
-		return a.CursorPersistentInteractiveSession
-	default:
-		return false
-	}
-}
-
 func codingAgentInteractiveEnabledForProvider(provider llm.Provider, modelID, sessionID string) bool {
 	if strings.TrimSpace(sessionID) == "" {
 		return false
@@ -101,6 +83,7 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].GenerationInfo == nil {
 		return
 	}
+	a.updateCodingProviderSessionHandleFromResponse(resp)
 	additional := resp.Choices[0].GenerationInfo.Additional
 	if additional == nil {
 		return
@@ -116,6 +99,9 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	}
 	if sid, ok := additional["codex_thread_id"].(string); ok && sid != "" {
 		a.CodexSessionID = sid
+	}
+	if a.CodingProviderSessionHandle.Empty() {
+		a.CodingProviderSessionHandle = a.legacyCodingProviderSessionHandle()
 	}
 }
 
@@ -134,7 +120,7 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 			opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
 		}
 	case llm.ProviderCodexCLI:
-		if a.CodexSessionID != "" && !a.codingAgentPersistentInteractiveEnabled() {
+		if a.CodexSessionID != "" {
 			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 		}
 	}

@@ -25,7 +25,7 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 			provider: llm.ProviderClaudeCode,
 			additional: map[string]interface{}{
 				"claude_code_session_id": "claude-sess-abc123",
-				"provider":              "claude-code",
+				"provider":               "claude-code",
 			},
 			wantClaude: "claude-sess-abc123",
 		},
@@ -131,7 +131,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 		wantResumeValue                   string
 		wantProjectDirKey                 string
 		wantProjectDirValue               string
-		wantSkipResume                    bool
 	}{
 		{
 			name:            "claude code passes resume session ID",
@@ -148,37 +147,31 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			wantResumeValue: "gemini-resume-id",
 		},
 		{
-			name:               "gemini passes project dir ID when no working dir",
-			provider:           llm.ProviderGeminiCLI,
-			geminiSessionID:    "gemini-resume-id",
-			geminiProjectDirID: "proj-dir-id",
-			wantResumeKey:      geminicli.MetadataKeyResumeSessionID,
-			wantResumeValue:    "gemini-resume-id",
-			wantProjectDirKey:  geminicli.MetadataKeyProjectDirID,
+			name:                "gemini passes project dir ID when no working dir",
+			provider:            llm.ProviderGeminiCLI,
+			geminiSessionID:     "gemini-resume-id",
+			geminiProjectDirID:  "proj-dir-id",
+			wantResumeKey:       geminicli.MetadataKeyResumeSessionID,
+			wantResumeValue:     "gemini-resume-id",
+			wantProjectDirKey:   geminicli.MetadataKeyProjectDirID,
 			wantProjectDirValue: "proj-dir-id",
 		},
 		{
-			name:           "codex passes resume thread ID when no persistent interactive",
-			provider:       llm.ProviderCodexCLI,
-			codexSessionID: "codex-thread-id",
-			wantResumeKey:  codexcli.MetadataKeyResumeSessionID,
+			name:            "codex passes resume thread ID when no persistent interactive",
+			provider:        llm.ProviderCodexCLI,
+			codexSessionID:  "codex-thread-id",
+			wantResumeKey:   codexcli.MetadataKeyResumeSessionID,
 			wantResumeValue: "codex-thread-id",
 		},
 		{
-			// Codex CLI uses the persistent tmux session for resume, so
-			// when persistent interactive is fully wired up
-			// (SessionID + tmux-capable model + explicit
-			// CodexPersistentInteractiveSession flag),
-			// buildStructuredResumeOptions must NOT emit a
-			// MetadataKeyResumeSessionID — the tmux session itself
-			// carries continuity.
-			name:                              "codex skips resume when persistent interactive enabled",
+			name:                              "codex passes resume thread ID when persistent interactive enabled",
 			provider:                          llm.ProviderCodexCLI,
 			modelID:                           "gpt-5.3-codex-spark",
 			codexSessionID:                    "codex-thread-id",
 			sessionID:                         "app-session-id",
 			codexPersistentInteractiveSession: true,
-			wantSkipResume:                    true,
+			wantResumeKey:                     codexcli.MetadataKeyResumeSessionID,
+			wantResumeValue:                   "codex-thread-id",
 		},
 		{
 			name:     "claude code no resume when session ID empty",
@@ -209,13 +202,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 
 			opts := agent.buildStructuredResumeOptions()
 			meta := metadataFromCallOptions(opts)
-
-			if tt.wantSkipResume {
-				if _, hasResume := meta[codexcli.MetadataKeyResumeSessionID]; hasResume {
-					t.Fatalf("expected resume to be skipped for Codex persistent interactive, but found %v", meta[codexcli.MetadataKeyResumeSessionID])
-				}
-				return
-			}
 
 			if tt.wantResumeKey == "" {
 				if len(meta) > 0 {
@@ -291,5 +277,119 @@ func TestSessionIDRoundTrip(t *testing.T) {
 				t.Fatalf("round-trip failed: extracted %q but resume option has %v (key=%s)", sessionID, meta[p.resumeKey], p.resumeKey)
 			}
 		})
+	}
+}
+
+func TestTypedCodingProviderSessionHandleUpdatesAgent(t *testing.T) {
+	agent := &Agent{provider: llm.ProviderClaudeCode, ModelID: "old-model"}
+	resp := &llmtypes.ContentResponse{
+		Choices: []*llmtypes.ContentChoice{
+			{
+				Content: "turn 1 response",
+				GenerationInfo: &llmtypes.GenerationInfo{
+					CodingProviderSessionHandle: &llmtypes.CodingProviderSessionHandle{
+						Provider:        "claude-code",
+						Transport:       llmtypes.CodingProviderTransportTmux,
+						NativeSessionID: "claude-native-1",
+						TmuxSession:     "tmux-1",
+						WorkingDir:      "/workspace",
+						Model:           "claude-sonnet-4-6",
+						Status:          llmtypes.CodingProviderSessionStatusIdle,
+					},
+				},
+			},
+		},
+	}
+
+	extractCodingAgentSessionIDs(agent, resp)
+
+	if agent.ClaudeCodeSessionID != "claude-native-1" {
+		t.Fatalf("ClaudeCodeSessionID = %q, want claude-native-1", agent.ClaudeCodeSessionID)
+	}
+	if agent.CodingAgentWorkingDir != "/workspace" {
+		t.Fatalf("CodingAgentWorkingDir = %q, want /workspace", agent.CodingAgentWorkingDir)
+	}
+	if agent.CodingProviderSessionHandle.TmuxSession != "tmux-1" {
+		t.Fatalf("typed handle not stored: %#v", agent.CodingProviderSessionHandle)
+	}
+}
+
+func TestAgentSessionHandleApplyRestoresProviderState(t *testing.T) {
+	agent := &Agent{}
+	handle := &AgentSessionHandle{
+		SessionID: "app-session-1",
+		Provider: llmtypes.CodingProviderSessionHandle{
+			Provider:        "codex-cli",
+			Transport:       llmtypes.CodingProviderTransportStructured,
+			NativeSessionID: "codex-thread-1",
+			WorkingDir:      "/workspace",
+			ProjectDirID:    "codex-project-1",
+			Model:           "gpt-5.4",
+			Status:          llmtypes.CodingProviderSessionStatusIdle,
+		},
+	}
+
+	agent.ApplyAgentSessionHandle(handle)
+
+	if agent.SessionID != "app-session-1" {
+		t.Fatalf("SessionID = %q, want app-session-1", agent.SessionID)
+	}
+	if agent.CodexSessionID != "codex-thread-1" {
+		t.Fatalf("CodexSessionID = %q, want codex-thread-1", agent.CodexSessionID)
+	}
+	if agent.CodexProjectDirID != "codex-project-1" {
+		t.Fatalf("CodexProjectDirID = %q, want codex-project-1", agent.CodexProjectDirID)
+	}
+	if got := agent.CurrentAgentSessionHandle(); got == nil || got.Provider.NativeSessionID != "codex-thread-1" {
+		t.Fatalf("CurrentAgentSessionHandle = %#v", got)
+	}
+}
+
+func TestCodingProviderContinuationHandleForModelRequiresMatchingNativeHandle(t *testing.T) {
+	agent := &Agent{
+		provider:              llm.ProviderClaudeCode,
+		ModelID:               "claude-sonnet-4-6",
+		CodingAgentWorkingDir: "/tmp/work",
+		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+			Provider:        string(llm.ProviderClaudeCode),
+			Transport:       llmtypes.CodingProviderTransportTmux,
+			NativeSessionID: "claude-native",
+		},
+	}
+
+	handle, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderClaudeCode, "claude-sonnet-4-6")
+	if !ok {
+		t.Fatal("expected continuation handle")
+	}
+	if handle.WorkingDir != "/tmp/work" {
+		t.Fatalf("WorkingDir = %q, want /tmp/work", handle.WorkingDir)
+	}
+	if handle.Model != "claude-sonnet-4-6" {
+		t.Fatalf("Model = %q, want claude-sonnet-4-6", handle.Model)
+	}
+
+	if _, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderCodexCLI, "gpt-5.4"); ok {
+		t.Fatal("expected provider mismatch to be rejected")
+	}
+
+	agent.CodingProviderSessionHandle.NativeSessionID = ""
+	if _, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderClaudeCode, "claude-sonnet-4-6"); ok {
+		t.Fatal("expected missing native session id to be rejected")
+	}
+}
+
+func TestLatestHumanMessageTextForProviderContinuation(t *testing.T) {
+	messages := []llmtypes.MessageContent{
+		llmtypes.TextPart(llmtypes.ChatMessageTypeSystem, "system"),
+		llmtypes.TextPart(llmtypes.ChatMessageTypeHuman, "old message"),
+		llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "old response"),
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "new", "message"),
+	}
+	got, ok := latestHumanMessageTextForProviderContinuation(messages)
+	if !ok {
+		t.Fatal("expected latest human message")
+	}
+	if got != "new\nmessage" {
+		t.Fatalf("latest message = %q, want new\\nmessage", got)
 	}
 }
