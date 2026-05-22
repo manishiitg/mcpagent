@@ -58,6 +58,57 @@ type UserMessageDeliveryResult struct {
 	Transport      llm.CodingAgentTransport
 }
 
+// ControlKeyDeliveryRequest carries a tmux control key (e.g. "Escape") for
+// injection into a currently running coding-agent session.
+type ControlKeyDeliveryRequest struct {
+	SessionID string
+	Key       string
+}
+
+// ControlKeyDeliveryResult reports how a control key was routed.
+type ControlKeyDeliveryResult struct {
+	Provider  llm.Provider
+	Transport llm.CodingAgentTransport
+}
+
+// DeliverControlKey injects a tmux control key into the agent's currently
+// running coding-agent session. Returns DeliveryErrorKindNotSupported for
+// non-tmux providers so callers can fall back to context cancellation.
+func (a *Agent) DeliverControlKey(ctx context.Context, req ControlKeyDeliveryRequest) (ControlKeyDeliveryResult, error) {
+	provider := a.GetProvider()
+	result := ControlKeyDeliveryResult{Provider: provider}
+	key := strings.TrimSpace(req.Key)
+	if key == "" {
+		return result, &CodingAgentDeliveryError{
+			Kind:     DeliveryErrorKindEmptyMessage,
+			Provider: provider,
+			Reason:   "control key is empty",
+		}
+	}
+	if !llm.IsAllowedCodingAgentControlKey(key) {
+		return result, &CodingAgentDeliveryError{
+			Kind:     DeliveryErrorKindNotSupported,
+			Provider: provider,
+			Reason:   fmt.Sprintf("control key %q is not allowed", key),
+		}
+	}
+
+	contract, isCodingAgent := llm.GetCodingAgentProviderContract(provider, a.ModelID)
+	if !isCodingAgent || !contract.SupportsLiveInput {
+		return result, &CodingAgentDeliveryError{
+			Kind:     DeliveryErrorKindNotSupported,
+			Provider: provider,
+			Reason:   "provider transport does not support live tmux control keys",
+		}
+	}
+	result.Transport = contract.Transport
+
+	if err := llm.SendCodingAgentControlKey(ctx, provider, a.ModelID, req.SessionID, key); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
 // DeliverUserMessage routes a user message through the correct running-turn
 // mechanism for this agent. Tmux coding agents get provider-native live input;
 // API/structured/non-coding agents fall back to the agent's internal steer queue
