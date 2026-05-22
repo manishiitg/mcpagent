@@ -78,6 +78,10 @@ func ContinueCodingAgentSession(ctx context.Context, model llmtypes.Model, handl
 	return llmproviders.ContinueCodingAgentSession(ctx, model, handle, message, options...)
 }
 
+func SendCodingAgentLiveInput(ctx context.Context, provider Provider, modelID, ownerSessionID, message string) error {
+	return llmproviders.SendCodingAgentLiveInput(ctx, provider, modelID, ownerSessionID, message)
+}
+
 func IsCodingAgentContinuationError(err error, kind CodingAgentContinuationErrorKind) bool {
 	return llmproviders.IsCodingAgentContinuationError(err, kind)
 }
