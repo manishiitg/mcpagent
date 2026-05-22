@@ -1300,12 +1300,20 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
 		if bridgeErr == nil {
 			opts = append(opts, llm.WithCursorMCPConfig(bridgeConfig))
+			// --approve-mcps auto-accepts cursor's "approve this MCP server?"
+			// TUI dialog so the FIRST bridge tool call does not stall waiting
+			// for a human to click through. Required whenever WithCursorMCPConfig
+			// is set in a headless context.
 			opts = append(opts, llm.WithCursorApproveMCPs())
 			a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json")
 		} else {
 			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Cursor CLI (tools may be limited): %v", bridgeErr))
 		}
 
+		// --force = --yolo (allow commands unless explicitly denied). Cursor's
+		// default agent mode is used (no WithCursorMode call) because --mode
+		// ask/plan put cursor in a conversational stance that refuses natural
+		// writes with "Switch to Agent mode". See coding_agent_options.go.
 		opts = append(opts, llm.WithCursorForce())
 		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and live input support")
 	}

@@ -208,13 +208,22 @@ func WithCursorForce() llmtypes.CallOption {
 	return llmproviders.WithCursorForce()
 }
 
-// WithCursorApproveMCPs enables Cursor Agent CLI's --approve-mcps flag.
+// WithCursorApproveMCPs enables Cursor Agent CLI's --approve-mcps flag, which
+// auto-accepts the "approve this MCP server?" TUI consent dialog so bridge
+// tool calls do not stall waiting for human approval. Only useful alongside
+// WithCursorMCPConfig — without an MCP config there is nothing to approve.
 func WithCursorApproveMCPs() llmtypes.CallOption {
 	return llmproviders.WithCursorApproveMCPs()
 }
 
-// WithCursorMode sets Cursor Agent CLI's --mode flag. "ask" blocks built-in
-// Write/Shell at the CLI level, "plan" is analyze-only.
+// WithCursorMode sets Cursor Agent CLI's --mode flag. Leave empty for normal
+// agent mode (the default chat path).
+//
+// CAUTION: "ask" and "plan" are conversational stances, not just "block
+// built-in Write/Shell". Cursor hard-refuses natural-language write requests
+// with "Switch to Agent mode and ask…", making chat unusable for any turn
+// that requires writes. Only safe when prompts explicitly name an MCP tool
+// to call (e.g. structured-mode E2E tests). For general chat, leave mode empty.
 func WithCursorMode(mode string) llmtypes.CallOption {
 	return llmproviders.WithCursorMode(mode)
 }
