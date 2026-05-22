@@ -640,6 +640,12 @@ type streamingManager struct {
 	// Claude Code, Codex CLI). Used by AskWithHistory to reconstruct conversation history
 	// with tool calls that ran inside the CLI subprocess.
 	CLIToolCalls []llmtypes.StreamChunk
+	// streamDebugFile is an optional per-turn append-only log of every
+	// chunk.Content emitted by the adapter. Off by default; toggled on by
+	// MCP_AGENT_STREAM_DEBUG=1. Useful when you need to verify "did the
+	// model actually emit X" vs. "did the frontend drop X" — the in-memory
+	// event store doesn't persist streamed text otherwise.
+	streamDebugFile *os.File
 }
 
 // startStreaming initializes streaming if enabled and on the first attempt
@@ -654,6 +660,26 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 		startTime:      time.Now(),
 		turn:           turn,
 		suppressEvents: a.SuppressGenerationStreamingEvents,
+	}
+
+	// Per-session/turn raw-stream debug log. Reuses the LOG_AGENT_PROMPTS
+	// toggle and the existing logs/agent_prompts/<session>/ directory so
+	// the streamed assistant content sits next to its turn's prompt and
+	// _conversation.md files — same lifecycle, same cleanup. Captures every
+	// chunk.Content emitted by the adapter byte-for-byte, so you can answer
+	// "did the model emit X" vs. "did the frontend drop X" without grepping
+	// the in-memory event store.
+	if os.Getenv("LOG_AGENT_PROMPTS") == "true" && strings.TrimSpace(a.SessionID) != "" {
+		sessionDir := strings.ReplaceAll(strings.TrimSpace(a.SessionID), "/", "_")
+		dir := filepath.Join("logs", "agent_prompts", sessionDir)
+		if err := os.MkdirAll(dir, 0o755); err == nil {
+			name := fmt.Sprintf("stream_turn-%03d_attempt-%d_%s.txt", turn, attempt, time.Now().UTC().Format("150405"))
+			if f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+				fmt.Fprintf(f, "# session=%s turn=%d attempt=%d provider=%s model=%s start=%s\n",
+					a.SessionID, turn, attempt, a.provider, a.ModelID, time.Now().UTC().Format(time.RFC3339Nano))
+				sm.streamDebugFile = f
+			}
+		}
 	}
 
 	*opts = append(*opts, llmtypes.WithStreamingChan(sm.streamChan))
@@ -673,6 +699,12 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 // processChunks runs in a goroutine to handle incoming streaming chunks
 func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 	defer func() {
+		if sm.streamDebugFile != nil {
+			fmt.Fprintf(sm.streamDebugFile, "\n# end %s totalChunks=%d sawTerminal=%t\n",
+				time.Now().UTC().Format(time.RFC3339Nano), sm.totalChunks, sm.sawTerminal)
+			_ = sm.streamDebugFile.Close()
+			sm.streamDebugFile = nil
+		}
 		sm.streamingDone <- true
 	}()
 
@@ -682,6 +714,10 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			if chunk.Content != "" {
 				sm.contentChunkIndex++
 				sm.totalChunks++
+
+				if sm.streamDebugFile != nil {
+					fmt.Fprintf(sm.streamDebugFile, "[content idx=%d] %s\n---\n", sm.contentChunkIndex, chunk.Content)
+				}
 
 				if !sm.suppressEvents {
 					a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
@@ -702,6 +738,9 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				sm.sawTerminal = true
 				sm.contentChunkIndex++
 				sm.totalChunks++
+				if sm.streamDebugFile != nil {
+					fmt.Fprintf(sm.streamDebugFile, "[terminal idx=%d] %s\n---\n", sm.contentChunkIndex, chunk.Content)
+				}
 				metadata := map[string]interface{}{
 					"kind":     "terminal",
 					"replace":  true,
