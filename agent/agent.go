@@ -2160,14 +2160,27 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 	}
 
-	// Auto-configure Cursor CLI provider
-	// NOTE: Cursor's built-in tools cannot be disabled via system prompt, and
-	// --mode ask is not used here (it refuses natural-language writes with
-	// "Switch to Agent mode"). Cursor runs in default agent mode and may use
-	// its built-in tools for reads/writes; observable events come from the
-	// MCP bridge calls cursor chooses to make via .cursor/mcp.json.
-	// No custom system prompt injected — the user's own prompt passes through unchanged.
+	// Auto-configure Cursor CLI provider.
+	//
+	// The system prompt below steers cursor away from its built-in
+	// editToolCall / shell tools toward the declared MCP bridge tools so
+	// state-changing operations are observable (every write produces a
+	// tool_call_start/end event the host can see). Empirically verified to
+	// work in both transports against cursor-agent v2026.05.20-2b5dd59:
+	//
+	//   - tmux mode: TestCursorTmuxSystemPromptSteersWritesThroughBridge in
+	//     multi-llm-provider-go/pkg/adapters/cursorcli — system prompt is
+	//     delivered as a .cursor/rules/*.mdc with alwaysApply:true, which
+	//     cursor honors as session-wide guidance.
+	//   - structured mode: same nudge works, delivered as inline prefix on
+	//     the user message.
+	//
+	// Cursor stays in default agent mode (no --mode ask) because ask mode
+	// refuses natural-language write requests with "Switch to Agent mode".
+	// The system prompt is the soft lever; --mode ask is the hard lever we
+	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
+		ag.AppendSystemPrompt("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -3216,14 +3229,27 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		}
 	}
 
-	// Auto-configure Cursor CLI provider
-	// NOTE: Cursor's built-in tools cannot be disabled via system prompt, and
-	// --mode ask is not used here (it refuses natural-language writes with
-	// "Switch to Agent mode"). Cursor runs in default agent mode and may use
-	// its built-in tools for reads/writes; observable events come from the
-	// MCP bridge calls cursor chooses to make via .cursor/mcp.json.
-	// No custom system prompt injected — the user's own prompt passes through unchanged.
+	// Auto-configure Cursor CLI provider.
+	//
+	// The system prompt below steers cursor away from its built-in
+	// editToolCall / shell tools toward the declared MCP bridge tools so
+	// state-changing operations are observable (every write produces a
+	// tool_call_start/end event the host can see). Empirically verified to
+	// work in both transports against cursor-agent v2026.05.20-2b5dd59:
+	//
+	//   - tmux mode: TestCursorTmuxSystemPromptSteersWritesThroughBridge in
+	//     multi-llm-provider-go/pkg/adapters/cursorcli — system prompt is
+	//     delivered as a .cursor/rules/*.mdc with alwaysApply:true, which
+	//     cursor honors as session-wide guidance.
+	//   - structured mode: same nudge works, delivered as inline prefix on
+	//     the user message.
+	//
+	// Cursor stays in default agent mode (no --mode ask) because ask mode
+	// refuses natural-language write requests with "Switch to Agent mode".
+	// The system prompt is the soft lever; --mode ask is the hard lever we
+	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
+		ag.AppendSystemPrompt("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
