@@ -52,15 +52,12 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 		if a.CursorPersistentInteractiveSession {
 			opts = append(opts, llm.WithCursorPersistentInteractiveSession(true))
 		}
-		if a.CursorBridgeToolsMode {
-			// --mode ask blocks Cursor's built-in Write/Shell so any state
-			// change must route through the MCP bridge (observable as tool
-			// events). --approve-mcps auto-accepts the MCP-server consent
-			// dialog so bridge tool calls don't stall waiting for a human
-			// operator to click "approve" in the cursor TUI.
-			opts = append(opts, llm.WithCursorMode("ask"))
-			opts = append(opts, llm.WithCursorApproveMCPs())
-		}
+		// CursorBridgeToolsMode intentionally does NOT set --mode ask. Cursor's
+		// ask mode is a conversational stance that hard-refuses natural-language
+		// write requests with "Switch to Agent mode", which makes the chat
+		// unusable for any task that involves writes. Cursor runs in default
+		// agent mode; MCP bridge config is still provided via .cursor/mcp.json
+		// for tools the agent chooses to invoke through the bridge.
 	}
 
 	return opts

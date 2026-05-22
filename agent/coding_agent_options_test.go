@@ -272,11 +272,14 @@ func TestWithClaudeCodeTransport(t *testing.T) {
 	}
 }
 
-// TestCursorBridgeToolsModeSetsAskAndApproveMCPs locks in the fix that pairs
-// --mode ask with --approve-mcps. Without --approve-mcps, the first MCP bridge
-// tool call from a chat-mode agent would stall on Cursor's "approve this MCP
-// server?" prompt because no operator is present to click through in the TUI.
-func TestCursorBridgeToolsModeSetsAskAndApproveMCPs(t *testing.T) {
+// Cursor's --mode ask is a conversational stance that refuses natural-language
+// writes with "Switch to Agent mode", which makes the chat unusable for any
+// turn that requires writes. CursorBridgeToolsMode must NOT set --mode ask
+// (and so must NOT set --approve-mcps either, since approve-mcps is only
+// meaningful when MCP tools are forced via a restricted mode). Cursor runs
+// in default agent mode and may still invoke MCP bridge tools via the
+// .cursor/mcp.json config that is mounted independently.
+func TestCursorBridgeToolsModeDoesNotForceAskMode(t *testing.T) {
 	agent := &Agent{
 		provider:                           llm.ProviderCursorCLI,
 		SessionID:                          "chat-session-bridge",
@@ -286,31 +289,11 @@ func TestCursorBridgeToolsModeSetsAskAndApproveMCPs(t *testing.T) {
 
 	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptions(nil))
 
-	if got[cursorcli.MetadataKeyMode] != "ask" {
-		t.Fatalf("mode metadata = %#v, want %q", got[cursorcli.MetadataKeyMode], "ask")
+	if mode, ok := got[cursorcli.MetadataKeyMode]; ok {
+		t.Fatalf("mode metadata should NOT be set under bridge tools mode (ask mode breaks natural-language writes), got %#v", mode)
 	}
-	if got[cursorcli.MetadataKeyApproveMCPs] != true {
-		t.Fatalf("approve-mcps metadata = %#v, want true (bridge tools must not stall on TUI approval prompt)", got[cursorcli.MetadataKeyApproveMCPs])
-	}
-}
-
-// When bridge mode is disabled, neither --mode ask nor --approve-mcps should be
-// added — the chat should run as a default agent without MCP-server consent flags.
-func TestCursorWithoutBridgeToolsModeOmitsAskAndApproveMCPs(t *testing.T) {
-	agent := &Agent{
-		provider:                           llm.ProviderCursorCLI,
-		SessionID:                          "chat-session-no-bridge",
-		CursorPersistentInteractiveSession: true,
-		CursorBridgeToolsMode:              false,
-	}
-
-	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptions(nil))
-
-	if _, ok := got[cursorcli.MetadataKeyMode]; ok {
-		t.Fatalf("mode metadata should be absent without bridge tools mode, got %#v", got[cursorcli.MetadataKeyMode])
-	}
-	if _, ok := got[cursorcli.MetadataKeyApproveMCPs]; ok {
-		t.Fatalf("approve-mcps metadata should be absent without bridge tools mode, got %#v", got[cursorcli.MetadataKeyApproveMCPs])
+	if approve, ok := got[cursorcli.MetadataKeyApproveMCPs]; ok {
+		t.Fatalf("approve-mcps metadata should NOT be set (only meaningful when --mode forces MCP routing), got %#v", approve)
 	}
 }
 

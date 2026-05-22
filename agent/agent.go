@@ -186,9 +186,11 @@ func WithCursorPersistentInteractiveSession(enabled bool) AgentOption {
 	}
 }
 
-// WithCursorBridgeToolsMode passes --mode ask to cursor-agent, blocking its
-// built-in Write/Shell tools at the CLI level so that filesystem and shell
-// operations are routed through MCP bridge tools instead.
+// WithCursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
+// The flag is retained for API compatibility but no longer sets --mode ask:
+// that mode hard-refuses natural-language writes with "Switch to Agent mode",
+// making chat unusable. Cursor runs in its default agent mode; the MCP bridge
+// is still mounted via .cursor/mcp.json for tools the model chooses to use.
 func WithCursorBridgeToolsMode(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.CursorBridgeToolsMode = enabled
@@ -858,9 +860,10 @@ type Agent struct {
 	// Cursor CLI persistent tmux mode for interactive chat
 	CursorPersistentInteractiveSession bool
 
-	// CursorBridgeToolsMode when true passes --mode ask to cursor-agent,
-	// which blocks built-in Write/Shell tools at the CLI level. Use this
-	// when MCP bridge tools handle filesystem and shell operations.
+	// CursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
+	// Retained for API compatibility; no longer sets --mode ask (that mode
+	// refuses natural-language writes with "Switch to Agent mode" and breaks
+	// chat). Cursor runs in default agent mode regardless of this flag.
 	CursorBridgeToolsMode bool
 
 	// Retained for API compatibility; OpenCode CLI uses structured JSON mode.
@@ -2158,8 +2161,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	// Auto-configure Cursor CLI provider
-	// NOTE: Cursor's built-in tools cannot be disabled via system prompt.
-	// Use --mode ask (via CursorBridgeToolsMode) to block Write/Shell at CLI level.
+	// NOTE: Cursor's built-in tools cannot be disabled via system prompt, and
+	// --mode ask is not used here (it refuses natural-language writes with
+	// "Switch to Agent mode"). Cursor runs in default agent mode and may use
+	// its built-in tools for reads/writes; observable events come from the
+	// MCP bridge calls cursor chooses to make via .cursor/mcp.json.
 	// No custom system prompt injected — the user's own prompt passes through unchanged.
 	if ag.provider == llmproviders.ProviderCursorCLI {
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
@@ -3211,8 +3217,11 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	}
 
 	// Auto-configure Cursor CLI provider
-	// NOTE: Cursor's built-in tools cannot be disabled via system prompt.
-	// Use --mode ask (via CursorBridgeToolsMode) to block Write/Shell at CLI level.
+	// NOTE: Cursor's built-in tools cannot be disabled via system prompt, and
+	// --mode ask is not used here (it refuses natural-language writes with
+	// "Switch to Agent mode"). Cursor runs in default agent mode and may use
+	// its built-in tools for reads/writes; observable events come from the
+	// MCP bridge calls cursor chooses to make via .cursor/mcp.json.
 	// No custom system prompt injected — the user's own prompt passes through unchanged.
 	if ag.provider == llmproviders.ProviderCursorCLI {
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
