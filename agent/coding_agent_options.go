@@ -53,7 +53,13 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 			opts = append(opts, llm.WithCursorPersistentInteractiveSession(true))
 		}
 		if a.CursorBridgeToolsMode {
+			// --mode ask blocks Cursor's built-in Write/Shell so any state
+			// change must route through the MCP bridge (observable as tool
+			// events). --approve-mcps auto-accepts the MCP-server consent
+			// dialog so bridge tool calls don't stall waiting for a human
+			// operator to click "approve" in the cursor TUI.
 			opts = append(opts, llm.WithCursorMode("ask"))
+			opts = append(opts, llm.WithCursorApproveMCPs())
 		}
 	}
 

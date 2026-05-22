@@ -272,6 +272,48 @@ func TestWithClaudeCodeTransport(t *testing.T) {
 	}
 }
 
+// TestCursorBridgeToolsModeSetsAskAndApproveMCPs locks in the fix that pairs
+// --mode ask with --approve-mcps. Without --approve-mcps, the first MCP bridge
+// tool call from a chat-mode agent would stall on Cursor's "approve this MCP
+// server?" prompt because no operator is present to click through in the TUI.
+func TestCursorBridgeToolsModeSetsAskAndApproveMCPs(t *testing.T) {
+	agent := &Agent{
+		provider:                           llm.ProviderCursorCLI,
+		SessionID:                          "chat-session-bridge",
+		CursorPersistentInteractiveSession: true,
+		CursorBridgeToolsMode:              true,
+	}
+
+	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptions(nil))
+
+	if got[cursorcli.MetadataKeyMode] != "ask" {
+		t.Fatalf("mode metadata = %#v, want %q", got[cursorcli.MetadataKeyMode], "ask")
+	}
+	if got[cursorcli.MetadataKeyApproveMCPs] != true {
+		t.Fatalf("approve-mcps metadata = %#v, want true (bridge tools must not stall on TUI approval prompt)", got[cursorcli.MetadataKeyApproveMCPs])
+	}
+}
+
+// When bridge mode is disabled, neither --mode ask nor --approve-mcps should be
+// added — the chat should run as a default agent without MCP-server consent flags.
+func TestCursorWithoutBridgeToolsModeOmitsAskAndApproveMCPs(t *testing.T) {
+	agent := &Agent{
+		provider:                           llm.ProviderCursorCLI,
+		SessionID:                          "chat-session-no-bridge",
+		CursorPersistentInteractiveSession: true,
+		CursorBridgeToolsMode:              false,
+	}
+
+	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptions(nil))
+
+	if _, ok := got[cursorcli.MetadataKeyMode]; ok {
+		t.Fatalf("mode metadata should be absent without bridge tools mode, got %#v", got[cursorcli.MetadataKeyMode])
+	}
+	if _, ok := got[cursorcli.MetadataKeyApproveMCPs]; ok {
+		t.Fatalf("approve-mcps metadata should be absent without bridge tools mode, got %#v", got[cursorcli.MetadataKeyApproveMCPs])
+	}
+}
+
 func metadataFromCallOptions(options []llmtypes.CallOption) map[string]interface{} {
 	opts := &llmtypes.CallOptions{}
 	for _, option := range options {
