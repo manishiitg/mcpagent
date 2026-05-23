@@ -1767,7 +1767,26 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 			}
 
-			if choice.Content != "" {
+			// Splice the coding-agent's internal turn trail (text +
+			// tool_use + tool_result) BEFORE the final assistant text,
+			// so the persisted conversation_history captures what
+			// happened inside the CLI's hidden loop in the same shape
+			// as outer-loop messages. Tmux transports (claude-code,
+			// codex, cursor, gemini CLIs) populate this from their
+			// sidecar transcript; structured/API transports typically
+			// don't populate it because the agent layer already sees
+			// those turns directly. Empty/missing is a no-op.
+			intermediate, hasIntermediate := llmtypes.ExtractCodingProviderIntermediateMessages(choice.GenerationInfo)
+			if hasIntermediate && len(intermediate.Messages) > 0 {
+				// Trust the sidecar splice as the complete trail
+				// (text + tool_use + tool_result + final answer).
+				// Skip choice.Content entirely — it can be corrupted
+				// for tmux CLIs whose pane-capture grabs stale user
+				// inputs alongside the final answer (observed in
+				// cursor's multi-input pane). The splice is built
+				// from the CLI's structured sidecar, not the pane.
+				messages = append(messages, intermediate.Messages...)
+			} else if choice.Content != "" {
 				assistantMessage := llmtypes.MessageContent{
 					Role:  llmtypes.ChatMessageTypeAI,
 					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: choice.Content}},
