@@ -2575,6 +2575,15 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	generationInfo["cumulative_reasoning_tokens"] = a.cumulativeReasoningTokens
 	generationInfo["llm_call_count"] = a.llmCallCount
 	generationInfo["cache_enabled_call_count"] = a.cacheEnabledCallCount
+	// Also expose cache reads under the raw Anthropic-style key the
+	// cost ledger's extractCacheTokens reads off — without this the
+	// cumulative cache total (which is correctly tracked above) never
+	// reaches the per-turn ledger Entry, leaving cache_read_tokens
+	// blank for every chat even though the adapter populated it on
+	// the per-call GenerationInfo.
+	if a.cumulativeCacheTokens > 0 {
+		generationInfo["cache_read_input_tokens"] = a.cumulativeCacheTokens
+	}
 
 	// Add pricing information
 	generationInfo["cumulative_input_cost"] = a.cumulativeInputCost

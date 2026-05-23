@@ -1478,6 +1478,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	}
 
 	maxRetriesZeroCandidates := 3 // Limit retries for zero_candidates errors to 3 before fallback
+	maxRetriesEmptyContent := 2   // Empty-content errors are partly structural; 2 retries rides out transient hiccups without burning cost when failure is permanent
 
 	baseDelaySeconds := 10
 	if env := os.Getenv("LLM_RETRY_BASE_DELAY_SECONDS"); env != "" {
@@ -1691,13 +1692,24 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				if attempt < maxRetries-1 {
 					shouldRetrySameModel = true
 				}
+			} else if errorType == "empty_content_error" {
+				// Empty-content errors include both transient cases (Gemini CLI
+				// status=error mid-stream with no detail, e.g. backend 5xx) and
+				// non-transient ones (context too large, safety filter). Retry
+				// up to 2 times — enough to ride out a transient hiccup without
+				// burning extra cost when the failure is structural.
+				if attempt < maxRetriesEmptyContent-1 {
+					shouldRetrySameModel = true
+				}
 			}
 
 			if shouldRetrySameModel {
-				// Use maxRetriesZeroCandidates for zero_candidates, maxRetries for throttling
+				// Use error-type-specific retry caps.
 				retryLimit := maxRetries
 				if errorType == "zero_candidates_error" {
 					retryLimit = maxRetriesZeroCandidates
+				} else if errorType == "empty_content_error" {
+					retryLimit = maxRetriesEmptyContent
 				}
 				shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, retryLimit, baseDelay, maxDelay, turn, logger, usage)
 				if retryErr != nil {
