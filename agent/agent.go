@@ -2291,10 +2291,21 @@ func calculateCostFromTokens(tokenCount int, costPer1MTokens float64) float64 {
 // Only accumulates if we have actual token values from LLM response (not estimates).
 func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.UsageMetrics, resp *llmtypes.ContentResponse, turn int) {
 	// Check if we have actual token values from LLM response
-	// Only accumulate if resp has actual usage data (not estimated)
+	// Only accumulate if resp has actual usage data (not estimated).
+	//
+	// Token fields on GenerationInfo come in two naming conventions
+	// depending on provider:
+	//   - Modern: PromptTokens / CompletionTokens (claude-code experimental, codex, etc.)
+	//   - Legacy: InputTokens / OutputTokens
+	// We treat both as authoritative; checking only the legacy pair
+	// dropped Claude Code chat ledger entries to zero tokens despite
+	// gi.PromptTokens being correctly populated by the adapter.
 	hasActualUsage := resp != nil && ((resp.Usage != nil && (resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0)) ||
 		(len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil &&
-			(resp.Choices[0].GenerationInfo.InputTokens != nil || resp.Choices[0].GenerationInfo.OutputTokens != nil)))
+			(resp.Choices[0].GenerationInfo.PromptTokens != nil ||
+				resp.Choices[0].GenerationInfo.CompletionTokens != nil ||
+				resp.Choices[0].GenerationInfo.InputTokens != nil ||
+				resp.Choices[0].GenerationInfo.OutputTokens != nil)))
 
 	// Also check if usageMetrics has actual values (from extractUsageMetrics)
 	// If usageMetrics has values but resp is nil, it might be from estimation - skip it
