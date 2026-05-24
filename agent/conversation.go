@@ -939,15 +939,16 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					return "", messages, fmt.Errorf("conversation cancelled: %w", genErr)
 				}
 
-				// Emit LLM generation error event using typed event data
-				llmErrorEvent := events.NewLLMGenerationErrorEvent(turn+1, a.ModelID, genErr.Error(), time.Since(llmStartTime))
-				a.EmitTypedEvent(ctx, llmErrorEvent)
+				// Tmux-loss continuation errors are infrastructure failures; the session
+				// may still be alive (observable as state=completed). Suppress user-visible
+				// error events and let the orchestrator decide based on final session state.
+				if !isTmuxLossContinuationError(genErr) {
+					llmErrorEvent := events.NewLLMGenerationErrorEvent(turn+1, a.ModelID, genErr.Error(), time.Since(llmStartTime))
+					a.EmitTypedEvent(ctx, llmErrorEvent)
 
-				// Agent processing end event removed - no longer needed
-
-				// 🎯 FIX: End the trace for error cases - replaced with event emission
-				conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, genErr.Error(), turn+1, "conversation_error", time.Since(conversationStartTime))
-				a.EmitTypedEvent(ctx, conversationErrorEvent)
+					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, genErr.Error(), turn+1, "conversation_error", time.Since(conversationStartTime))
+					a.EmitTypedEvent(ctx, conversationErrorEvent)
+				}
 
 				return "", messages, fmt.Errorf("llm error: %w", genErr)
 			}

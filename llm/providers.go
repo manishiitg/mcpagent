@@ -78,6 +78,14 @@ func ContinueCodingAgentSession(ctx context.Context, model llmtypes.Model, handl
 	return llmproviders.ContinueCodingAgentSession(ctx, model, handle, message, options...)
 }
 
+func StartCodingAgentTransportSession(ctx context.Context, model llmtypes.Model, handle llmtypes.CodingProviderSessionHandle, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
+	return llmproviders.StartCodingAgentTransportSession(ctx, model, handle, options...)
+}
+
+func StartCodingAgentTmuxSession(ctx context.Context, model llmtypes.Model, handle llmtypes.CodingProviderSessionHandle, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
+	return llmproviders.StartCodingAgentTransportSession(ctx, model, handle, options...)
+}
+
 func SendCodingAgentLiveInput(ctx context.Context, provider Provider, modelID, ownerSessionID, message string) error {
 	return llmproviders.SendCodingAgentLiveInput(ctx, provider, modelID, ownerSessionID, message)
 }

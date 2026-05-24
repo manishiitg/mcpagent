@@ -607,8 +607,20 @@ func classifyLLMError(err error) string {
 		return "stream_error"
 	} else if isInternalError(err) {
 		return "internal_error"
+	} else if isTmuxLossContinuationError(err) {
+		return "tmux_loss_error"
 	}
 	return ""
+}
+
+// isTmuxLossContinuationError reports whether err is a failed coding-agent
+// session continuation due to tmux loss. The session may still be alive after
+// this error, so callers should not surface it as a user-visible error.
+func isTmuxLossContinuationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "coding-agent continuation retry after tmux loss failed")
 }
 
 // shouldSkipSameModelRetry prefers fast fallback for providers where same-model
@@ -672,9 +684,12 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 	if os.Getenv("LOG_AGENT_PROMPTS") == "true" && strings.TrimSpace(a.SessionID) != "" {
 		sessionDir := strings.ReplaceAll(strings.TrimSpace(a.SessionID), "/", "_")
 		dir := filepath.Join("logs", "agent_prompts", sessionDir)
-		if err := os.MkdirAll(dir, 0o755); err == nil {
+		if err := os.MkdirAll(dir, 0o750); err == nil {
 			name := fmt.Sprintf("stream_turn-%03d_attempt-%d_%s.txt", turn, attempt, time.Now().UTC().Format("150405"))
-			if f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			// Debug-only sink gated by LOG_AGENT_PROMPTS; path is a fixed
+			// logs/agent_prompts root + sanitized session id + generated name.
+			// #nosec G304 -- not user-controlled file inclusion.
+			if f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 				fmt.Fprintf(f, "# session=%s turn=%d attempt=%d provider=%s model=%s start=%s\n",
 					a.SessionID, turn, attempt, a.provider, a.ModelID, time.Now().UTC().Format(time.RFC3339Nano))
 				sm.streamDebugFile = f
@@ -1069,8 +1084,16 @@ func dedupeFallbacks(fallbacks []LLMModel) []LLMModel {
 	return result
 }
 
-// executeLLM creates an LLM instance and executes it
+// executeLLM creates an LLM instance and executes it.
 func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
+	return a.executeLLMInner(ctx, model, messages, opts, false)
+}
+
+func (a *Agent) executeLLMForCodingAgentTransportLaunch(ctx context.Context, model LLMModel, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
+	return a.executeLLMInner(ctx, model, nil, opts, true)
+}
+
+func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly bool) (*llmtypes.ContentResponse, error) {
 	// Clone agent-level keys as base (so Azure and Bedrock configs are always available)
 	apiKeys := a.APIKeys.Clone()
 	if apiKeys == nil {
@@ -1423,6 +1446,16 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 	}
 
 	if continuationHandle, ok := a.codingProviderContinuationHandleForModel(modelProvider, model.ModelID); ok {
+		if launchOnly {
+			transport := strings.TrimSpace(continuationHandle.Transport)
+			if transport == "" {
+				if contract, ok := llm.GetCodingAgentProviderContract(modelProvider, model.ModelID); ok {
+					transport = string(contract.Transport)
+				}
+			}
+			a.Logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Starting %s transport session (%s) for native session %s", model.Provider, transport, continuationHandle.NativeSessionID))
+			return llm.StartCodingAgentTransportSession(ctx, llmInstance, continuationHandle, opts...)
+		}
 		latestMessage, msgOK := latestHumanMessageTextForProviderContinuation(messages)
 		if !msgOK {
 			return nil, fmt.Errorf("cannot continue coding-agent session: latest human message not found")
@@ -1432,6 +1465,62 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 	}
 
 	return llmInstance.GenerateContent(ctx, messages, opts...)
+}
+
+// StartCodingAgentTransportSession starts or reacquires the agent's current
+// launchable coding-agent transport without sending a user message. Terminal
+// chunks are emitted through the agent's normal event listeners, but no
+// streaming_end event is emitted because this is an idle terminal warmup rather
+// than a completed generation turn.
+func (a *Agent) StartCodingAgentTransportSession(ctx context.Context) (*llmtypes.CodingProviderSessionHandle, error) {
+	if a == nil {
+		return nil, fmt.Errorf("agent is nil")
+	}
+	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.ModelID)
+	if !ok {
+		return nil, fmt.Errorf("agent provider %s/%s is not a coding-agent provider", a.provider, a.ModelID)
+	}
+	if a.ForceStructuredCodingAgent || contract.Transport != llm.CodingAgentTransportTmux {
+		return nil, fmt.Errorf("agent provider %s/%s does not expose a launchable terminal transport (%s)", a.provider, a.ModelID, contract.Transport)
+	}
+	primary := a.getEffectiveLLMConfig().Primary
+	if strings.TrimSpace(primary.Provider) == "" {
+		primary.Provider = string(a.provider)
+	}
+	if strings.TrimSpace(primary.ModelID) == "" {
+		primary.ModelID = a.ModelID
+	}
+
+	var opts []llmtypes.CallOption
+	sm := a.startStreaming(ctx, 0, 0, &opts)
+	resp, err := a.executeLLMForCodingAgentTransportLaunch(ctx, primary, opts)
+	a.drainStreamingWithoutEnd(sm)
+	if err != nil {
+		return nil, err
+	}
+	a.updateCodingProviderSessionHandleFromResponse(resp)
+	if handle := a.CurrentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
+		providerHandle := handle.Provider
+		return &providerHandle, nil
+	}
+	return nil, fmt.Errorf("coding-agent transport session started without provider handle")
+}
+
+// StartCodingAgentTmuxSession preserves the older tmux-specific entry point for
+// callers that have not moved to the transport-level API.
+func (a *Agent) StartCodingAgentTmuxSession(ctx context.Context) (*llmtypes.CodingProviderSessionHandle, error) {
+	return a.StartCodingAgentTransportSession(ctx)
+}
+
+func (a *Agent) drainStreamingWithoutEnd(sm *streamingManager) {
+	if sm == nil {
+		return
+	}
+	func() {
+		defer func() { recover() }() //nolint:errcheck
+		close(sm.streamChan)
+	}()
+	<-sm.streamingDone
 }
 
 func latestHumanMessageTextForProviderContinuation(messages []llmtypes.MessageContent) (string, bool) {
@@ -1640,21 +1729,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// Handle context cancellation specifically
 			if isContextCanceledError(err) || ctx.Err() != nil {
 				return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
-			}
-
-			// Only emit LLMGenerationErrorEvent when this is the last model (no fallback will follow).
-			// For intermediate failures where a fallback will be tried, the FallbackModelUsedEvent
-			// already communicates the model switch — emitting an error card here causes confusing
-			// red error UI even though the request ultimately succeeded via the fallback.
-			isLastModel := modelIndex == len(modelsToTry)-1
-			if isLastModel {
-				a.EmitTypedEvent(ctx, &events.LLMGenerationErrorEvent{
-					BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-					Turn:          turn + 1,
-					ModelID:       model.ModelID,
-					Error:         err.Error(),
-					Duration:      time.Since(generationStartTime),
-				})
 			}
 
 			errorType := classifyLLMError(err)
