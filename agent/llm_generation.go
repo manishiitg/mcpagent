@@ -1093,6 +1093,24 @@ func (a *Agent) executeLLMForCodingAgentTransportLaunch(ctx context.Context, mod
 	return a.executeLLMInner(ctx, model, nil, opts, true)
 }
 
+func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
+	if bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig(); bridgeErr == nil {
+		opts = append(opts,
+			llm.WithAgyMCPConfig(bridgeConfig),
+			llm.WithAgyBridgeOnlyTools(true),
+		)
+		a.Logger.Info("🌉 [AGY_CLI] Configured MCP bridge through .agents/mcp_config.json with bridge-only hooks")
+	} else {
+		a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Antigravity CLI (tools may be limited): %v", bridgeErr))
+	}
+	if a.AgySessionID != "" {
+		opts = append(opts, llm.WithAgyResumeSessionID(a.AgySessionID))
+	}
+	opts = append(opts, llm.WithAgyDangerouslySkipPermissions(true))
+	a.Logger.Info("🌉 Using Antigravity CLI in tmux mode with MCP bridge and live input support")
+	return opts
+}
+
 func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly bool) (*llmtypes.ContentResponse, error) {
 	// Clone agent-level keys as base (so Azure and Bedrock configs are always available)
 	apiKeys := a.APIKeys.Clone()
@@ -1367,7 +1385,18 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 			// for a human to click through. Required whenever WithCursorMCPConfig
 			// is set in a headless context.
 			opts = append(opts, llm.WithCursorApproveMCPs())
-			a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json")
+			// WithCursorDenyBuiltinTools installs a per-session
+			// .cursor/hooks.json that denies cursor's built-in
+			// Shell/Read/Edit/Write/etc. tools at the hook layer,
+			// forcing the agent to route every tool call through the
+			// MCP bridge we just configured. Mirrors what
+			// appendAgyCLIIntegrationOptions does with
+			// WithAgyBridgeOnlyTools(true) — same effect, different
+			// CLI's hook convention. Only enabled alongside the bridge
+			// config so we never deny built-ins without a working MCP
+			// fallback.
+			opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
+			a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
 		} else {
 			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Cursor CLI (tools may be limited): %v", bridgeErr))
 		}
@@ -1380,22 +1409,9 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and live input support")
 	}
 
-	// 🔧 ANTIGRAVITY CLI INTEGRATION: tmux live input. Per-session MCP config
-	// is passed as metadata for forward compatibility, but agy currently reads
-	// global Antigravity/Gemini config; the provider contract marks bridge-only
-	// enforcement as uncertified.
+	// 🔧 ANTIGRAVITY CLI INTEGRATION: MCP bridge + tmux live input.
 	if llmproviders.Provider(model.Provider) == llmproviders.ProviderAgyCLI {
-		if bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig(); bridgeErr == nil {
-			opts = append(opts, llm.WithAgyMCPConfig(bridgeConfig))
-			a.Logger.Info("🌉 [AGY_CLI] Recorded MCP bridge config candidate")
-		} else {
-			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Antigravity CLI (tools may be limited): %v", bridgeErr))
-		}
-		if a.AgySessionID != "" {
-			opts = append(opts, llm.WithAgyResumeSessionID(a.AgySessionID))
-		}
-		opts = append(opts, llm.WithAgyDangerouslySkipPermissions(true))
-		a.Logger.Info("🌉 Using Antigravity CLI in tmux mode with live input support")
+		opts = a.appendAgyCLIIntegrationOptions(opts)
 	}
 
 	// 🔧 OPENCODE CLI INTEGRATION: MCP bridge + structured JSON transport.

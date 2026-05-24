@@ -243,6 +243,17 @@ func WithCursorMode(mode string) llmtypes.CallOption {
 	return llmproviders.WithCursorMode(mode)
 }
 
+// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json that
+// denies Cursor's built-in Shell/Read/Edit/Write/etc. tools at the hook
+// layer, forcing the agent to route every tool call through the MCP bridge.
+// This is the modern equivalent of --mode ask but without the conversational
+// hard-refuse behavior — natural-language requests still work; only built-in
+// tool calls get vetoed. Pairs cleanly with WithCursorMCPConfig +
+// WithCursorApproveMCPs.
+func WithCursorDenyBuiltinTools(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithCursorDenyBuiltinTools(enabled)
+}
+
 // WithCursorSandbox sets Cursor Agent CLI's --sandbox flag ("enabled"/"disabled").
 func WithCursorSandbox(mode string) llmtypes.CallOption {
 	return llmproviders.WithCursorSandbox(mode)
@@ -268,6 +279,12 @@ func WithAgyWorkingDir(dir string) llmtypes.CallOption {
 // WithAgyMCPConfig records an Antigravity MCP config candidate.
 func WithAgyMCPConfig(config string) llmtypes.CallOption {
 	return llmproviders.WithAgyMCPConfig(config)
+}
+
+// WithAgyBridgeOnlyTools writes an Antigravity workspace hook that denies
+// built-in tools while leaving configured MCP bridge tools available.
+func WithAgyBridgeOnlyTools(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithAgyBridgeOnlyTools(enabled)
 }
 
 // WithAgyDangerouslySkipPermissions controls agy's skip-permissions flag.
