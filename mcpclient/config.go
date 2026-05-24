@@ -369,13 +369,26 @@ func LoadMergedConfig(configPath string, logger loggerv2.Logger) (*MCPConfig, er
 	return mergedConfig, nil
 }
 
-// GetServer returns the configuration for a specific server
+// GetServer returns the configuration for a specific server. After an exact
+// match miss the lookup retries with hyphen↔underscore swaps so callers that
+// received a sanitized name (e.g. "google_sheets" via the bridge URL) still
+// find the canonical config entry (e.g. "google-sheets"). This matches the
+// per-tool handler's existing desanitize-first behavior.
 func (c *MCPConfig) GetServer(name string) (MCPServerConfig, error) {
-	server, exists := c.MCPServers[name]
-	if !exists {
-		return MCPServerConfig{}, fmt.Errorf("server '%s' not found in configuration", name)
+	if server, exists := c.MCPServers[name]; exists {
+		return server, nil
 	}
-	return server, nil
+	if strings.Contains(name, "_") {
+		if server, ok := c.MCPServers[strings.ReplaceAll(name, "_", "-")]; ok {
+			return server, nil
+		}
+	}
+	if strings.Contains(name, "-") {
+		if server, ok := c.MCPServers[strings.ReplaceAll(name, "-", "_")]; ok {
+			return server, nil
+		}
+	}
+	return MCPServerConfig{}, fmt.Errorf("server '%s' not found in configuration", name)
 }
 
 // ListServers returns all configured server names

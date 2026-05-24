@@ -168,6 +168,14 @@ func (a *Agent) applyCodingProviderSessionHandle(handle llmtypes.CodingProviderS
 		if dir := strings.TrimSpace(handle.ProjectDirID); dir != "" {
 			a.GeminiProjectDirID = dir
 		}
+	case string(llm.ProviderCursorCLI):
+		if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
+			a.CursorSessionID = id
+		}
+	case string(llm.ProviderOpenCodeCLI):
+		if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
+			a.OpenCodeSessionID = id
+		}
 	}
 }
 
@@ -194,6 +202,10 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	case llm.ProviderGeminiCLI:
 		handle.NativeSessionID = strings.TrimSpace(a.GeminiSessionID)
 		handle.ProjectDirID = strings.TrimSpace(a.GeminiProjectDirID)
+	case llm.ProviderCursorCLI:
+		handle.NativeSessionID = strings.TrimSpace(a.CursorSessionID)
+	case llm.ProviderOpenCodeCLI:
+		handle.NativeSessionID = strings.TrimSpace(a.OpenCodeSessionID)
 	}
 	handle.WorkingDir = strings.TrimSpace(a.CodingAgentWorkingDir)
 	if handle.NativeSessionID == "" && handle.ProjectDirID == "" && handle.WorkingDir == "" {

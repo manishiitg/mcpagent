@@ -860,6 +860,17 @@ type Agent struct {
 	// Cursor CLI persistent tmux mode for interactive chat
 	CursorPersistentInteractiveSession bool
 
+	// Cursor CLI session ID for --resume on subsequent turns. Populated by
+	// the structured adapter from cursor's stream-json init event (and by
+	// the interactive adapter from its sqlite agentId after each turn —
+	// best-effort), so a restored chat can pick up cursor's native chat
+	// memory instead of starting fresh.
+	CursorSessionID string
+
+	// OpenCode CLI session ID for --session <id> on subsequent turns.
+	// Populated by the structured adapter from opencode's output.
+	OpenCodeSessionID string
+
 	// CursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 	// Retained for API compatibility; no longer sets --mode ask (that mode
 	// refuses natural-language writes with "Switch to Agent mode" and breaks

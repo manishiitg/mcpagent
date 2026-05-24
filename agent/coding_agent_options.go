@@ -103,6 +103,12 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	if sid, ok := additional["codex_thread_id"].(string); ok && sid != "" {
 		a.CodexSessionID = sid
 	}
+	if sid, ok := additional["cursor_session_id"].(string); ok && sid != "" {
+		a.CursorSessionID = sid
+	}
+	if sid, ok := additional["opencode_session_id"].(string); ok && sid != "" {
+		a.OpenCodeSessionID = sid
+	}
 	if a.CodingProviderSessionHandle.Empty() {
 		a.CodingProviderSessionHandle = a.legacyCodingProviderSessionHandle()
 	}
@@ -125,6 +131,14 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 	case llm.ProviderCodexCLI:
 		if a.CodexSessionID != "" {
 			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
+		}
+	case llm.ProviderCursorCLI:
+		if a.CursorSessionID != "" {
+			opts = append(opts, llm.WithCursorResumeSessionID(a.CursorSessionID))
+		}
+	case llm.ProviderOpenCodeCLI:
+		if a.OpenCodeSessionID != "" {
+			opts = append(opts, llm.WithOpenCodeResumeSessionID(a.OpenCodeSessionID))
 		}
 	}
 	return opts
