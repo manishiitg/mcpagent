@@ -8,6 +8,7 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -57,19 +58,15 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantWorkingDir:  "/tmp/codex-chat",
 		},
 		{
-			name: "gemini persistent chat",
+			name: "gemini structured contract gets working dir only",
 			agent: &Agent{
 				provider:                           llm.ProviderGeminiCLI,
 				SessionID:                          "chat-session-3",
 				GeminiPersistentInteractiveSession: true,
 				CodingAgentWorkingDir:              "/tmp/gemini-chat",
 			},
-			wantSessionKey:  geminicli.MetadataKeyInteractiveSessionID,
-			wantPersistKey:  geminicli.MetadataKeyPersistentInteractive,
-			wantSessionID:   "chat-session-3",
-			wantPersistence: true,
-			wantWorkingKey:  geminicli.MetadataKeyWorkingDir,
-			wantWorkingDir:  "/tmp/gemini-chat",
+			wantWorkingKey: geminicli.MetadataKeyWorkingDir,
+			wantWorkingDir: "/tmp/gemini-chat",
 		},
 		{
 			name: "cursor persistent chat",
@@ -85,6 +82,21 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantPersistence: true,
 			wantWorkingKey:  cursorcli.MetadataKeyWorkingDir,
 			wantWorkingDir:  "/tmp/cursor-chat",
+		},
+		{
+			name: "agy persistent chat",
+			agent: &Agent{
+				provider:                        llm.ProviderAgyCLI,
+				SessionID:                       "chat-session-5",
+				AgyPersistentInteractiveSession: true,
+				CodingAgentWorkingDir:           "/tmp/agy-chat",
+			},
+			wantSessionKey:  agycli.MetadataKeyInteractiveSessionID,
+			wantPersistKey:  agycli.MetadataKeyPersistentInteractive,
+			wantSessionID:   "chat-session-5",
+			wantPersistence: true,
+			wantWorkingKey:  agycli.MetadataKeyWorkingDir,
+			wantWorkingDir:  "/tmp/agy-chat",
 		},
 		{
 			name: "codex workflow uses bounded interactive lifecycle",
@@ -159,6 +171,7 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 		{name: "codex cli", provider: llm.ProviderCodexCLI, metadataKey: codexcli.MetadataKeyProjectDirID},
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI, metadataKey: geminicli.MetadataKeyWorkingDir},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, metadataKey: cursorcli.MetadataKeyWorkingDir},
+		{name: "agy cli", provider: llm.ProviderAgyCLI, metadataKey: agycli.MetadataKeyWorkingDir},
 		{name: "opencode cli", provider: llm.ProviderOpenCodeCLI, metadataKey: opencodecli.MetadataKeyWorkingDir},
 	}
 
@@ -210,12 +223,6 @@ func TestAppendCodingAgentInteractiveOptionsForActualFallbackProvider(t *testing
 
 	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptionsForProvider(nil, llm.ProviderGeminiCLI, "gemini-3.1-flash-lite"))
 
-	if got[geminicli.MetadataKeyInteractiveSessionID] != "fallback-session" {
-		t.Fatalf("Gemini fallback session metadata = %#v, want fallback-session", got[geminicli.MetadataKeyInteractiveSessionID])
-	}
-	if got[geminicli.MetadataKeyPersistentInteractive] != true {
-		t.Fatalf("Gemini fallback persistent metadata = %#v, want true", got[geminicli.MetadataKeyPersistentInteractive])
-	}
 	if got[geminicli.MetadataKeyWorkingDir] != "/tmp/fallback-workdir" {
 		t.Fatalf("Gemini fallback working dir = %#v, want /tmp/fallback-workdir", got[geminicli.MetadataKeyWorkingDir])
 	}

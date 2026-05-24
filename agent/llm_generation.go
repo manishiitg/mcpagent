@@ -1380,6 +1380,24 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and live input support")
 	}
 
+	// 🔧 ANTIGRAVITY CLI INTEGRATION: tmux live input. Per-session MCP config
+	// is passed as metadata for forward compatibility, but agy currently reads
+	// global Antigravity/Gemini config; the provider contract marks bridge-only
+	// enforcement as uncertified.
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderAgyCLI {
+		if bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig(); bridgeErr == nil {
+			opts = append(opts, llm.WithAgyMCPConfig(bridgeConfig))
+			a.Logger.Info("🌉 [AGY_CLI] Recorded MCP bridge config candidate")
+		} else {
+			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Antigravity CLI (tools may be limited): %v", bridgeErr))
+		}
+		if a.AgySessionID != "" {
+			opts = append(opts, llm.WithAgyResumeSessionID(a.AgySessionID))
+		}
+		opts = append(opts, llm.WithAgyDangerouslySkipPermissions(true))
+		a.Logger.Info("🌉 Using Antigravity CLI in tmux mode with live input support")
+	}
+
 	// 🔧 OPENCODE CLI INTEGRATION: MCP bridge + structured JSON transport.
 	// All sub-provider tiles (opencode-cli-kimi / -deepseek / -qwen /
 	// -minimax / -glm / -free) share this path; the sub-provider scope

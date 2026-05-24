@@ -172,6 +172,10 @@ func (a *Agent) applyCodingProviderSessionHandle(handle llmtypes.CodingProviderS
 		if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
 			a.CursorSessionID = id
 		}
+	case string(llm.ProviderAgyCLI):
+		if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
+			a.AgySessionID = id
+		}
 	case string(llm.ProviderOpenCodeCLI):
 		if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
 			a.OpenCodeSessionID = id
@@ -204,6 +208,8 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 		handle.ProjectDirID = strings.TrimSpace(a.GeminiProjectDirID)
 	case llm.ProviderCursorCLI:
 		handle.NativeSessionID = strings.TrimSpace(a.CursorSessionID)
+	case llm.ProviderAgyCLI:
+		handle.NativeSessionID = strings.TrimSpace(a.AgySessionID)
 	case llm.ProviderOpenCodeCLI:
 		handle.NativeSessionID = strings.TrimSpace(a.OpenCodeSessionID)
 	}

@@ -58,6 +58,11 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 		// unusable for any task that involves writes. Cursor runs in default
 		// agent mode; MCP bridge config is still provided via .cursor/mcp.json
 		// for tools the agent chooses to invoke through the bridge.
+	case llm.ProviderAgyCLI:
+		opts = append(opts, llm.WithAgyInteractiveSessionID(sessionID))
+		if a.AgyPersistentInteractiveSession {
+			opts = append(opts, llm.WithAgyPersistentInteractiveSession(true))
+		}
 	}
 
 	return opts
@@ -106,6 +111,9 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	if sid, ok := additional["cursor_session_id"].(string); ok && sid != "" {
 		a.CursorSessionID = sid
 	}
+	if sid, ok := additional["agy_session_id"].(string); ok && sid != "" {
+		a.AgySessionID = sid
+	}
 	if sid, ok := additional["opencode_session_id"].(string); ok && sid != "" {
 		a.OpenCodeSessionID = sid
 	}
@@ -136,6 +144,10 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 		if a.CursorSessionID != "" {
 			opts = append(opts, llm.WithCursorResumeSessionID(a.CursorSessionID))
 		}
+	case llm.ProviderAgyCLI:
+		if a.AgySessionID != "" {
+			opts = append(opts, llm.WithAgyResumeSessionID(a.AgySessionID))
+		}
 	case llm.ProviderOpenCodeCLI:
 		if a.OpenCodeSessionID != "" {
 			opts = append(opts, llm.WithOpenCodeResumeSessionID(a.OpenCodeSessionID))
@@ -154,6 +166,8 @@ func codingAgentWorkingDirOptionForProvider(provider llm.Provider, modelID strin
 		return llm.WithGeminiWorkingDir, true
 	case llm.ProviderCursorCLI:
 		return llm.WithCursorWorkingDir, true
+	case llm.ProviderAgyCLI:
+		return llm.WithAgyWorkingDir, true
 	case llm.ProviderOpenCodeCLI:
 		return llm.WithOpenCodeWorkingDir, true
 	}

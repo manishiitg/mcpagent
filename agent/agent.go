@@ -186,6 +186,14 @@ func WithCursorPersistentInteractiveSession(enabled bool) AgentOption {
 	}
 }
 
+// WithAgyPersistentInteractiveSession keeps Antigravity CLI tmux sessions alive
+// across completed chat turns.
+func WithAgyPersistentInteractiveSession(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.AgyPersistentInteractiveSession = enabled
+	}
+}
+
 // WithCursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 // The flag is retained for API compatibility but no longer sets --mode ask:
 // that mode hard-refuses natural-language writes with "Switch to Agent mode",
@@ -860,6 +868,12 @@ type Agent struct {
 	// Cursor CLI persistent tmux mode for interactive chat
 	CursorPersistentInteractiveSession bool
 
+	// Antigravity CLI persistent tmux mode for interactive chat
+	AgyPersistentInteractiveSession bool
+
+	// Antigravity CLI conversation ID for --conversation on subsequent turns.
+	AgySessionID string
+
 	// Cursor CLI session ID for --resume on subsequent turns. Populated by
 	// the structured adapter from cursor's stream-json init event (and by
 	// the interactive adapter from its sqlite agentId after each turn —
@@ -1241,6 +1255,8 @@ func (a *Agent) GetLLMModelConfig() LLMModel {
 			config.APIKey = a.APIKeys.CodexCLI
 		case llm.ProviderCursorCLI:
 			config.APIKey = a.APIKeys.CursorCLI
+		case llm.ProviderAgyCLI:
+			config.APIKey = a.APIKeys.AgyCLI
 		case llm.ProviderOpenCodeCLI:
 			config.APIKey = a.APIKeys.OpenCodeCLI
 		case llm.ProviderMiniMax:

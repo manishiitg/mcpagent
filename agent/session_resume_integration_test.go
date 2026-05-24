@@ -5,6 +5,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
@@ -19,6 +20,7 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 		wantGemini   string
 		wantGeminiPD string
 		wantCodex    string
+		wantAgy      string
 	}{
 		{
 			name:     "claude code session ID extracted",
@@ -56,6 +58,15 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 				"provider":        "codex-cli",
 			},
 			wantCodex: "019e-codex-thread-id",
+		},
+		{
+			name:     "agy conversation ID extracted",
+			provider: llm.ProviderAgyCLI,
+			additional: map[string]interface{}{
+				"agy_session_id": "agy-conversation-id",
+				"provider":       "agy-cli",
+			},
+			wantAgy: "agy-conversation-id",
 		},
 		{
 			name:     "empty session ID not stored",
@@ -112,6 +123,9 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 			if agent.CodexSessionID != tt.wantCodex {
 				t.Errorf("CodexSessionID = %q, want %q", agent.CodexSessionID, tt.wantCodex)
 			}
+			if agent.AgySessionID != tt.wantAgy {
+				t.Errorf("AgySessionID = %q, want %q", agent.AgySessionID, tt.wantAgy)
+			}
 		})
 	}
 }
@@ -125,6 +139,7 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 		geminiSessionID                   string
 		geminiProjectDirID                string
 		codexSessionID                    string
+		agySessionID                      string
 		sessionID                         string
 		codexPersistentInteractiveSession bool
 		wantResumeKey                     string
@@ -174,6 +189,13 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			wantResumeValue:                   "codex-thread-id",
 		},
 		{
+			name:            "agy passes resume conversation ID",
+			provider:        llm.ProviderAgyCLI,
+			agySessionID:    "agy-conversation-id",
+			wantResumeKey:   agycli.MetadataKeyResumeSessionID,
+			wantResumeValue: "agy-conversation-id",
+		},
+		{
 			name:     "claude code no resume when session ID empty",
 			provider: llm.ProviderClaudeCode,
 		},
@@ -197,6 +219,7 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 				GeminiSessionID:                   tt.geminiSessionID,
 				GeminiProjectDirID:                tt.geminiProjectDirID,
 				CodexSessionID:                    tt.codexSessionID,
+				AgySessionID:                      tt.agySessionID,
 				CodexPersistentInteractiveSession: tt.codexPersistentInteractiveSession,
 			}
 
@@ -247,6 +270,12 @@ func TestSessionIDRoundTrip(t *testing.T) {
 			provider:   llm.ProviderCodexCLI,
 			sessionKey: "codex_thread_id",
 			resumeKey:  codexcli.MetadataKeyResumeSessionID,
+		},
+		{
+			name:       "agy cli",
+			provider:   llm.ProviderAgyCLI,
+			sessionKey: "agy_session_id",
+			resumeKey:  agycli.MetadataKeyResumeSessionID,
 		},
 	}
 

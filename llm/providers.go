@@ -29,6 +29,7 @@ const (
 	ProviderGeminiCLI         = llmproviders.ProviderGeminiCLI
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
 	ProviderCursorCLI         = llmproviders.ProviderCursorCLI
+	ProviderAgyCLI            = llmproviders.ProviderAgyCLI
 	ProviderOpenCodeCLI       = llmproviders.ProviderOpenCodeCLI
 	ProviderMiniMax           = llmproviders.ProviderMiniMax
 	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
@@ -137,6 +138,12 @@ func SendCursorCLIInteractiveInput(ctx context.Context, sessionID, message strin
 	return llmproviders.SendCursorCLIInteractiveInput(ctx, sessionID, message)
 }
 
+// SendAgyCLIInteractiveInput sends user input to a live Antigravity CLI
+// interactive session registered for the owning application session.
+func SendAgyCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
+	return llmproviders.SendAgyCLIInteractiveInput(ctx, sessionID, message)
+}
+
 // SendOpenCodeCLIInteractiveInput sends user input to a live OpenCode CLI
 // interactive session registered for the owning application session.
 func SendOpenCodeCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
@@ -239,6 +246,33 @@ func WithCursorMode(mode string) llmtypes.CallOption {
 // WithCursorSandbox sets Cursor Agent CLI's --sandbox flag ("enabled"/"disabled").
 func WithCursorSandbox(mode string) llmtypes.CallOption {
 	return llmproviders.WithCursorSandbox(mode)
+}
+
+// WithAgyInteractiveSessionID links an Antigravity CLI interactive run to the
+// owning application session so live follow-up input can be sent to it.
+func WithAgyInteractiveSessionID(id string) llmtypes.CallOption {
+	return llmproviders.WithAgyInteractiveSessionID(id)
+}
+
+// WithAgyPersistentInteractiveSession keeps Antigravity CLI interactive tmux
+// sessions alive across completed chat turns.
+func WithAgyPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithAgyPersistentInteractiveSession(enabled)
+}
+
+// WithAgyWorkingDir sets the Antigravity CLI workspace/cwd.
+func WithAgyWorkingDir(dir string) llmtypes.CallOption {
+	return llmproviders.WithAgyWorkingDir(dir)
+}
+
+// WithAgyMCPConfig records an Antigravity MCP config candidate.
+func WithAgyMCPConfig(config string) llmtypes.CallOption {
+	return llmproviders.WithAgyMCPConfig(config)
+}
+
+// WithAgyDangerouslySkipPermissions controls agy's skip-permissions flag.
+func WithAgyDangerouslySkipPermissions(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithAgyDangerouslySkipPermissions(enabled)
 }
 
 // WithOpenCodeInteractiveSessionID links an OpenCode CLI interactive run to
@@ -634,6 +668,11 @@ func WithCodexResumeSessionID(id string) CallOption {
 // cursor's native chat memory instead of starting fresh.
 func WithCursorResumeSessionID(id string) CallOption {
 	return llmproviders.WithCursorResumeSessionID(id)
+}
+
+// WithAgyResumeSessionID resumes an Antigravity CLI conversation by id.
+func WithAgyResumeSessionID(id string) CallOption {
+	return llmproviders.WithAgyResumeSessionID(id)
 }
 
 // WithOpenCodeResumeSessionID resumes an OpenCode chat by its session id.
