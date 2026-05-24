@@ -4035,6 +4035,21 @@ func (a *Agent) GetServerNames() []string {
 	return getClientNames(a.Clients)
 }
 
+// GetConfiguredServerName returns the server selection the agent was configured
+// with (a comma-joined list, "all", or "NO_SERVERS") — not the set of currently
+// connected clients. Used to persist a session's runtime so a later restore can
+// replay the same MCP server selection.
+func (a *Agent) GetConfiguredServerName() string {
+	return a.serverName
+}
+
+// GetSelectedTools returns the explicit "server:tool" selection the agent was
+// configured with (empty means no narrowing). Paired with GetConfiguredServerName
+// to faithfully reopen a session's tool catalog on restore.
+func (a *Agent) GetSelectedTools() []string {
+	return a.selectedTools
+}
+
 // GetContext returns the agent's context for cancellation and lifecycle management
 func (a *Agent) GetContext() context.Context {
 	return a.ctx
