@@ -103,8 +103,21 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	if a == nil || !llm.IsCodingAgentProvider(provider, modelID) {
 		return llmtypes.CodingProviderSessionHandle{}, false
 	}
+	// Resolve a usable handle. The primary field (a.CodingProviderSessionHandle)
+	// is set on restore via ApplyAgentSessionHandle from the persisted chat
+	// history. For chats saved BEFORE cursor adapter started attaching a
+	// SessionHandle (mlp ccf010e), the persisted handle may exist but be
+	// missing NativeSessionID — the seed populates a.CursorSessionID
+	// independently, but the primary handle stays "valid but native-less".
+	// In that case the legacy lookup (which derives NativeSessionID from the
+	// per-provider *SessionID fields seeded above) recovers the missing
+	// piece. Fall back to legacy whenever the primary handle would reject;
+	// the legacy handle's stricter Empty() check guards correctness.
 	handle := a.CodingProviderSessionHandle
-	if handle.Empty() {
+	useLegacy := handle.Empty() ||
+		!strings.EqualFold(strings.TrimSpace(handle.Provider), strings.TrimSpace(string(provider))) ||
+		strings.TrimSpace(handle.NativeSessionID) == ""
+	if useLegacy {
 		handle = a.legacyCodingProviderSessionHandle()
 	}
 	if handle.Empty() {
