@@ -1137,6 +1137,16 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 	}
 
 	modelProvider := llm.Provider(model.Provider)
+	// Sweep stale coding-agent artifacts BEFORE the adapter projects its
+	// own files. Removes leftover .cursor/.claude/.codex/.gemini/.agents/
+	// .opencode/ from previous provider switches in this workflow folder,
+	// plus stale mlp-system-*.{mdc,md} from sessions that crashed without
+	// running their cleanup callbacks. The active provider re-projects
+	// immediately inside its adapter's prepare*ProjectFiles. Best-effort;
+	// errors here must not block the turn.
+	if llm.IsCodingAgentProvider(modelProvider, model.ModelID) {
+		CleanupStaleCodingAgentArtifacts(a.CodingAgentWorkingDir, modelProvider)
+	}
 	opts = a.appendCodingAgentInteractiveOptionsForProvider(opts, modelProvider, model.ModelID)
 
 	llmInstance, err := llm.InitializeLLM(llm.Config{
