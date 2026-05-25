@@ -1545,6 +1545,17 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		return llm.ContinueCodingAgentSession(ctx, llmInstance, continuationHandle, latestMessage, opts...)
 	}
 
+	// Belt-and-suspenders: some chat-agent paths reach executeLLMInner
+	// without having gone through AskWithHistory's ensureSystemPrompt
+	// (e.g., post-launch-only first-message path in code-execution mode),
+	// so messages may lack a Role:System entry → adapter's
+	// splitXxxSystemPrompt returns empty → prepareXxxProjectFiles skips
+	// the rule-file write → user sees missing .cursor/rules/mlp-system.mdc
+	// or .agents/rules/mlp-system.md mid-conversation. Re-inject here
+	// for coding-agent providers so the rule file always projects.
+	if llm.IsCodingAgentProvider(modelProvider, model.ModelID) && strings.TrimSpace(a.systemPrompt) != "" {
+		messages = ensureSystemPrompt(a, messages)
+	}
 	return llmInstance.GenerateContent(ctx, messages, opts...)
 }
 
