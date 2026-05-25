@@ -145,6 +145,38 @@ func WithCodingAgentWorkingDir(dir string) AgentOption {
 	}
 }
 
+// WithIsolatedSessionWorkspace asks the coding-CLI session to run in a
+// fresh per-call os.MkdirTemp directory instead of CodingAgentWorkingDir.
+// When enabled, the agent:
+//
+//   - Creates a new tmp dir before launching the CLI session
+//   - Overrides the CLI's cwd / --dir option to that tmp path
+//   - rm -rf's the tmp dir after the session completes
+//
+// The MCP bridge config (which already carries the actual workflow dir
+// paths in its env / args) is unchanged — the bridge subprocess runs
+// outside the CLI's sandbox so it can still touch the user's workflow
+// dir for file ops the model invokes via bridge tools.
+//
+// Intended for WORKFLOW STEPS where:
+//   - Resume is never needed (each step is a fresh conversation)
+//   - Concurrent steps must not collide on the same workspace files
+//   - The user's actual workflow dir must be protected from accidental
+//     model writes via the CLI's built-in editing tools
+//
+// Chat code paths (multi-agent + builder) should NOT set this — they
+// need the agent to operate directly on the user's chosen workspace
+// dir for the "agent edits my files" UX and need resume-tied-to-dir
+// for session continuity.
+//
+// See docs/WORKFLOW_STEP_ISOLATION.md in multi-llm-provider-go for the
+// design rationale and per-CLI sandbox interaction details.
+func WithIsolatedSessionWorkspace(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.IsolatedSessionWorkspace = enabled
+	}
+}
+
 // WithCodexPersistentInteractiveSession keeps Codex CLI tmux sessions alive
 // across completed turns. Coding CLI providers now use this interactive path
 // whenever an owner session id is available; this option remains for callers
@@ -846,6 +878,25 @@ type Agent struct {
 
 	// Process working directory for interactive coding CLI providers.
 	CodingAgentWorkingDir string
+
+	// IsolatedSessionWorkspace, when true, asks the coding-CLI session
+	// to run in a fresh os.MkdirTemp directory instead of
+	// CodingAgentWorkingDir. The tmp dir is created at session launch
+	// and rm -rf'd at session teardown. Intended for workflow steps;
+	// chat code paths leave this false. See WithIsolatedSessionWorkspace
+	// and docs/WORKFLOW_STEP_ISOLATION.md in multi-llm-provider-go.
+	IsolatedSessionWorkspace bool
+
+	// isolatedWorkspacePath and isolatedWorkspaceOnce back the lazy
+	// per-Agent tmp dir created when IsolatedSessionWorkspace is true.
+	// sync.Once guarantees exactly one tmp dir per Agent lifetime even
+	// if appendCodingAgentWorkingDirOptionForProvider is called from
+	// multiple goroutines. Agent.Close rm -rf's the dir if it was
+	// ever created. Unexported because the lifecycle is managed
+	// internally; callers control the feature via
+	// WithIsolatedSessionWorkspace.
+	isolatedWorkspacePath string
+	isolatedWorkspaceOnce sync.Once
 
 	// Gemini CLI session ID for --resume on subsequent turns
 	GeminiSessionID string
@@ -3660,6 +3711,18 @@ func (a *Agent) Close() {
 	// Legacy single client cleanup (may be redundant but safe)
 	if a.Client != nil {
 		_ = a.Client.Close() // Ignore errors during cleanup
+	}
+
+	// IsolatedSessionWorkspace cleanup: rm -rf the per-Agent tmp dir
+	// we created in ensureIsolatedWorkspaceDir. Errors are silently
+	// ignored — the OS will eventually clean /tmp on reboot, and the
+	// dir name (mlp-cli-session-*) is distinctive enough that a leaked
+	// dir is recognizable in `df`/`ls /tmp` output.
+	if a.isolatedWorkspacePath != "" {
+		_ = os.RemoveAll(a.isolatedWorkspacePath)
+		if a.Logger != nil {
+			a.Logger.Info("IsolatedSessionWorkspace: removed tmp dir " + a.isolatedWorkspacePath)
+		}
 	}
 }
 

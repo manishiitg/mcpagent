@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"os"
 	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -77,6 +78,15 @@ func codingAgentInteractiveEnabledForProvider(provider llm.Provider, modelID, se
 
 func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
 	workingDir := strings.TrimSpace(a.CodingAgentWorkingDir)
+	// IsolatedSessionWorkspace overrides the caller-supplied workingDir
+	// with a fresh per-Agent tmp dir. The dir is created lazily on
+	// first call and rm -rf'd by Agent.Close. Workflow steps opt into
+	// this; chat code paths don't.
+	if a.IsolatedSessionWorkspace {
+		if tmpDir := a.ensureIsolatedWorkspaceDir(); tmpDir != "" {
+			workingDir = tmpDir
+		}
+	}
 	if workingDir == "" {
 		return opts
 	}
@@ -85,6 +95,29 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 		return opts
 	}
 	return append(opts, option(workingDir))
+}
+
+// ensureIsolatedWorkspaceDir returns the per-Agent isolated tmp dir,
+// creating it on first call via sync.Once. Returns "" only on
+// os.MkdirTemp failure (in which case the caller falls back to
+// CodingAgentWorkingDir to preserve session usability — isolation is
+// belt-and-suspenders, not a hard contract). Agent.Close rm -rf's the
+// dir if it was created.
+func (a *Agent) ensureIsolatedWorkspaceDir() string {
+	a.isolatedWorkspaceOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "mlp-cli-session-*")
+		if err != nil {
+			if a.Logger != nil {
+				a.Logger.Warn("IsolatedSessionWorkspace: os.MkdirTemp failed; falling back to CodingAgentWorkingDir")
+			}
+			return
+		}
+		a.isolatedWorkspacePath = dir
+		if a.Logger != nil {
+			a.Logger.Info("IsolatedSessionWorkspace: created tmp dir " + dir)
+		}
+	})
+	return a.isolatedWorkspacePath
 }
 
 func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
