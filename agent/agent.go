@@ -2138,6 +2138,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
 		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -2179,6 +2180,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
 		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.\n\nCRITICAL: When calling MCP tools, use the EXACT tool name as declared (e.g. mcp_api-bridge_execute_shell_command). Do NOT add any prefix like 'default_api:' — calling 'default_api:mcp_api-bridge_execute_shell_command' will fail with tool_not_registered. Always use the bare tool name without namespace prefixes.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2210,6 +2212,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
 	if ag.provider == llmproviders.ProviderCodexCLI {
 		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2259,6 +2262,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
 		ag.AppendSystemPrompt("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2287,9 +2291,43 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 	}
 
+	// Auto-configure Antigravity CLI provider (same constraints as the other CLI coding agents).
+	// Previously missing — agy was getting the generic system prompt
+	// without any "use the bridge instead of built-ins" guidance, so
+	// the model would occasionally call run_command / write_to_file
+	// and report "no MCP server configuration" when the bridge-only
+	// hook denied them.
+	if ag.provider == llmproviders.ProviderAgyCLI {
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools (view_file, write_to_file, replace_file_content, list_dir, find_by_name, grep_search, run_command, search_web, etc.) — they are denied by the orchestrator's bridge-only hook. Use the declared MCP bridge tools listed below instead. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
+		logger.Debug("🔧 [AGY_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [AGY_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [AGY_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [AGY_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [AGY_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [AGY_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
 	// Auto-configure OpenCode CLI provider (same constraints as the other CLI coding agents)
 	if ag.provider == llmproviders.ProviderOpenCodeCLI {
 		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [OPENCODE_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -3228,6 +3266,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
 		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -3268,6 +3307,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderGeminiCLI {
 		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.\n\nCRITICAL: When calling MCP tools, use the EXACT tool name as declared (e.g. mcp_api-bridge_execute_shell_command). Do NOT add any prefix like 'default_api:' — calling 'default_api:mcp_api-bridge_execute_shell_command' will fail with tool_not_registered. Always use the bare tool name without namespace prefixes.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -3299,6 +3339,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
 	if ag.provider == llmproviders.ProviderCodexCLI {
 		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -3348,6 +3389,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
 		ag.AppendSystemPrompt("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -3376,9 +3418,43 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		}
 	}
 
+	// Auto-configure Antigravity CLI provider (same constraints as the other CLI coding agents).
+	// Previously missing — agy was getting the generic system prompt
+	// without any "use the bridge instead of built-ins" guidance, so
+	// the model would occasionally call run_command / write_to_file
+	// and report "no MCP server configuration" when the bridge-only
+	// hook denied them.
+	if ag.provider == llmproviders.ProviderAgyCLI {
+		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools (view_file, write_to_file, replace_file_content, list_dir, find_by_name, grep_search, run_command, search_web, etc.) — they are denied by the orchestrator's bridge-only hook. Use the declared MCP bridge tools listed below instead. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
+		logger.Debug("🔧 [AGY_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.UseCodeExecutionMode {
+			ag.UseCodeExecutionMode = true
+			logger.Debug("🔧 [AGY_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+		if ag.EnableContextEditing {
+			ag.EnableContextEditing = false
+			logger.Debug("🔧 [AGY_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+		if ag.EnableContextSummarization {
+			ag.EnableContextSummarization = false
+			logger.Debug("🔧 [AGY_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+		if ag.EnableContextOffloading {
+			ag.EnableContextOffloading = false
+			logger.Debug("🔧 [AGY_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+		if !ag.EnableStreaming {
+			ag.EnableStreaming = true
+			logger.Debug("🔧 [AGY_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
 	// Auto-configure OpenCode CLI provider (same constraints as the other CLI coding agents)
 	if ag.provider == llmproviders.ProviderOpenCodeCLI {
 		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 		logger.Debug("🔧 [OPENCODE_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
