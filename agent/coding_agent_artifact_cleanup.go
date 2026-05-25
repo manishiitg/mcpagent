@@ -33,17 +33,20 @@ var codingAgentProviderArtifacts = map[llm.Provider][]string{
 }
 
 // CleanupStaleCodingAgentArtifacts removes workspace projection files
-// from inactive coding-agent providers, plus sweeps stale per-session
-// rule files (mlp-system-*.mdc / .md) under the active provider's
-// rules dir. Called by mcpagent at the start of each coding-agent
-// integration setup so the workflow folder stays clean across:
+// from inactive coding-agent providers. Called by mcpagent at the
+// start of each coding-agent integration setup so the workflow
+// folder stays clean across provider switches (e.g., user moves
+// from claude to cursor in the same workflow folder — the previous
+// .claude/ projection stops shadowing the active cursor session).
 //
-//   - provider switches (e.g., user moves from claude to cursor in
-//     the same workflow folder — the previous .claude/ projection
-//     stops shadowing the active cursor session)
-//   - crashed/force-killed sessions that left mlp-system-<hex>.{mdc,md}
-//     files unreaped (cleanup callbacks only run on graceful exit;
-//     SIGKILL or process crash leaves them on disk forever)
+// Important: this does NOT touch the active provider's own
+// projection. Per-session rule files (mlp-system-<hex>.{mdc,md})
+// are managed by the adapter itself — it writes them in
+// prepareXxxProjectFiles on first turn (new session) and reuses
+// them across subsequent turns (existing session reuse path).
+// Sweeping them from here at the top of every turn would wipe the
+// file mid-conversation because the adapter does not re-project on
+// turn-N for an already-acquired tmux session.
 //
 // Best-effort: errors are swallowed because cleanup must not block
 // session startup. A failed deletion just means one more stale file
@@ -60,32 +63,5 @@ func CleanupStaleCodingAgentArtifacts(workingDir string, activeProvider llm.Prov
 			full := filepath.Join(workingDir, rel)
 			_ = os.RemoveAll(full)
 		}
-	}
-	sweepActiveProviderStaleRules(workingDir, activeProvider)
-}
-
-// sweepActiveProviderStaleRules removes mlp-system-*.{mdc,md} files
-// under the active provider's rules dir. The current session will
-// immediately re-project its own version, so this is effectively a
-// "drop everything orphaned and start fresh" sweep. Within a single
-// session lifecycle, the adapter re-creates the file as the first
-// step of prepareXxxProjectFiles; the brief window between sweep and
-// re-create is irrelevant because the CLI hasn't been launched yet.
-func sweepActiveProviderStaleRules(workingDir string, activeProvider llm.Provider) {
-	var pattern string
-	switch activeProvider {
-	case llm.ProviderCursorCLI:
-		pattern = filepath.Join(workingDir, ".cursor", "rules", "mlp-system-*.mdc")
-	case llm.ProviderAgyCLI:
-		pattern = filepath.Join(workingDir, ".agents", "rules", "mlp-system-*.md")
-	default:
-		return
-	}
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return
-	}
-	for _, m := range matches {
-		_ = os.Remove(m)
 	}
 }
