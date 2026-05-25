@@ -95,6 +95,11 @@ type ToolRegistry struct {
 	// When multiple workflows run concurrently, each gets its own virtual tool handlers
 	sessionVirtualTools map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 
+	// Latest virtual tool scope registered for a base session. This lets older
+	// restored bridge processes recover when they still carry a stale
+	// session:vt:<trace> scope from before workspace tools were registered.
+	latestVirtualScopeBySession map[string]string
+
 	// Session-scoped tool allow lists for mode-based restriction.
 	// Key: sessionID, Value: set of allowed tool names (nil = no restriction).
 	// Set via SetSessionToolAllowList, checked in CallCustomToolWithSession.
@@ -132,13 +137,14 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 	if globalRegistry == nil {
 		// First initialization - create new registry
 		globalRegistry = &ToolRegistry{
-			mcpClients:          make(map[string]mcpclient.ClientInterface),
-			customTools:         make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			virtualTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			toolToServer:        make(map[string]string),
-			sessionCustomTools:  make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			sessionVirtualTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			logger:              logger,
+			mcpClients:                  make(map[string]mcpclient.ClientInterface),
+			customTools:                 make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:                make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:                make(map[string]string),
+			sessionCustomTools:          make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			sessionVirtualTools:         make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			latestVirtualScopeBySession: make(map[string]string),
+			logger:                      logger,
 		}
 		logger.Debug("Creating new tool registry")
 	} else {
@@ -471,13 +477,14 @@ func InitRegistryVirtualToolsForSession(sessionID string, virtualTools map[strin
 	// Ensure global registry exists
 	if globalRegistry == nil {
 		globalRegistry = &ToolRegistry{
-			mcpClients:          make(map[string]mcpclient.ClientInterface),
-			customTools:         make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			virtualTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			toolToServer:        make(map[string]string),
-			sessionCustomTools:  make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			sessionVirtualTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			logger:              logger,
+			mcpClients:                  make(map[string]mcpclient.ClientInterface),
+			customTools:                 make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:                make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:                make(map[string]string),
+			sessionCustomTools:          make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			sessionVirtualTools:         make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			latestVirtualScopeBySession: make(map[string]string),
+			logger:                      logger,
 		}
 	}
 
@@ -493,6 +500,13 @@ func InitRegistryVirtualToolsForSession(sessionID string, virtualTools map[strin
 		logger.Debug("Registered session-scoped virtual tool",
 			loggerv2.String("session_id", sessionID),
 			loggerv2.String("tool", toolName))
+	}
+	if globalRegistry.latestVirtualScopeBySession == nil {
+		globalRegistry.latestVirtualScopeBySession = make(map[string]string)
+	}
+	baseSessionID := baseSessionFromVirtualScopeID(sessionID)
+	if baseSessionID != "" {
+		globalRegistry.latestVirtualScopeBySession[baseSessionID] = sessionID
 	}
 
 	logger.Info("Session-scoped virtual tools registered",
@@ -521,7 +535,20 @@ func CallVirtualToolWithSession(ctx context.Context, sessionID string, toolName 
 						loggerv2.String("session_id", sessionID),
 						loggerv2.String("tool", toolName))
 				}
-				return executor(ctx, args)
+				result, err := executor(ctx, args)
+				if err != nil && shouldRetryVirtualToolWithLatestScope(err) {
+					if latestScopeID, latestExecutor := registry.latestVirtualToolExecutorLocked(sessionID, toolName); latestExecutor != nil {
+						if registry.logger != nil {
+							registry.logger.Warn("Retrying virtual tool with latest scope after stale empty discovery",
+								loggerv2.String("tool", toolName),
+								loggerv2.String("stale_scope_id", sessionID),
+								loggerv2.String("latest_scope_id", latestScopeID),
+								loggerv2.Error(err))
+						}
+						return latestExecutor(ctx, args)
+					}
+				}
+				return result, err
 			}
 		}
 		// Session exists but tool not found in session scope - fall through to global
@@ -529,6 +556,15 @@ func CallVirtualToolWithSession(ctx context.Context, sessionID string, toolName 
 			registry.logger.Debug("Virtual tool not found in session scope, falling back to global",
 				loggerv2.String("session_id", sessionID),
 				loggerv2.String("tool", toolName))
+		}
+		if latestScopeID, latestExecutor := registry.latestVirtualToolExecutorLocked(sessionID, toolName); latestExecutor != nil {
+			if registry.logger != nil {
+				registry.logger.Debug("Using latest virtual tool scope for base session",
+					loggerv2.String("session_id", sessionID),
+					loggerv2.String("latest_scope_id", latestScopeID),
+					loggerv2.String("tool", toolName))
+			}
+			return latestExecutor(ctx, args)
 		}
 	}
 
@@ -545,6 +581,44 @@ func CallVirtualToolWithSession(ctx context.Context, sessionID string, toolName 
 	}
 
 	return executor(ctx, args)
+}
+
+func baseSessionFromVirtualScopeID(scopeID string) string {
+	if scopeID == "" {
+		return ""
+	}
+	if idx := strings.Index(scopeID, ":vt:"); idx >= 0 {
+		return scopeID[:idx]
+	}
+	return scopeID
+}
+
+func shouldRetryVirtualToolWithLatestScope(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Available servers/categories: []")
+}
+
+func (r *ToolRegistry) latestVirtualToolExecutorLocked(sessionID, toolName string) (string, func(ctx context.Context, args map[string]interface{}) (string, error)) {
+	if r == nil || sessionID == "" || toolName == "" || r.latestVirtualScopeBySession == nil || r.sessionVirtualTools == nil {
+		return "", nil
+	}
+	baseSessionID := baseSessionFromVirtualScopeID(sessionID)
+	latestScopeID := r.latestVirtualScopeBySession[baseSessionID]
+	if latestScopeID == "" || latestScopeID == sessionID {
+		return "", nil
+	}
+	latestTools := r.sessionVirtualTools[latestScopeID]
+	if latestTools == nil {
+		return "", nil
+	}
+	executor := latestTools[toolName]
+	if executor == nil {
+		return "", nil
+	}
+	return latestScopeID, executor
 }
 
 // InitRegistryForSession registers custom tools scoped to a specific session
@@ -569,13 +643,14 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 	// Ensure global registry exists
 	if globalRegistry == nil {
 		globalRegistry = &ToolRegistry{
-			mcpClients:          make(map[string]mcpclient.ClientInterface),
-			customTools:         make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			virtualTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			toolToServer:        make(map[string]string),
-			sessionCustomTools:  make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			sessionVirtualTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			logger:              logger,
+			mcpClients:                  make(map[string]mcpclient.ClientInterface),
+			customTools:                 make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:                make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:                make(map[string]string),
+			sessionCustomTools:          make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			sessionVirtualTools:         make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			latestVirtualScopeBySession: make(map[string]string),
+			logger:                      logger,
 		}
 	}
 
@@ -728,6 +803,15 @@ func CleanupSession(sessionID string) {
 		for key := range registry.sessionVirtualTools {
 			if strings.HasPrefix(key, prefix) {
 				delete(registry.sessionVirtualTools, key)
+			}
+		}
+	}
+	if registry.latestVirtualScopeBySession != nil {
+		delete(registry.latestVirtualScopeBySession, sessionID)
+		prefix := sessionID + ":vt:"
+		for base, scope := range registry.latestVirtualScopeBySession {
+			if scope == sessionID || strings.HasPrefix(scope, prefix) {
+				delete(registry.latestVirtualScopeBySession, base)
 			}
 		}
 	}
