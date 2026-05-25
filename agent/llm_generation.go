@@ -1320,6 +1320,21 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		opts = append(opts, llm.WithCodexDisableShellTool())
 		// Auto-approve all tool calls (no interactive prompts)
 		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
+		// Explicitly pin sandbox=workspace-write so apply_patch (which
+		// is NOT covered by --disable feature flags — see
+		// codexBridgeOnlyDisabledFeatures in
+		// multi-llm-provider-go/pkg/adapters/codexcli/options.go) is
+		// still confined to the session's cwd. When the workflow-step
+		// isolation flag is set, cwd is an os.MkdirTemp dir so
+		// apply_patch can only write to the tmp dir and never reach
+		// the user's actual workflow files. For chat mode (no
+		// isolation), cwd is the user's workspace dir so apply_patch
+		// edits the user's files — the desired chat UX. Codex's
+		// implicit default under approval=never happens to be
+		// workspace-write today, but we set it explicitly so the
+		// isolation guarantee doesn't silently regress if codex's
+		// default changes.
+		opts = append(opts, llm.WithCodexSandbox("workspace-write"))
 		if a.CodexSessionID != "" {
 			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 		}
