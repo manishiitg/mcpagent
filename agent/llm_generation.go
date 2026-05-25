@@ -1090,6 +1090,16 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 }
 
 func (a *Agent) executeLLMForCodingAgentTransportLaunch(ctx context.Context, model LLMModel, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
+	// Carry the agent's accumulated system prompt through the
+	// launch-only contract so the adapter projects its provider-specific
+	// rule file (mlp-system.mdc / mlp-system.md / AGENTS.md / GEMINI.md /
+	// CLAUDE.md) on resume. Without this, launch-only sends nil messages
+	// → adapter's split*SystemPrompt returns empty → prepare*ProjectFiles
+	// skips the rule-file write → user sees an empty .cursor/rules/
+	// directory mid-conversation.
+	if sp := strings.TrimSpace(a.systemPrompt); sp != "" {
+		opts = append(opts, llmtypes.WithCodingProviderLaunchSystemPrompt(sp))
+	}
 	return a.executeLLMInner(ctx, model, nil, opts, true)
 }
 
