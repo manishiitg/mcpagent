@@ -8,6 +8,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 )
 
 func TestLookupBridgeToolSynthesizesGetAPISpecWhenFilteredFromTools(t *testing.T) {
@@ -219,6 +220,29 @@ func TestBuildBridgeMCPConfigAPIBaseURLPriority(t *testing.T) {
 	}
 	if env["MCP_API_TOKEN"].(string) != "agent-token" {
 		t.Fatalf("APIToken should take priority, got %q", env["MCP_API_TOKEN"])
+	}
+}
+
+func TestAppendAgyCLIIntegrationOptionsEnablesBridgeOnlyHooks(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	agent.SessionID = "app-session"
+	agent.AgySessionID = "agy-conversation-id"
+
+	got := metadataFromCallOptions(agent.appendAgyCLIIntegrationOptions(nil))
+
+	mcpConfig, ok := got[agycli.MetadataKeyMCPConfig].(string)
+	if !ok || !strings.Contains(mcpConfig, `"api-bridge"`) {
+		t.Fatalf("Agy MCP config metadata = %#v, want api-bridge config", got[agycli.MetadataKeyMCPConfig])
+	}
+	if got[agycli.MetadataKeyBridgeOnlyTools] != true {
+		t.Fatalf("Agy bridge-only metadata = %#v, want true", got[agycli.MetadataKeyBridgeOnlyTools])
+	}
+	if got[agycli.MetadataKeyResumeSessionID] != "agy-conversation-id" {
+		t.Fatalf("Agy resume metadata = %#v, want agy-conversation-id", got[agycli.MetadataKeyResumeSessionID])
 	}
 }
 
