@@ -1541,8 +1541,18 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		if !msgOK {
 			return nil, fmt.Errorf("cannot continue coding-agent session: latest human message not found")
 		}
+		// Carry the system prompt through the continuation path too —
+		// without it, ContinueCodingAgentSession builds messages with
+		// only a Human entry and the adapter's split*SystemPrompt
+		// returns empty, causing prepare*ProjectFiles to skip the rule
+		// file and the "launch configuration changed" guard to recycle
+		// the tmux session mid-chat.
+		continuationOpts := opts
+		if sp := strings.TrimSpace(a.systemPrompt); sp != "" {
+			continuationOpts = append(continuationOpts, llmtypes.WithCodingProviderLaunchSystemPrompt(sp))
+		}
 		a.Logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Continuing %s with native session %s", model.Provider, continuationHandle.NativeSessionID))
-		return llm.ContinueCodingAgentSession(ctx, llmInstance, continuationHandle, latestMessage, opts...)
+		return llm.ContinueCodingAgentSession(ctx, llmInstance, continuationHandle, latestMessage, continuationOpts...)
 	}
 
 	// Belt-and-suspenders: some chat-agent paths reach executeLLMInner
