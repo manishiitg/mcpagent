@@ -257,6 +257,20 @@ func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes
 	// message carried over in conversation history from a previous turn.
 	systemPrompt := a.systemPrompt
 
+	// If skills are attached, append the progressive-disclosure listing
+	// (name + description per skill). This is the transport-layer
+	// equivalent of what builders used to do manually with
+	// AppendSystemPrompt(buildSkillPrompt(...)). For CLI transports the
+	// adapter also projects SKILL.md files to disk via SkillProjector;
+	// the listing is harmless redundancy there.
+	if listing := renderSkillListing(a.attachedSkills); listing != "" {
+		if systemPrompt != "" {
+			systemPrompt = systemPrompt + "\n\n" + listing
+		} else {
+			systemPrompt = listing
+		}
+	}
+
 	systemMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeSystem,
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}},
@@ -508,36 +522,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		v2Logger.Debug("🔧 Available tools", loggerv2.Any("tools", toolNames))
 	}
 
-	// Only run smart routing if it was enabled during initialization
-	// Use active clients count
-	serverCount := len(a.Clients)
+	// filteredTools was set above (tool-search mode or full Tools).
+	// The smart-routing per-turn re-filter previously lived here; it's
+	// gone, so what was set during the pre-call setup is what the LLM
+	// will see.
 
-	if a.EnableSmartRouting && len(a.Tools) > a.SmartRoutingThreshold.MaxTools && serverCount > a.SmartRoutingThreshold.MaxServers {
-		v2Logger.Warn("⚠️ SMART ROUTING IS DEPRECATED - This feature will be removed in a future version")
-		v2Logger.Info("Smart routing enabled - applying conversation-specific tool filtering")
-
-		// Get the full conversation history for context
-		conversationContext := a.buildConversationContext(messages)
-
-		filteredTools, err := a.filterToolsByRelevance(ctx, conversationContext)
-		if err != nil {
-			v2Logger.Warn("Smart routing failed, using all tools", loggerv2.Error(err))
-			a.filteredTools = a.Tools // Fallback to all tools
-		} else {
-			a.filteredTools = filteredTools
-			v2Logger.Info("Smart routing successful",
-				loggerv2.Int("filtered_tools", len(filteredTools)),
-				loggerv2.Int("total_tools", len(a.Tools)))
-		}
-	} else {
-		// Smart routing was already determined during initialization
-		v2Logger.Debug("Using pre-determined tool set",
-			loggerv2.Int("tool_count", len(a.filteredTools)),
-			loggerv2.Any("smart_routing", a.EnableSmartRouting))
-	}
-
-	// ✅ Emit system prompt event AFTER smart routing has completed
-	// This ensures the frontend sees the final system prompt with filtered servers
 	// Calculate token count for the system prompt if tool output handler is available
 	var tokenCount int
 	if a.toolOutputHandler != nil && a.ModelID != "" {

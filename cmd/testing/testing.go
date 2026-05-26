@@ -22,7 +22,6 @@ import (
 	mcpbridge "github.com/manishiitg/mcpagent/cmd/testing/mcpbridge"
 	oauthflow "github.com/manishiitg/mcpagent/cmd/testing/oauth-flow"
 	paralleltoolexec "github.com/manishiitg/mcpagent/cmd/testing/parallel-tool-exec"
-	smartrouting "github.com/manishiitg/mcpagent/cmd/testing/smart-routing"
 	"github.com/manishiitg/mcpagent/cmd/testing/structured-output/conversion"
 	"github.com/manishiitg/mcpagent/cmd/testing/structured-output/tool"
 	tokentracking "github.com/manishiitg/mcpagent/cmd/testing/token-tracking"
@@ -112,7 +111,6 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(langsmith.GetLangsmithReadTestCmd())
 	TestingCmd.AddCommand(largetooloutput.GetLargeToolOutputTestCmd())
 	TestingCmd.AddCommand(oauthflow.GetOAuthFlowTestCmd())
-	TestingCmd.AddCommand(smartrouting.GetSmartRoutingTestCmd())
 	TestingCmd.AddCommand(conversion.GetStructuredOutputConversionTestCmd())
 	TestingCmd.AddCommand(tool.GetStructuredOutputToolTestCmd())
 	TestingCmd.AddCommand(tokentracking.GetTokenTrackingTestCmd())

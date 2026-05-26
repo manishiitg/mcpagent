@@ -474,61 +474,6 @@ func WithCustomTools(tools []llmtypes.Tool) AgentOption {
 	}
 }
 
-// WithSmartRouting enables intelligent tool filtering (DEPRECATED - will be removed in future version).
-//
-// DEPRECATED: This feature is deprecated and will be removed in a future version.
-// Only use when explicitly needed for legacy compatibility.
-//
-// When enabled, the agent attempts to filter the available tools based on the user's
-// query to reduce context usage and improve LLM focus.
-//
-// Default: false (Disabled)
-func WithSmartRouting(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.EnableSmartRouting = enabled
-	}
-}
-
-// WithSmartRoutingThresholds configures the triggers for smart routing (DEPRECATED).
-//
-// DEPRECATED: This feature is deprecated and will be removed in a future version.
-// Only use when explicitly needed for legacy compatibility.
-//
-// Smart routing will only activate if the number of tools or servers exceeds these limits.
-//
-// Parameters:
-//   - maxTools: Max tools allowed before routing logic kicks in.
-//   - maxServers: Max servers allowed before routing logic kicks in.
-//
-// Default: 30 tools, 4 servers
-func WithSmartRoutingThresholds(maxTools, maxServers int) AgentOption {
-	return func(a *Agent) {
-		a.SmartRoutingThreshold.MaxTools = maxTools
-		a.SmartRoutingThreshold.MaxServers = maxServers
-	}
-}
-
-// WithSmartRoutingConfig configures the internal mechanics of the smart router (DEPRECATED).
-//
-// DEPRECATED: This feature is deprecated and will be removed in a future version.
-// Only use when explicitly needed for legacy compatibility.
-//
-// Parameters:
-//   - temperature: LLM temperature for the routing decision.
-//   - maxTokens: Max tokens for the routing request.
-//   - maxMessages: History limit for routing context.
-//   - userMsgLimit: Character limit for user messages in routing context.
-//   - assistantMsgLimit: Character limit for assistant messages in routing context.
-func WithSmartRoutingConfig(temperature float64, maxTokens, maxMessages, userMsgLimit, assistantMsgLimit int) AgentOption {
-	return func(a *Agent) {
-		a.SmartRoutingConfig.Temperature = temperature
-		a.SmartRoutingConfig.MaxTokens = maxTokens
-		a.SmartRoutingConfig.MaxMessages = maxMessages
-		a.SmartRoutingConfig.UserMsgLimit = userMsgLimit
-		a.SmartRoutingConfig.AssistantMsgLimit = assistantMsgLimit
-	}
-}
-
 // WithSystemPrompt sets a custom system prompt.
 //
 // This overrides the default system prompt generation logic. The agent will use
@@ -1044,29 +989,28 @@ type Agent struct {
 	listeners []AgentEventListener
 	mu        sync.RWMutex
 
-	// Smart routing configuration with defaults
-	EnableSmartRouting    bool
-	SmartRoutingThreshold struct {
-		MaxTools   int
-		MaxServers int
-	}
-
-	// Smart routing configuration for additional parameters
-	SmartRoutingConfig struct {
-		Temperature       float64
-		MaxTokens         int
-		MaxMessages       int
-		UserMsgLimit      int
-		AssistantMsgLimit int
-	}
-
-	// Pre-filtered tools for smart routing (determined once at conversation start)
+	// Pre-filtered tool set used for the outgoing LLM call. Updated by
+	// the tool-search-mode path (see conversation.go's
+	// applyToolAllowList + getToolsForToolSearchMode) and by direct
+	// allow-list filters; falls back to a.Tools when neither path
+	// trims the set.
 	filteredTools []llmtypes.Tool
 
-	// Track appended system prompts separately for smart routing
+	// Track appended system prompts so callers can rebuild the final
+	// prompt after a SetSystemPrompt overwrite.
 	appendedSystemPrompts []string // Track each appended prompt
 	originalSystemPrompt  string   // Keep original system prompt
 	hasAppendedPrompts    bool     // Flag to indicate if any prompts were appended
+
+	// Skills attached to this agent. Skills are Anthropic-format SKILL.md
+	// bundles (folder = one skill) that adapters project to provider-native
+	// locations (.claude/skills/, .agents/skills/, etc.) at session launch.
+	// API-transport adapters surface skills via the system prompt listing
+	// instead of disk projection. See agent/skill.go for the attachment
+	// methods (AttachSkill / AttachedSkills / ClearSkills); the Skill
+	// value type lives in llmtypes so adapters can reference it without
+	// importing mcpagent.
+	attachedSkills []*llmtypes.Skill
 
 	// Hierarchy tracking fields for event tree structure
 	currentParentEventID  string // Track current parent event ID
@@ -1460,30 +1404,6 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ContextEditingTurnThreshold:   0,                                // Default: 0 means use default (10 turns)
 		Logger:                        loggerv2.NewDefault(),            // Default logger
 		customTools:                   make(map[string]CustomTool),      // Initialize custom tools map
-
-		// Smart routing configuration with defaults
-		EnableSmartRouting: false, // Default to disabled for now
-		SmartRoutingThreshold: struct {
-			MaxTools   int
-			MaxServers int
-		}{
-			MaxTools:   30, // Default threshold
-			MaxServers: 4,  // Default threshold
-		},
-		// Smart routing configuration for additional parameters
-		SmartRoutingConfig: struct {
-			Temperature       float64
-			MaxTokens         int
-			MaxMessages       int
-			UserMsgLimit      int
-			AssistantMsgLimit int
-		}{
-			Temperature:       0.1,  // Default temperature for routing
-			MaxTokens:         5000, // Default max tokens for routing
-			MaxMessages:       8,    // Default max conversation messages
-			UserMsgLimit:      200,  // Default user message character limit
-			AssistantMsgLimit: 300,  // Default assistant message character limit
-		},
 
 		// Initialize hierarchy tracking fields
 		currentParentEventID:  "", // Start with no parent
@@ -2089,43 +2009,13 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.systemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, preDiscoveredToolSpecs, ag.UseToolSearchMode, toolCategories, ag.Logger, ag.EnableParallelToolExecution)
 	}
 
-	// 🎯 SMART ROUTING INITIALIZATION - Run AFTER all tools are loaded (including virtual tools)
-	// This ensures we have the complete tool count for accurate smart routing decisions
-
-	if ag.shouldUseSmartRouting() {
-		// Get server count for logging
-		serverCount := len(ag.Clients)
-		serverType := "active"
-
-		logger.Warn("⚠️ SMART ROUTING IS DEPRECATED - This feature will be removed in a future version")
-		logger.Info("Smart routing enabled - determining relevant tools after full initialization")
-		logger.Debug("Total tools loaded",
-			loggerv2.Int("tool_count", len(ag.Tools)),
-			loggerv2.String("server_type", serverType),
-			loggerv2.Int("server_count", serverCount),
-			loggerv2.Int("max_tools_threshold", ag.SmartRoutingThreshold.MaxTools),
-			loggerv2.Int("max_servers_threshold", ag.SmartRoutingThreshold.MaxServers))
-
-		// For now, use all tools since we don't have conversation context yet
-		// Smart routing will be re-evaluated in AskWithHistory with full conversation context
-		ag.filteredTools = ag.Tools
-		logger.Debug("Smart routing will be applied during conversation with full context")
-	} else {
-		// Get server count for logging
-		serverCount := len(ag.Clients)
-		serverType := "active"
-		logger.Debug("Active mode",
-			loggerv2.Int("client_count", serverCount))
-
-		// No smart routing - use all tools
-		ag.filteredTools = ag.Tools
-		logger.Debug("Smart routing disabled - using all tools",
-			loggerv2.Int("tool_count", len(ag.Tools)),
-			loggerv2.String("server_type", serverType),
-			loggerv2.Int("server_count", serverCount),
-			loggerv2.Int("max_tools_threshold", ag.SmartRoutingThreshold.MaxTools),
-			loggerv2.Int("max_servers_threshold", ag.SmartRoutingThreshold.MaxServers))
-	}
+	// Initialize the filtered-tool set used by the outgoing LLM call.
+	// Conversation paths (tool-search mode, allow-list filtering) may
+	// further trim this slice per turn; until they do it mirrors Tools.
+	ag.filteredTools = ag.Tools
+	logger.Debug("Initialized filtered tool set",
+		loggerv2.Int("tool_count", len(ag.Tools)),
+		loggerv2.Int("client_count", len(ag.Clients)))
 
 	// No more event listeners - events go directly to tracer
 	// Langfuse tracing is handled by the tracer itself
@@ -3123,7 +3013,6 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		lastSummarizationTurn:             -1,                               // Default: -1 means never summarized
 		Logger:                            loggerv2.NewDefault(),            // Default logger
 		customTools:                       make(map[string]CustomTool),
-		EnableSmartRouting:                false,
 		DiscoverResource:                  true,
 		DiscoverPrompt:                    true,
 		DisableCache:                      false,                // Default: cache enabled

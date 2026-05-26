@@ -1122,6 +1122,17 @@ func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) []llm
 }
 
 func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly bool) (*llmtypes.ContentResponse, error) {
+	// Thread attached skills through opts so CLI transport adapters can
+	// project SKILL.md folders to disk via ProjectSkills at session
+	// launch. API transports already see the listing in the system
+	// prompt via ensureSystemPrompt — they can ignore this metadata.
+	// Centralized here so every LLM call (chat, launch-only, retries)
+	// carries the same skill set; individual call sites do not need to
+	// re-append it.
+	if skills := a.attachedSkills; len(skills) > 0 {
+		opts = append(opts, llmtypes.WithAttachedSkills(skills))
+	}
+
 	// Clone agent-level keys as base (so Azure and Bedrock configs are always available)
 	apiKeys := a.APIKeys.Clone()
 	if apiKeys == nil {
