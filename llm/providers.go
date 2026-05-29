@@ -38,6 +38,7 @@ const (
 )
 
 const (
+	ClaudeCodeTransportTmux         = llmproviders.ClaudeCodeTransportTmux
 	ClaudeCodeTransportExperimental = llmproviders.ClaudeCodeTransportExperimental
 	ClaudeCodeTransportPrint        = llmproviders.ClaudeCodeTransportPrint
 )
