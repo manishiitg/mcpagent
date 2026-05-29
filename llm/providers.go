@@ -114,10 +114,12 @@ const (
 	MetadataKeyTools                      = "claude_code_tools"
 )
 
-// SendClaudeCodeExperimentalInput sends user input to a live Claude Code
-// experimental session registered for the owning application session.
-func SendClaudeCodeExperimentalInput(ctx context.Context, sessionID, message string) error {
-	return llmproviders.SendClaudeCodeExperimentalInput(ctx, sessionID, message)
+// SendClaudeCodeInput sends user input to a live Claude Code interactive
+// session registered for the owning application session. (Renamed from
+// SendClaudeCodeExperimentalInput to match the upstream Experimental→Interactive
+// rename; no callers used the old name.)
+func SendClaudeCodeInput(ctx context.Context, sessionID, message string) error {
+	return llmproviders.SendClaudeCodeInput(ctx, sessionID, message)
 }
 
 // SendCodexCLIInteractiveInput sends user input to a live Codex CLI interactive
@@ -165,6 +167,39 @@ func WithClaudeCodePersistentInteractiveSession(enabled bool) llmtypes.CallOptio
 // WithClaudeCodeWorkingDir sets the process working directory for Claude Code.
 func WithClaudeCodeWorkingDir(dir string) llmtypes.CallOption {
 	return llmproviders.WithClaudeCodeWorkingDir(dir)
+}
+
+// WithClaudeCodeProjectInstructionOnly makes the Claude Code adapter carry the
+// per-session system prompt solely via <workingDir>/CLAUDE.md (auto-loaded as
+// project instructions), skipping --system-prompt-file / --append-system-prompt
+// so the prompt is applied once instead of doubled. Falls back to the flag if
+// the CLAUDE.md projection is disabled or its write fails.
+func WithClaudeCodeProjectInstructionOnly(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithClaudeCodeProjectInstructionOnly(enabled)
+}
+
+// WithCodexProjectInstructionOnly carries the codex system prompt solely via
+// the projected AGENTS.md, skipping the developer_instructions /
+// model_instructions_file CLI override, so the prompt is applied once instead
+// of doubled. Falls back to the override if the projection is disabled/fails.
+func WithCodexProjectInstructionOnly(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithCodexProjectInstructionOnly(enabled)
+}
+
+// WithGeminiProjectInstructionOnly carries the gemini system prompt solely via
+// the projected GEMINI.md, skipping the GEMINI_SYSTEM_MD env injection, so the
+// prompt is applied once instead of doubled. Falls back to the env if the
+// projection is disabled/fails.
+func WithGeminiProjectInstructionOnly(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithGeminiProjectInstructionOnly(enabled)
+}
+
+// WithOpenCodeProjectInstructionOnly carries the opencode system prompt solely
+// via the projected AGENTS.md, skipping the in-band "[System Instructions]"
+// prefix, so the prompt is applied once instead of doubled. Falls back to the
+// in-band prefix if the projection is disabled/fails.
+func WithOpenCodeProjectInstructionOnly(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithOpenCodeProjectInstructionOnly(enabled)
 }
 
 // WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning

@@ -94,7 +94,29 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	if !ok {
 		return opts
 	}
-	return append(opts, option(workingDir))
+	opts = append(opts, option(workingDir))
+
+	// CLI providers that ALSO project the per-session system prompt into a
+	// workspace instruction file (claude→CLAUDE.md, codex→AGENTS.md,
+	// gemini→GEMINI.md, opencode→AGENTS.md) would otherwise inject the prompt
+	// twice — once via the CLI flag/env/in-band channel and once via the
+	// projected file — doubling the (often large) builder prompt. Carry it
+	// through the projected file only; each adapter falls back to its normal
+	// channel if the projection is disabled or its write fails. cursor and agy
+	// carry the prompt through their rules file alone (single channel), so they
+	// need no opt-in here.
+	switch provider {
+	case llm.ProviderClaudeCode:
+		opts = append(opts, llm.WithClaudeCodeProjectInstructionOnly(true))
+	case llm.ProviderCodexCLI:
+		opts = append(opts, llm.WithCodexProjectInstructionOnly(true))
+	case llm.ProviderGeminiCLI:
+		opts = append(opts, llm.WithGeminiProjectInstructionOnly(true))
+	case llm.ProviderOpenCodeCLI:
+		opts = append(opts, llm.WithOpenCodeProjectInstructionOnly(true))
+	}
+
+	return opts
 }
 
 // ensureIsolatedWorkspaceDir returns the per-Agent isolated tmp dir,
