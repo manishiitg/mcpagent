@@ -707,6 +707,13 @@ func WithGeminiProjectDirID(id string) CallOption {
 	return llmproviders.WithGeminiProjectDirID(id)
 }
 
+// WithGeminiProjectDirAbsolute overrides the default /tmp project directory with
+// an absolute path. Used for workflow main_agent so GEMINI_PROJECT_DIR points at
+// a workflow-rooted location instead of /tmp.
+func WithGeminiProjectDirAbsolute(absPath string) CallOption {
+	return llmproviders.WithGeminiProjectDirAbsolute(absPath)
+}
+
 // --- Codex CLI Wrapper Functions ---
 
 // WithCodexResumeSessionID resumes a Codex CLI session by thread ID.

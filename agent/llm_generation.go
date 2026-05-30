@@ -1259,7 +1259,17 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		// Yolo mode bypasses the policy engine entirely, so we must NOT use it.
 
 		a.ensureGeminiProjectDirID()
-		projectDir := filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
+		// For the workflow main_agent / chat case (IsolatedSessionWorkspace=false
+		// AND a workflow-rooted CodingAgentWorkingDir is set), root the project
+		// dir inside the workflow folder so GEMINI_PROJECT_DIR survives /tmp
+		// wipes and the status line shows a meaningful workspace. Steps stay
+		// in /tmp so concurrent runs don't clobber each other's settings.json.
+		var projectDir string
+		if !a.IsolatedSessionWorkspace && strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
+			projectDir = filepath.Join(a.CodingAgentWorkingDir, ".gemini-main")
+		} else {
+			projectDir = filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
+		}
 
 		// Build project settings with MCP bridge config.
 		// Tool restriction is handled by a per-run --admin-policy TOML file. Do
@@ -1337,9 +1347,14 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		// The Gemini adapter may still launch the CLI from an isolated project
 		// settings dir because Gemini discovers .gemini/settings.json from cwd.
 		opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
+		if !a.IsolatedSessionWorkspace && strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
+			// Main_agent / chat: tell the adapter to use the workflow-rooted
+			// project dir we computed above instead of the /tmp default.
+			opts = append(opts, llm.WithGeminiProjectDirAbsolute(projectDir))
+		}
 		if strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
 			opts = append(opts, llm.WithGeminiWorkingDir(a.CodingAgentWorkingDir))
-			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using working dir: %s and isolated project dir ID: %s (session: %s)", a.CodingAgentWorkingDir, a.GeminiProjectDirID, a.GeminiSessionID))
+			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using working dir: %s, project dir: %s, project dir ID: %s (session: %s)", a.CodingAgentWorkingDir, projectDir, a.GeminiProjectDirID, a.GeminiSessionID))
 		} else {
 			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
 		}
