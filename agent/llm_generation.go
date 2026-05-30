@@ -1285,9 +1285,10 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		// kept at defaults to avoid hiding diagnostic info.
 		settings := map[string]interface{}{
 			"ui": map[string]interface{}{
-				"hideBanner":        true,
-				"hideTips":          true,
-				"showShortcutsHint": false,
+				"hideBanner":         true,
+				"hideTips":           true,
+				"showShortcutsHint":  false,
+				"inlineThinkingMode": "full",
 				"footer": map[string]interface{}{
 					"hideSandboxStatus": true,
 				},
