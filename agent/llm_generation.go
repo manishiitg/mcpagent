@@ -1293,6 +1293,16 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 					"hideSandboxStatus": true,
 				},
 			},
+			// Disable gemini-cli's built-in loop detector. The mcpagent
+			// workflow already enforces higher-level loop guards (max
+			// iterations per step, step timeouts, bounded retries), and
+			// gemini's detector frequently false-positives on legitimate
+			// workflow patterns (re-running tests across iterations,
+			// re-evaluating the same artifacts, planning passes that
+			// revisit the same fields) — aborting useful work mid-task.
+			"model": map[string]interface{}{
+				"disableLoopDetection": true,
+			},
 		}
 		debugHooksEnabled := geminiDebugHooksEnabled()
 		httpRoutingHooksEnabled := geminiHTTPRoutingHooksEnabled()
