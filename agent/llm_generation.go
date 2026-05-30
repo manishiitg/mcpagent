@@ -1277,7 +1277,22 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		// startup. Do not install enforcement hooks by default: Gemini warns
 		// about project hooks in interactive mode, and Policy Engine can hide
 		// denied tools from the model without hook noise.
-		settings := map[string]interface{}{}
+		// UI defaults: gemini-cli renders inside a captured tmux pane viewed via
+		// the web terminal, not a real terminal. Strip elements that are pure
+		// noise here (banner, tips, ASCII shortcut hint, sandbox badge). Keep
+		// footer.cwd visible so users can confirm the session is rooted in the
+		// right workflow folder. Tool output / context summary / window title
+		// kept at defaults to avoid hiding diagnostic info.
+		settings := map[string]interface{}{
+			"ui": map[string]interface{}{
+				"hideBanner":        true,
+				"hideTips":          true,
+				"showShortcutsHint": false,
+				"footer": map[string]interface{}{
+					"hideSandboxStatus": true,
+				},
+			},
+		}
 		debugHooksEnabled := geminiDebugHooksEnabled()
 		httpRoutingHooksEnabled := geminiHTTPRoutingHooksEnabled()
 		if debugHooksEnabled {
