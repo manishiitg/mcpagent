@@ -105,8 +105,11 @@ func TestBuildBridgeMCPConfigSessionURLEmbedding(t *testing.T) {
 	env := bridge["env"].(map[string]interface{})
 
 	apiURL := env["MCP_API_URL"].(string)
-	if apiURL != "http://localhost:8080/s/sess-abc-123" {
-		t.Fatalf("MCP_API_URL = %q, want session-scoped URL", apiURL)
+	if apiURL != "http://localhost:8080" {
+		t.Fatalf("MCP_API_URL = %q, want static URL http://localhost:8080", apiURL)
+	}
+	if env["MCP_SESSION_ID"].(string) != "sess-abc-123" {
+		t.Fatalf("MCP_SESSION_ID = %q, want sess-abc-123", env["MCP_SESSION_ID"])
 	}
 	if env["MCP_API_TOKEN"].(string) != "test-token-123" {
 		t.Fatalf("MCP_API_TOKEN mismatch")
@@ -164,8 +167,11 @@ func TestBuildBridgeMCPConfigBridgeURLOverride(t *testing.T) {
 	bridge := servers["api-bridge"].(map[string]interface{})
 	env := bridge["env"].(map[string]interface{})
 
-	if env["MCP_API_URL"].(string) != "http://host-reachable:9090/s/s1" {
+	if env["MCP_API_URL"].(string) != "http://host-reachable:9090" {
 		t.Fatalf("MCP_BRIDGE_API_URL should take priority over MCP_API_URL, got %q", env["MCP_API_URL"])
+	}
+	if env["MCP_SESSION_ID"].(string) != "s1" {
+		t.Fatalf("MCP_SESSION_ID = %q, want s1", env["MCP_SESSION_ID"])
 	}
 }
 

@@ -100,14 +100,11 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		return "", fmt.Errorf("API token not configured (set APIToken or MCP_API_TOKEN)")
 	}
 
-	// Embed session_id in the API URL path for the bridge.
-	// The server registers session-scoped routes at /s/{session_id}/tools/...
-	// so all bridge tool calls automatically include the session context.
-	if a.SessionID != "" {
-		apiURL = apiURL + "/s/" + a.SessionID
-		logger.Info("Bridge API URL includes session prefix",
-			loggerv2.String("session_id", a.SessionID))
-	}
+	// In Approach C, we do NOT embed the session ID in the API URL path.
+	// Instead, the MCP_API_URL remains static, and we pass the session ID via
+	// the MCP_SESSION_ID environment variable. This ensures that the generated
+	// mcp-config JSON can be easily normalized or kept identical across sessions.
+	// We no longer append session ID path prefixes here.
 
 	// 4. Build MCP config JSON
 	toolsJSON, err := json.Marshal(toolDefs)
@@ -119,6 +116,9 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		"MCP_API_URL":   apiURL,
 		"MCP_API_TOKEN": apiToken,
 		"MCP_TOOLS":     string(toolsJSON),
+	}
+	if a.SessionID != "" {
+		bridgeEnv["MCP_SESSION_ID"] = a.SessionID
 	}
 	// Route mcpbridge stderr to a log file for debugging startup/crash issues.
 	// Claude Code swallows the subprocess stderr, so without this there is no
