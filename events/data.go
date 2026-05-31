@@ -2159,6 +2159,28 @@ func (e *StreamingConnectionLostEvent) GetEventType() EventType {
 	return StreamingConnectionLost
 }
 
+// StreamingStatusLineEvent represents a statusline telemetry snapshot.
+// It carries the full StatusLine payload so no provider telemetry is dropped
+// between the adapter and the UI.
+type StreamingStatusLineEvent struct {
+	BaseEventData
+	Provider                 string                 `json:"provider"`
+	Model                    string                 `json:"model,omitempty"`
+	TmuxSession              string                 `json:"tmux_session,omitempty"` // identifies the owning coding-agent pane so consumers can target it
+	InputTokens              int                    `json:"input_tokens,omitempty"`
+	OutputTokens             int                    `json:"output_tokens,omitempty"`
+	CacheCreationInputTokens int                    `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int                    `json:"cache_read_input_tokens,omitempty"`
+	TotalInputTokens         int                    `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens        int                    `json:"total_output_tokens,omitempty"`
+	CostUSD                  float64                `json:"cost_usd,omitempty"`
+	Metadata                 map[string]interface{} `json:"metadata,omitempty"` // raw provider extras (context window, git branch, rate limits, …)
+}
+
+func (e *StreamingStatusLineEvent) GetEventType() EventType {
+	return StreamingStatusLine
+}
+
 // CacheHitEvent represents a cache hit
 type CacheHitEvent struct {
 	BaseEventData
