@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -70,6 +71,9 @@ func (a *Agent) ApplyAgentSessionHandle(handle *AgentSessionHandle) {
 	if handle.Provider.Empty() {
 		return
 	}
+	if a.Logger != nil {
+		a.Logger.Info(fmt.Sprintf("🔎 [CODEX_SESSION_DEBUG] ApplyAgentSessionHandle SEED: session=%q provider=%q nativeSessionID=%q workingDir=%q isolated=%v — this agent will now resume that native session", a.SessionID, handle.Provider.Provider, handle.Provider.NativeSessionID, handle.Provider.WorkingDir, a.IsolatedSessionWorkspace))
+	}
 	a.CodingProviderSessionHandle = handle.Provider
 	a.applyCodingProviderSessionHandle(handle.Provider)
 }
@@ -113,6 +117,9 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	// per-provider *SessionID fields seeded above) recovers the missing
 	// piece. Fall back to legacy whenever the primary handle would reject;
 	// the legacy handle's stricter Empty() check guards correctness.
+	if a.Logger != nil {
+		a.Logger.Info(fmt.Sprintf("🔎 [CODEX_SESSION_DEBUG] continuation-check ENTER: session=%q provider=%q isolated=%v CodexSessionID=%q primaryHandle{provider=%q native=%q} workingDir=%q", a.SessionID, provider, a.IsolatedSessionWorkspace, a.CodexSessionID, a.CodingProviderSessionHandle.Provider, a.CodingProviderSessionHandle.NativeSessionID, a.CodingAgentWorkingDir))
+	}
 	handle := a.CodingProviderSessionHandle
 	useLegacy := handle.Empty() ||
 		!strings.EqualFold(strings.TrimSpace(handle.Provider), strings.TrimSpace(string(provider))) ||
@@ -134,6 +141,9 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	}
 	if strings.TrimSpace(handle.Model) == "" {
 		handle.Model = modelID
+	}
+	if a.Logger != nil {
+		a.Logger.Info(fmt.Sprintf("🔎 [CODEX_SESSION_DEBUG] continuation-check RESOLVED → WILL CONTINUE (not fresh): session=%q provider=%q nativeSessionID=%q useLegacy=%v isolated=%v workingDir=%q", a.SessionID, provider, handle.NativeSessionID, useLegacy, a.IsolatedSessionWorkspace, handle.WorkingDir))
 	}
 	return handle, true
 }
@@ -169,6 +179,9 @@ func (a *Agent) applyCodingProviderSessionHandle(handle llmtypes.CodingProviderS
 		}
 	case string(llm.ProviderCodexCLI):
 		if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
+			if a.Logger != nil && a.CodexSessionID != id {
+				a.Logger.Info(fmt.Sprintf("🔎 [CODEX_SESSION_DEBUG] CodexSessionID SET via handle: session=%q old=%q new=%q isolated=%v", a.SessionID, a.CodexSessionID, id, a.IsolatedSessionWorkspace))
+			}
 			a.CodexSessionID = id
 		}
 		if dir := strings.TrimSpace(handle.ProjectDirID); dir != "" {

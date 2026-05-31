@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -161,6 +162,9 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 		a.GeminiProjectDirID = dirID
 	}
 	if sid, ok := additional["codex_thread_id"].(string); ok && sid != "" {
+		if a.Logger != nil && a.CodexSessionID != sid {
+			a.Logger.Info(fmt.Sprintf("🔎 [CODEX_SESSION_DEBUG] CodexSessionID SET from response codex_thread_id: session=%q old=%q new=%q isolated=%v", a.SessionID, a.CodexSessionID, sid, a.IsolatedSessionWorkspace))
+		}
 		a.CodexSessionID = sid
 	}
 	if sid, ok := additional["cursor_session_id"].(string); ok && sid != "" {
