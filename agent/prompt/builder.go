@@ -40,10 +40,12 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 **Workflow:**
 1. See available servers and tools in the JSON block above. Call get_api_spec(server_name="...", tool_name="...") to get the full API spec for any tool
 2. Use execute_shell_command to write and run code
-3. MCP_API_URL and MCP_API_TOKEN env vars are pre-set — use them as-is
+3. MCP_API_URL, MCP_API_TOKEN, MCP_AUTH, MCP_MCP, MCP_CUSTOM, and MCP_VIRTUAL env vars are pre-set — use them as-is
 
 **Environment — what's pre-set for you:**
-- ` + "`" + `$MCP_API_URL` + "`" + ` + ` + "`" + `$MCP_API_TOKEN` + "`" + ` — HTTP endpoint + bearer for invoking MCP tools (see example below).
+- ` + "`" + `$MCP_MCP` + "`" + `, ` + "`" + `$MCP_CUSTOM` + "`" + `, ` + "`" + `$MCP_VIRTUAL` + "`" + ` — short endpoint bases for MCP, custom, and virtual tools.
+- ` + "`" + `$MCP_AUTH` + "`" + ` — Authorization header value (` + "`" + `Authorization: Bearer ...` + "`" + `). Use with ` + "`" + `-H "$MCP_AUTH"` + "`" + `.
+- ` + "`" + `$MCP_API_URL` + "`" + ` + ` + "`" + `$MCP_API_TOKEN` + "`" + ` — full bridge endpoint + token fallback if you need custom HTTP code.
 - ` + "`" + `$STEP_OUTPUT_DIR` + "`" + ` — write all primary outputs here. The folder exists; do not mkdir.
 - ` + "`" + `$STEP_EXECUTION_DIR` + "`" + ` — parent of STEP_OUTPUT_DIR. Use only when reaching a sibling step's folder and sys.argv wasn't used.
 - ` + "`" + `$VAR_<NAME>` + "`" + ` — workflow config values (e.g. ` + "`" + `$VAR_PAN` + "`" + `, ` + "`" + `$VAR_SHEET_URL` + "`" + `). Reference always; never hardcode the value.
@@ -52,12 +54,10 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 - Accessing missing vars must fail loudly. In bash use ` + "`" + `"${VAR_PAN:?missing}"` + "`" + ` or ` + "`" + `set -u` + "`" + `; in python use ` + "`" + `os.environ['VAR_PAN']` + "`" + ` (not ` + "`" + `.get()` + "`" + ` with a default).
 
 **Example — calling an MCP tool:**
-MCP tools are reachable at ` + "`" + `$MCP_API_URL/tools/mcp/{server}/{tool}` + "`" + ` via authenticated HTTP POST. Any shell tool works — curl, jq, node, python, whatever fits the task. Code execution is shell-first; Python is optional.
+MCP tools are reachable at ` + "`" + `$MCP_MCP/{server}/{tool}` + "`" + ` via authenticated HTTP POST. Any shell tool works — curl, jq, node, python, whatever fits the task. Code execution is shell-first; Python is optional.
 ` + "```" + `bash
-curl -sS -X POST "$MCP_API_URL/tools/mcp/{server_name}/{tool_name}" \
-  -H "Authorization: Bearer $MCP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"arg1":"value1"}' | jq
+payload='{"arg1":"value1"}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_MCP/{server_name}/{tool_name}" | jq
 # Response envelope: {"success": true|false, "result": ..., "error": "..."}
 ` + "```" + `
 If you need retries, backoff, or structured logging, write a small helper in the language of your choice. For reusable helpers saved to main.py, see the main.py authoring rules below (when in learn-code mode).`
