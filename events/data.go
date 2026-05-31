@@ -2159,6 +2159,21 @@ func (e *StreamingConnectionLostEvent) GetEventType() EventType {
 	return StreamingConnectionLost
 }
 
+// StreamingStatusLineEvent represents a statusline telemetry snapshot
+type StreamingStatusLineEvent struct {
+	BaseEventData
+	Provider     string  `json:"provider"`
+	Model        string  `json:"model,omitempty"`
+	InputTokens  int     `json:"input_tokens,omitempty"`
+	OutputTokens int     `json:"output_tokens,omitempty"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`
+}
+
+func (e *StreamingStatusLineEvent) GetEventType() EventType {
+	return StreamingStatusLine
+}
+
+
 // CacheHitEvent represents a cache hit
 type CacheHitEvent struct {
 	BaseEventData

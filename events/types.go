@@ -55,6 +55,7 @@ const (
 	StreamingError          EventType = "streaming_error"
 	StreamingProgress       EventType = "streaming_progress"
 	StreamingConnectionLost EventType = "streaming_connection_lost"
+	StreamingStatusLine     EventType = "status_line"
 
 	// Debug events
 	Debug         EventType = "debug"

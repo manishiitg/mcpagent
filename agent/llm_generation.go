@@ -829,6 +829,21 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			if a.StreamingCallback != nil {
 				a.StreamingCallback(chunk)
 			}
+
+		case llmtypes.StreamChunkTypeStatusLine:
+			if chunk.StatusLine != nil {
+				a.EmitTypedEvent(ctx, &events.StreamingStatusLineEvent{
+					BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+					Provider:      chunk.StatusLine.Provider,
+					Model:         chunk.StatusLine.Model,
+					InputTokens:   chunk.StatusLine.InputTokens,
+					OutputTokens:  chunk.StatusLine.OutputTokens,
+					CostUSD:       chunk.StatusLine.CostUSD,
+				})
+				if a.StreamingCallback != nil {
+					a.StreamingCallback(chunk)
+				}
+			}
 		}
 	}
 }
