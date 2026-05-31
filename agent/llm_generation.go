@@ -832,13 +832,23 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 
 		case llmtypes.StreamChunkTypeStatusLine:
 			if chunk.StatusLine != nil {
+				// Carry the owning tmux session (when the provider supplies it) so
+				// downstream consumers can target the exact pane instead of every
+				// terminal in the session.
+				tmuxSession, _ := chunk.StatusLine.Metadata["tmux_session"].(string)
 				a.EmitTypedEvent(ctx, &events.StreamingStatusLineEvent{
-					BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-					Provider:      chunk.StatusLine.Provider,
-					Model:         chunk.StatusLine.Model,
-					InputTokens:   chunk.StatusLine.InputTokens,
-					OutputTokens:  chunk.StatusLine.OutputTokens,
-					CostUSD:       chunk.StatusLine.CostUSD,
+					BaseEventData:            events.BaseEventData{Timestamp: time.Now()},
+					Provider:                 chunk.StatusLine.Provider,
+					Model:                    chunk.StatusLine.Model,
+					TmuxSession:              tmuxSession,
+					InputTokens:              chunk.StatusLine.InputTokens,
+					OutputTokens:             chunk.StatusLine.OutputTokens,
+					CacheCreationInputTokens: chunk.StatusLine.CacheCreationInputTokens,
+					CacheReadInputTokens:     chunk.StatusLine.CacheReadInputTokens,
+					TotalInputTokens:         chunk.StatusLine.TotalInputTokens,
+					TotalOutputTokens:        chunk.StatusLine.TotalOutputTokens,
+					CostUSD:                  chunk.StatusLine.CostUSD,
+					Metadata:                 chunk.StatusLine.Metadata,
 				})
 				if a.StreamingCallback != nil {
 					a.StreamingCallback(chunk)
