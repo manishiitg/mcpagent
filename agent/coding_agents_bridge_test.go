@@ -82,7 +82,7 @@ func bridgeTestAgent() *Agent {
 	return &Agent{Logger: loggerv2.NewDefault()}
 }
 
-func TestBuildBridgeMCPConfigSessionURLEmbedding(t *testing.T) {
+func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token-123")
