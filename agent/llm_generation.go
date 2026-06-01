@@ -1310,10 +1310,17 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		// kept at defaults to avoid hiding diagnostic info.
 		settings := map[string]interface{}{
 			"ui": map[string]interface{}{
-				"hideBanner":         true,
-				"hideTips":           true,
-				"showShortcutsHint":  false,
-				"inlineThinkingMode": "full",
+				"hideBanner":        true,
+				"hideTips":          true,
+				"showShortcutsHint": false,
+				// inlineThinkingMode is intentionally NOT "full": with it on, gemini
+				// streams its reasoning into the transcript as many bare "Thinking…"
+				// lines that linger in scrollback. Completion detection
+				// (hasGeminiActivity) scans the recent transcript and reads a lingering
+				// "Thinking…" as "still active", so a finished turn is held open until
+				// the 120s stale-pane backstop — delaying every step completion (and
+				// its auto-notification) by ~1-2 min. The live in-progress signal
+				// ("⠋ Thinking… (esc to cancel)" in the footer) is unaffected.
 				"footer": map[string]interface{}{
 					"hideSandboxStatus": true,
 				},
