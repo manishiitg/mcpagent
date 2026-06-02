@@ -4145,6 +4145,28 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 		return
 	}
 
+	// Idempotency guard: refuse an exact-duplicate append.
+	//
+	// Some callers re-run the per-turn supplementary-prompt assembly
+	// (capability snapshot, browser pointer, workspace map, etc.) against a
+	// reused/persistent agent without first calling ClearAppendedSystemPrompts.
+	// Because the branch below concatenates onto a.systemPrompt, that stacks
+	// identical blocks every turn — observed as the same block repeated 14x in
+	// a projected CLAUDE.md (~59k), which is also re-sent to the model on every
+	// turn (wasted context/tokens). Skipping an exact duplicate makes this
+	// operation idempotent regardless of the caller's clear/no-clear behavior.
+	for _, existing := range a.appendedSystemPrompts {
+		if existing == additionalPrompt {
+			if a.Logger != nil {
+				a.Logger.Warn("⏭️ AppendSystemPrompt: skipped duplicate block (idempotency guard)",
+					loggerv2.Int("length_chars", len(additionalPrompt)),
+					loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
+					loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)))
+			}
+			return
+		}
+	}
+
 	// Track the appended prompt for smart routing
 	a.appendedSystemPrompts = append(a.appendedSystemPrompts, additionalPrompt)
 	a.hasAppendedPrompts = true
@@ -4160,7 +4182,11 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 		existingPrompt := prompt.RemoveAIStaffEngineerText(a.systemPrompt)
 		a.systemPrompt = existingPrompt + "\n\n" + additionalPrompt
 		if a.Logger != nil {
-			a.Logger.Debug("✅ System prompt appended - AI Staff Engineer text removed", loggerv2.Int("length_chars", len(additionalPrompt)))
+			a.Logger.Debug("✅ System prompt appended - AI Staff Engineer text removed",
+				loggerv2.Int("length_chars", len(additionalPrompt)),
+				loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
+				loggerv2.Int("system_prompt_chars", len(a.systemPrompt)),
+				loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)))
 		}
 	} else {
 		// If no existing system prompt, just set it
@@ -4169,6 +4195,21 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 
 	// Mark as custom to prevent overwriting
 	a.hasCustomSystemPrompt = true
+}
+
+// systemPromptPreview returns a short single-line prefix of a system-prompt
+// block for logging — enough to identify which block (capability snapshot,
+// browser pointer, workspace map, …) without dumping the whole thing.
+func systemPromptPreview(s string) string {
+	s = strings.TrimSpace(s)
+	if idx := strings.IndexByte(s, '\n'); idx != -1 {
+		s = s[:idx]
+	}
+	const max = 80
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
 }
 
 // SetToolArgTransformer registers a per-tool argument transformer on the agent.
