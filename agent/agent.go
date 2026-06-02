@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -4145,26 +4146,33 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 		return
 	}
 
-	// Idempotency guard: refuse an exact-duplicate append.
+	// Idempotency guard: refuse to append a block already present in the
+	// materialized system prompt.
 	//
-	// Some callers re-run the per-turn supplementary-prompt assembly
-	// (capability snapshot, browser pointer, workspace map, etc.) against a
-	// reused/persistent agent without first calling ClearAppendedSystemPrompts.
-	// Because the branch below concatenates onto a.systemPrompt, that stacks
-	// identical blocks every turn — observed as the same block repeated 14x in
-	// a projected CLAUDE.md (~59k), which is also re-sent to the model on every
-	// turn (wasted context/tokens). Skipping an exact duplicate makes this
-	// operation idempotent regardless of the caller's clear/no-clear behavior.
-	for _, existing := range a.appendedSystemPrompts {
-		if existing == additionalPrompt {
-			if a.Logger != nil {
-				a.Logger.Warn("⏭️ AppendSystemPrompt: skipped duplicate block (idempotency guard)",
-					loggerv2.Int("length_chars", len(additionalPrompt)),
-					loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
-					loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)))
-			}
-			return
+	// The check is against a.systemPrompt (the string actually sent to the
+	// model / projected to CLAUDE.md), NOT just the appendedSystemPrompts
+	// list. Reason: ClearAppendedSystemPrompts resets the list and flags but
+	// does NOT rebuild a.systemPrompt, and only SetSystemPrompt re-bases it.
+	// So a reused/persistent agent on a path that clears the list each turn
+	// but never re-bases keeps concatenating the same supplementary block
+	// (capability snapshot, browser pointer, …) onto an ever-growing
+	// a.systemPrompt while the list stays tiny — observed as the same block
+	// stacked 14x in a projected CLAUDE.md (~59k), also re-sent to the model
+	// every turn. A list-only check is blind to that (the list was cleared);
+	// checking the materialized prompt catches it regardless of the caller's
+	// clear / re-base behavior. The healthy path (SetSystemPrompt re-bases to
+	// a clean phase prompt, THEN appends) is unaffected — the block isn't in
+	// the freshly re-based prompt yet, so it appends normally.
+	if a.systemPrompt != "" && strings.Contains(a.systemPrompt, additionalPrompt) {
+		if a.Logger != nil {
+			a.Logger.Warn("⏭️ AppendSystemPrompt: skipped duplicate block already in system prompt (idempotency guard)",
+				loggerv2.Int("length_chars", len(additionalPrompt)),
+				loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
+				loggerv2.Int("system_prompt_chars", len(a.systemPrompt)),
+				loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)),
+				loggerv2.String("caller", callerChain()))
 		}
+		return
 	}
 
 	// Track the appended prompt for smart routing
@@ -4195,6 +4203,37 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 
 	// Mark as custom to prevent overwriting
 	a.hasCustomSystemPrompt = true
+}
+
+// callerChain returns a compact "fn:line <- fn:line <- …" trace of the
+// callers above this package's frame. Used to pin which external code path
+// triggered a suspicious system-prompt mutation (duplicate append, or a
+// ClearAppendedSystemPrompts that leaves a.systemPrompt un-rebased) so the
+// root caller can be fixed, not just the symptom.
+func callerChain() string {
+	pcs := make([]uintptr, 10)
+	// skip: runtime.Callers, callerChain, and the logging method that called us.
+	n := runtime.Callers(3, pcs)
+	if n == 0 {
+		return "?"
+	}
+	frames := runtime.CallersFrames(pcs[:n])
+	var parts []string
+	for i := 0; i < 5; i++ {
+		f, more := frames.Next()
+		if f.Function == "" {
+			break
+		}
+		name := f.Function
+		if idx := strings.LastIndexByte(name, '/'); idx != -1 {
+			name = name[idx+1:]
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d", name, f.Line))
+		if !more {
+			break
+		}
+	}
+	return strings.Join(parts, " <- ")
 }
 
 // systemPromptPreview returns a short single-line prefix of a system-prompt
@@ -4859,6 +4898,20 @@ func (a *Agent) GetSystemPrompt() string {
 
 // ClearAppendedSystemPrompts removes all appended system prompts
 func (a *Agent) ClearAppendedSystemPrompts() {
+	// Diagnostic: this resets the bookkeeping list/flags but deliberately does
+	// NOT rewrite a.systemPrompt — that is left to a following SetSystemPrompt
+	// re-base. If a caller clears here and then re-appends WITHOUT a re-base,
+	// the materialized a.systemPrompt keeps its old appended blocks and grows
+	// turn over turn (the CLAUDE.md 14x-bloat bug). Logging cleared_count vs
+	// the retained system_prompt_chars + caller makes that pattern visible:
+	// a large system_prompt_chars here that is never followed by SetSystemPrompt
+	// is the smoking gun.
+	if a.Logger != nil {
+		a.Logger.Warn("🧹 ClearAppendedSystemPrompts: cleared append-list (a.systemPrompt left intact until next SetSystemPrompt)",
+			loggerv2.Int("cleared_count", len(a.appendedSystemPrompts)),
+			loggerv2.Int("system_prompt_chars", len(a.systemPrompt)),
+			loggerv2.String("caller", callerChain()))
+	}
 	a.appendedSystemPrompts = nil
 	a.hasAppendedPrompts = false
 	a.originalSystemPrompt = ""
