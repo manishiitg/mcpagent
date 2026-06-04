@@ -4922,6 +4922,18 @@ func (a *Agent) GetAppendedSystemPrompts() []string {
 	return a.appendedSystemPrompts
 }
 
+// GetBaseSystemPrompt returns the system prompt WITHOUT any appended sections —
+// the base captured before the first AppendSystemPrompt. originalSystemPrompt is
+// only set once something has been appended, so before any append the base is the
+// current systemPrompt itself. Callers use this to persist/restore the base
+// separately from the appendix and avoid re-appending it on each save/restore.
+func (a *Agent) GetBaseSystemPrompt() string {
+	if a.originalSystemPrompt != "" {
+		return a.originalSystemPrompt
+	}
+	return a.systemPrompt
+}
+
 // HasAppendedSystemPrompts returns true if any system prompts were appended
 func (a *Agent) HasAppendedSystemPrompts() bool {
 	return a.hasAppendedPrompts
