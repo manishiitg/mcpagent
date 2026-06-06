@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -56,7 +57,11 @@ func TestDeliverUserMessageRejectsEmptyMessage(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected empty message error")
 	}
-	if !llm.IsCodingAgentContinuationError(err, llm.CodingAgentContinuationErrorNonContinuable) {
-		t.Fatalf("expected non-continuable error, got %T: %v", err, err)
+	var deliveryErr *CodingAgentDeliveryError
+	if !errors.As(err, &deliveryErr) {
+		t.Fatalf("expected CodingAgentDeliveryError, got %T: %v", err, err)
+	}
+	if deliveryErr.Kind != DeliveryErrorKindEmptyMessage {
+		t.Fatalf("error kind = %q, want %q", deliveryErr.Kind, DeliveryErrorKindEmptyMessage)
 	}
 }
