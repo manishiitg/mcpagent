@@ -176,6 +176,69 @@ func TestTypedErrorsClassifyWithoutStringMatching(t *testing.T) {
 	}
 }
 
+func TestAuthAndModelNotFoundClassification(t *testing.T) {
+	authCases := []error{
+		fmt.Errorf("status code: 401 Unauthorized"),
+		fmt.Errorf("invalid x-api-key"),
+		fmt.Errorf("AccessDeniedException: not authorized to invoke this model"),
+		&llmerrors.Error{Kind: llmerrors.KindAuth, Err: fmt.Errorf("opaque")},
+	}
+	for _, err := range authCases {
+		if !isAuthError(err) {
+			t.Errorf("isAuthError(%v) = false, want true", err)
+		}
+		if got := classifyLLMError(err); got != "auth_error" {
+			t.Errorf("classifyLLMError(%v) = %q, want auth_error", err, got)
+		}
+	}
+
+	modelCases := []error{
+		fmt.Errorf("status code: 404 The model `gpt-9` does not exist or you do not have access to it"),
+		fmt.Errorf("model_not_found"),
+		&llmerrors.Error{Kind: llmerrors.KindModelNotFound, Err: fmt.Errorf("opaque")},
+	}
+	for _, err := range modelCases {
+		if !isModelNotFoundError(err) {
+			t.Errorf("isModelNotFoundError(%v) = false, want true", err)
+		}
+		if got := classifyLLMError(err); got != "model_not_found_error" {
+			t.Errorf("classifyLLMError(%v) = %q, want model_not_found_error", err, got)
+		}
+	}
+
+	// Negative: context cancellation must never look like auth, and a throttling
+	// error must not be misread as auth/model-not-found.
+	if isAuthError(context.Canceled) {
+		t.Error("context.Canceled must not classify as auth")
+	}
+	throttle := fmt.Errorf("StatusCode: 429 rate limit")
+	if isAuthError(throttle) || isModelNotFoundError(throttle) {
+		t.Error("429 throttle must not classify as auth or model-not-found")
+	}
+}
+
+// TestAuthAndModelNotFoundAreNotSameModelRetried locks the intent: neither kind
+// is on a same-model retry path. classifyLLMError returns a dedicated type, and
+// the retry loop's same-model-retry branches (zero_candidates / throttling /
+// empty_content) deliberately exclude them — so the loop breaks straight to the
+// fallback chain. This guards against a future "retry unknown errors by default"
+// change silently re-retrying terminal auth failures.
+func TestAuthAndModelNotFoundAreNotSameModelRetried(t *testing.T) {
+	sameModelRetryTypes := map[string]bool{
+		"zero_candidates_error": true,
+		"throttling_error":      true,
+		"internal_error":        true,
+		"connection_error":      true,
+		"stream_error":          true,
+		"empty_content_error":   true,
+	}
+	for _, et := range []string{"auth_error", "model_not_found_error"} {
+		if sameModelRetryTypes[et] {
+			t.Errorf("%s must not be a same-model-retry error type", et)
+		}
+	}
+}
+
 func TestNilErrorsReturnFalse(t *testing.T) {
 	checks := []struct {
 		name string
@@ -190,6 +253,8 @@ func TestNilErrorsReturnFalse(t *testing.T) {
 		{"isConnectionError", isConnectionError},
 		{"isStreamError", isStreamError},
 		{"isInternalError", isInternalError},
+		{"isAuthError", isAuthError},
+		{"isModelNotFoundError", isModelNotFoundError},
 	}
 
 	for _, c := range checks {

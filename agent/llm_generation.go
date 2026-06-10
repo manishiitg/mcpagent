@@ -607,10 +607,52 @@ func isInternalError(err error) bool {
 		strings.Contains(msg, "Gateway Timeout")
 }
 
+// isAuthError reports whether err is a credential/permission failure (invalid
+// or expired key, unauthorized, access denied). These cannot recover by
+// retrying the same model with the same credentials.
+func isAuthError(err error) bool {
+	if err == nil || isContextCanceledError(err) {
+		return false
+	}
+	if llmerrors.KindOf(err) == llmerrors.KindAuth {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "invalid api key") ||
+		strings.Contains(msg, "invalid x-api-key") ||
+		strings.Contains(msg, "incorrect api key") ||
+		strings.Contains(msg, "api key not valid") ||
+		strings.Contains(msg, "unauthorized") ||
+		strings.Contains(msg, "unauthenticated") ||
+		strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "accessdeniedexception")
+}
+
+// isModelNotFoundError reports whether err means the model ID is unknown or
+// unavailable for the provider. This is a permanent config error — the model
+// ID will not become valid on retry — so the model is memoized and skipped on
+// future turns, like a quota-exhausted model.
+func isModelNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if llmerrors.KindOf(err) == llmerrors.KindModelNotFound {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "model not found") ||
+		strings.Contains(msg, "model_not_found") ||
+		strings.Contains(msg, "does not exist or you do not have access")
+}
+
 // classifyLLMError categorizes the given error into a known LLM error type
 func classifyLLMError(err error) string {
 	if isMaxTokenError(err) {
 		return "max_token_error"
+	} else if isAuthError(err) {
+		return "auth_error"
+	} else if isModelNotFoundError(err) {
+		return "model_not_found_error"
 	} else if isQuotaExhaustedError(err) {
 		return "quota_exhausted_error"
 	} else if isThrottlingError(err) {
@@ -1923,6 +1965,23 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				key := model.Provider + "/" + model.ModelID
 				a.quotaExhaustedModels[key] = true
 				logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Daily/permanent quota exceeded for %s — marked as exhausted for remaining turns", key))
+				break
+			} else if errorType == "auth_error" {
+				// Credential/permission failure for THIS provider's key — retrying the
+				// same model cannot recover. Move straight to the fallback chain, which
+				// may use a different provider/key; do NOT abort the whole chain, since
+				// a bad primary key must not block a valid fallback.
+				logger.Warn(fmt.Sprintf("🔑 [AUTH] Authentication/permission failed for %s/%s; skipping same-model retry, trying fallback chain", model.Provider, model.ModelID))
+				break
+			} else if errorType == "model_not_found_error" {
+				// Unknown/unavailable model ID — a permanent config error. Memoize it
+				// (like quota) so future turns skip it, then move to the fallback chain.
+				if a.quotaExhaustedModels == nil {
+					a.quotaExhaustedModels = make(map[string]bool)
+				}
+				key := model.Provider + "/" + model.ModelID
+				a.quotaExhaustedModels[key] = true
+				logger.Warn(fmt.Sprintf("🚫 [MODEL_NOT_FOUND] Model %s is unavailable; marked to skip on future turns, trying fallback chain", key))
 				break
 			} else if errorType == "zero_candidates_error" {
 				// Zero candidates: retry up to 3 times (attempts 0, 1, 2 = 3 retries total)
