@@ -6,8 +6,10 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -46,8 +48,11 @@ type Client struct {
 	logger        loggerv2.Logger
 	contextCancel context.CancelFunc // Store context cancel function for SSE connections
 	context       context.Context    // Store context for SSE connections
-	mu            sync.RWMutex       // Protect access to contextCancel and context
+	mu            sync.RWMutex       // Protect access to contextCancel, context, and leakGuard
 	oauthManager  *oauth.Manager     // OAuth manager for authentication
+	reconnectMu   sync.Mutex         // Serializes mid-session reconnects (resilience.go)
+	connGen       atomic.Int64       // Connection generation; bumped on each successful connect
+	leakGuard     *runtime.Cleanup   // GC guard that reaps unclosed connections (resilience.go)
 }
 
 // New creates a new MCP client for the given server configuration
@@ -228,6 +233,11 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		}
 	}
 
+	c.connGen.Add(1)
+	c.mu.Lock()
+	c.armLeakGuardLocked()
+	c.mu.Unlock()
+
 	return nil
 }
 
@@ -320,10 +330,11 @@ func (c *Client) Close() error {
 		c.contextCancel()
 	}
 
-	// Clear the stored context and cancel function
+	// Clear the stored context and cancel function; explicit Close means no leak.
 	c.mu.Lock()
 	c.context = nil
 	c.contextCancel = nil
+	c.disarmLeakGuardLocked()
 	c.mu.Unlock()
 
 	if c.mcpClient != nil {
@@ -393,22 +404,41 @@ func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 	return result.Tools, nil
 }
 
-// CallTool invokes a tool with the given arguments
+// CallTool invokes a tool with the given arguments. If the transport died
+// mid-session (server crash, dropped stream), it reconnects once and retries
+// the call — see resilience.go.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	if c.mcpClient == nil {
 		return nil, fmt.Errorf("client not connected")
 	}
 
-	result, err := c.mcpClient.CallTool(ctx, mcp.CallToolRequest{
+	request := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      name,
 			Arguments: arguments,
 		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to call tool %s: %w", name, err)
 	}
 
+	observedGen := c.connGeneration()
+	result, err := c.mcpClient.CallTool(ctx, request)
+	if err == nil {
+		return result, nil
+	}
+
+	if !shouldReconnectAfterError(ctx, err) {
+		return nil, fmt.Errorf("failed to call tool %s: %w", name, err)
+	}
+	if reconnectErr := c.reconnectIfStale(ctx, observedGen); reconnectErr != nil {
+		return nil, fmt.Errorf("failed to call tool %s: %w (reconnect also failed: %w)", name, err, reconnectErr)
+	}
+
+	c.logger.Warn("Retrying tool call after mid-session reconnect",
+		loggerv2.String("server", c.getServerName()),
+		loggerv2.String("tool", name))
+	result, err = c.mcpClient.CallTool(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call tool %s after reconnect: %w", name, err)
+	}
 	return result, nil
 }
 
