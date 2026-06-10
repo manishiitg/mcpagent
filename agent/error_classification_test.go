@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmerrors"
 )
 
 func TestClassifyLLMError(t *testing.T) {
@@ -134,6 +136,43 @@ func TestShouldSkipSameModelRetry(t *testing.T) {
 				t.Fatalf("shouldSkipSameModelRetry(%q, %q) = %v, want %v", tt.provider, tt.errorType, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestTypedErrorsClassifyWithoutStringMatching verifies the kind-first path:
+// errors classified by the provider layer (llmerrors) are recognized even
+// when their message text matches none of the legacy string patterns.
+// This is what makes classification robust to provider message changes.
+func TestTypedErrorsClassifyWithoutStringMatching(t *testing.T) {
+	opaque := func(kind llmerrors.Kind) error {
+		// Message deliberately contains no matchable fragments; only the
+		// typed Kind carries the signal.
+		return &llmerrors.Error{Kind: kind, Provider: "p", Model: "m", Err: fmt.Errorf("opaque failure %d", 12)}
+	}
+
+	tests := []struct {
+		kind llmerrors.Kind
+		want string
+	}{
+		{llmerrors.KindContextTooLong, "max_token_error"},
+		{llmerrors.KindQuotaExhausted, "quota_exhausted_error"},
+		{llmerrors.KindRateLimit, "throttling_error"},
+		{llmerrors.KindNetwork, "connection_error"},
+		{llmerrors.KindTimeout, "connection_error"},
+		{llmerrors.KindServerError, "internal_error"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.kind), func(t *testing.T) {
+			if got := classifyLLMError(opaque(tt.kind)); got != tt.want {
+				t.Fatalf("classifyLLMError(typed %s) = %q, want %q", tt.kind, got, tt.want)
+			}
+		})
+	}
+
+	// Wrapped typed errors must classify the same way.
+	wrapped := fmt.Errorf("generation failed: %w", opaque(llmerrors.KindRateLimit))
+	if !isThrottlingError(wrapped) {
+		t.Error("wrapped typed rate-limit error should classify as throttling")
 	}
 }
 

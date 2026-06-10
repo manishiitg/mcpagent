@@ -19,6 +19,7 @@ import (
 	"github.com/manishiitg/mcpagent/observability"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
+	"github.com/manishiitg/multi-llm-provider-go/llmerrors"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -429,6 +430,11 @@ func isMaxTokenError(err error) bool {
 	if isContextCanceledError(err) {
 		return false
 	}
+	// Typed classification from the provider layer wins; string matching below
+	// is the fallback for errors that bypassed ProviderAwareLLM.
+	if llmerrors.KindOf(err) == llmerrors.KindContextTooLong {
+		return true
+	}
 	return strings.Contains(msg, "max_token") ||
 		strings.Contains(msg, "max tokens") ||
 		strings.Contains(msg, "Input is too long") ||
@@ -441,6 +447,9 @@ func isMaxTokenError(err error) bool {
 func isQuotaExhaustedError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if llmerrors.KindOf(err) == llmerrors.KindQuotaExhausted {
+		return true
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "per_day") ||
@@ -467,6 +476,9 @@ func isThrottlingError(err error) bool {
 	// Exclude context cancellation from throttling errors
 	if isContextCanceledError(err) {
 		return false
+	}
+	if llmerrors.KindOf(err) == llmerrors.KindRateLimit {
+		return true
 	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "ThrottlingException") ||
@@ -519,6 +531,9 @@ func isConnectionError(err error) bool {
 	if isContextCanceledError(err) {
 		return false
 	}
+	if kind := llmerrors.KindOf(err); kind == llmerrors.KindNetwork || kind == llmerrors.KindTimeout {
+		return true
+	}
 	msg := err.Error()
 	return strings.Contains(msg, "EOF") ||
 		strings.Contains(msg, "connection refused") ||
@@ -556,6 +571,9 @@ func isStreamError(err error) bool {
 func isInternalError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if llmerrors.KindOf(err) == llmerrors.KindServerError {
+		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "INTERNAL_ERROR") ||
