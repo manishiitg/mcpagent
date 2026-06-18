@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2018,12 +2019,107 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 // promptLogCounter is a global counter for ordering prompt log files within a session.
 var promptLogCounter uint64
 var promptLogCounterMu sync.Mutex
+var promptLogPruneMu sync.Mutex
+
+const defaultAgentPromptLogMaxSessions = 10
 
 func nextPromptLogCounter() uint64 {
 	promptLogCounterMu.Lock()
 	defer promptLogCounterMu.Unlock()
 	promptLogCounter++
 	return promptLogCounter
+}
+
+func agentPromptLogRoot() string {
+	return filepath.Join("logs", "agent_prompts")
+}
+
+func agentPromptLogSessionDirName(sessionID string) string {
+	sessionDir := strings.TrimSpace(sessionID)
+	if sessionDir == "" {
+		sessionDir = "no-session"
+	}
+	sessionDir = strings.ReplaceAll(sessionDir, "/", "_")
+	sessionDir = strings.ReplaceAll(sessionDir, string(os.PathSeparator), "_")
+	return sessionDir
+}
+
+func agentPromptLogSessionDir(sessionID string) string {
+	return filepath.Join(agentPromptLogRoot(), agentPromptLogSessionDirName(sessionID))
+}
+
+func agentPromptLogMaxSessions() int {
+	raw := strings.TrimSpace(os.Getenv("LOG_AGENT_PROMPTS_MAX_SESSIONS"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("AGENT_PROMPTS_MAX_SESSIONS"))
+	}
+	if raw == "" {
+		return defaultAgentPromptLogMaxSessions
+	}
+	maxSessions, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultAgentPromptLogMaxSessions
+	}
+	return maxSessions
+}
+
+func pruneAgentPromptLogSessions(activeSessionDir string) {
+	maxSessions := agentPromptLogMaxSessions()
+	if maxSessions <= 0 {
+		return
+	}
+
+	promptLogPruneMu.Lock()
+	defer promptLogPruneMu.Unlock()
+
+	entries, err := os.ReadDir(agentPromptLogRoot())
+	if err != nil {
+		return
+	}
+
+	type sessionDirInfo struct {
+		name    string
+		modTime time.Time
+	}
+	sessionDirs := make([]sessionDirInfo, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		sessionDirs = append(sessionDirs, sessionDirInfo{name: entry.Name(), modTime: info.ModTime()})
+	}
+	if len(sessionDirs) <= maxSessions {
+		return
+	}
+
+	sort.Slice(sessionDirs, func(i, j int) bool {
+		if sessionDirs[i].modTime.Equal(sessionDirs[j].modTime) {
+			return sessionDirs[i].name > sessionDirs[j].name
+		}
+		return sessionDirs[i].modTime.After(sessionDirs[j].modTime)
+	})
+
+	keep := make(map[string]bool, maxSessions)
+	if activeSessionDir != "" {
+		keep[activeSessionDir] = true
+	}
+	for _, dir := range sessionDirs {
+		if len(keep) >= maxSessions {
+			break
+		}
+		keep[dir.name] = true
+	}
+
+	for _, dir := range sessionDirs {
+		if keep[dir.name] {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(agentPromptLogRoot(), dir.name))
+	}
 }
 
 // logFinalPrompts writes the final system prompt and user message to logs/agent_prompts/
@@ -2073,11 +2169,8 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInf
 	seq := nextPromptLogCounter()
 
 	// Compute dir + baseName synchronously so the caller can pass them to the end logger
-	sessionDir := "no-session"
-	if a.SessionID != "" {
-		sessionDir = strings.ReplaceAll(a.SessionID, "/", "_")
-	}
-	dir := filepath.Join("logs", "agent_prompts", sessionDir)
+	sessionDir := agentPromptLogSessionDirName(a.SessionID)
+	dir := filepath.Join(agentPromptLogRoot(), sessionDir)
 
 	ts := time.Now()
 	sanitize := func(s string) string {
@@ -2133,6 +2226,7 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInf
 		md.WriteString(userMessage)
 		md.WriteString("\n")
 		_ = os.WriteFile(filepath.Join(dir, baseName+".md"), []byte(md.String()), 0600)
+		pruneAgentPromptLogSessions(sessionDir)
 	}()
 
 	return info
@@ -2167,5 +2261,6 @@ func logConversationEnd(info *promptLogInfo, messages []llmtypes.MessageContent,
 		}
 
 		_ = os.WriteFile(filepath.Join(info.Dir, info.BaseName+"_conversation.md"), []byte(md.String()), 0600)
+		pruneAgentPromptLogSessions(filepath.Base(info.Dir))
 	}()
 }
