@@ -65,6 +65,11 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 		if a.AgyPersistentInteractiveSession {
 			opts = append(opts, llm.WithAgyPersistentInteractiveSession(true))
 		}
+	case llm.ProviderPiCLI:
+		opts = append(opts, llm.WithPiInteractiveSessionID(sessionID))
+		if a.PiPersistentInteractiveSession {
+			opts = append(opts, llm.WithPiPersistentInteractiveSession(true))
+		}
 	}
 
 	return opts
@@ -99,7 +104,7 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 
 	// CLI providers that ALSO project the per-session system prompt into a
 	// workspace instruction file (claude→CLAUDE.md, codex→AGENTS.md,
-	// gemini→GEMINI.md, opencode→AGENTS.md) would otherwise inject the prompt
+	// gemini→GEMINI.md) would otherwise inject the prompt
 	// twice — once via the CLI flag/env/in-band channel and once via the
 	// projected file — doubling the (often large) builder prompt. Carry it
 	// through the projected file only; each adapter falls back to its normal
@@ -113,8 +118,6 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 		opts = append(opts, llm.WithCodexProjectInstructionOnly(true))
 	case llm.ProviderGeminiCLI:
 		opts = append(opts, llm.WithGeminiProjectInstructionOnly(true))
-	case llm.ProviderOpenCodeCLI:
-		opts = append(opts, llm.WithOpenCodeProjectInstructionOnly(true))
 	}
 
 	return opts
@@ -173,8 +176,8 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	if sid, ok := additional["agy_session_id"].(string); ok && sid != "" {
 		a.AgySessionID = sid
 	}
-	if sid, ok := additional["opencode_session_id"].(string); ok && sid != "" {
-		a.OpenCodeSessionID = sid
+	if sid, ok := additional["pi_session_id"].(string); ok && sid != "" {
+		a.PiSessionID = sid
 	}
 	if a.CodingProviderSessionHandle.Empty() {
 		a.CodingProviderSessionHandle = a.legacyCodingProviderSessionHandle()
@@ -207,9 +210,9 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 		if a.AgySessionID != "" {
 			opts = append(opts, llm.WithAgyResumeSessionID(a.AgySessionID))
 		}
-	case llm.ProviderOpenCodeCLI:
-		if a.OpenCodeSessionID != "" {
-			opts = append(opts, llm.WithOpenCodeResumeSessionID(a.OpenCodeSessionID))
+	case llm.ProviderPiCLI:
+		if a.PiSessionID != "" {
+			opts = append(opts, llm.WithPiResumeSessionID(a.PiSessionID))
 		}
 	}
 	return opts
@@ -227,8 +230,8 @@ func codingAgentWorkingDirOptionForProvider(provider llm.Provider, modelID strin
 		return llm.WithCursorWorkingDir, true
 	case llm.ProviderAgyCLI:
 		return llm.WithAgyWorkingDir, true
-	case llm.ProviderOpenCodeCLI:
-		return llm.WithOpenCodeWorkingDir, true
+	case llm.ProviderPiCLI:
+		return llm.WithPiWorkingDir, true
 	}
 	return nil, false
 }

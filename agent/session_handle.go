@@ -107,6 +107,10 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	if a == nil || !llm.IsCodingAgentProvider(provider, modelID) {
 		return llmtypes.CodingProviderSessionHandle{}, false
 	}
+	contract, ok := llm.GetCodingAgentProviderContract(provider, modelID)
+	if !ok || !contract.SupportsNativeResume {
+		return llmtypes.CodingProviderSessionHandle{}, false
+	}
 	// Resolve a usable handle. The primary field (a.CodingProviderSessionHandle)
 	// is set on restore via ApplyAgentSessionHandle from the persisted chat
 	// history. For chats saved BEFORE cursor adapter started attaching a
@@ -202,9 +206,9 @@ func (a *Agent) applyCodingProviderSessionHandle(handle llmtypes.CodingProviderS
 		if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
 			a.AgySessionID = id
 		}
-	case string(llm.ProviderOpenCodeCLI):
+	case string(llm.ProviderPiCLI):
 		if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
-			a.OpenCodeSessionID = id
+			a.PiSessionID = id
 		}
 	}
 }
@@ -236,8 +240,8 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 		handle.NativeSessionID = strings.TrimSpace(a.CursorSessionID)
 	case llm.ProviderAgyCLI:
 		handle.NativeSessionID = strings.TrimSpace(a.AgySessionID)
-	case llm.ProviderOpenCodeCLI:
-		handle.NativeSessionID = strings.TrimSpace(a.OpenCodeSessionID)
+	case llm.ProviderPiCLI:
+		handle.NativeSessionID = strings.TrimSpace(a.PiSessionID)
 	}
 	handle.WorkingDir = strings.TrimSpace(a.CodingAgentWorkingDir)
 	if handle.NativeSessionID == "" && handle.ProjectDirID == "" && handle.WorkingDir == "" {

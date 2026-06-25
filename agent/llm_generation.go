@@ -1206,6 +1206,23 @@ func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) []llm
 	return opts
 }
 
+func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
+	if bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig(); bridgeErr == nil {
+		opts = append(opts,
+			llm.WithPiMCPConfig(bridgeConfig),
+			llm.WithPiBridgeOnlyTools(true),
+		)
+		a.Logger.Info("🌉 [PI_CLI] Configured MCP bridge through .pi/mcp.json with built-in tools disabled")
+	} else {
+		return nil, fmt.Errorf("Pi CLI requires the MCP bridge: %w", bridgeErr)
+	}
+	if a.PiSessionID != "" {
+		opts = append(opts, llm.WithPiResumeSessionID(a.PiSessionID))
+	}
+	a.Logger.Info("🌉 Using Pi CLI in tmux marker mode with MCP bridge and live input support")
+	return opts, nil
+}
+
 func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly bool) (*llmtypes.ContentResponse, error) {
 	// Thread attached skills through opts so CLI transport adapters can
 	// project SKILL.md folders to disk via ProjectSkills at session
@@ -1585,48 +1602,23 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		opts = a.appendAgyCLIIntegrationOptions(opts)
 	}
 
-	// 🔧 OPENCODE CLI INTEGRATION: MCP bridge + structured JSON transport.
-	// All sub-provider tiles (opencode-cli-kimi / -deepseek / -qwen /
-	// -minimax / -glm / -free) share this path; the sub-provider scope
-	// itself is baked into the adapter via NewOpenCodeCLIAdapterForSub-
-	// Provider during InitializeLLM.
-	if llmproviders.IsOpenCodeCLIProvider(llmproviders.Provider(model.Provider)) {
-		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
-		if bridgeErr == nil {
-			opts = append(opts, llm.WithOpenCodeMCPConfig(bridgeConfig))
-			a.Logger.Info("🌉 [OPENCODE_CLI] Configured MCP bridge through opencode.jsonc")
-		} else {
-			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for OpenCode CLI (tools may be limited): %v", bridgeErr))
+	// 🔧 PI CLI INTEGRATION: tmux marker transport + optional upstream provider override.
+	if llmproviders.Provider(model.Provider) == llmproviders.ProviderPiCLI {
+		var err error
+		opts, err = a.appendPiCLIIntegrationOptions(opts)
+		if err != nil {
+			return nil, err
 		}
 		if model.Options != nil {
-			if agent, ok := model.Options["agent"].(string); ok && agent != "" {
-				opts = append(opts, llm.WithOpenCodeAgent(agent))
-				a.Logger.Info(fmt.Sprintf("🤖 [OPENCODE_CLI] Agent set to: %s", agent))
+			if provider, ok := model.Options["pi_provider"].(string); ok && provider != "" {
+				opts = append(opts, llm.WithPiProvider(provider))
 			}
-		}
-		// Sub-provider tiles may also carry per-call overrides for the
-		// sub-provider scope. The adapter inherits its construction-
-		// time defaults when no override is present, so passing these
-		// only matters when a dispatcher wants to swap credentials at
-		// runtime (e.g. multi-tenant proxy).
-		if model.Options != nil {
-			if id, ok := model.Options["opencode_sub_provider_id"].(string); ok && id != "" {
-				opts = append(opts, llm.WithOpenCodeSubProvider(id))
-			}
-			if rawKeys, ok := model.Options["opencode_sub_provider_api_keys"].(map[string]string); ok && len(rawKeys) > 0 {
-				opts = append(opts, llm.WithOpenCodeSubProviderAPIKeys(rawKeys))
-			}
-		}
-		if llmproviders.IsOpenCodeSubProvider(llmproviders.Provider(model.Provider)) {
-			a.Logger.Info(fmt.Sprintf("🌉 Using OpenCode CLI sub-provider tile %s with MCP bridge", model.Provider))
-		} else {
-			a.Logger.Info("🌉 Using OpenCode CLI structured JSON mode with MCP bridge")
 		}
 	}
 
 	// Apply model options for all providers (reasoning_effort, thinking_level, etc.)
 	if model.Options != nil {
-		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" && llmproviders.Provider(model.Provider) != llmproviders.ProviderCodexCLI && llmproviders.Provider(model.Provider) != llmproviders.ProviderCursorCLI && llmproviders.Provider(model.Provider) != llmproviders.ProviderOpenCodeCLI {
+		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" && llmproviders.Provider(model.Provider) != llmproviders.ProviderCodexCLI && llmproviders.Provider(model.Provider) != llmproviders.ProviderCursorCLI {
 			opts = append(opts, llmtypes.WithReasoningEffort(effort))
 		}
 		if level, ok := model.Options["thinking_level"].(string); ok && level != "" {

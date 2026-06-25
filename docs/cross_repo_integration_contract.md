@@ -26,7 +26,7 @@ mcpagent sits between the HTTP API and the LLM adapters. It owns:
   `WithResumeSessionID()`.
 - **Provider-specific option fan-out**: per-provider option builders
   in `executeLLM()` (claude-code, gemini-cli, codex-cli, cursor-cli,
-  opencode-cli).
+  agy-cli, pi-cli).
 - **Fallback chain**: cross-provider fallback parsing and adapter
   re-initialisation.
 - **Error classification**: `classifyLLMError()` → typed error events.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/manishiitg/mcpagent/agent/codeexec"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
@@ -70,6 +71,9 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 	var toolDefs []BridgeToolDef
 	for _, want := range bridgeTools {
 		def := a.lookupBridgeTool(want.name, want.toolType, logger)
+		if def == nil {
+			def = defaultBridgeToolDef(want.name, want.toolType, logger)
+		}
 		if def != nil {
 			toolDefs = append(toolDefs, *def)
 		} else {
@@ -151,6 +155,44 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		loggerv2.String("bridge_path", bridgePath))
 
 	return string(configJSON), nil
+}
+
+func defaultBridgeToolDef(name, toolType string, logger loggerv2.Logger) *BridgeToolDef {
+	if toolType != "custom" {
+		return nil
+	}
+	switch name {
+	case "execute_shell_command":
+		return marshalBridgeToolDef(name, codeexec.ShellCommandDescription, codeexec.ShellCommandParams, toolType, logger)
+	case "diff_patch_workspace_file":
+		return marshalBridgeToolDef(name, "Apply a unified diff patch to a workspace file.", map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"filepath": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace-relative path or absolute path under the workspace docs root.",
+				},
+				"diff": map[string]interface{}{
+					"type":        "string",
+					"description": "Unified diff content to apply.",
+				},
+			},
+			"required": []string{"filepath", "diff"},
+		}, toolType, logger)
+	case "agent_browser":
+		return marshalBridgeToolDef(name, "Control a browser agent session.", map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"command": map[string]interface{}{
+					"type":        "string",
+					"description": "Browser command such as get, snapshot, click, type, wait, or tab.",
+				},
+			},
+			"required": []string{"command"},
+		}, toolType, logger)
+	default:
+		return nil
+	}
 }
 
 // lookupBridgeTool finds a tool by name from the agent's registered tools.

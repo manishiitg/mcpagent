@@ -13,7 +13,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
 func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
@@ -111,14 +111,19 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantPersistence: false,
 		},
 		{
-			name: "opencode structured chat gets working dir only",
+			name: "pi persistent chat",
 			agent: &Agent{
-				provider:              llm.ProviderOpenCodeCLI,
-				SessionID:             "chat-session-5",
-				CodingAgentWorkingDir: "/tmp/opencode-chat",
+				provider:                       llm.ProviderPiCLI,
+				SessionID:                      "chat-session-6",
+				PiPersistentInteractiveSession: true,
+				CodingAgentWorkingDir:          "/tmp/pi-chat",
 			},
-			wantWorkingKey: opencodecli.MetadataKeyWorkingDir,
-			wantWorkingDir: "/tmp/opencode-chat",
+			wantSessionKey:  picli.MetadataKeyInteractiveSessionID,
+			wantPersistKey:  picli.MetadataKeyPersistentInteractive,
+			wantSessionID:   "chat-session-6",
+			wantPersistence: true,
+			wantWorkingKey:  picli.MetadataKeyWorkingDir,
+			wantWorkingDir:  "/tmp/pi-chat",
 		},
 		{
 			name: "missing owner session produces no coding-agent metadata",
@@ -172,7 +177,7 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI, metadataKey: geminicli.MetadataKeyWorkingDir},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, metadataKey: cursorcli.MetadataKeyWorkingDir},
 		{name: "agy cli", provider: llm.ProviderAgyCLI, metadataKey: agycli.MetadataKeyWorkingDir},
-		{name: "opencode cli", provider: llm.ProviderOpenCodeCLI, metadataKey: opencodecli.MetadataKeyWorkingDir},
+		{name: "pi cli", provider: llm.ProviderPiCLI, metadataKey: picli.MetadataKeyWorkingDir},
 	}
 
 	for _, tc := range cases {

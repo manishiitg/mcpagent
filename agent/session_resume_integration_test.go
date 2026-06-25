@@ -9,6 +9,7 @@ import (
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
 func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
@@ -21,6 +22,7 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 		wantGeminiPD string
 		wantCodex    string
 		wantAgy      string
+		wantPi       string
 	}{
 		{
 			name:     "claude code session ID extracted",
@@ -67,6 +69,15 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 				"provider":       "agy-cli",
 			},
 			wantAgy: "agy-conversation-id",
+		},
+		{
+			name:     "pi session ID extracted",
+			provider: llm.ProviderPiCLI,
+			additional: map[string]interface{}{
+				"pi_session_id": "mlp-pi-session-id",
+				"provider":      "pi-cli",
+			},
+			wantPi: "mlp-pi-session-id",
 		},
 		{
 			name:     "empty session ID not stored",
@@ -126,6 +137,9 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 			if agent.AgySessionID != tt.wantAgy {
 				t.Errorf("AgySessionID = %q, want %q", agent.AgySessionID, tt.wantAgy)
 			}
+			if agent.PiSessionID != tt.wantPi {
+				t.Errorf("PiSessionID = %q, want %q", agent.PiSessionID, tt.wantPi)
+			}
 		})
 	}
 }
@@ -140,6 +154,7 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 		geminiProjectDirID                string
 		codexSessionID                    string
 		agySessionID                      string
+		piSessionID                       string
 		sessionID                         string
 		codexPersistentInteractiveSession bool
 		wantResumeKey                     string
@@ -196,6 +211,13 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			wantResumeValue: "agy-conversation-id",
 		},
 		{
+			name:            "pi passes native session ID",
+			provider:        llm.ProviderPiCLI,
+			piSessionID:     "mlp-pi-resume-id",
+			wantResumeKey:   picli.MetadataKeyResumeSessionID,
+			wantResumeValue: "mlp-pi-resume-id",
+		},
+		{
 			name:     "claude code no resume when session ID empty",
 			provider: llm.ProviderClaudeCode,
 		},
@@ -220,6 +242,7 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 				GeminiProjectDirID:                tt.geminiProjectDirID,
 				CodexSessionID:                    tt.codexSessionID,
 				AgySessionID:                      tt.agySessionID,
+				PiSessionID:                       tt.piSessionID,
 				CodexPersistentInteractiveSession: tt.codexPersistentInteractiveSession,
 			}
 
@@ -276,6 +299,12 @@ func TestSessionIDRoundTrip(t *testing.T) {
 			provider:   llm.ProviderAgyCLI,
 			sessionKey: "agy_session_id",
 			resumeKey:  agycli.MetadataKeyResumeSessionID,
+		},
+		{
+			name:       "pi cli",
+			provider:   llm.ProviderPiCLI,
+			sessionKey: "pi_session_id",
+			resumeKey:  picli.MetadataKeyResumeSessionID,
 		},
 	}
 
@@ -404,6 +433,29 @@ func TestCodingProviderContinuationHandleForModelRequiresMatchingNativeHandle(t 
 	agent.CodingProviderSessionHandle.NativeSessionID = ""
 	if _, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderClaudeCode, "claude-sonnet-4-6"); ok {
 		t.Fatal("expected missing native session id to be rejected")
+	}
+}
+
+func TestCodingProviderContinuationHandleAcceptsPiNativeResume(t *testing.T) {
+	agent := &Agent{
+		provider:              llm.ProviderPiCLI,
+		ModelID:               "google/gemini-3.5-flash",
+		CodingAgentWorkingDir: "/tmp/pi-work",
+		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+			Provider:        string(llm.ProviderPiCLI),
+			Transport:       llmtypes.CodingProviderTransportTmux,
+			NativeSessionID: "owner-session",
+			TmuxSession:     "mlp-pi-cli-int-owner-session",
+			WorkingDir:      "/tmp/pi-work",
+		},
+	}
+
+	handle, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderPiCLI, "google/gemini-3.5-flash")
+	if !ok {
+		t.Fatal("expected pi-cli provider-native continuation")
+	}
+	if handle.NativeSessionID != "owner-session" || handle.WorkingDir != "/tmp/pi-work" {
+		t.Fatalf("Pi continuation handle = %#v", handle)
 	}
 }
 

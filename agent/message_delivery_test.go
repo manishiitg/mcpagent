@@ -28,25 +28,6 @@ func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
 	}
 }
 
-func TestDeliverUserMessageQueuesForStructuredCodingProvider(t *testing.T) {
-	agent := &Agent{provider: llm.ProviderOpenCodeCLI, ModelID: "opencode"}
-
-	result, err := agent.DeliverUserMessage(context.Background(), UserMessageDeliveryRequest{
-		SessionID: "session-1",
-		Message:   "structured follow-up",
-		Intent:    UserMessageDeliveryIntentAuto,
-	})
-	if err != nil {
-		t.Fatalf("DeliverUserMessage() error = %v", err)
-	}
-	if result.DeliveryStatus != UserMessageDeliveryStatusQueuedForInjection {
-		t.Fatalf("status = %q, want %q", result.DeliveryStatus, UserMessageDeliveryStatusQueuedForInjection)
-	}
-	if result.Transport != llm.CodingAgentTransportStructured {
-		t.Fatalf("transport = %q, want %q", result.Transport, llm.CodingAgentTransportStructured)
-	}
-}
-
 func TestDeliverUserMessageRejectsEmptyMessage(t *testing.T) {
 	agent := &Agent{provider: llm.ProviderOpenAI, ModelID: "gpt-5"}
 	_, err := agent.DeliverUserMessage(context.Background(), UserMessageDeliveryRequest{

@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
 func TestLookupBridgeToolSynthesizesGetAPISpecWhenFilteredFromTools(t *testing.T) {
@@ -41,7 +42,7 @@ func TestIsCodingCLIProviderExcludesKimiAPIProvider(t *testing.T) {
 		{name: "codex cli", provider: llm.ProviderCodexCLI, want: true},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, want: true},
 		{name: "agy cli", provider: llm.ProviderAgyCLI, want: true},
-		{name: "opencode cli", provider: llm.ProviderOpenCodeCLI, want: true},
+		{name: "pi cli", provider: llm.ProviderPiCLI, want: true},
 		{name: "kimi api model", provider: llm.ProviderKimi, modelID: "kimi-k2.6", want: false},
 		{name: "anthropic", provider: llm.ProviderAnthropic, want: false},
 	}
@@ -52,6 +53,15 @@ func TestIsCodingCLIProviderExcludesKimiAPIProvider(t *testing.T) {
 				t.Fatalf("isCodingCLIProvider(%q, %q) = %v, want %v", tt.provider, tt.modelID, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIsCodingCLIBridgeProviderIncludesPiWhenBridgeMounted(t *testing.T) {
+	if !isCodingCLIBridgeProvider(llm.ProviderCodexCLI, "gpt-5.4") {
+		t.Fatal("codex-cli should be recognized as a coding CLI bridge provider")
+	}
+	if !isCodingCLIBridgeProvider(llm.ProviderPiCLI, "google/gemini-3.5-flash") {
+		t.Fatal("pi-cli should be treated as bridge-capable through pi-mcp-adapter")
 	}
 }
 
@@ -85,6 +95,8 @@ func bridgeTestAgent() *Agent {
 func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
 	prompt := bridgeRoutingExplicitInstructions()
 	for _, want := range []string{
+		"mcp({ search:",
+		"sub_agent_tools",
 		"$MCP_CUSTOM/list_published_llms",
 		"$MCP_CUSTOM/list_provider_models",
 		"$MCP_CUSTOM/save_published_llm",
@@ -92,6 +104,14 @@ func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("bridge routing prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, unwanted := range []string{
+		"api_bridge_call_sub_agent",
+		"api_bridge_get_route_description",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("bridge routing prompt should not advertise sub-agent tools as native bridge tools: found %q\n%s", unwanted, prompt)
 		}
 	}
 }
@@ -266,6 +286,52 @@ func TestAppendAgyCLIIntegrationOptionsEnablesBridgeOnlyHooks(t *testing.T) {
 	}
 }
 
+func TestAppendPiCLIIntegrationOptionsEnablesMCPBridgeOnlyTools(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	agent.SessionID = "app-session"
+
+	opts, err := agent.appendPiCLIIntegrationOptions(nil)
+	if err != nil {
+		t.Fatalf("appendPiCLIIntegrationOptions() error = %v", err)
+	}
+	got := metadataFromCallOptions(opts)
+
+	mcpConfig, ok := got[picli.MetadataKeyMCPConfig].(string)
+	if !ok || !strings.Contains(mcpConfig, `"api-bridge"`) {
+		t.Fatalf("Pi MCP config metadata = %#v, want api-bridge config", got[picli.MetadataKeyMCPConfig])
+	}
+	tools := bridgeToolsFromConfig(t, mcpConfig)
+	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec"} {
+		if _, ok := tools[name]; !ok {
+			t.Fatalf("Pi MCP config missing core bridge tool %q; tools=%v", name, mapKeys(tools))
+		}
+	}
+	for _, name := range []string{"call_sub_agent", "call_generic_agent", "get_route_description", "get_sub_agent_conversation"} {
+		if _, ok := tools[name]; ok {
+			t.Fatalf("Pi MCP config must not expose sub-agent tool %q as a native bridge tool; tools=%v", name, mapKeys(tools))
+		}
+	}
+	if got[picli.MetadataKeyBridgeOnlyTools] != true {
+		t.Fatalf("Pi bridge-only metadata = %#v, want true", got[picli.MetadataKeyBridgeOnlyTools])
+	}
+}
+
+func TestAppendPiCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "")
+	t.Setenv("MCP_BRIDGE_API_URL", "")
+	t.Setenv("MCP_API_TOKEN", "")
+
+	agent := bridgeTestAgent()
+	if _, err := agent.appendPiCLIIntegrationOptions(nil); err == nil {
+		t.Fatal("appendPiCLIIntegrationOptions() error = nil, want missing bridge config error")
+	}
+}
+
 func TestBridgeToolsList(t *testing.T) {
 	expected := map[string]string{
 		"execute_shell_command":     "custom",
@@ -286,4 +352,36 @@ func TestBridgeToolsList(t *testing.T) {
 			t.Fatalf("bridge tool %q type = %q, want %q", bt.name, bt.toolType, wantType)
 		}
 	}
+}
+
+func bridgeToolsFromConfig(t *testing.T, configJSON string) map[string]BridgeToolDef {
+	t.Helper()
+
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatalf("invalid config JSON: %v", err)
+	}
+	servers := config["mcpServers"].(map[string]interface{})
+	bridge := servers["api-bridge"].(map[string]interface{})
+	env := bridge["env"].(map[string]interface{})
+	toolsJSON := env["MCP_TOOLS"].(string)
+
+	var defs []BridgeToolDef
+	if err := json.Unmarshal([]byte(toolsJSON), &defs); err != nil {
+		t.Fatalf("invalid MCP_TOOLS JSON: %v", err)
+	}
+
+	tools := make(map[string]BridgeToolDef, len(defs))
+	for _, def := range defs {
+		tools[def.Name] = def
+	}
+	return tools
+}
+
+func mapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

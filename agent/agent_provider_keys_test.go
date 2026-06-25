@@ -33,7 +33,7 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 	zaiKey := "zai-key"
 	kimiKey := "kimi-key"
 	minimaxKey := "minimax-key"
-	opencodeKey := "opencode-key"
+	piKey := "pi-key"
 
 	tests := []struct {
 		name     string
@@ -66,12 +66,12 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 			want: &kimiKey,
 		},
 		{
-			name:     "opencode-cli",
-			provider: llm.ProviderOpenCodeCLI,
+			name:     "pi-cli",
+			provider: llm.ProviderPiCLI,
 			keys: &llm.ProviderAPIKeys{
-				OpenCodeCLI: &opencodeKey,
+				PiCLI: &piKey,
 			},
-			want: &opencodeKey,
+			want: &piKey,
 		},
 	}
 
@@ -91,18 +91,18 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 	}
 }
 
-func TestExtractAPIKeysFromLLMPreservesZAIKimiCodexAndOpenCodeCLI(t *testing.T) {
+func TestExtractAPIKeysFromLLMPreservesCodingCLIKeys(t *testing.T) {
 	zaiKey := "zai-key"
 	kimiKey := "kimi-key"
 	codexKey := "codex-key"
-	opencodeKey := "opencode-key"
+	piKey := "pi-key"
 
 	model := &providerKeyCarrierModel{
 		keys: &llm.ProviderAPIKeys{
-			ZAI:         &zaiKey,
-			Kimi:        &kimiKey,
-			CodexCLI:    &codexKey,
-			OpenCodeCLI: &opencodeKey,
+			ZAI:      &zaiKey,
+			Kimi:     &kimiKey,
+			CodexCLI: &codexKey,
+			PiCLI:    &piKey,
 		},
 	}
 
@@ -119,8 +119,8 @@ func TestExtractAPIKeysFromLLMPreservesZAIKimiCodexAndOpenCodeCLI(t *testing.T) 
 	if keys.CodexCLI == nil || *keys.CodexCLI != codexKey {
 		t.Fatalf("expected Codex CLI key %q, got %#v", codexKey, keys.CodexCLI)
 	}
-	if keys.OpenCodeCLI == nil || *keys.OpenCodeCLI != opencodeKey {
-		t.Fatalf("expected OpenCode CLI key %q, got %#v", opencodeKey, keys.OpenCodeCLI)
+	if keys.PiCLI == nil || *keys.PiCLI != piKey {
+		t.Fatalf("expected Pi CLI key %q, got %#v", piKey, keys.PiCLI)
 	}
 }
 

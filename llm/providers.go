@@ -30,7 +30,7 @@ const (
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
 	ProviderCursorCLI         = llmproviders.ProviderCursorCLI
 	ProviderAgyCLI            = llmproviders.ProviderAgyCLI
-	ProviderOpenCodeCLI       = llmproviders.ProviderOpenCodeCLI
+	ProviderPiCLI             = llmproviders.ProviderPiCLI
 	ProviderMiniMax           = llmproviders.ProviderMiniMax
 	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
 	ProviderElevenLabs        = llmproviders.ProviderElevenLabs
@@ -147,10 +147,28 @@ func SendAgyCLIInteractiveInput(ctx context.Context, sessionID, message string) 
 	return llmproviders.SendAgyCLIInteractiveInput(ctx, sessionID, message)
 }
 
-// SendOpenCodeCLIInteractiveInput sends user input to a live OpenCode CLI
-// interactive session registered for the owning application session.
-func SendOpenCodeCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
-	return llmproviders.SendOpenCodeCLIInteractiveInput(ctx, sessionID, message)
+// SendPiCLIInteractiveInput sends user input to a live Pi CLI interactive
+// session registered for the owning application session.
+func SendPiCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
+	return llmproviders.SendPiCLIInteractiveInput(ctx, sessionID, message)
+}
+
+// CleanupPiCLIInteractiveSessions closes all tracked Pi CLI interactive
+// sessions.
+func CleanupPiCLIInteractiveSessions(ctx context.Context) error {
+	return llmproviders.CleanupPiCLIInteractiveSessions(ctx)
+}
+
+// ClosePiCLIInteractiveSessionForOwner closes a tracked Pi CLI session by
+// owning application session id.
+func ClosePiCLIInteractiveSessionForOwner(ownerSessionID, reason string) {
+	llmproviders.ClosePiCLIInteractiveSessionForOwner(ownerSessionID, reason)
+}
+
+// ClosePiCLIInteractiveSessionByTmux closes a tracked Pi CLI session by tmux
+// session name.
+func ClosePiCLIInteractiveSessionByTmux(tmuxSessionName, reason string) {
+	llmproviders.ClosePiCLIInteractiveSessionByTmux(tmuxSessionName, reason)
 }
 
 // WithClaudeCodeInteractiveSessionID links a Claude Code experimental run to
@@ -193,14 +211,6 @@ func WithCodexProjectInstructionOnly(enabled bool) llmtypes.CallOption {
 // projection is disabled/fails.
 func WithGeminiProjectInstructionOnly(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithGeminiProjectInstructionOnly(enabled)
-}
-
-// WithOpenCodeProjectInstructionOnly carries the opencode system prompt solely
-// via the projected AGENTS.md, skipping the in-band "[System Instructions]"
-// prefix, so the prompt is applied once instead of doubled. Falls back to the
-// in-band prefix if the projection is disabled/fails.
-func WithOpenCodeProjectInstructionOnly(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeProjectInstructionOnly(enabled)
 }
 
 // WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning
@@ -328,60 +338,47 @@ func WithAgyDangerouslySkipPermissions(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithAgyDangerouslySkipPermissions(enabled)
 }
 
-// WithOpenCodeInteractiveSessionID links an OpenCode CLI interactive run to
-// the owning application session so live follow-up input can be sent to it.
-func WithOpenCodeInteractiveSessionID(id string) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeInteractiveSessionID(id)
+// WithPiInteractiveSessionID links a Pi CLI interactive run to the owning
+// application session so live follow-up input can be sent to it.
+func WithPiInteractiveSessionID(id string) llmtypes.CallOption {
+	return llmproviders.WithPiInteractiveSessionID(id)
 }
 
-// WithOpenCodePersistentInteractiveSession keeps OpenCode CLI interactive tmux
-// sessions alive across completed chat turns.
-func WithOpenCodePersistentInteractiveSession(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithOpenCodePersistentInteractiveSession(enabled)
+// WithPiPersistentInteractiveSession keeps Pi CLI tmux sessions alive across
+// completed chat turns.
+func WithPiPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithPiPersistentInteractiveSession(enabled)
 }
 
-// WithOpenCodeWorkingDir sets the OpenCode CLI workspace/cwd.
-func WithOpenCodeWorkingDir(dir string) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeWorkingDir(dir)
+// WithPiResumeSessionID resumes a Pi native session created with --session-id.
+func WithPiResumeSessionID(sessionID string) llmtypes.CallOption {
+	return llmproviders.WithPiResumeSessionID(sessionID)
 }
 
-// WithOpenCodeMCPConfig writes a temporary/restored opencode.jsonc for OpenCode.
-func WithOpenCodeMCPConfig(config string) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeMCPConfig(config)
+// WithPiWorkingDir sets the Pi CLI workspace/cwd.
+func WithPiWorkingDir(dir string) llmtypes.CallOption {
+	return llmproviders.WithPiWorkingDir(dir)
 }
 
-// WithOpenCodeProjectConfig writes a temporary/restored opencode.jsonc for OpenCode.
-func WithOpenCodeProjectConfig(config string) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeProjectConfig(config)
+// WithPiProvider overrides the Pi upstream provider inferred from the model id.
+func WithPiProvider(provider string) llmtypes.CallOption {
+	return llmproviders.WithPiProvider(provider)
 }
 
-// WithOpenCodeAgent sets the OpenCode --agent flag.
-func WithOpenCodeAgent(agent string) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeAgent(agent)
+// WithPiMCPConfig records a Pi MCP config candidate.
+func WithPiMCPConfig(config string) llmtypes.CallOption {
+	return llmproviders.WithPiMCPConfig(config)
 }
 
-// WithOpenCodeSubProvider scopes a single OpenCode CLI call to one
-// sub-provider tile (e.g. "opencode-cli-kimi"). Adapters that were built
-// for a tile via the sub-provider constructor inherit this scope by
-// default; the call-time option lets dispatchers override the scope per
-// call without rebuilding the adapter.
-func WithOpenCodeSubProvider(id string) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeSubProvider(id)
+// WithPiBridgeOnlyTools disables Pi built-in tools while leaving extension and
+// custom tools, including the MCP adapter, enabled.
+func WithPiBridgeOnlyTools(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithPiBridgeOnlyTools(enabled)
 }
 
-// WithOpenCodeSubProviderAPIKey attaches a credential for a single
-// OpenCode-backed sub-provider, keyed by the env-var name the OpenCode
-// bundled SDK reads (KIMI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY,
-// MINIMAX_API_KEY, ZHIPU_API_KEY).
-func WithOpenCodeSubProviderAPIKey(envVar, apiKey string) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeSubProviderAPIKey(envVar, apiKey)
-}
-
-// WithOpenCodeSubProviderAPIKeys replaces the whole per-sub-provider key
-// map in one call. Useful when the caller already loaded the full
-// credential set from a workspace store.
-func WithOpenCodeSubProviderAPIKeys(keys map[string]string) llmtypes.CallOption {
-	return llmproviders.WithOpenCodeSubProviderAPIKeys(keys)
+// WithPiMCPExtension overrides the Pi MCP adapter extension source.
+func WithPiMCPExtension(source string) llmtypes.CallOption {
+	return llmproviders.WithPiMCPExtension(source)
 }
 
 // Config holds configuration for LLM initialization (agent_go version)
@@ -733,11 +730,6 @@ func WithCursorResumeSessionID(id string) CallOption {
 // WithAgyResumeSessionID resumes an Antigravity CLI conversation by id.
 func WithAgyResumeSessionID(id string) CallOption {
 	return llmproviders.WithAgyResumeSessionID(id)
-}
-
-// WithOpenCodeResumeSessionID resumes an OpenCode chat by its session id.
-func WithOpenCodeResumeSessionID(id string) CallOption {
-	return llmproviders.WithOpenCodeResumeSessionID(id)
 }
 
 // WithCodexApprovalPolicy sets the approval_policy for the Codex CLI.

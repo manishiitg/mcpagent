@@ -227,6 +227,14 @@ func WithAgyPersistentInteractiveSession(enabled bool) AgentOption {
 	}
 }
 
+// WithPiPersistentInteractiveSession keeps Pi CLI tmux sessions alive across
+// completed chat turns.
+func WithPiPersistentInteractiveSession(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.PiPersistentInteractiveSession = enabled
+	}
+}
+
 // WithCursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 // The flag is retained for API compatibility but no longer sets --mode ask:
 // that mode hard-refuses natural-language writes with "Switch to Agent mode",
@@ -235,14 +243,6 @@ func WithAgyPersistentInteractiveSession(enabled bool) AgentOption {
 func WithCursorBridgeToolsMode(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.CursorBridgeToolsMode = enabled
-	}
-}
-
-// WithOpenCodePersistentInteractiveSession is retained for API compatibility.
-// OpenCode CLI currently uses structured JSON invocations, not tmux sessions.
-func WithOpenCodePersistentInteractiveSession(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.OpenCodePersistentInteractiveSession = enabled
 	}
 }
 
@@ -759,6 +759,11 @@ func isCodingCLIProvider(provider llm.Provider, modelID string) bool {
 	return llm.IsCodingAgentProvider(provider, modelID)
 }
 
+func isCodingCLIBridgeProvider(provider llm.Provider, modelID string) bool {
+	contract, ok := llm.GetCodingAgentProviderContract(provider, modelID)
+	return ok && contract.UsesMCPBridge
+}
+
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
 // It is the central component that orchestrates interactions between the Large Language Model (LLM),
 // Model Context Protocol (MCP) servers, and various tools.
@@ -868,6 +873,12 @@ type Agent struct {
 	// Antigravity CLI persistent tmux mode for interactive chat
 	AgyPersistentInteractiveSession bool
 
+	// Pi CLI persistent tmux mode for interactive chat
+	PiPersistentInteractiveSession bool
+
+	// Pi CLI native session ID for --session-id resume on subsequent turns.
+	PiSessionID string
+
 	// Antigravity CLI conversation ID for --conversation on subsequent turns.
 	AgySessionID string
 
@@ -878,18 +889,11 @@ type Agent struct {
 	// memory instead of starting fresh.
 	CursorSessionID string
 
-	// OpenCode CLI session ID for --session <id> on subsequent turns.
-	// Populated by the structured adapter from opencode's output.
-	OpenCodeSessionID string
-
 	// CursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 	// Retained for API compatibility; no longer sets --mode ask (that mode
 	// refuses natural-language writes with "Switch to Agent mode" and breaks
 	// chat). Cursor runs in default agent mode regardless of this flag.
 	CursorBridgeToolsMode bool
-
-	// Retained for API compatibility; OpenCode CLI uses structured JSON mode.
-	OpenCodePersistentInteractiveSession bool
 
 	// ForceStructuredCodingAgent forces the structured (JSON / --print /
 	// --exec) transport for coding-agent CLI providers even when a session
@@ -1253,8 +1257,8 @@ func (a *Agent) GetLLMModelConfig() LLMModel {
 			config.APIKey = a.APIKeys.CursorCLI
 		case llm.ProviderAgyCLI:
 			config.APIKey = a.APIKeys.AgyCLI
-		case llm.ProviderOpenCodeCLI:
-			config.APIKey = a.APIKeys.OpenCodeCLI
+		case llm.ProviderPiCLI:
+			config.APIKey = a.APIKeys.PiCLI
 		case llm.ProviderMiniMax:
 			config.APIKey = a.APIKeys.MiniMax
 		case llm.ProviderMiniMaxCodingPlan:
@@ -1330,7 +1334,7 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 			Vertex:            providerKeys.Vertex,
 			GeminiCLI:         providerKeys.GeminiCLI,
 			CodexCLI:          providerKeys.CodexCLI,
-			OpenCodeCLI:       providerKeys.OpenCodeCLI,
+			PiCLI:             providerKeys.PiCLI,
 			MiniMax:           providerKeys.MiniMax,
 			MiniMaxCodingPlan: providerKeys.MiniMaxCodingPlan,
 		}
@@ -1612,7 +1616,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// CLI providers always need code execution mode (tools accessed via HTTP bridge).
 	// Without this, the tool filtering below would take the UseToolSearchMode path instead of
 	// UseCodeExecutionMode, leaving allMCPToolDefs empty and breaking get_api_spec.
-	if isCodingCLIProvider(ag.provider, ag.ModelID) {
+	if isCodingCLIBridgeProvider(ag.provider, ag.ModelID) {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
 			logger.Debug("[BRIDGE_DEBUG] Pre-set UseCodeExecutionMode for CLI provider before MCP tool filtering",
@@ -1865,7 +1869,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Safety net: Ensure CLI provider modes are correct before virtual tool filtering.
 	// The primary pre-detection is above (before MCP tool filtering at allMCPToolDefs).
 	// This block is a safety net in case code is reordered in the future.
-	if isCodingCLIProvider(ag.provider, ag.ModelID) {
+	if isCodingCLIBridgeProvider(ag.provider, ag.ModelID) {
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
 			logger.Warn("[BRIDGE_DEBUG] CLI provider UseCodeExecutionMode was not pre-set — enforcing before virtual tool filtering (safety net)",
@@ -2215,35 +2219,37 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 	}
 
-	// Auto-configure OpenCode CLI provider (same constraints as the other CLI coding agents)
-	if ag.provider == llmproviders.ProviderOpenCodeCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+	// Auto-configure Pi CLI provider. Pi runs through tmux marker transport with
+	// pi-mcp-adapter mounted and built-in tools disabled by the adapter when the
+	// bridge config is available.
+	if ag.provider == llmproviders.ProviderPiCLI {
+		ag.AppendSystemPrompt("IMPORTANT: You are running inside Pi CLI with built-in tools disabled. Use the MCP bridge through Pi's MCP gateway: call mcp({ search: \"tool words\" }) to discover tools, mcp({ describe: \"api_bridge_execute_shell_command\" }) for schemas when needed, and mcp({ tool: \"api_bridge_execute_shell_command\", args: \"{...}\" }) or the direct api_bridge_* tools when available. If a built-in tool is unavailable, use the declared MCP bridge tools instead of reporting that no MCP server exists.")
 		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [OPENCODE_CLI] Provider detected - silently disabling incompatible features")
+		logger.Debug("🔧 [PI_CLI] Provider detected - using tmux marker transport with MCP bridge")
 
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [OPENCODE_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+			logger.Debug("🔧 [PI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
 		if ag.EnableContextEditing {
 			ag.EnableContextEditing = false
-			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Editing (handled natively by CLI)")
+			logger.Debug("🔧 [PI_CLI] Disabled Context Editing (handled natively by CLI)")
 		}
 
 		if ag.EnableContextSummarization {
 			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Summarization (handled natively by CLI)")
+			logger.Debug("🔧 [PI_CLI] Disabled Context Summarization (handled natively by CLI)")
 		}
 
 		if ag.EnableContextOffloading {
 			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Offloading (handled natively by CLI)")
+			logger.Debug("🔧 [PI_CLI] Disabled Context Offloading (handled natively by CLI)")
 		}
 
 		if !ag.EnableStreaming {
 			ag.EnableStreaming = true
-			logger.Debug("🔧 [OPENCODE_CLI] Auto-enabled streaming (required for tool call observability)")
+			logger.Debug("🔧 [PI_CLI] Auto-enabled streaming (required for terminal observability)")
 		}
 	}
 
@@ -3341,35 +3347,37 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		}
 	}
 
-	// Auto-configure OpenCode CLI provider (same constraints as the other CLI coding agents)
-	if ag.provider == llmproviders.ProviderOpenCodeCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Prefer declared MCP bridge tools such as execute_shell_command and diff_patch_workspace_file for filesystem or shell work. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+	// Auto-configure Pi CLI provider. Pi runs through tmux marker transport with
+	// pi-mcp-adapter mounted and built-in tools disabled by the adapter when the
+	// bridge config is available.
+	if ag.provider == llmproviders.ProviderPiCLI {
+		ag.AppendSystemPrompt("IMPORTANT: You are running inside Pi CLI with built-in tools disabled. Use the MCP bridge through Pi's MCP gateway: call mcp({ search: \"tool words\" }) to discover tools, mcp({ describe: \"api_bridge_execute_shell_command\" }) for schemas when needed, and mcp({ tool: \"api_bridge_execute_shell_command\", args: \"{...}\" }) or the direct api_bridge_* tools when available. If a built-in tool is unavailable, use the declared MCP bridge tools instead of reporting that no MCP server exists.")
 		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [OPENCODE_CLI] Provider detected - silently disabling incompatible features")
+		logger.Debug("🔧 [PI_CLI] Provider detected - using tmux marker transport with MCP bridge")
 
 		if !ag.UseCodeExecutionMode {
 			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [OPENCODE_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+			logger.Debug("🔧 [PI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
 		if ag.EnableContextEditing {
 			ag.EnableContextEditing = false
-			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Editing (handled natively by CLI)")
+			logger.Debug("🔧 [PI_CLI] Disabled Context Editing (handled natively by CLI)")
 		}
 
 		if ag.EnableContextSummarization {
 			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Summarization (handled natively by CLI)")
+			logger.Debug("🔧 [PI_CLI] Disabled Context Summarization (handled natively by CLI)")
 		}
 
 		if ag.EnableContextOffloading {
 			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [OPENCODE_CLI] Disabled Context Offloading (handled natively by CLI)")
+			logger.Debug("🔧 [PI_CLI] Disabled Context Offloading (handled natively by CLI)")
 		}
 
 		if !ag.EnableStreaming {
 			ag.EnableStreaming = true
-			logger.Debug("🔧 [OPENCODE_CLI] Auto-enabled streaming (required for tool call observability)")
+			logger.Debug("🔧 [PI_CLI] Auto-enabled streaming (required for terminal observability)")
 		}
 	}
 
