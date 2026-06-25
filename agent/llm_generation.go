@@ -742,8 +742,8 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 	// "did the model emit X" vs. "did the frontend drop X" without grepping
 	// the in-memory event store.
 	if os.Getenv("LOG_AGENT_PROMPTS") == "true" && strings.TrimSpace(a.SessionID) != "" {
-		sessionDir := strings.ReplaceAll(strings.TrimSpace(a.SessionID), "/", "_")
-		dir := filepath.Join("logs", "agent_prompts", sessionDir)
+		sessionDir := agentPromptLogSessionDirName(a.SessionID)
+		dir := agentPromptLogSessionDir(a.SessionID)
 		if err := os.MkdirAll(dir, 0o750); err == nil {
 			name := fmt.Sprintf("stream_turn-%03d_attempt-%d_%s.txt", turn, attempt, time.Now().UTC().Format("150405"))
 			// Debug-only sink gated by LOG_AGENT_PROMPTS; path is a fixed
@@ -753,6 +753,7 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 				fmt.Fprintf(f, "# session=%s turn=%d attempt=%d provider=%s model=%s start=%s\n",
 					a.SessionID, turn, attempt, a.provider, a.ModelID, time.Now().UTC().Format(time.RFC3339Nano))
 				sm.streamDebugFile = f
+				pruneAgentPromptLogSessions(sessionDir)
 			}
 		}
 	}
