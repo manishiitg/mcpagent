@@ -381,6 +381,11 @@ func WithPiMCPExtension(source string) llmtypes.CallOption {
 	return llmproviders.WithPiMCPExtension(source)
 }
 
+// WithPiStatuslineExtension overrides the Pi statusline extension source.
+func WithPiStatuslineExtension(source string) llmtypes.CallOption {
+	return llmproviders.WithPiStatuslineExtension(source)
+}
+
 // Config holds configuration for LLM initialization (agent_go version)
 // This is kept for backward compatibility and converted to llm-providers Config internally
 type Config struct {
