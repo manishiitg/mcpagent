@@ -132,7 +132,14 @@ func (a *Agent) DeliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 
 	if isCodingAgent && contract.SupportsLiveInput {
 		if err := llm.SendCodingAgentLiveInput(ctx, provider, a.ModelID, req.SessionID, message); err != nil {
-			return result, err
+			// Live delivery failed (e.g. the foreground turn already exited, or
+			// there's no active pane to inject into). Fall back to the steer queue
+			// so the message is redelivered by the drain backstop instead of being
+			// lost — the caller treats QueuedForInjection as "not definitively
+			// delivered" and won't mark the completion notified.
+			a.AddSteerMessage(message)
+			result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
+			return result, nil
 		}
 		result.DeliveryStatus = UserMessageDeliveryStatusSentToCLI
 		return result, nil
