@@ -58,12 +58,18 @@ var globalSessionRegistry = &SessionConnectionRegistry{
 var globalHTTPSessionTracker = &httpSessionTracker{
 	sessions:        make(map[string]map[string]struct{}),
 	stoppedSessions: make(map[string]struct{}),
+	stoppedByHTTP:   make(map[string]map[string]struct{}),
 }
 
 type httpSessionTracker struct {
 	mu              sync.Mutex
 	sessions        map[string]map[string]struct{} // httpSessionID -> set of mcpSessionIDs
 	stoppedSessions map[string]struct{}            // set of stopped MCP session IDs (prevents broken pipe reconnection)
+	// stoppedByHTTP records which MCP session IDs were stopped under each HTTP
+	// session ID. CloseHTTPSession removes the live sessions mapping, so this is
+	// what lets an intentional resume of that HTTP session (a new user message)
+	// clear the stopped flags afterward and reconnect its MCP/bridge tools.
+	stoppedByHTTP map[string]map[string]struct{} // httpSessionID -> set of stopped mcpSessionIDs
 }
 
 func (t *httpSessionTracker) register(httpSessionID, mcpSessionID string) {
@@ -122,6 +128,40 @@ func (t *httpSessionTracker) clearStopped(mcpSessionIDs []string) {
 	for _, id := range mcpSessionIDs {
 		delete(t.stoppedSessions, id)
 	}
+}
+
+// markStoppedForHTTP marks the given MCP session IDs as stopped AND records them
+// under httpSessionID so a later resume of that HTTP session can clear them
+// (CloseHTTPSession drops the live sessions mapping, so we keep a separate copy).
+func (t *httpSessionTracker) markStoppedForHTTP(httpSessionID string, mcpSessionIDs []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, id := range mcpSessionIDs {
+		t.stoppedSessions[id] = struct{}{}
+	}
+	if httpSessionID == "" || len(mcpSessionIDs) == 0 {
+		return
+	}
+	set := t.stoppedByHTTP[httpSessionID]
+	if set == nil {
+		set = make(map[string]struct{})
+		t.stoppedByHTTP[httpSessionID] = set
+	}
+	for _, id := range mcpSessionIDs {
+		set[id] = struct{}{}
+	}
+}
+
+// clearStoppedForHTTP lifts the stopped flag for every MCP session ID stopped
+// under httpSessionID (via markStoppedForHTTP) and forgets the record. Called
+// when a new user message intentionally resumes a stopped session.
+func (t *httpSessionTracker) clearStoppedForHTTP(httpSessionID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for id := range t.stoppedByHTTP[httpSessionID] {
+		delete(t.stoppedSessions, id)
+	}
+	delete(t.stoppedByHTTP, httpSessionID)
 }
 
 // GetSessionRegistry returns the global session connection registry
@@ -441,11 +481,21 @@ func (r *SessionConnectionRegistry) CloseHTTPSession(httpSessionID string) {
 	// This is the critical ordering: markStopped → close. If we close first,
 	// the broken pipe handler could sneak in between close and markStopped,
 	// recreating the connection before we flag it as stopped.
-	globalHTTPSessionTracker.markStopped(mcpSessionIDs)
+	globalHTTPSessionTracker.markStoppedForHTTP(httpSessionID, mcpSessionIDs)
 	globalHTTPSessionTracker.remove(httpSessionID)
 	for _, mcpID := range mcpSessionIDs {
 		r.CloseSession(mcpID)
 	}
+}
+
+// ClearHTTPSessionStopped lifts the stopped flag for every MCP session ID that
+// was stopped under httpSessionID via CloseHTTPSession. Call this when a new
+// user message intentionally resumes a session that was stopped mid-run (e.g.
+// the stop icon on a scheduled coding-agent run) — otherwise zombie prevention
+// permanently refuses the reused bridge's connections and its api-bridge tools
+// read as "No such tool available" until a full reload.
+func (r *SessionConnectionRegistry) ClearHTTPSessionStopped(httpSessionID string) {
+	globalHTTPSessionTracker.clearStoppedForHTTP(httpSessionID)
 }
 
 // IsSessionStopped returns true if the given MCP session was closed via

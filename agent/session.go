@@ -191,6 +191,16 @@ func CloseHTTPSession(httpSessionID string) {
 	registry.CloseHTTPSession(httpSessionID)
 }
 
+// ClearHTTPSessionStopped lifts the zombie-prevention "stopped" flag for the MCP
+// sessions that were stopped under httpSessionID via CloseHTTPSession. Call this
+// when a new user message intentionally resumes a session that was stopped
+// mid-run — without it, the reused coding-agent bridge can't reconnect and its
+// api-bridge tools report "No such tool available" until a full reload.
+func ClearHTTPSessionStopped(httpSessionID string) {
+	registry := mcpclient.GetSessionRegistry()
+	registry.ClearHTTPSessionStopped(httpSessionID)
+}
+
 // GetSessionRegistry returns the underlying session connection registry.
 // This is for advanced use cases where direct registry access is needed.
 func GetSessionRegistry() *mcpclient.SessionConnectionRegistry {
