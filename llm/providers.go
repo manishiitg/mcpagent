@@ -277,6 +277,13 @@ func WithCursorApproveMCPs() llmtypes.CallOption {
 	return llmproviders.WithCursorApproveMCPs()
 }
 
+// WithCursorAutoApproveWebSearch auto-accepts Cursor Agent CLI's TUI prompts
+// for web search and opening URLs during an already-user-initiated agent turn.
+// It does not enable --force.
+func WithCursorAutoApproveWebSearch() llmtypes.CallOption {
+	return llmproviders.WithCursorAutoApproveWebSearch()
+}
+
 // WithCursorMode sets Cursor Agent CLI's --mode flag. Leave empty for normal
 // agent mode (the default chat path).
 //

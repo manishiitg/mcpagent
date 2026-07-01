@@ -51,6 +51,7 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 		}
 	case llm.ProviderCursorCLI:
 		opts = append(opts, llm.WithCursorInteractiveSessionID(sessionID))
+		opts = append(opts, llm.WithCursorAutoApproveWebSearch())
 		if a.CursorPersistentInteractiveSession {
 			opts = append(opts, llm.WithCursorPersistentInteractiveSession(true))
 		}

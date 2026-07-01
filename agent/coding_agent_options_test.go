@@ -307,6 +307,9 @@ func TestCursorBridgeToolsModeDoesNotForceAskMode(t *testing.T) {
 	if approve, ok := got[cursorcli.MetadataKeyApproveMCPs]; ok {
 		t.Fatalf("approve-mcps metadata should NOT be set (only meaningful when --mode forces MCP routing), got %#v", approve)
 	}
+	if approveWeb, ok := got[cursorcli.MetadataKeyAutoApproveWebSearch].(bool); !ok || !approveWeb {
+		t.Fatalf("auto web approval metadata = %#v, want true", got[cursorcli.MetadataKeyAutoApproveWebSearch])
+	}
 }
 
 func metadataFromCallOptions(options []llmtypes.CallOption) map[string]interface{} {
