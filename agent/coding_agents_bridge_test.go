@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
@@ -283,6 +284,57 @@ func TestAppendAgyCLIIntegrationOptionsEnablesBridgeOnlyHooks(t *testing.T) {
 	}
 	if got[agycli.MetadataKeyResumeSessionID] != "agy-conversation-id" {
 		t.Fatalf("Agy resume metadata = %#v, want agy-conversation-id", got[agycli.MetadataKeyResumeSessionID])
+	}
+}
+
+func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	agent.SessionID = "app-session"
+
+	got := metadataFromCallOptions(agent.appendCursorCLIIntegrationOptions(nil))
+
+	mcpConfig, ok := got[cursorcli.MetadataKeyMCPConfig].(string)
+	if !ok || !strings.Contains(mcpConfig, `"api-bridge"`) {
+		t.Fatalf("Cursor MCP config metadata = %#v, want api-bridge config", got[cursorcli.MetadataKeyMCPConfig])
+	}
+	tools := bridgeToolsFromConfig(t, mcpConfig)
+	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec"} {
+		if _, ok := tools[name]; !ok {
+			t.Fatalf("Cursor MCP config missing core bridge tool %q; tools=%v", name, mapKeys(tools))
+		}
+	}
+	if got[cursorcli.MetadataKeyApproveMCPs] != true {
+		t.Fatalf("Cursor approve-mcps metadata = %#v, want true", got[cursorcli.MetadataKeyApproveMCPs])
+	}
+	if got[cursorcli.MetadataKeyDenyBuiltinTools] != true {
+		t.Fatalf("Cursor deny-builtin metadata = %#v, want true", got[cursorcli.MetadataKeyDenyBuiltinTools])
+	}
+	if _, ok := got[cursorcli.MetadataKeyForce]; ok {
+		t.Fatalf("Cursor force metadata should not be set when bridge is configured: %#v", got[cursorcli.MetadataKeyForce])
+	}
+}
+
+func TestAppendCursorCLIIntegrationOptionsFallsBackToForceWithoutBridge(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "")
+	t.Setenv("MCP_BRIDGE_API_URL", "")
+	t.Setenv("MCP_API_TOKEN", "")
+
+	agent := bridgeTestAgent()
+	got := metadataFromCallOptions(agent.appendCursorCLIIntegrationOptions(nil))
+
+	if got[cursorcli.MetadataKeyForce] != true {
+		t.Fatalf("Cursor force metadata = %#v, want true when bridge is unavailable", got[cursorcli.MetadataKeyForce])
+	}
+	if _, ok := got[cursorcli.MetadataKeyDenyBuiltinTools]; ok {
+		t.Fatalf("Cursor deny-builtin metadata must not be set without bridge: %#v", got[cursorcli.MetadataKeyDenyBuiltinTools])
+	}
+	if _, ok := got[cursorcli.MetadataKeyMCPConfig]; ok {
+		t.Fatalf("Cursor MCP config metadata must not be set without bridge: %#v", got[cursorcli.MetadataKeyMCPConfig])
 	}
 }
 

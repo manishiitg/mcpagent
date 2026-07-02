@@ -8,6 +8,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
@@ -153,6 +154,8 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 		geminiSessionID                   string
 		geminiProjectDirID                string
 		codexSessionID                    string
+		cursorSessionID                   string
+		cursorBridgeToolsMode             bool
 		agySessionID                      string
 		piSessionID                       string
 		sessionID                         string
@@ -204,6 +207,19 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			wantResumeValue:                   "codex-thread-id",
 		},
 		{
+			name:            "cursor passes resume session ID outside bridge mode",
+			provider:        llm.ProviderCursorCLI,
+			cursorSessionID: "cursor-native-id",
+			wantResumeKey:   cursorcli.MetadataKeyResumeSessionID,
+			wantResumeValue: "cursor-native-id",
+		},
+		{
+			name:                  "cursor bridge mode does not native-resume stale tool catalogs",
+			provider:              llm.ProviderCursorCLI,
+			cursorSessionID:       "cursor-native-id",
+			cursorBridgeToolsMode: true,
+		},
+		{
 			name:            "agy passes resume conversation ID",
 			provider:        llm.ProviderAgyCLI,
 			agySessionID:    "agy-conversation-id",
@@ -241,6 +257,8 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 				GeminiSessionID:                   tt.geminiSessionID,
 				GeminiProjectDirID:                tt.geminiProjectDirID,
 				CodexSessionID:                    tt.codexSessionID,
+				CursorSessionID:                   tt.cursorSessionID,
+				CursorBridgeToolsMode:             tt.cursorBridgeToolsMode,
 				AgySessionID:                      tt.agySessionID,
 				PiSessionID:                       tt.piSessionID,
 				CodexPersistentInteractiveSession: tt.codexPersistentInteractiveSession,
@@ -293,6 +311,12 @@ func TestSessionIDRoundTrip(t *testing.T) {
 			provider:   llm.ProviderCodexCLI,
 			sessionKey: "codex_thread_id",
 			resumeKey:  codexcli.MetadataKeyResumeSessionID,
+		},
+		{
+			name:       "cursor cli",
+			provider:   llm.ProviderCursorCLI,
+			sessionKey: "cursor_session_id",
+			resumeKey:  cursorcli.MetadataKeyResumeSessionID,
 		},
 		{
 			name:       "agy cli",

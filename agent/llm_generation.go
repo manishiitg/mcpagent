@@ -1554,48 +1554,7 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 
 	// 🔧 CURSOR CLI INTEGRATION: MCP bridge + tmux live input
 	if llmproviders.Provider(model.Provider) == llmproviders.ProviderCursorCLI {
-		denyBuiltinsEnabled := false
-		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
-		if bridgeErr == nil {
-			opts = append(opts, llm.WithCursorMCPConfig(bridgeConfig))
-			// --approve-mcps auto-accepts cursor's "approve this MCP server?"
-			// TUI dialog so the FIRST bridge tool call does not stall waiting
-			// for a human to click through. Required whenever WithCursorMCPConfig
-			// is set in a headless context.
-			opts = append(opts, llm.WithCursorApproveMCPs())
-			// WithCursorDenyBuiltinTools installs a per-session
-			// .cursor/hooks.json that denies cursor's built-in
-			// Shell/Read/Edit/Write/etc. tools at the hook layer,
-			// forcing the agent to route every tool call through the
-			// MCP bridge we just configured. Mirrors what
-			// appendAgyCLIIntegrationOptions does with
-			// WithAgyBridgeOnlyTools(true) — same effect, different
-			// CLI's hook convention. Only enabled alongside the bridge
-			// config so we never deny built-ins without a working MCP
-			// fallback.
-			opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
-			denyBuiltinsEnabled = true
-			a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
-		} else {
-			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Cursor CLI (tools may be limited): %v", bridgeErr))
-		}
-
-		// --force (= --yolo) puts cursor in auto-approve-everything mode,
-		// which bypasses the .cursor/hooks.json deny verdicts we install
-		// above. The two are mutually exclusive — with --force, cursor
-		// never consults the hook so built-in Shell/Read run unimpeded.
-		// Only pass --force when deny-builtins is OFF (no bridge → no
-		// hooks → fall back to yolo to avoid per-call approval stalls).
-		// Cursor's default agent mode is used either way (no WithCursorMode
-		// call) because --mode ask/plan put cursor in a conversational
-		// stance that refuses natural writes with "Switch to Agent mode".
-		// See coding_agent_options.go.
-		if !denyBuiltinsEnabled {
-			opts = append(opts, llm.WithCursorForce())
-			a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and live input support (--force yolo: bridge unavailable)")
-		} else {
-			a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
-		}
+		opts = a.appendCursorCLIIntegrationOptions(opts)
 	}
 
 	// 🔧 ANTIGRAVITY CLI INTEGRATION: MCP bridge + tmux live input.

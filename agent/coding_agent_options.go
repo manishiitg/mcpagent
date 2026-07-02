@@ -204,7 +204,12 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 		}
 	case llm.ProviderCursorCLI:
-		if a.CursorSessionID != "" {
+		// In bridge-tools mode, Cursor must launch a fresh native conversation
+		// so it discovers the just-written .cursor/mcp.json before the deny
+		// hooks block built-in Shell/Read/Write. Resuming an older Cursor
+		// conversation can preserve a stale native tool catalog with no
+		// api-bridge tools, leaving the agent with no usable tools at all.
+		if a.CursorSessionID != "" && !a.CursorBridgeToolsMode {
 			opts = append(opts, llm.WithCursorResumeSessionID(a.CursorSessionID))
 		}
 	case llm.ProviderAgyCLI:
@@ -215,6 +220,41 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 		if a.PiSessionID != "" {
 			opts = append(opts, llm.WithPiResumeSessionID(a.PiSessionID))
 		}
+	}
+	return opts
+}
+
+func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
+	bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
+	if bridgeErr == nil {
+		opts = append(opts, llm.WithCursorMCPConfig(bridgeConfig))
+		// --approve-mcps auto-accepts cursor's "approve this MCP server?"
+		// TUI dialog so the FIRST bridge tool call does not stall waiting
+		// for a human to click through. Required whenever WithCursorMCPConfig
+		// is set in a headless context.
+		opts = append(opts, llm.WithCursorApproveMCPs())
+		// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
+		// that denies cursor's built-in Shell/Read/Edit/Write/etc. tools at the
+		// hook layer, forcing the agent to route tool calls through the MCP
+		// bridge we just configured. Only enable it alongside the bridge config
+		// so we never deny built-ins without a working MCP fallback.
+		opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
+		if a.Logger != nil {
+			a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
+			a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
+		}
+		return opts
+	}
+
+	if a.Logger != nil {
+		a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Cursor CLI (tools may be limited): %v", bridgeErr))
+	}
+	// --force (= --yolo) puts cursor in auto-approve-everything mode, which
+	// bypasses .cursor/hooks.json deny verdicts. Only pass --force when no
+	// bridge config was available, because there are no hooks to enforce.
+	opts = append(opts, llm.WithCursorForce())
+	if a.Logger != nil {
+		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with live input support (--force yolo: bridge unavailable)")
 	}
 	return opts
 }

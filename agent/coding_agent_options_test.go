@@ -287,10 +287,9 @@ func TestWithClaudeCodeTransport(t *testing.T) {
 // Cursor's --mode ask is a conversational stance that refuses natural-language
 // writes with "Switch to Agent mode", which makes the chat unusable for any
 // turn that requires writes. CursorBridgeToolsMode must NOT set --mode ask
-// (and so must NOT set --approve-mcps either, since approve-mcps is only
-// meaningful when MCP tools are forced via a restricted mode). Cursor runs
-// in default agent mode and may still invoke MCP bridge tools via the
-// .cursor/mcp.json config that is mounted independently.
+// from the interactive-session option layer. Cursor runs in default agent mode;
+// MCP bridge config, --approve-mcps, and deny-builtin hooks are mounted later
+// by appendCursorCLIIntegrationOptions.
 func TestCursorBridgeToolsModeDoesNotForceAskMode(t *testing.T) {
 	agent := &Agent{
 		provider:                           llm.ProviderCursorCLI,
@@ -305,7 +304,7 @@ func TestCursorBridgeToolsModeDoesNotForceAskMode(t *testing.T) {
 		t.Fatalf("mode metadata should NOT be set under bridge tools mode (ask mode breaks natural-language writes), got %#v", mode)
 	}
 	if approve, ok := got[cursorcli.MetadataKeyApproveMCPs]; ok {
-		t.Fatalf("approve-mcps metadata should NOT be set (only meaningful when --mode forces MCP routing), got %#v", approve)
+		t.Fatalf("approve-mcps metadata should be added by Cursor integration options, not interactive options; got %#v", approve)
 	}
 	if approveWeb, ok := got[cursorcli.MetadataKeyAutoApproveWebSearch].(bool); !ok || !approveWeb {
 		t.Fatalf("auto web approval metadata = %#v, want true", got[cursorcli.MetadataKeyAutoApproveWebSearch])
