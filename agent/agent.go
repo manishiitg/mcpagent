@@ -882,12 +882,11 @@ type Agent struct {
 	// Antigravity CLI conversation ID for --conversation on subsequent turns.
 	AgySessionID string
 
-	// Cursor CLI session ID for native --resume outside bridge-tools mode.
+	// Cursor CLI session ID for native --resume on subsequent turns.
 	// Populated by the structured adapter from cursor's stream-json init
 	// event (and by the interactive adapter from its sqlite agentId after
-	// each turn — best-effort). Bridge-tools mode deliberately launches a
-	// fresh native Cursor conversation so .cursor/mcp.json is discovered
-	// before deny-builtin hooks can block the fallback built-in tools.
+	// each turn — best-effort), so a restored chat can pick up cursor's
+	// native chat memory instead of starting fresh.
 	CursorSessionID string
 
 	// CursorBridgeToolsMode marks a chat as preferring MCP bridge tools.

@@ -204,12 +204,7 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 		}
 	case llm.ProviderCursorCLI:
-		// In bridge-tools mode, Cursor must launch a fresh native conversation
-		// so it discovers the just-written .cursor/mcp.json before the deny
-		// hooks block built-in Shell/Read/Write. Resuming an older Cursor
-		// conversation can preserve a stale native tool catalog with no
-		// api-bridge tools, leaving the agent with no usable tools at all.
-		if a.CursorSessionID != "" && !a.CursorBridgeToolsMode {
+		if a.CursorSessionID != "" {
 			opts = append(opts, llm.WithCursorResumeSessionID(a.CursorSessionID))
 		}
 	case llm.ProviderAgyCLI:

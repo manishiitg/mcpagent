@@ -214,10 +214,12 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			wantResumeValue: "cursor-native-id",
 		},
 		{
-			name:                  "cursor bridge mode does not native-resume stale tool catalogs",
+			name:                  "cursor bridge mode still passes resume session ID",
 			provider:              llm.ProviderCursorCLI,
 			cursorSessionID:       "cursor-native-id",
 			cursorBridgeToolsMode: true,
+			wantResumeKey:         cursorcli.MetadataKeyResumeSessionID,
+			wantResumeValue:       "cursor-native-id",
 		},
 		{
 			name:            "agy passes resume conversation ID",
