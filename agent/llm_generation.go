@@ -1189,22 +1189,22 @@ func (a *Agent) executeLLMForCodingAgentTransportLaunch(ctx context.Context, mod
 	return a.executeLLMInner(ctx, model, nil, opts, true)
 }
 
-func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
-	if bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig(); bridgeErr == nil {
-		opts = append(opts,
-			llm.WithAgyMCPConfig(bridgeConfig),
-			llm.WithAgyBridgeOnlyTools(true),
-		)
-		a.Logger.Info("🌉 [AGY_CLI] Configured MCP bridge through .agents/mcp_config.json with bridge-only hooks")
-	} else {
-		a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Antigravity CLI (tools may be limited): %v", bridgeErr))
+func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
+	bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
+	if bridgeErr != nil {
+		return nil, fmt.Errorf("Antigravity CLI requires the MCP bridge: %w", bridgeErr)
 	}
+	opts = append(opts,
+		llm.WithAgyMCPConfig(bridgeConfig),
+		llm.WithAgyBridgeOnlyTools(true),
+	)
+	a.Logger.Info("🌉 [AGY_CLI] Configured MCP bridge through .agents/mcp_config.json with bridge-only hooks")
 	if a.AgySessionID != "" {
 		opts = append(opts, llm.WithAgyResumeSessionID(a.AgySessionID))
 	}
 	opts = append(opts, llm.WithAgyDangerouslySkipPermissions(true))
 	a.Logger.Info("🌉 Using Antigravity CLI in tmux mode with MCP bridge and live input support")
-	return opts
+	return opts, nil
 }
 
 func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
@@ -1278,301 +1278,11 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
-	// 🔧 CLAUDE CODE INTEGRATION: Inject MCP Config via bridge
-	// Claude Code always uses code execution mode — tools are accessed via the
-	// mcpbridge stdio binary which forwards calls to the HTTP API endpoints.
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderClaudeCode {
-		claudeHTTPHooksEnabled := claudeHTTPRoutingHooksEnabled()
-
-		// Use restricted permissions instead of skipping them entirely
-		// Allow our bridge tools and WebSearch to run without prompts.
-		// When HTTP tool routing enforcement is enabled, narrow this to the minimal set.
-		allowedTools := "mcp__api-bridge__*,WebSearch"
-		if claudeHTTPHooksEnabled {
-			allowedTools = "mcp__api-bridge__execute_shell_command,mcp__api-bridge__diff_patch_workspace_file,mcp__api-bridge__agent_browser,mcp__api-bridge__get_api_spec,WebSearch"
-		}
-		opts = append(opts, llm.WithAllowedTools(allowedTools))
-
-		// Force Claude to use our custom tools by disabling its own internal ones
-		// We explicitly allow only WebSearch (if desired) and disable all others (Bash, Read, Edit, etc.)
-		opts = append(opts, llm.WithClaudeCodeTools("WebSearch"))
-
-		if claudeHTTPHooksEnabled {
-			hookPath, hookErr := writeClaudeHTTPRoutingHook()
-			if hookErr != nil {
-				a.Logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
-			} else {
-				settingsJSON, settingsErr := buildClaudeHTTPRoutingSettings(hookPath)
-				if settingsErr != nil {
-					a.Logger.Warn("Failed to build Claude Code hook settings", loggerv2.Error(settingsErr))
-				} else {
-					opts = append(opts, llm.WithClaudeCodeSettings(settingsJSON))
-					a.Logger.Info("🪝 Claude Code HTTP tool routing enforcement enabled",
-						loggerv2.String("env", "MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING"),
-						loggerv2.String("hook_path", hookPath))
-				}
-			}
-		}
-
-		bridgeConfig, err := a.BuildBridgeMCPConfig()
-		if err != nil {
-			return nil, fmt.Errorf("Claude Code requires the MCP bridge: %w", err)
-		}
-		opts = append(opts, llm.WithMCPConfig(bridgeConfig))
-		a.Logger.Info("🌉 Using MCP bridge for Claude Code tool access via HTTP API")
-
-		// Pass max turns to Claude Code CLI
-		if a.MaxTurns > 0 {
-			opts = append(opts, llm.WithMaxTurns(a.MaxTurns))
-		}
-
-		// Resume existing Claude Code session if available
-		if a.ClaudeCodeSessionID != "" {
-			opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
-		}
-
-		// Pass effort level from model options
-		if model.Options != nil {
-			if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
-				opts = append(opts, llm.WithClaudeCodeEffort(effort))
-				a.Logger.Info(fmt.Sprintf("🧠 [CLAUDE_CODE] Effort level set to: %s", effort))
-			}
-		}
-	}
-
-	// 🔧 GEMINI CLI INTEGRATION: Project settings + MCP bridge
-	// Gemini CLI reads .gemini/settings.json from its working directory. We create
-	// a temp directory with settings that:
-	//   1. Restrict built-in tools via tools.core (only google_web_search allowed)
-	//   2. Configure the MCP bridge server via mcpServers
-	// The adapter runs `gemini` from that temp dir so these settings take effect.
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderGeminiCLI {
-		// No --approval-mode: the Policy Engine TOML handles all tool approval.
-		// "allow" decisions auto-approve MCP tools, "deny" blocks built-in tools.
-		// Yolo mode bypasses the policy engine entirely, so we must NOT use it.
-
-		a.ensureGeminiProjectDirID()
-		// For the workflow main_agent / chat case (IsolatedSessionWorkspace=false
-		// AND a workflow-rooted CodingAgentWorkingDir is set), root the project
-		// dir inside the workflow folder so GEMINI_PROJECT_DIR survives /tmp
-		// wipes and the status line shows a meaningful workspace. Steps stay
-		// in /tmp so concurrent runs don't clobber each other's settings.json.
-		var projectDir string
-		if !a.IsolatedSessionWorkspace && strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
-			projectDir = filepath.Join(a.CodingAgentWorkingDir, ".gemini-main")
-		} else {
-			projectDir = filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
-		}
-
-		// Build project settings with MCP bridge config.
-		// Tool restriction is handled by a per-run --admin-policy TOML file. Do
-		// not write tools.exclude here: Gemini CLI deprecates it and warns on
-		// startup. Do not install enforcement hooks by default: Gemini warns
-		// about project hooks in interactive mode, and Policy Engine can hide
-		// denied tools from the model without hook noise.
-		// UI defaults: gemini-cli renders inside a captured tmux pane viewed via
-		// the web terminal, not a real terminal. Strip elements that are pure
-		// noise here (banner, tips, ASCII shortcut hint, sandbox badge). Keep
-		// footer.cwd visible so users can confirm the session is rooted in the
-		// right workflow folder. Tool output / context summary / window title
-		// kept at defaults to avoid hiding diagnostic info.
-		settings := map[string]interface{}{
-			"ui": map[string]interface{}{
-				"hideBanner":        true,
-				"hideTips":          true,
-				"showShortcutsHint": false,
-				// inlineThinkingMode is intentionally NOT "full": with it on, gemini
-				// streams its reasoning into the transcript as many bare "Thinking…"
-				// lines that linger in scrollback. Completion detection
-				// (hasGeminiActivity) scans the recent transcript and reads a lingering
-				// "Thinking…" as "still active", so a finished turn is held open until
-				// the 120s stale-pane backstop — delaying every step completion (and
-				// its auto-notification) by ~1-2 min. The live in-progress signal
-				// ("⠋ Thinking… (esc to cancel)" in the footer) is unaffected.
-				"footer": map[string]interface{}{
-					"hideSandboxStatus": true,
-				},
-			},
-		}
-		debugHooksEnabled := geminiDebugHooksEnabled()
-		httpRoutingHooksEnabled := geminiHTTPRoutingHooksEnabled()
-		if debugHooksEnabled {
-			settings["hooks"] = buildGeminiDebugHooks()
-		}
-		if debugHooksEnabled {
-			a.Logger.Info("🪝 Gemini CLI BeforeTool debug hook enabled",
-				loggerv2.String("env", "MCPAGENT_GEMINI_DEBUG_HOOKS"),
-				loggerv2.String("project_dir", projectDir))
-		}
-		if httpRoutingHooksEnabled {
-			a.Logger.Info("🔒 Gemini CLI HTTP tool routing policy enabled",
-				loggerv2.String("env", "MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING"),
-				loggerv2.String("project_dir", projectDir))
-		}
-
-		// Build bridge MCP config and merge mcpServers into settings
-		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
-		if bridgeErr == nil {
-			var bridgeParsed map[string]interface{}
-			if json.Unmarshal([]byte(bridgeConfig), &bridgeParsed) == nil {
-				if mcpServers, ok := bridgeParsed["mcpServers"]; ok {
-					settings["mcpServers"] = mcpServers
-				}
-			}
-		} else {
-			a.Logger.Warn("Could not build bridge MCP config for Gemini CLI (tools may be limited)", loggerv2.Error(bridgeErr))
-		}
-
-		settingsBytes, _ := json.Marshal(settings)
-		opts = append(opts, llm.WithGeminiProjectSettings(string(settingsBytes)))
-
-		// Pre-create a policy file and pass it explicitly with --admin-policy.
-		// Workspace .gemini/policies is not enough on current Gemini CLI builds
-		// because project-level policies are disabled/non-functional.
-		policiesDir := filepath.Join(projectDir, ".gemini", "policies")
-		if err := os.MkdirAll(policiesDir, 0750); err != nil {
-			a.Logger.Warn("Failed to create Gemini CLI policies directory", loggerv2.Error(err))
-		} else {
-			policyContent := geminiRestrictToolsPolicyContent()
-			policyPath := filepath.Join(policiesDir, "restrict-tools.toml")
-			if err := os.WriteFile(policyPath, []byte(policyContent), 0600); err != nil {
-				a.Logger.Warn("Failed to write Gemini CLI policy file", loggerv2.Error(err))
-			} else {
-				opts = append(opts, llm.WithGeminiAdminPolicyPath(policyPath))
-				a.Logger.Info(fmt.Sprintf("📋 Wrote Gemini CLI admin policy file to %s", policyPath))
-			}
-		}
-		if debugHooksEnabled {
-			if err := writeGeminiHookScripts(projectDir, true, false); err != nil {
-				a.Logger.Warn("Failed to write Gemini CLI hook scripts", loggerv2.Error(err))
-			} else {
-				a.Logger.Info("🪝 Gemini CLI BeforeTool debug hook script ready",
-					loggerv2.String("path", filepath.Join(projectDir, ".gemini", "hooks", "log-before-tool.py")))
-			}
-		}
-
-		a.Logger.Info("🌉 Using Gemini CLI with project settings (MCP bridge configured, policy engine active)")
-
-		// Resume existing Gemini session if available
-		if a.GeminiSessionID != "" {
-			opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
-		}
-
-		// When a coding-agent working directory is configured, it remains the
-		// source of truth for MCP shell cwd and caller-visible workspace access.
-		// The Gemini adapter may still launch the CLI from an isolated project
-		// settings dir because Gemini discovers .gemini/settings.json from cwd.
-		opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
-		if !a.IsolatedSessionWorkspace && strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
-			// Main_agent / chat: tell the adapter to use the workflow-rooted
-			// project dir we computed above instead of the /tmp default.
-			opts = append(opts, llm.WithGeminiProjectDirAbsolute(projectDir))
-		}
-		if strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
-			opts = append(opts, llm.WithGeminiWorkingDir(a.CodingAgentWorkingDir))
-			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using working dir: %s, project dir: %s, project dir ID: %s (session: %s)", a.CodingAgentWorkingDir, projectDir, a.GeminiProjectDirID, a.GeminiSessionID))
-		} else {
-			a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
-		}
-	}
-
-	// 🔧 CODEX CLI INTEGRATION: MCP bridge + disable shell + auto-approve
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderCodexCLI {
-		// Disable shell tool so Codex only uses MCP bridge tools
-		opts = append(opts, llm.WithCodexDisableShellTool())
-		// Auto-approve all tool calls (no interactive prompts)
-		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
-		// Explicitly pin sandbox=workspace-write so apply_patch (which
-		// is NOT covered by --disable feature flags — see
-		// codexBridgeOnlyDisabledFeatures in
-		// multi-llm-provider-go/pkg/adapters/codexcli/options.go) is
-		// still confined to the session's cwd. When the workflow-step
-		// isolation flag is set, cwd is an os.MkdirTemp dir so
-		// apply_patch can only write to the tmp dir and never reach
-		// the user's actual workflow files. For chat mode (no
-		// isolation), cwd is the user's workspace dir so apply_patch
-		// edits the user's files — the desired chat UX. Codex's
-		// implicit default under approval=never happens to be
-		// workspace-write today, but we set it explicitly so the
-		// isolation guarantee doesn't silently regress if codex's
-		// default changes.
-		opts = append(opts, llm.WithCodexSandbox("workspace-write"))
-		if a.CodexSessionID != "" {
-			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
-		}
-
-		// Build MCP bridge config and pass as Codex CLI config overrides
-		// Codex CLI uses config.toml format: mcp_servers.<name>.command, .args, .env
-		bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
-		if bridgeErr == nil {
-			var bridgeParsed map[string]interface{}
-			if json.Unmarshal([]byte(bridgeConfig), &bridgeParsed) == nil {
-				if mcpServers, ok := bridgeParsed["mcpServers"].(map[string]interface{}); ok {
-					if apiBridge, ok := mcpServers["api-bridge"].(map[string]interface{}); ok {
-						var configOverrides []string
-
-						// Set the bridge command
-						if cmd, ok := apiBridge["command"].(string); ok {
-							configOverrides = append(configOverrides, fmt.Sprintf("mcp_servers.api-bridge.command=%q", cmd))
-						}
-
-						// Set environment variables for the bridge
-						if envMap, ok := apiBridge["env"].(map[string]interface{}); ok {
-							for k, v := range envMap {
-								if vStr, ok := v.(string); ok {
-									configOverrides = append(configOverrides, fmt.Sprintf("mcp_servers.api-bridge.env.%s=%q", k, vStr))
-								}
-							}
-						}
-
-						// Set a generous tool timeout so long-running shell commands
-						// (web searches, sub-agent calls, analysis scripts) are not
-						// killed by the Codex CLI default of 60s.
-						configOverrides = append(configOverrides, "mcp_servers.api-bridge.tool_timeout_sec=5400")
-
-						if len(configOverrides) > 0 {
-							opts = append(opts, llm.WithCodexConfigOverrides(configOverrides))
-							a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge with %d config overrides", len(configOverrides)))
-						}
-					}
-				}
-			}
-		} else {
-			a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Codex CLI (tools may be limited): %v", bridgeErr))
-		}
-
-		// Pass reasoning effort from model options
-		if model.Options != nil {
-			if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
-				opts = append(opts, llm.WithCodexReasoningEffort(effort))
-				a.Logger.Info(fmt.Sprintf("🧠 [CODEX_CLI] Reasoning effort set to: %s", effort))
-			}
-		}
-
-		a.Logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
-	}
-
-	// 🔧 CURSOR CLI INTEGRATION: MCP bridge + tmux live input
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderCursorCLI {
-		opts = a.appendCursorCLIIntegrationOptions(opts)
-	}
-
-	// 🔧 ANTIGRAVITY CLI INTEGRATION: MCP bridge + tmux live input.
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderAgyCLI {
-		opts = a.appendAgyCLIIntegrationOptions(opts)
-	}
-
-	// 🔧 PI CLI INTEGRATION: tmux marker transport + optional upstream provider override.
-	if llmproviders.Provider(model.Provider) == llmproviders.ProviderPiCLI {
-		var err error
-		opts, err = a.appendPiCLIIntegrationOptions(opts)
-		if err != nil {
-			return nil, err
-		}
-		if model.Options != nil {
-			if provider, ok := model.Options["pi_provider"].(string); ok && provider != "" {
-				opts = append(opts, llm.WithPiProvider(provider))
-			}
+	if appender, ok := codingAgentIntegrationAppenders[llmproviders.Provider(model.Provider)]; ok {
+		var integrationErr error
+		opts, integrationErr = appender(a, opts, model)
+		if integrationErr != nil {
+			return nil, integrationErr
 		}
 	}
 

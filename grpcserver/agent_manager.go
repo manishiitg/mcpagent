@@ -52,10 +52,10 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 	defer m.mu.Unlock()
 
 	// Generate IDs
-	agentID := "agent_" + uuid.New().String()[:8]
+	agentID := newManagedAgentID()
 	sessionID := req.SessionID
 	if sessionID == "" {
-		sessionID = "session_" + uuid.New().String()[:8]
+		sessionID = newManagedSessionID()
 	}
 
 	// Create context with cancellation
@@ -116,6 +116,14 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 	m.logger.Info("Agent created", loggerv2.String("agent_id", agentID), loggerv2.String("session_id", sessionID))
 
 	return managed, nil
+}
+
+func newManagedAgentID() string {
+	return "agent_" + uuid.NewString()
+}
+
+func newManagedSessionID() string {
+	return "session_" + uuid.NewString()
 }
 
 // GetAgent retrieves an agent by ID

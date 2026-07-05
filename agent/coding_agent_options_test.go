@@ -197,6 +197,27 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 	}
 }
 
+func TestCodingAgentIntegrationAppenderCoverage(t *testing.T) {
+	for _, contract := range llm.CodingAgentProviderContracts() {
+		if !contract.UsesMCPBridge {
+			continue
+		}
+		if _, ok := codingAgentIntegrationAppenders[contract.Provider]; !ok {
+			t.Errorf("provider %s uses MCP bridge but has no executeLLM integration appender", contract.Provider)
+		}
+	}
+	for provider := range codingAgentIntegrationAppenders {
+		contract, ok := llm.GetCodingAgentProviderContract(provider, "")
+		if !ok {
+			t.Errorf("integration appender has %s but no coding-agent contract", provider)
+			continue
+		}
+		if !contract.UsesMCPBridge {
+			t.Errorf("integration appender has %s but contract does not use MCP bridge", provider)
+		}
+	}
+}
+
 func TestForceStructuredCodingAgentSuppressesGeminiInteractiveSessionMetadata(t *testing.T) {
 	agent := &Agent{
 		provider:                           llm.ProviderGeminiCLI,

@@ -25,14 +25,31 @@ func (h *ExecutorHandlers) HandlePerToolCustomRequest(w http.ResponseWriter, r *
 	h.handlePerToolCustom(w, r, tool)
 }
 
+func perToolSessionIDFromRequest(r *http.Request, args map[string]interface{}) string {
+	bodySessionID := ""
+	if sid, ok := args["session_id"].(string); ok {
+		bodySessionID = strings.TrimSpace(sid)
+		delete(args, "session_id")
+	}
+
+	// X-Session-ID is injected by the trusted session-scoped bridge route. It
+	// must be authoritative; a CLI agent can control JSON args but cannot
+	// rewrite this header from the per-session route.
+	if hdr := strings.TrimSpace(r.Header.Get("X-Session-ID")); hdr != "" {
+		return hdr
+	}
+
+	// Legacy direct /tools/... callers may still pass session_id in the body.
+	return bodySessionID
+}
+
 // handlePerToolMCP handles requests to /tools/mcp/{server}/{tool}.
 // It extracts the tool arguments from the request body and delegates to the standard MCP execution logic.
 func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Request, server, tool string) {
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
+	if !applyExecutorCORS(w, r) {
+		return
+	}
 
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -55,21 +72,7 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 		args = make(map[string]interface{})
 	}
 
-	// Extract optional session_id from args (and remove it so it's not passed as tool arg)
-	sessionID := ""
-	if sid, ok := args["session_id"].(string); ok {
-		sessionID = sid
-		delete(args, "session_id")
-	}
-
-	// Server-side fallback: if session_id is empty in body, check X-Session-ID header.
-	// This header is set automatically when requests come through session-scoped routes
-	// (/s/{session_id}/tools/...), so session_id is enforced without agent cooperation.
-	if sessionID == "" {
-		if hdr := r.Header.Get("X-Session-ID"); hdr != "" {
-			sessionID = hdr
-		}
-	}
+	sessionID := perToolSessionIDFromRequest(r, args)
 
 	mcpStartTime := time.Now()
 	h.logger.Info("Per-tool MCP request",
@@ -175,11 +178,10 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 
 // handlePerToolCustom handles requests to /tools/custom/{tool}.
 func (h *ExecutorHandlers) handlePerToolCustom(w http.ResponseWriter, r *http.Request, tool string) {
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
+	if !applyExecutorCORS(w, r) {
+		return
+	}
 
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -202,19 +204,7 @@ func (h *ExecutorHandlers) handlePerToolCustom(w http.ResponseWriter, r *http.Re
 		args = make(map[string]interface{})
 	}
 
-	// Extract optional session_id
-	sessionID := ""
-	if sid, ok := args["session_id"].(string); ok {
-		sessionID = sid
-		delete(args, "session_id")
-	}
-
-	// Server-side fallback: check X-Session-ID header if body doesn't have session_id
-	if sessionID == "" {
-		if hdr := r.Header.Get("X-Session-ID"); hdr != "" {
-			sessionID = hdr
-		}
-	}
+	sessionID := perToolSessionIDFromRequest(r, args)
 
 	h.logger.Info("Per-tool custom request",
 		loggerv2.String("tool", tool),
@@ -253,11 +243,10 @@ func (h *ExecutorHandlers) handlePerToolCustom(w http.ResponseWriter, r *http.Re
 // It handles requests to /tools/virtual/{tool}, extracting args from the body
 // and delegating to the standard virtual tool execution logic.
 func (h *ExecutorHandlers) HandlePerToolVirtualRequest(w http.ResponseWriter, r *http.Request, tool string) {
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
+	if !applyExecutorCORS(w, r) {
+		return
+	}
 
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -280,25 +269,13 @@ func (h *ExecutorHandlers) HandlePerToolVirtualRequest(w http.ResponseWriter, r 
 		args = make(map[string]interface{})
 	}
 
-	// Extract optional session_id from args (and remove it so it's not passed as tool arg)
-	sessionID := ""
-	if sid, ok := args["session_id"].(string); ok {
-		sessionID = sid
-		delete(args, "session_id")
-	}
-
-	// Server-side fallback: check X-Session-ID header if body doesn't have session_id
-	if sessionID == "" {
-		if hdr := r.Header.Get("X-Session-ID"); hdr != "" {
-			sessionID = hdr
-		}
-	}
+	sessionID := perToolSessionIDFromRequest(r, args)
 
 	// Per-agent virtual tool scoping: if X-Virtual-Scope-ID header is present,
 	// use it instead of session_id for virtual tool lookup. This prevents parent/child
 	// agents sharing the same MCP session from overwriting each other's get_api_spec handler.
 	virtualScopeID := sessionID
-	if scopeHdr := r.Header.Get("X-Virtual-Scope-ID"); scopeHdr != "" {
+	if scopeHdr := strings.TrimSpace(r.Header.Get("X-Virtual-Scope-ID")); scopeHdr != "" {
 		virtualScopeID = scopeHdr
 	}
 

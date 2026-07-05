@@ -530,7 +530,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Calculate token count for the system prompt if tool output handler is available
 	var tokenCount int
-	if a.toolOutputHandler != nil && a.ModelID != "" {
+	if a.ModelID != "" && a.shouldUseWrapperTokenCounting() {
 		tokenCount = a.toolOutputHandler.CountTokensForModel(a.systemPrompt, a.ModelID)
 	}
 	systemPromptEvent := events.NewSystemPromptEventWithTokens(a.systemPrompt, 0, tokenCount)
@@ -1582,7 +1582,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					}
 
 					// Context offloading: Check if tool output should be offloaded to filesystem
-					if a.EnableContextOffloading && a.toolOutputHandler != nil {
+					if a.EnableContextOffloading && a.shouldUseWrapperTokenCounting() {
 						// Check if output exceeds threshold for context offloading
 						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
 
@@ -1617,7 +1617,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Safety check: Apply max token limit truncation regardless of context offloading setting
 					// This prevents API errors from prompts exceeding model context limits
-					if a.toolOutputHandler != nil && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
+					if a.shouldUseWrapperTokenCounting() && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
 						truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.ModelID, tc.FunctionCall.Name)
 						if wasTruncated {
 							v2Logger.Warn("Tool output exceeded max token limit, truncated",

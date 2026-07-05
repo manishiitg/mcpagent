@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 // maxOutputBytes is the maximum size of stdout/stderr captured from shell commands (100KB).
@@ -19,6 +22,10 @@ var ShellCommandParams = map[string]interface{}{
 			"type":        "string",
 			"description": "The shell command to execute",
 		},
+		"working_directory": map[string]interface{}{
+			"type":        "string",
+			"description": "Optional directory to run the command from. Must exist and be a directory.",
+		},
 	},
 	"required": []string{"command"},
 }
@@ -28,9 +35,10 @@ const ShellCommandDescription = "Execute a shell command and return stdout, stde
 
 // ExecuteShellCommand runs a shell command via sh -c and returns
 // a formatted string with exit_code, stdout, and stderr.
-// env specifies the environment for the child process; if nil, the current
-// process's environment is inherited (which may leak secrets).
-// Callers should pass BuildSafeEnvironment() plus any required env vars.
+// env specifies the environment for the child process. If nil, a minimal safe
+// environment is used instead of inheriting the parent process environment.
+// Callers should pass BuildSafeEnvironment() plus any required env vars when
+// the command needs bridge or workflow-specific values.
 // stdout and stderr are each capped at maxOutputBytes.
 func ExecuteShellCommand(ctx context.Context, args map[string]interface{}, env []string) (string, error) {
 	command, ok := args["command"].(string)
@@ -38,16 +46,26 @@ func ExecuteShellCommand(ctx context.Context, args map[string]interface{}, env [
 		return "", fmt.Errorf("command must be a string")
 	}
 
+	workingDirectory, err := shellWorkingDirectory(args)
+	if err != nil {
+		return "", err
+	}
+
 	cmd := exec.CommandContext(ctx, "sh", "-c", command) //nolint:gosec // G204: intentional — this tool's purpose is to execute user-provided commands
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if workingDirectory != "" {
+		cmd.Dir = workingDirectory
+	}
 
 	if env != nil {
 		cmd.Env = env
+	} else {
+		cmd.Env = BuildSafeEnvironment()
 	}
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	exitCode := 0
 	if err != nil {
@@ -63,6 +81,44 @@ func ExecuteShellCommand(ctx context.Context, args map[string]interface{}, env [
 	stderrStr := truncateOutput(stderr.Bytes(), maxOutputBytes)
 
 	return fmt.Sprintf("exit_code: %d\nstdout:\n%s\nstderr:\n%s", exitCode, stdoutStr, stderrStr), nil
+}
+
+// BuildSafeEnvironment creates a minimal environment for shell commands.
+// It intentionally excludes the parent process environment so API keys and
+// process-level secrets are not inherited by accident.
+func BuildSafeEnvironment() []string {
+	return []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/tmp",
+		"USER=agent",
+		"SHELL=/bin/sh",
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+	}
+}
+
+func shellWorkingDirectory(args map[string]interface{}) (string, error) {
+	raw, ok := args["working_directory"]
+	if !ok || raw == nil {
+		return "", nil
+	}
+	dir, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("working_directory must be a string")
+	}
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return "", nil
+	}
+	cleaned := filepath.Clean(dir)
+	info, err := os.Stat(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("working_directory %q is not accessible: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("working_directory %q is not a directory", dir)
+	}
+	return cleaned, nil
 }
 
 // truncateOutput truncates output to maxBytes and appends a truncation notice.

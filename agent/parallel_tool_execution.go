@@ -607,7 +607,7 @@ func executeToolCall(
 		}
 
 		// Context offloading
-		if a.EnableContextOffloading && a.toolOutputHandler != nil {
+		if a.EnableContextOffloading && a.shouldUseWrapperTokenCounting() {
 			if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
 				detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
 				detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
@@ -629,7 +629,7 @@ func executeToolCall(
 
 		// Safety check: Apply max token limit truncation regardless of context offloading setting
 		// This prevents API errors from prompts exceeding model context limits
-		if a.toolOutputHandler != nil && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
+		if a.shouldUseWrapperTokenCounting() && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
 			truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.ModelID, tc.FunctionCall.Name)
 			if wasTruncated {
 				v2Logger.Warn("Tool output exceeded max token limit, truncated",

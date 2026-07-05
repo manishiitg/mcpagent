@@ -88,6 +88,11 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	if err := os.Chmod(s.socketPath, 0o600); err != nil {
+		_ = listener.Close()
+		_ = os.Remove(s.socketPath)
+		return err
+	}
 	s.listener = listener
 
 	s.logger.Info("Starting gRPC server on Unix socket", loggerv2.String("socket", s.socketPath))

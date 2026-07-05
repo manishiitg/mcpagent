@@ -9,6 +9,15 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+var codingAgentPersistentInteractiveEnabledByProvider = map[llm.Provider]func(*Agent) bool{
+	llm.ProviderClaudeCode: func(a *Agent) bool { return a.ClaudeCodePersistentInteractiveSession },
+	llm.ProviderCodexCLI:   func(a *Agent) bool { return a.CodexPersistentInteractiveSession },
+	llm.ProviderGeminiCLI:  func(a *Agent) bool { return a.GeminiPersistentInteractiveSession },
+	llm.ProviderCursorCLI:  func(a *Agent) bool { return a.CursorPersistentInteractiveSession },
+	llm.ProviderAgyCLI:     func(a *Agent) bool { return a.AgyPersistentInteractiveSession },
+	llm.ProviderPiCLI:      func(a *Agent) bool { return a.PiPersistentInteractiveSession },
+}
+
 func (a *Agent) appendCodingAgentInteractiveOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
 	return a.appendCodingAgentInteractiveOptionsForProvider(opts, a.provider, a.ModelID)
 }
@@ -28,48 +37,33 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 		return opts
 	}
 
-	switch provider {
-	case llm.ProviderClaudeCode:
-		opts = append(opts, llm.WithClaudeCodeInteractiveSessionID(sessionID))
-		if a.ClaudeCodePersistentInteractiveSession {
-			opts = append(opts, llm.WithClaudeCodePersistentInteractiveSession(true))
-		}
-	case llm.ProviderCodexCLI:
-		opts = append(opts, llm.WithCodexInteractiveSessionID(sessionID))
+	if option := llm.CodingAgentInteractiveSessionOption(provider, sessionID); option != nil {
+		opts = append(opts, option)
+	} else {
+		return opts
+	}
+
+	if provider == llm.ProviderCodexCLI {
 		if strings.TrimSpace(a.CodingAgentWorkingDir) == "" {
 			if legacyDir := strings.TrimSpace(a.CodexProjectDirID); legacyDir != "" {
 				opts = append(opts, llm.WithCodexProjectDirID(legacyDir))
 			}
 		}
-		if a.CodexPersistentInteractiveSession {
-			opts = append(opts, llm.WithCodexPersistentInteractiveSession(true))
-		}
-	case llm.ProviderGeminiCLI:
-		opts = append(opts, llm.WithGeminiInteractiveSessionID(sessionID))
-		if a.GeminiPersistentInteractiveSession {
-			opts = append(opts, llm.WithGeminiPersistentInteractiveSession(true))
-		}
-	case llm.ProviderCursorCLI:
-		opts = append(opts, llm.WithCursorInteractiveSessionID(sessionID))
+	}
+
+	if provider == llm.ProviderCursorCLI {
 		opts = append(opts, llm.WithCursorAutoApproveWebSearch())
-		if a.CursorPersistentInteractiveSession {
-			opts = append(opts, llm.WithCursorPersistentInteractiveSession(true))
-		}
 		// CursorBridgeToolsMode intentionally does NOT set --mode ask. Cursor's
 		// ask mode is a conversational stance that hard-refuses natural-language
 		// write requests with "Switch to Agent mode", which makes the chat
 		// unusable for any task that involves writes. Cursor runs in default
 		// agent mode; MCP bridge config is still provided via .cursor/mcp.json
 		// for tools the agent chooses to invoke through the bridge.
-	case llm.ProviderAgyCLI:
-		opts = append(opts, llm.WithAgyInteractiveSessionID(sessionID))
-		if a.AgyPersistentInteractiveSession {
-			opts = append(opts, llm.WithAgyPersistentInteractiveSession(true))
-		}
-	case llm.ProviderPiCLI:
-		opts = append(opts, llm.WithPiInteractiveSessionID(sessionID))
-		if a.PiPersistentInteractiveSession {
-			opts = append(opts, llm.WithPiPersistentInteractiveSession(true))
+	}
+
+	if a.codingAgentPersistentInteractiveEnabled(provider) {
+		if option := llm.CodingAgentPersistentInteractiveOption(provider, true); option != nil {
+			opts = append(opts, option)
 		}
 	}
 
@@ -97,11 +91,11 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	if workingDir == "" {
 		return opts
 	}
-	option, ok := codingAgentWorkingDirOptionForProvider(provider, modelID)
-	if !ok {
+	option := llm.CodingAgentWorkingDirOption(provider, workingDir)
+	if option == nil {
 		return opts
 	}
-	opts = append(opts, option(workingDir))
+	opts = append(opts, option)
 
 	// CLI providers that ALSO project the per-session system prompt into a
 	// workspace instruction file (claude→CLAUDE.md, codex→AGENTS.md,
@@ -109,16 +103,11 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	// twice — once via the CLI flag/env/in-band channel and once via the
 	// projected file — doubling the (often large) builder prompt. Carry it
 	// through the projected file only; each adapter falls back to its normal
-	// channel if the projection is disabled or its write fails. cursor and agy
-	// carry the prompt through their rules file alone (single channel), so they
-	// need no opt-in here.
-	switch provider {
-	case llm.ProviderClaudeCode:
-		opts = append(opts, llm.WithClaudeCodeProjectInstructionOnly(true))
-	case llm.ProviderCodexCLI:
-		opts = append(opts, llm.WithCodexProjectInstructionOnly(true))
-	case llm.ProviderGeminiCLI:
-		opts = append(opts, llm.WithGeminiProjectInstructionOnly(true))
+	// channel if the projection is disabled or its write fails. Cursor/Agy carry
+	// the prompt through their rules file alone, and Pi uses explicit append-
+	// system-prompt, so they need no opt-in here.
+	if option := llm.CodingAgentProjectInstructionOnlyOption(provider, true); option != nil {
+		opts = append(opts, option)
 	}
 
 	return opts
@@ -167,7 +156,7 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	}
 	if sid, ok := additional["codex_thread_id"].(string); ok && sid != "" {
 		if a.Logger != nil && a.CodexSessionID != sid {
-			a.Logger.Info(fmt.Sprintf("🔎 [CODEX_SESSION_DEBUG] CodexSessionID SET from response codex_thread_id: session=%q old=%q new=%q isolated=%v", a.SessionID, a.CodexSessionID, sid, a.IsolatedSessionWorkspace))
+			a.Logger.Debug(fmt.Sprintf("CodexSessionID set from response: session=%q old=%q new=%q isolated=%v", a.SessionID, a.CodexSessionID, sid, a.IsolatedSessionWorkspace))
 		}
 		a.CodexSessionID = sid
 	}
@@ -187,87 +176,61 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 
 func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 	var opts []llmtypes.CallOption
-	switch a.provider {
-	case llm.ProviderClaudeCode:
-		if a.ClaudeCodeSessionID != "" {
-			opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
+	handle := a.legacyCodingProviderSessionHandle()
+	if sessionID := strings.TrimSpace(handle.NativeSessionID); sessionID != "" {
+		if option := llm.NativeResumeOption(a.provider, sessionID); option != nil {
+			opts = append(opts, option)
 		}
-	case llm.ProviderGeminiCLI:
-		if a.GeminiSessionID != "" {
-			opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
-		}
-		if strings.TrimSpace(a.CodingAgentWorkingDir) == "" && a.GeminiProjectDirID != "" {
-			opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
-		}
-	case llm.ProviderCodexCLI:
-		if a.CodexSessionID != "" {
-			opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
-		}
-	case llm.ProviderCursorCLI:
-		if a.CursorSessionID != "" {
-			opts = append(opts, llm.WithCursorResumeSessionID(a.CursorSessionID))
-		}
-	case llm.ProviderAgyCLI:
-		if a.AgySessionID != "" {
-			opts = append(opts, llm.WithAgyResumeSessionID(a.AgySessionID))
-		}
-	case llm.ProviderPiCLI:
-		if a.PiSessionID != "" {
-			opts = append(opts, llm.WithPiResumeSessionID(a.PiSessionID))
+	}
+	if a.provider == llm.ProviderGeminiCLI && strings.TrimSpace(a.CodingAgentWorkingDir) == "" {
+		if projectDirID := strings.TrimSpace(handle.ProjectDirID); projectDirID != "" {
+			if option := llm.CodingAgentProjectDirIDOption(a.provider, projectDirID); option != nil {
+				opts = append(opts, option)
+			}
 		}
 	}
 	return opts
 }
 
-func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
+func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
 	bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
-	if bridgeErr == nil {
-		opts = append(opts, llm.WithCursorMCPConfig(bridgeConfig))
-		// --approve-mcps auto-accepts cursor's "approve this MCP server?"
-		// TUI dialog so the FIRST bridge tool call does not stall waiting
-		// for a human to click through. Required whenever WithCursorMCPConfig
-		// is set in a headless context.
-		opts = append(opts, llm.WithCursorApproveMCPs())
-		// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
-		// that denies cursor's built-in Shell/Read/Edit/Write/etc. tools at the
-		// hook layer, forcing the agent to route tool calls through the MCP
-		// bridge we just configured. Only enable it alongside the bridge config
-		// so we never deny built-ins without a working MCP fallback.
-		opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
-		if a.Logger != nil {
-			a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
-			a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
-		}
-		return opts
+	if bridgeErr != nil {
+		return nil, fmt.Errorf("Cursor CLI requires the MCP bridge: %w", bridgeErr)
 	}
 
+	opts = append(opts, llm.WithCursorMCPConfig(bridgeConfig))
+	// --approve-mcps auto-accepts cursor's "approve this MCP server?"
+	// TUI dialog so the FIRST bridge tool call does not stall waiting
+	// for a human to click through. Required whenever WithCursorMCPConfig
+	// is set in a headless context.
+	opts = append(opts, llm.WithCursorApproveMCPs())
+	// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
+	// that denies cursor's built-in Shell/Read/Edit/Write/etc. tools at the
+	// hook layer, forcing the agent to route tool calls through the MCP
+	// bridge we just configured.
+	opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
 	if a.Logger != nil {
-		a.Logger.Warn(fmt.Sprintf("Could not build bridge MCP config for Cursor CLI (tools may be limited): %v", bridgeErr))
+		a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
+		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
 	}
-	// --force (= --yolo) puts cursor in auto-approve-everything mode, which
-	// bypasses .cursor/hooks.json deny verdicts. Only pass --force when no
-	// bridge config was available, because there are no hooks to enforce.
-	opts = append(opts, llm.WithCursorForce())
-	if a.Logger != nil {
-		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with live input support (--force yolo: bridge unavailable)")
-	}
-	return opts
+	return opts, nil
 }
 
 func codingAgentWorkingDirOptionForProvider(provider llm.Provider, modelID string) (func(string) llmtypes.CallOption, bool) {
-	switch provider {
-	case llm.ProviderClaudeCode:
-		return llm.WithClaudeCodeWorkingDir, true
-	case llm.ProviderCodexCLI:
-		return llm.WithCodexProjectDirID, true
-	case llm.ProviderGeminiCLI:
-		return llm.WithGeminiWorkingDir, true
-	case llm.ProviderCursorCLI:
-		return llm.WithCursorWorkingDir, true
-	case llm.ProviderAgyCLI:
-		return llm.WithAgyWorkingDir, true
-	case llm.ProviderPiCLI:
-		return llm.WithPiWorkingDir, true
+	if !llm.IsCodingAgentProvider(provider, modelID) {
+		return nil, false
 	}
-	return nil, false
+	return func(dir string) llmtypes.CallOption {
+		return llm.CodingAgentWorkingDirOption(provider, dir)
+	}, true
+}
+
+func (a *Agent) codingAgentPersistentInteractiveEnabled(provider llm.Provider) bool {
+	if a == nil {
+		return false
+	}
+	if fn, ok := codingAgentPersistentInteractiveEnabledByProvider[provider]; ok {
+		return fn(a)
+	}
+	return false
 }
