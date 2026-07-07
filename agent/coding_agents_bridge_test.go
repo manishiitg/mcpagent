@@ -9,7 +9,9 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
@@ -273,7 +275,11 @@ func TestAppendAgyCLIIntegrationOptionsEnablesBridgeOnlyHooks(t *testing.T) {
 	agent.SessionID = "app-session"
 	agent.AgySessionID = "agy-conversation-id"
 
-	got := metadataFromCallOptions(agent.appendAgyCLIIntegrationOptions(nil))
+	opts, err := agent.appendAgyCLIIntegrationOptions(nil)
+	if err != nil {
+		t.Fatalf("appendAgyCLIIntegrationOptions() error = %v", err)
+	}
+	got := metadataFromCallOptions(opts)
 
 	mcpConfig, ok := got[agycli.MetadataKeyMCPConfig].(string)
 	if !ok || !strings.Contains(mcpConfig, `"api-bridge"`) {
@@ -295,7 +301,11 @@ func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T
 	agent := bridgeTestAgent()
 	agent.SessionID = "app-session"
 
-	got := metadataFromCallOptions(agent.appendCursorCLIIntegrationOptions(nil))
+	opts, err := agent.appendCursorCLIIntegrationOptions(nil)
+	if err != nil {
+		t.Fatalf("appendCursorCLIIntegrationOptions() error = %v", err)
+	}
+	got := metadataFromCallOptions(opts)
 
 	mcpConfig, ok := got[cursorcli.MetadataKeyMCPConfig].(string)
 	if !ok || !strings.Contains(mcpConfig, `"api-bridge"`) {
@@ -331,7 +341,11 @@ func TestCursorRunloopChatOptionsCarryBridgeAndWebAutoApproval(t *testing.T) {
 	agent.CursorBridgeToolsMode = true
 
 	opts := agent.appendCodingAgentInteractiveOptions(nil)
-	opts = agent.appendCursorCLIIntegrationOptions(opts)
+	var err error
+	opts, err = agent.appendCursorCLIIntegrationOptions(opts)
+	if err != nil {
+		t.Fatalf("appendCursorCLIIntegrationOptions() error = %v", err)
+	}
 	got := metadataFromCallOptions(opts)
 
 	if got[cursorcli.MetadataKeyInteractiveSessionID] != "app-session" {
@@ -367,23 +381,91 @@ func TestCursorRunloopChatOptionsCarryBridgeAndWebAutoApproval(t *testing.T) {
 	}
 }
 
-func TestAppendCursorCLIIntegrationOptionsFallsBackToForceWithoutBridge(t *testing.T) {
+func TestAppendCursorCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "")
 	t.Setenv("MCP_BRIDGE_API_URL", "")
 	t.Setenv("MCP_API_TOKEN", "")
 
 	agent := bridgeTestAgent()
-	got := metadataFromCallOptions(agent.appendCursorCLIIntegrationOptions(nil))
+	if _, err := agent.appendCursorCLIIntegrationOptions(nil); err == nil {
+		t.Fatal("appendCursorCLIIntegrationOptions() error = nil, want missing bridge config error")
+	}
+}
 
-	if got[cursorcli.MetadataKeyForce] != true {
-		t.Fatalf("Cursor force metadata = %#v, want true when bridge is unavailable", got[cursorcli.MetadataKeyForce])
+func TestAppendAgyCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "")
+	t.Setenv("MCP_BRIDGE_API_URL", "")
+	t.Setenv("MCP_API_TOKEN", "")
+
+	agent := bridgeTestAgent()
+	if _, err := agent.appendAgyCLIIntegrationOptions(nil); err == nil {
+		t.Fatal("appendAgyCLIIntegrationOptions() error = nil, want missing bridge config error")
 	}
-	if _, ok := got[cursorcli.MetadataKeyDenyBuiltinTools]; ok {
-		t.Fatalf("Cursor deny-builtin metadata must not be set without bridge: %#v", got[cursorcli.MetadataKeyDenyBuiltinTools])
+}
+
+func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+	if err != nil {
+		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
 	}
-	if _, ok := got[cursorcli.MetadataKeyMCPConfig]; ok {
-		t.Fatalf("Cursor MCP config metadata must not be set without bridge: %#v", got[cursorcli.MetadataKeyMCPConfig])
+	got := metadataFromCallOptions(opts)
+	overrides, ok := got[codexcli.MetadataKeyConfigOverrides].([]string)
+	if !ok {
+		t.Fatalf("Codex config overrides = %#v, want []string", got[codexcli.MetadataKeyConfigOverrides])
+	}
+	joined := strings.Join(overrides, "\n")
+	for _, want := range []string{"mcp_servers.api-bridge.command", "mcp_servers.api-bridge.env.MCP_API_URL", "mcp_servers.api-bridge.env.MCP_API_TOKEN"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("Codex config overrides missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestAppendCodexCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "")
+	t.Setenv("MCP_BRIDGE_API_URL", "")
+	t.Setenv("MCP_API_TOKEN", "")
+
+	agent := bridgeTestAgent()
+	if _, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{}); err == nil {
+		t.Fatal("appendCodexCLIIntegrationOptions() error = nil, want missing bridge config error")
+	}
+}
+
+func TestAppendGeminiCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	opts, err := agent.appendGeminiCLIIntegrationOptions(nil)
+	if err != nil {
+		t.Fatalf("appendGeminiCLIIntegrationOptions() error = %v", err)
+	}
+	got := metadataFromCallOptions(opts)
+	settingsJSON, ok := got[geminicli.MetadataKeyProjectSettings].(string)
+	if !ok || !strings.Contains(settingsJSON, `"api-bridge"`) {
+		t.Fatalf("Gemini project settings = %#v, want api-bridge settings", got[geminicli.MetadataKeyProjectSettings])
+	}
+}
+
+func TestAppendGeminiCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "")
+	t.Setenv("MCP_BRIDGE_API_URL", "")
+	t.Setenv("MCP_API_TOKEN", "")
+
+	agent := bridgeTestAgent()
+	if _, err := agent.appendGeminiCLIIntegrationOptions(nil); err == nil {
+		t.Fatal("appendGeminiCLIIntegrationOptions() error = nil, want missing bridge config error")
 	}
 }
 

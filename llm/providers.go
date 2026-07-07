@@ -67,6 +67,30 @@ func CodingAgentProviderContracts() []CodingAgentProviderContract {
 	return llmproviders.CodingAgentProviderContracts()
 }
 
+func CodingAgentInteractiveSessionOption(provider Provider, ownerSessionID string) llmtypes.CallOption {
+	return llmproviders.CodingAgentInteractiveSessionOption(provider, ownerSessionID)
+}
+
+func CodingAgentPersistentInteractiveOption(provider Provider, enabled bool) llmtypes.CallOption {
+	return llmproviders.CodingAgentPersistentInteractiveOption(provider, enabled)
+}
+
+func CodingAgentWorkingDirOption(provider Provider, workingDir string) llmtypes.CallOption {
+	return llmproviders.CodingAgentWorkingDirOption(provider, workingDir)
+}
+
+func CodingAgentProjectDirIDOption(provider Provider, projectDirID string) llmtypes.CallOption {
+	return llmproviders.CodingAgentProjectDirIDOption(provider, projectDirID)
+}
+
+func CodingAgentProjectInstructionOnlyOption(provider Provider, enabled bool) llmtypes.CallOption {
+	return llmproviders.CodingAgentProjectInstructionOnlyOption(provider, enabled)
+}
+
+func NativeResumeOption(provider Provider, sessionID string) llmtypes.CallOption {
+	return llmproviders.NativeResumeOption(provider, sessionID)
+}
+
 type CodingAgentContinuationError = llmproviders.CodingAgentContinuationError
 type CodingAgentContinuationErrorKind = llmproviders.CodingAgentContinuationErrorKind
 

@@ -2760,6 +2760,7 @@ func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.D
 
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
+	a.closeStreamingTracers()
 
 	// Cleanup agent-specific generated directory (only in code execution mode)
 	if a.UseCodeExecutionMode {
@@ -2870,6 +2871,14 @@ func (a *Agent) stopCleanupRoutine() {
 		case a.cleanupDone <- true:
 		default:
 			// Channel already has a signal, skip
+		}
+	}
+}
+
+func (a *Agent) closeStreamingTracers() {
+	for _, tracer := range a.Tracers {
+		if streamingTracer, ok := tracer.(*streamingTracerImpl); ok {
+			_ = streamingTracer.Close()
 		}
 	}
 }
@@ -3662,6 +3671,7 @@ func getClientNames(clients map[string]mcpclient.ClientInterface) []string {
 func (a *Agent) Close() {
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
+	a.closeStreamingTracers()
 
 	// Check if using session-scoped connections
 	if a.SessionID != "" {

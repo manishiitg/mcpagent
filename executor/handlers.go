@@ -134,11 +134,10 @@ func NewExecutorHandlers(configPath string, logger loggerv2.Logger) *ExecutorHan
 // Body: {"server": "aws", "tool": "list_buckets", "args": {...}}
 // Response: {"success": true, "result": "..."}
 func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
+	if !applyExecutorCORS(w, r) {
+		return
+	}
 
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -579,11 +578,10 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 // Body: {"tool": "read_workspace_file", "args": {...}}
 // Response: {"success": true, "result": "..."}
 func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
+	if !applyExecutorCORS(w, r) {
+		return
+	}
 
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -678,11 +676,10 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 // Body: {"tool": "discover_code_structure", "args": {...}}
 // Response: {"success": true, "result": "..."}
 func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
+	if !applyExecutorCORS(w, r) {
+		return
+	}
 
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)

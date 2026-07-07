@@ -92,14 +92,9 @@ func (st *streamingTracerImpl) SubscribeToEvents(ctx context.Context) (<-chan *e
 func (st *streamingTracerImpl) forwardEvents() {
 	for event := range st.eventStream {
 		st.subscriberMu.RLock()
-		subscribers := make([]chan *events.AgentEvent, 0, len(st.subscribers))
+		// Send while holding the read lock so unsubscribe/Close cannot close a
+		// subscriber channel between selection and send.
 		for _, ch := range st.subscribers {
-			subscribers = append(subscribers, ch)
-		}
-		st.subscriberMu.RUnlock()
-
-		// Send to all subscribers (non-blocking)
-		for _, ch := range subscribers {
 			select {
 			case ch <- event:
 				// Event sent successfully
@@ -107,6 +102,7 @@ func (st *streamingTracerImpl) forwardEvents() {
 				// Channel is full, skip this subscriber
 			}
 		}
+		st.subscriberMu.RUnlock()
 	}
 }
 
@@ -119,6 +115,11 @@ func (st *streamingTracerImpl) EmitEvent(event observability.AgentEvent) error {
 
 	// Try to convert to our AgentEvent type for streaming
 	if agentEvent, ok := event.(*events.AgentEvent); ok {
+		st.mu.RLock()
+		if st.closed {
+			st.mu.RUnlock()
+			return nil
+		}
 		// Send to our event stream (non-blocking)
 		select {
 		case st.eventStream <- agentEvent:
@@ -126,6 +127,7 @@ func (st *streamingTracerImpl) EmitEvent(event observability.AgentEvent) error {
 		default:
 			// Event stream is full, skip
 		}
+		st.mu.RUnlock()
 	}
 
 	return nil
