@@ -318,6 +318,55 @@ func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T
 	}
 }
 
+func TestCursorRunloopChatOptionsCarryBridgeAndWebAutoApproval(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	agent.provider = llm.ProviderCursorCLI
+	agent.ModelID = "cursor-cli"
+	agent.SessionID = "app-session"
+	agent.CursorPersistentInteractiveSession = true
+	agent.CursorBridgeToolsMode = true
+
+	opts := agent.appendCodingAgentInteractiveOptions(nil)
+	opts = agent.appendCursorCLIIntegrationOptions(opts)
+	got := metadataFromCallOptions(opts)
+
+	if got[cursorcli.MetadataKeyInteractiveSessionID] != "app-session" {
+		t.Fatalf("Cursor interactive session metadata = %#v, want app-session", got[cursorcli.MetadataKeyInteractiveSessionID])
+	}
+	if got[cursorcli.MetadataKeyPersistentInteractive] != true {
+		t.Fatalf("Cursor persistent metadata = %#v, want true", got[cursorcli.MetadataKeyPersistentInteractive])
+	}
+	if got[cursorcli.MetadataKeyAutoApproveWebSearch] != true {
+		t.Fatalf("Cursor web auto-approval metadata = %#v, want true", got[cursorcli.MetadataKeyAutoApproveWebSearch])
+	}
+	mcpConfig, ok := got[cursorcli.MetadataKeyMCPConfig].(string)
+	if !ok || !strings.Contains(mcpConfig, `"api-bridge"`) {
+		t.Fatalf("Cursor MCP config metadata = %#v, want api-bridge config", got[cursorcli.MetadataKeyMCPConfig])
+	}
+	tools := bridgeToolsFromConfig(t, mcpConfig)
+	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec"} {
+		if _, ok := tools[name]; !ok {
+			t.Fatalf("Cursor MCP config missing core bridge tool %q; tools=%v", name, mapKeys(tools))
+		}
+	}
+	if got[cursorcli.MetadataKeyApproveMCPs] != true {
+		t.Fatalf("Cursor approve-mcps metadata = %#v, want true", got[cursorcli.MetadataKeyApproveMCPs])
+	}
+	if got[cursorcli.MetadataKeyDenyBuiltinTools] != true {
+		t.Fatalf("Cursor deny-builtin metadata = %#v, want true", got[cursorcli.MetadataKeyDenyBuiltinTools])
+	}
+	if _, ok := got[cursorcli.MetadataKeyMode]; ok {
+		t.Fatalf("Cursor app path should not force --mode ask; metadata=%#v", got)
+	}
+	if _, ok := got[cursorcli.MetadataKeyForce]; ok {
+		t.Fatalf("Cursor app path should not force yolo mode; metadata=%#v", got)
+	}
+}
+
 func TestAppendCursorCLIIntegrationOptionsFallsBackToForceWithoutBridge(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "")
