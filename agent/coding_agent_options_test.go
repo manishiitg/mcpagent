@@ -1,6 +1,8 @@
 package mcpagent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -162,6 +164,115 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 				t.Fatalf("working dir metadata %q = %#v, want %q", tt.wantWorkingKey, got[tt.wantWorkingKey], tt.wantWorkingDir)
 			}
 		})
+	}
+}
+
+func TestAppendCodingAgentWorkingDirOptionCleansInactiveGeneratedArtifacts(t *testing.T) {
+	workDir := t.TempDir()
+	mustWrite := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(workDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	mustWrite(".claude/skills/system-tools/SKILL.md", "generated")
+	mustWrite(".pi/skills/system-tools/SKILL.md", "generated")
+	mustWrite(".pi/APPEND_SYSTEM.md", "<!-- mlp-session-instructions: orchestrator-generated -->\n")
+	mustWrite(".pi/mcp.json", `{"mcpServers":{"api-bridge":{"command":"mcpbridge"}}}`)
+	mustWrite(".agents/skills/system-tools/SKILL.md", "generated")
+	mustWrite(".agents/worker/keep.txt", "background runtime")
+	mustWrite("CLAUDE.md", "<!-- mlp-session-instructions: orchestrator-generated -->\n")
+	mustWrite("AGENTS.md", "<!-- mlp-session-instructions: orchestrator-generated -->\n")
+
+	agent := &Agent{
+		provider:                           llm.ProviderCursorCLI,
+		SessionID:                          "cursor-session",
+		CursorPersistentInteractiveSession: true,
+		CodingAgentWorkingDir:              workDir,
+	}
+	_ = metadataFromCallOptions(agent.appendCodingAgentWorkingDirOptionForProvider(nil, llm.ProviderCursorCLI, "cursor-cli"))
+
+	for _, rel := range []string{".claude", ".pi", ".agents/skills", "CLAUDE.md", "AGENTS.md"} {
+		if _, err := os.Stat(filepath.Join(workDir, rel)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be removed as inactive generated artifact, stat err=%v", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".agents", "worker", "keep.txt")); err != nil {
+		t.Fatalf("background runtime under .agents must be preserved: %v", err)
+	}
+}
+
+func TestAppendCodingAgentWorkingDirOptionRemovesInactiveProviderDirsInWorkflow(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "workspace-docs", "Workflow", "demo")
+	mustWrite := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(workDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	mustWrite(".claude/skills/system-tools/SKILL.md", "generated")
+	mustWrite(".pi/APPEND_SYSTEM.md", "generated")
+	mustWrite(".gemini/settings.json", `{"generated":true}`)
+	mustWrite(".agents/skills/system-tools/SKILL.md", "generated")
+	mustWrite(".agents/save-0001/marker.txt", "stale runtime")
+	mustWrite(".cursor/mcp.json", `{"mcpServers":{"api-bridge":{"command":"mcpbridge"}}}`)
+
+	agent := &Agent{
+		provider:              llm.ProviderCursorCLI,
+		ModelID:               "cursor-cli",
+		SessionID:             "cursor-session",
+		CodingAgentWorkingDir: workDir,
+	}
+	_ = metadataFromCallOptions(agent.appendCodingAgentWorkingDirOptionForProvider(nil, llm.ProviderCursorCLI, "cursor-cli"))
+
+	for _, rel := range []string{".claude", ".pi", ".gemini", ".agents"} {
+		if _, err := os.Stat(filepath.Join(workDir, rel)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be removed when Cursor starts in a workflow folder, stat err=%v", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".cursor", "mcp.json")); err != nil {
+		t.Fatalf("active cursor folder should be preserved before cursor adapter rewrites it: %v", err)
+	}
+}
+
+func TestCleanupInactiveCodingAgentArtifactsPreservesUserCursorMCP(t *testing.T) {
+	workDir := t.TempDir()
+	cursorDir := filepath.Join(workDir, ".cursor")
+	if err := os.MkdirAll(cursorDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	userMCP := filepath.Join(cursorDir, "mcp.json")
+	body := `{"mcpServers":{"github":{"command":"docker","args":["run","github-mcp"]}}}`
+	if err := os.WriteFile(userMCP, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cursorDir, "skills", "system-tools"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cursorDir, "skills", "system-tools", "SKILL.md"), []byte("generated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupInactiveCodingAgentProjectArtifacts(workDir, llm.ProviderClaudeCode)
+
+	// #nosec G304 - test path is created inside t.TempDir above.
+	got, err := os.ReadFile(userMCP)
+	if err != nil {
+		t.Fatalf("user cursor mcp.json should be preserved: %v", err)
+	}
+	if string(got) != body {
+		t.Fatalf("user cursor mcp.json changed: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(cursorDir, "skills")); !os.IsNotExist(err) {
+		t.Fatalf("generated cursor skills should be removed, stat err=%v", err)
 	}
 }
 

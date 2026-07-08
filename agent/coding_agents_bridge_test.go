@@ -159,6 +159,41 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	}
 }
 
+func TestBuildBridgeMCPConfigNormalizesMarkdownAPIURL(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "[http://127.0.0.1:45678](http://127.0.0.1:45678)")
+	t.Setenv("MCP_API_TOKEN", "test-token-123")
+
+	agent := bridgeTestAgent()
+	configJSON, err := agent.BuildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	servers := config["mcpServers"].(map[string]interface{})
+	bridge := servers["api-bridge"].(map[string]interface{})
+	env := bridge["env"].(map[string]interface{})
+	if got := env["MCP_API_URL"].(string); got != "http://127.0.0.1:45678" {
+		t.Fatalf("MCP_API_URL = %q, want plain URL", got)
+	}
+}
+
+func TestBuildBridgeMCPConfigRejectsInvalidAPIURL(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "not a url")
+	t.Setenv("MCP_API_TOKEN", "test-token-123")
+
+	agent := bridgeTestAgent()
+	_, err := agent.BuildBridgeMCPConfig()
+	if err == nil || !strings.Contains(err.Error(), "invalid MCP bridge API URL") {
+		t.Fatalf("BuildBridgeMCPConfig() error = %v, want invalid URL error", err)
+	}
+}
+
 func TestBuildBridgeMCPConfigNoSessionID(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")

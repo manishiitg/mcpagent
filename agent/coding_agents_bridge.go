@@ -3,8 +3,10 @@ package mcpagent
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -100,6 +102,10 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 	if apiURL == "" {
 		return "", fmt.Errorf("API base URL not configured (set APIBaseURL or MCP_API_URL)")
 	}
+	apiURL, err := normalizeBridgeAPIURL(apiURL)
+	if err != nil {
+		return "", err
+	}
 	if apiToken == "" {
 		return "", fmt.Errorf("API token not configured (set APIToken or MCP_API_TOKEN)")
 	}
@@ -155,6 +161,27 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		loggerv2.String("bridge_path", bridgePath))
 
 	return string(configJSON), nil
+}
+
+func normalizeBridgeAPIURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("API base URL not configured (set APIBaseURL or MCP_API_URL)")
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		if close := strings.Index(trimmed, "]("); close > 1 && strings.HasSuffix(trimmed, ")") {
+			trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed[close+2:], ")"))
+		}
+	}
+	trimmed = strings.Trim(trimmed, "<>")
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid MCP bridge API URL %q; expected plain http(s) URL", raw)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("invalid MCP bridge API URL %q; expected http(s) URL", raw)
+	}
+	return trimmed, nil
 }
 
 func defaultBridgeToolDef(name, toolType string, logger loggerv2.Logger) *BridgeToolDef {

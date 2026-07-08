@@ -91,6 +91,7 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	if workingDir == "" {
 		return opts
 	}
+	cleanupInactiveCodingAgentProjectArtifacts(workingDir, provider)
 	option := llm.CodingAgentWorkingDirOption(provider, workingDir)
 	if option == nil {
 		return opts
