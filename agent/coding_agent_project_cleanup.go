@@ -14,19 +14,10 @@ func cleanupInactiveCodingAgentProjectArtifacts(workingDir string, activeProvide
 		return
 	}
 	active := string(activeProvider)
-	removeWholeProviderDirs := isWorkflowWorkingDir(workingDir)
 
 	if active != string(llm.ProviderClaudeCode) {
 		removeManagedInstructionFile(filepath.Join(workingDir, "CLAUDE.md"))
-		if removeWholeProviderDirs {
-			removeManagedDir(filepath.Join(workingDir, ".claude"))
-		} else {
-			removeManagedDir(filepath.Join(workingDir, ".claude", "skills"))
-			pruneEmptyDirs(
-				filepath.Join(workingDir, ".claude", "skills"),
-				filepath.Join(workingDir, ".claude"),
-			)
-		}
+		removeManagedDir(filepath.Join(workingDir, ".claude"))
 	}
 	if active != string(llm.ProviderCodexCLI) {
 		removeManagedInstructionFile(filepath.Join(workingDir, "AGENTS.md"))
@@ -34,62 +25,19 @@ func cleanupInactiveCodingAgentProjectArtifacts(workingDir string, activeProvide
 	}
 	if active != string(llm.ProviderGeminiCLI) {
 		removeManagedInstructionFile(filepath.Join(workingDir, "GEMINI.md"))
-		if removeWholeProviderDirs {
-			removeManagedDir(filepath.Join(workingDir, ".gemini"))
-		} else {
-			removeManagedDir(filepath.Join(workingDir, ".gemini", "skills"))
-			removeManagedFileIfGenerated(filepath.Join(workingDir, ".gemini", "settings.json"))
-			removeManagedFile(filepath.Join(workingDir, ".gemini", "hooks", "deny-builtin.sh"))
-			removeManagedFile(filepath.Join(workingDir, ".gemini", "policies", "restrict-tools.toml"))
-			pruneEmptyDirs(
-				filepath.Join(workingDir, ".gemini", "hooks"),
-				filepath.Join(workingDir, ".gemini", "policies"),
-				filepath.Join(workingDir, ".gemini", "skills"),
-				filepath.Join(workingDir, ".gemini"),
-			)
-		}
+		removeManagedDir(filepath.Join(workingDir, ".gemini"))
 		removeManagedDir(filepath.Join(workingDir, ".gemini-main"))
 	}
 	if active != string(llm.ProviderCursorCLI) {
-		if removeWholeProviderDirs {
-			removeManagedDir(filepath.Join(workingDir, ".cursor"))
-		} else {
-			removeManagedDir(filepath.Join(workingDir, ".cursor", "skills"))
-			removeManagedFile(filepath.Join(workingDir, ".cursor", "rules", "mlp-system.mdc"))
-			removeManagedFile(filepath.Join(workingDir, ".cursor", "hooks", "mlp-deny-builtin.sh"))
-			removeManagedFile(filepath.Join(workingDir, ".cursor", "hooks", "mlp-deny-builtin-denials.jsonl"))
-			removeManagedFileIfGenerated(filepath.Join(workingDir, ".cursor", "hooks.json"))
-			removeManagedFileIfGenerated(filepath.Join(workingDir, ".cursor", "cli.json"))
-			removeManagedFileIfGenerated(filepath.Join(workingDir, ".cursor", "mcp.json"))
-			pruneEmptyDirs(
-				filepath.Join(workingDir, ".cursor", "rules"),
-				filepath.Join(workingDir, ".cursor", "hooks"),
-				filepath.Join(workingDir, ".cursor", "skills"),
-				filepath.Join(workingDir, ".cursor"),
-			)
-		}
+		removeManagedDir(filepath.Join(workingDir, ".cursor"))
 	}
 	if active != string(llm.ProviderPiCLI) {
-		if removeWholeProviderDirs {
-			removeManagedDir(filepath.Join(workingDir, ".pi"))
-		} else {
-			removeManagedDir(filepath.Join(workingDir, ".pi", "skills"))
-			removeManagedInstructionFile(filepath.Join(workingDir, ".pi", "APPEND_SYSTEM.md"))
-			removeManagedFileIfGenerated(filepath.Join(workingDir, ".pi", "mcp.json"))
-			pruneEmptyDirs(
-				filepath.Join(workingDir, ".pi", "skills"),
-				filepath.Join(workingDir, ".pi"),
-			)
-		}
+		removeManagedDir(filepath.Join(workingDir, ".pi"))
 	}
 	if active != string(llm.ProviderAgyCLI) &&
 		active != string(llm.ProviderCodexCLI) &&
 		active != string(llm.ProviderGeminiCLI) {
-		if removeWholeProviderDirs {
-			removeManagedDir(filepath.Join(workingDir, ".agents"))
-		} else {
-			removeManagedDir(filepath.Join(workingDir, ".agents", "skills"))
-		}
+		removeManagedDir(filepath.Join(workingDir, ".agents"))
 	}
 	if active != string(llm.ProviderAgyCLI) {
 		removeManagedFile(filepath.Join(workingDir, ".agents", "rules", "mlp-system.md"))
@@ -103,11 +51,6 @@ func cleanupInactiveCodingAgentProjectArtifacts(workingDir string, activeProvide
 		filepath.Join(workingDir, ".agents", "skills"),
 		filepath.Join(workingDir, ".agents"),
 	)
-}
-
-func isWorkflowWorkingDir(workingDir string) bool {
-	normalized := filepath.ToSlash(filepath.Clean(workingDir))
-	return strings.Contains(normalized, "/Workflow/")
 }
 
 func removeManagedInstructionFile(path string) {

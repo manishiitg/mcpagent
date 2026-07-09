@@ -201,8 +201,8 @@ func TestAppendCodingAgentWorkingDirOptionCleansInactiveGeneratedArtifacts(t *te
 			t.Fatalf("%s should be removed as inactive generated artifact, stat err=%v", rel, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(workDir, ".agents", "worker", "keep.txt")); err != nil {
-		t.Fatalf("background runtime under .agents must be preserved: %v", err)
+	if _, err := os.Stat(filepath.Join(workDir, ".agents")); !os.IsNotExist(err) {
+		t.Fatalf(".agents should be removed as an inactive provider artifact, stat err=%v", err)
 	}
 }
 
@@ -243,7 +243,7 @@ func TestAppendCodingAgentWorkingDirOptionRemovesInactiveProviderDirsInWorkflow(
 	}
 }
 
-func TestCleanupInactiveCodingAgentArtifactsPreservesUserCursorMCP(t *testing.T) {
+func TestCleanupInactiveCodingAgentArtifactsRemovesInactiveCursorDir(t *testing.T) {
 	workDir := t.TempDir()
 	cursorDir := filepath.Join(workDir, ".cursor")
 	if err := os.MkdirAll(cursorDir, 0o700); err != nil {
@@ -263,16 +263,8 @@ func TestCleanupInactiveCodingAgentArtifactsPreservesUserCursorMCP(t *testing.T)
 
 	cleanupInactiveCodingAgentProjectArtifacts(workDir, llm.ProviderClaudeCode)
 
-	// #nosec G304 - test path is created inside t.TempDir above.
-	got, err := os.ReadFile(userMCP)
-	if err != nil {
-		t.Fatalf("user cursor mcp.json should be preserved: %v", err)
-	}
-	if string(got) != body {
-		t.Fatalf("user cursor mcp.json changed: %q", got)
-	}
-	if _, err := os.Stat(filepath.Join(cursorDir, "skills")); !os.IsNotExist(err) {
-		t.Fatalf("generated cursor skills should be removed, stat err=%v", err)
+	if _, err := os.Stat(cursorDir); !os.IsNotExist(err) {
+		t.Fatalf("inactive cursor dir should be removed, stat err=%v", err)
 	}
 }
 
