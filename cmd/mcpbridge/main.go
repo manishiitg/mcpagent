@@ -41,6 +41,14 @@ func isLongRunningDelegationTool(toolType, toolName string) bool {
 	}
 }
 
+func truncateBridgeErrorText(s string) string {
+	const maxBytes = 16 * 1024
+	if len(s) <= maxBytes {
+		return s
+	}
+	return s[:maxBytes] + fmt.Sprintf("\n... truncated %d bytes ...", len(s)-maxBytes)
+}
+
 func main() {
 	// If MCP_BRIDGE_LOG is set, tee all log output to that file in addition to stderr.
 	// This lets the Go server capture mcpbridge startup/crash messages for debugging.
@@ -98,9 +106,20 @@ func main() {
 			}
 
 			// Marshal arguments
-			argsJSON, err := json.Marshal(req.GetArguments())
+			args := req.GetArguments()
+			argsJSON, err := json.Marshal(args)
 			if err != nil {
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to marshal arguments: %v", err)), nil
+			}
+			diffBytes := -1
+			filepathArg := ""
+			if def.Name == "diff_patch_workspace_file" {
+				if v, ok := args["diff"].(string); ok {
+					diffBytes = len(v)
+				}
+				if v, ok := args["filepath"].(string); ok {
+					filepathArg = v
+				}
 			}
 
 			// Make HTTP POST request
@@ -122,19 +141,24 @@ func main() {
 				httpClient = longRunningHTTPClient
 			}
 
+			started := time.Now()
+			log.Printf("mcpbridge: tool call start type=%s tool=%s url=%s args_bytes=%d diff_bytes=%d filepath=%q session=%s", def.Type, def.Name, url, len(argsJSON), diffBytes, filepathArg, sessionID)
 			resp, err := httpClient.Do(httpReq)
 			if err != nil {
+				log.Printf("mcpbridge: tool call http error type=%s tool=%s duration=%s error=%v", def.Type, def.Name, time.Since(started), err)
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: HTTP request failed: %v", err)), nil
 			}
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
+				log.Printf("mcpbridge: tool call read error type=%s tool=%s status=%d duration=%s error=%v", def.Type, def.Name, resp.StatusCode, time.Since(started), err)
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to read response: %v", err)), nil
 			}
+			log.Printf("mcpbridge: tool call response type=%s tool=%s status=%d duration=%s body_bytes=%d", def.Type, def.Name, resp.StatusCode, time.Since(started), len(body))
 
 			if resp.StatusCode >= 400 {
-				return mcp.NewToolResultText(fmt.Sprintf("ERROR: HTTP %d: %s", resp.StatusCode, string(body))), nil
+				return mcp.NewToolResultText(fmt.Sprintf("ERROR: HTTP %d: %s", resp.StatusCode, truncateBridgeErrorText(string(body)))), nil
 			}
 
 			var result struct {
@@ -156,7 +180,7 @@ func main() {
 				if errorMsg == "" {
 					errorMsg = "unknown error (no details in response)"
 				}
-				return mcp.NewToolResultText(fmt.Sprintf("ERROR: %s", errorMsg)), nil
+				return mcp.NewToolResultText(fmt.Sprintf("ERROR: %s", truncateBridgeErrorText(errorMsg))), nil
 			}
 			return mcp.NewToolResultText(result.Result), nil
 		})
