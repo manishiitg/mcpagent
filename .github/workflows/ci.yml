@@ -27,7 +27,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.25.12'
         cache-dependency-path: mcpagent/go.sum
     
     - name: Run golangci-lint
@@ -37,6 +37,7 @@ jobs:
         version: v2.4.0
         args: --timeout=5m
         working-directory: mcpagent
+        only-new-issues: true
 
   security-scan:
     name: Secret Scanning with Gitleaks
@@ -92,7 +93,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.25.12'
         cache-dependency-path: mcpagent/go.sum
     
     - name: Run tests
@@ -118,7 +119,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.25.12'
         cache-dependency-path: mcpagent/go.sum
     
     - name: Verify checkout and list directories
@@ -138,4 +139,3 @@ jobs:
         go mod download
         mkdir -p bin
         go build -v -o bin/mcpagent-test ./cmd/testing
-
