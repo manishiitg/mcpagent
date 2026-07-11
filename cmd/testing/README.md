@@ -322,7 +322,7 @@ mcpagent-test test agent-mcp --model gpt-4.1-mini --log-file logs/agent-mcp-test
 Tests the large tool output handling feature:
 - Large output detection and file writing
 - File message creation with previews
-- Virtual tools: `read_large_output`, `search_large_output`, `query_large_output`
+- `search_large_output` read/search/query operations
 
 **See `criteria.md` in the large-tool-output folder for detailed log analysis criteria.**
 
@@ -337,33 +337,6 @@ mcpagent-test test large-tool-output --threshold 2000 --log-file logs/large-tool
 
 # Test with text output instead of JSON
 mcpagent-test test large-tool-output --output-type text --log-file logs/large-tool-output-test.log
-```
-
----
-
-### `smart-routing` - Smart Routing Testing
-
-**Folder**: `cmd/testing/smart-routing/`  
-**Files**: 
-- `smart-routing-test.go` - Test implementation with Cobra command
-- `criteria.md` - Log analysis criteria
-**Command**: `mcpagent-test test smart-routing`
-
-Tests the agent's smart routing feature that filters tools based on conversation context.
-
-**See `criteria.md` in the smart-routing folder for detailed log analysis criteria.**
-
-#### Running
-
-```bash
-# Basic test (uses OpenAI by default, thresholds: 5 tools, 2 servers)
-mcpagent-test test smart-routing --log-file logs/smart-routing-test.log
-
-# Custom thresholds
-mcpagent-test test smart-routing --max-tools-threshold 10 --max-servers-threshold 3 --log-file logs/smart-routing-test.log
-
-# Custom smart routing config
-mcpagent-test test smart-routing --temperature 0.1 --max-tokens 1000 --log-file logs/smart-routing-test.log
 ```
 
 ---
@@ -549,12 +522,6 @@ mcpagent-test test human-feedback-code-exec --model gpt-4.1 --log-file logs/huma
 This section outlines planned tests to be implemented for comprehensive agent feature coverage.
 
 ### High Priority Tests
-
-#### 1. `smart-routing` - Smart Routing Testing
-**Status**: ✅ Completed  
-**Feature**: `EnableSmartRouting`, `SmartRoutingThreshold`, `SmartRoutingConfig`  
-**What to Test**: Tool filtering based on conversation context, threshold behavior, routing decisions  
-**Complexity**: High (requires conversation context)
 
 #### 3. `structured-output` - Structured Output Testing
 **Status**: ✅ Completed  

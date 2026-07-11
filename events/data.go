@@ -59,15 +59,14 @@ func (e *AgentEvent) GetParentID() string {
 	return e.ParentID
 }
 
-// GenericEventData is kept for backward compatibility during migration
-// TODO: Migrate all usages to FallbackDetailEvent and remove this
+// GenericEventData carries unstructured payloads for application-defined outer event types.
 type GenericEventData struct {
 	BaseEventData
 	Data map[string]interface{} `json:"data"`
 }
 
 func (e *GenericEventData) GetEventType() EventType {
-	return FallbackAttemptEventType // Use fallback type for generic events
+	return FallbackAttempt // Use fallback type for generic events
 }
 
 const (
@@ -88,11 +87,11 @@ type BrokenPipeEvent struct {
 }
 
 func (e *BrokenPipeEvent) GetEventType() EventType {
-	return BrokenPipeEventType
+	return BrokenPipe
 }
 
 // FallbackDetailEvent represents detailed fallback operation events
-// Use this for type-safe fallback tracking (preferred over GenericEventData)
+// Use this for type-safe fallback tracking.
 type FallbackDetailEvent struct {
 	BaseEventData
 	Turn                  int      `json:"turn"`
@@ -117,7 +116,7 @@ type FallbackDetailEvent struct {
 }
 
 func (e *FallbackDetailEvent) GetEventType() EventType {
-	return FallbackAttemptEventType
+	return FallbackAttempt
 }
 
 // NewFallbackSuccessDetailEvent creates a fallback success detail event
@@ -618,7 +617,7 @@ type TokenUsageEvent struct {
 }
 
 func (e *TokenUsageEvent) GetEventType() EventType {
-	return TokenUsageEventType
+	return TokenUsage
 }
 
 // ErrorDetailEvent represents detailed error information
@@ -637,7 +636,7 @@ type ErrorDetailEvent struct {
 }
 
 func (e *ErrorDetailEvent) GetEventType() EventType {
-	return ErrorDetailEventType
+	return ErrorDetail
 }
 
 // ToolContext represents tool information for LLM context
@@ -658,7 +657,7 @@ type SystemPromptEvent struct {
 }
 
 func (e *SystemPromptEvent) GetEventType() EventType {
-	return SystemPromptEventType
+	return SystemPrompt
 }
 
 // ToolOutputEvent represents tool output data
@@ -672,7 +671,7 @@ type ToolOutputEvent struct {
 }
 
 func (e *ToolOutputEvent) GetEventType() EventType {
-	return ToolOutputEventType
+	return ToolOutput
 }
 
 // ToolResponseEvent represents a tool response
@@ -687,7 +686,7 @@ type ToolResponseEvent struct {
 }
 
 func (e *ToolResponseEvent) GetEventType() EventType {
-	return ToolResponseEventType
+	return ToolResponse
 }
 
 // UserMessageEvent represents a user message
@@ -699,7 +698,7 @@ type UserMessageEvent struct {
 }
 
 func (e *UserMessageEvent) GetEventType() EventType {
-	return UserMessageEventType
+	return UserMessage
 }
 
 // NewUserMessageEvent creates a new UserMessageEvent
@@ -735,8 +734,6 @@ func NewAgentEvent(eventData EventData) *AgentEvent {
 	}
 }
 
-// NewAgentEndEvent function removed - no longer needed
-
 // NewAgentStartEvent creates a new AgentStartEvent
 func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMode, useToolSearchMode bool) *AgentStartEvent {
 	return &AgentStartEvent{
@@ -748,52 +745,6 @@ func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMod
 		Provider:             provider,
 		UseCodeExecutionMode: useCodeExecutionMode,
 		UseToolSearchMode:    useToolSearchMode,
-	}
-}
-
-// NewAgentStartEventWithHierarchy creates a new AgentStartEvent with hierarchy fields
-func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID string, level int, sessionID, component string, useCodeExecutionMode, useToolSearchMode bool) *AgentStartEvent {
-	return &AgentStartEvent{
-		BaseEventData: BaseEventData{
-			Timestamp:      time.Now(),
-			ParentID:       parentID,
-			HierarchyLevel: level,
-			SessionID:      sessionID,
-			Component:      component,
-		},
-		AgentType:            agentType,
-		ModelID:              modelID,
-		Provider:             provider,
-		UseCodeExecutionMode: useCodeExecutionMode,
-		UseToolSearchMode:    useToolSearchMode,
-	}
-}
-
-// NewAgentEndEvent creates a new AgentEndEvent
-func NewAgentEndEvent(agentType string, success bool, error string) *AgentEndEvent {
-	return &AgentEndEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		AgentType: agentType,
-		Success:   success,
-		Error:     error,
-	}
-}
-
-// NewAgentEndEventWithHierarchy creates a new AgentEndEvent with hierarchy fields
-func NewAgentEndEventWithHierarchy(agentType string, success bool, error, parentID string, level int, sessionID, component string) *AgentEndEvent {
-	return &AgentEndEvent{
-		BaseEventData: BaseEventData{
-			Timestamp:      time.Now(),
-			ParentID:       parentID,
-			HierarchyLevel: level,
-			SessionID:      sessionID,
-			Component:      component,
-		},
-		AgentType: agentType,
-		Success:   success,
-		Error:     error,
 	}
 }
 
@@ -920,23 +871,6 @@ func NewLLMGenerationStartEvent(turn int, modelID string, temperature float64, t
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
 			EventID:   GenerateEventID(),
-		},
-		Turn:          turn,
-		ModelID:       modelID,
-		Temperature:   temperature,
-		ToolsCount:    toolsCount,
-		MessagesCount: messagesCount,
-	}
-}
-
-// NewLLMGenerationStartEventWithCorrelation creates a new LLMGenerationStartEvent with correlation data
-func NewLLMGenerationStartEventWithCorrelation(turn int, modelID string, temperature float64, toolsCount, messagesCount int, traceID, parentID string) *LLMGenerationStartEvent {
-	return &LLMGenerationStartEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-			TraceID:   traceID,
-			EventID:   GenerateEventID(),
-			ParentID:  parentID,
 		},
 		Turn:          turn,
 		ModelID:       modelID,
@@ -1239,7 +1173,7 @@ type LargeToolOutputDetectedEvent struct {
 }
 
 func (e *LargeToolOutputDetectedEvent) GetEventType() EventType {
-	return LargeToolOutputDetectedEventType
+	return LargeToolOutputDetected
 }
 
 // LargeToolOutputFileWrittenEvent represents successful file writing of large tool output
@@ -1254,7 +1188,7 @@ type LargeToolOutputFileWrittenEvent struct {
 }
 
 func (e *LargeToolOutputFileWrittenEvent) GetEventType() EventType {
-	return LargeToolOutputFileWrittenEventType
+	return LargeToolOutputFileWritten
 }
 
 // LargeToolOutputFileWriteErrorEvent represents error in writing large tool output to file
@@ -1268,7 +1202,7 @@ type LargeToolOutputFileWriteErrorEvent struct {
 }
 
 func (e *LargeToolOutputFileWriteErrorEvent) GetEventType() EventType {
-	return LargeToolOutputFileWriteErrorEventType
+	return LargeToolOutputFileWriteError
 }
 
 // LargeToolOutputServerUnavailableEvent represents when server is not available for large tool output handling
@@ -1282,7 +1216,7 @@ type LargeToolOutputServerUnavailableEvent struct {
 }
 
 func (e *LargeToolOutputServerUnavailableEvent) GetEventType() EventType {
-	return LargeToolOutputServerUnavailableEventType
+	return LargeToolOutputServerUnavailable
 }
 
 // Constructor functions for large tool output events
@@ -1523,7 +1457,7 @@ type ModelChangeEvent struct {
 }
 
 func (e *ModelChangeEvent) GetEventType() EventType {
-	return ModelChangeEventType
+	return ModelChange
 }
 
 // FallbackModelUsedEvent represents when a fallback model is successfully used
@@ -1538,7 +1472,7 @@ type FallbackModelUsedEvent struct {
 }
 
 func (e *FallbackModelUsedEvent) GetEventType() EventType {
-	return FallbackModelUsedEventType
+	return FallbackModelUsed
 }
 
 // ThrottlingDetectedEvent represents when throttling is detected
@@ -1555,7 +1489,7 @@ type ThrottlingDetectedEvent struct {
 }
 
 func (e *ThrottlingDetectedEvent) GetEventType() EventType {
-	return ThrottlingDetectedEventType
+	return ThrottlingDetected
 }
 
 // TokenLimitExceededEvent represents when token limits are exceeded
@@ -1571,7 +1505,7 @@ type TokenLimitExceededEvent struct {
 }
 
 func (e *TokenLimitExceededEvent) GetEventType() EventType {
-	return TokenLimitExceededEventType
+	return TokenLimitExceeded
 }
 
 // NewModelChangeEvent creates a new ModelChangeEvent
@@ -1658,7 +1592,7 @@ type FallbackAttemptEvent struct {
 }
 
 func (e *FallbackAttemptEvent) GetEventType() EventType {
-	return FallbackAttemptEventType
+	return FallbackAttempt
 }
 
 func NewFallbackAttemptEvent(turn, attemptIndex, totalAttempts int, modelID, provider, phase string, success bool, duration time.Duration, error string) *FallbackAttemptEvent {
@@ -1690,7 +1624,7 @@ type MaxTurnsReachedEvent struct {
 }
 
 func (e *MaxTurnsReachedEvent) GetEventType() EventType {
-	return MaxTurnsReachedEventType
+	return MaxTurnsReached
 }
 
 // NewMaxTurnsReachedEvent creates a new MaxTurnsReachedEvent
@@ -1717,7 +1651,7 @@ type ContextCancelledEvent struct {
 }
 
 func (e *ContextCancelledEvent) GetEventType() EventType {
-	return ContextCancelledEventType
+	return ContextCancelled
 }
 
 func NewContextCancelledEvent(turn int, reason string, duration time.Duration) *ContextCancelledEvent {
@@ -1752,7 +1686,7 @@ type CacheEvent struct {
 }
 
 func (e *CacheEvent) GetEventType() EventType {
-	return CacheEventType
+	return GenericCache
 }
 
 // Unified cache event constructors
@@ -1895,93 +1829,6 @@ func (e *LLMGenerationWithRetryEvent) GetEventType() EventType {
 }
 
 // LLMTextChunkEvent represents a single text chunk from LLM streaming
-
-// SmartRoutingStartEvent represents the start of smart routing
-type SmartRoutingStartEvent struct {
-	BaseEventData
-	TotalTools   int `json:"total_tools"`
-	TotalServers int `json:"total_servers"`
-	Thresholds   struct {
-		MaxTools   int `json:"max_tools"`
-		MaxServers int `json:"max_servers"`
-	} `json:"thresholds"`
-	// LLM Input/Output for debugging smart routing decisions
-	LLMPrompt           string `json:"llm_prompt,omitempty"`           // The prompt sent to LLM for server selection
-	UserQuery           string `json:"user_query,omitempty"`           // The user's current query
-	ConversationContext string `json:"conversation_context,omitempty"` // Recent conversation history
-	// LLM Information for smart routing
-	LLMModelID     string  `json:"llm_model_id,omitempty"`    // The LLM model used for smart routing
-	LLMProvider    string  `json:"llm_provider,omitempty"`    // The LLM provider used for smart routing
-	LLMTemperature float64 `json:"llm_temperature,omitempty"` // Temperature used for smart routing
-	LLMMaxTokens   int     `json:"llm_max_tokens,omitempty"`  // Max tokens used for smart routing
-}
-
-func (e *SmartRoutingStartEvent) GetEventType() EventType {
-	return SmartRoutingStartEventType
-}
-
-// SmartRoutingEndEvent represents the completion of smart routing
-type SmartRoutingEndEvent struct {
-	BaseEventData
-	TotalTools       int           `json:"total_tools"`
-	FilteredTools    int           `json:"filtered_tools"`
-	TotalServers     int           `json:"total_servers"`
-	RelevantServers  []string      `json:"relevant_servers"`
-	RoutingReasoning string        `json:"routing_reasoning,omitempty"`
-	RoutingDuration  time.Duration `json:"routing_duration"`
-	Success          bool          `json:"success"`
-	Error            string        `json:"error,omitempty"`
-	// LLM Output for debugging smart routing decisions
-	LLMResponse     string `json:"llm_response,omitempty"`     // The raw response from LLM for server selection
-	SelectedServers string `json:"selected_servers,omitempty"` // The parsed server selection from LLM
-	// NEW: Appended prompt information
-	HasAppendedPrompts    bool   `json:"has_appended_prompts"`
-	AppendedPromptCount   int    `json:"appended_prompt_count,omitempty"`
-	AppendedPromptSummary string `json:"appended_prompt_summary,omitempty"`
-	// LLM Information for smart routing
-	LLMModelID     string  `json:"llm_model_id,omitempty"`    // The LLM model used for smart routing
-	LLMProvider    string  `json:"llm_provider,omitempty"`    // The LLM provider used for smart routing
-	LLMTemperature float64 `json:"llm_temperature,omitempty"` // Temperature used for smart routing
-	LLMMaxTokens   int     `json:"llm_max_tokens,omitempty"`  // Max tokens used for smart routing
-}
-
-func (e *SmartRoutingEndEvent) GetEventType() EventType {
-	return SmartRoutingEndEventType
-}
-
-// Constructor functions for smart routing events
-func NewSmartRoutingStartEvent(totalTools, totalServers, maxTools, maxServers int) *SmartRoutingStartEvent {
-	return &SmartRoutingStartEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		TotalTools:   totalTools,
-		TotalServers: totalServers,
-		Thresholds: struct {
-			MaxTools   int `json:"max_tools"`
-			MaxServers int `json:"max_servers"`
-		}{
-			MaxTools:   maxTools,
-			MaxServers: maxServers,
-		},
-	}
-}
-
-func NewSmartRoutingEndEvent(totalTools, filteredTools, totalServers int, relevantServers []string, reasoning string, duration time.Duration, success bool, errorMsg string) *SmartRoutingEndEvent {
-	return &SmartRoutingEndEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		TotalTools:       totalTools,
-		FilteredTools:    filteredTools,
-		TotalServers:     totalServers,
-		RelevantServers:  relevantServers,
-		RoutingReasoning: reasoning,
-		RoutingDuration:  duration,
-		Success:          success,
-		Error:            errorMsg,
-	}
-}
 
 // UnifiedCompletionEvent represents a standardized completion event for all agent types
 type UnifiedCompletionEvent struct {

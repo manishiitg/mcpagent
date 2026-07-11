@@ -66,12 +66,6 @@ func mapToParameters(paramsMap map[string]interface{}) *llmtypes.Parameters {
 	return params
 }
 
-// normalizeArrayParameters is now provided by multi-llm-provider-go/pkg/utils
-// This is kept as an alias for backward compatibility, but delegates to utils.NormalizeArrayParameters
-func normalizeArrayParameters(schema map[string]interface{}) {
-	utils.NormalizeArrayParameters(schema)
-}
-
 // NormalizeLLMTools normalizes array parameters in llmtypes.Tool objects to ensure
 // all arrays have an 'items' field (required by Gemini and some other LLM providers).
 // This function normalizes tools in-place, modifying their Parameters schema.
@@ -147,7 +141,7 @@ func NormalizeLLMTools(tools []llmtypes.Tool, logger loggerv2.Logger) {
 						loggerv2.Int("missing_count", beforeFix))
 				}
 			}
-			normalizeArrayParameters(paramsMap)
+			utils.NormalizeArrayParameters(paramsMap)
 			afterFix := countMissingItems(paramsMap)
 			totalFixed += (beforeFix - afterFix)
 			if afterFix < beforeFix {
@@ -250,7 +244,7 @@ func ToolsAsLLM(mcpTools []mcp.Tool) ([]llmtypes.Tool, error) {
 		schema["additionalProperties"] = false
 
 		// Normalize array parameters to ensure all arrays have items field (required by Gemini)
-		normalizeArrayParameters(schema)
+		utils.NormalizeArrayParameters(schema)
 
 		llmTools[i] = llmtypes.Tool{
 			Type: "function",
@@ -293,7 +287,7 @@ func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llmtypes.Tool, error) {
 		schema["additionalProperties"] = false
 
 		// Normalize array parameters to ensure all arrays have items field (required by Gemini)
-		normalizeArrayParameters(schema)
+		utils.NormalizeArrayParameters(schema)
 
 		llmTools[i] = llmtypes.Tool{
 			Type: "function",

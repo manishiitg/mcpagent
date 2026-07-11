@@ -206,35 +206,6 @@ func TestGetEffectiveLLMConfigNewConfigPassthrough(t *testing.T) {
 	}
 }
 
-func TestGetEffectiveLLMConfigCrossProviderFallbackMerge(t *testing.T) {
-	agent := &Agent{
-		provider: llm.ProviderAnthropic,
-		ModelID:  "claude-opus-4-7",
-		CrossProviderFallback: &CrossProviderFallback{
-			Provider: "openai",
-			Models:   []string{"gpt-5", "gpt-5-mini"},
-		},
-	}
-
-	config := agent.getEffectiveLLMConfig()
-
-	var crossProviderFallbacks []LLMModel
-	for _, fb := range config.Fallbacks {
-		if fb.Provider == "openai" {
-			crossProviderFallbacks = append(crossProviderFallbacks, fb)
-		}
-	}
-	if len(crossProviderFallbacks) != 2 {
-		t.Fatalf("cross-provider fallbacks = %d, want 2: %v", len(crossProviderFallbacks), config.Fallbacks)
-	}
-	if crossProviderFallbacks[0].ModelID != "gpt-5" {
-		t.Fatalf("first cross-provider fallback = %q, want gpt-5", crossProviderFallbacks[0].ModelID)
-	}
-	if crossProviderFallbacks[1].ModelID != "gpt-5-mini" {
-		t.Fatalf("second cross-provider fallback = %q, want gpt-5-mini", crossProviderFallbacks[1].ModelID)
-	}
-}
-
 func TestGetEffectiveLLMConfigDeduplicatesFallbacks(t *testing.T) {
 	agent := &Agent{
 		provider: llm.ProviderOpenAI,

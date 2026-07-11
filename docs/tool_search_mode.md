@@ -272,8 +272,6 @@ These tools are always available because they're needed when large tool outputs 
 | Tool | Purpose |
 |------|---------|
 | `search_large_output` | Unified tool for accessing offloaded files (read/search/query) |
-| `read_large_output` | Read character ranges from offloaded files |
-| `query_large_output` | Execute jq queries on offloaded JSON files |
 
 ### Pre-Discovered Tools
 Tools specified in `WithPreDiscoveredTools()` are immediately available.
@@ -415,7 +413,7 @@ for _, tools := range ag.mcpServerTools {
 // 2. Virtual tools (context offloading tools are immediately available)
 for _, tool := range virtualTools {
     if isContextOffloadingTool(tool) {
-        // search_large_output, read_large_output, query_large_output
+        // search_large_output
         // Always immediately available
         filteredVirtualTools = append(filteredVirtualTools, tool)
     } else {

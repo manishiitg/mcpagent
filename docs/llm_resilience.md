@@ -36,13 +36,19 @@ By default, the agent uses hardcoded fallback chains based on the primary provid
 - **OpenAI**: GPT-4o -> GPT-4o-mini -> GPT-4
 
 ### Custom Configuration
-You can configure custom fallback chains via the `WithCrossProviderFallback` option.
+Configure custom fallback chains through the unified `WithLLMConfig` option.
 
 ```go
-agent, err := mcpagent.NewAgent(..., 
-    mcpagent.WithCrossProviderFallback(&mcpagent.CrossProviderFallback{
-        Provider: string(llm.ProviderOpenAI),
-        Models:   []string{openai.ModelGPT4O, openai.ModelGPT4Turbo},
+agent, err := mcpagent.NewAgent(...,
+    mcpagent.WithLLMConfig(mcpagent.AgentLLMConfiguration{
+        Primary: mcpagent.LLMModel{
+            Provider: string(llm.ProviderAnthropic),
+            ModelID:  anthropic.ModelClaudeSonnet,
+        },
+        Fallbacks: []mcpagent.LLMModel{
+            {Provider: string(llm.ProviderOpenAI), ModelID: openai.ModelGPT4O},
+            {Provider: string(llm.ProviderOpenAI), ModelID: openai.ModelGPT4Turbo},
+        },
     }),
 )
 ```
@@ -71,6 +77,6 @@ The resilience layer emits detailed events to track system health:
 
 ## 💡 Best Practices
 
-1.  **Context Management**: While fallbacks help, it's better to prevent context errors. Use Smart Routing to keep prompts small.
+1.  **Context Management**: While fallbacks help, prevent context errors with tool-search mode, context offloading, and summarization.
 2.  **Provider Diversity**: Configure at least two different providers (e.g., AWS and OpenAI) to ensure true high availability.
 3.  **Monitoring**: Watch for `fallback_attempt` events. Frequent fallbacks indicate your primary model is undersized for the workload.

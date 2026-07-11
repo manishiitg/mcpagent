@@ -321,9 +321,9 @@ func TestAnnotateUnifiedCompletionEventMarksCodingAgentTerminalFormat(t *testing
 
 func TestWithClaudeCodeTransport(t *testing.T) {
 	agent := &Agent{}
-	WithClaudeCodeTransport(llm.ClaudeCodeTransportPrint)(agent)
-	if agent.ClaudeCodeTransport != llm.ClaudeCodeTransportPrint {
-		t.Fatalf("ClaudeCodeTransport = %q, want %q", agent.ClaudeCodeTransport, llm.ClaudeCodeTransportPrint)
+	WithClaudeCodeTransport(llm.ClaudeCodeTransportTmux)(agent)
+	if agent.ClaudeCodeTransport != llm.ClaudeCodeTransportTmux {
+		t.Fatalf("ClaudeCodeTransport = %q, want %q", agent.ClaudeCodeTransport, llm.ClaudeCodeTransportTmux)
 	}
 }
 

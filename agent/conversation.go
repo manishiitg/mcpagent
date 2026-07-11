@@ -60,6 +60,30 @@ func getLogger(a *Agent) loggerv2.Logger {
 	return a.Logger
 }
 
+// mappedMCPClient returns only the client owned by the server mapped to toolName.
+func (a *Agent) mappedMCPClient(toolName string) (mcpclient.ClientInterface, string, bool) {
+	if a.toolToServer == nil {
+		return nil, "", false
+	}
+
+	serverName, mapped := a.toolToServer[toolName]
+	if !mapped || serverName == "" || serverName == "custom" {
+		return nil, serverName, mapped
+	}
+
+	a.clientsMu.RLock()
+	client := a.Clients[serverName]
+	a.clientsMu.RUnlock()
+	return client, serverName, true
+}
+
+func requireFunctionCall(tc llmtypes.ToolCall) (*llmtypes.FunctionCall, error) {
+	if tc.FunctionCall == nil {
+		return nil, fmt.Errorf("invalid tool call: nil function call")
+	}
+	return tc.FunctionCall, nil
+}
+
 func injectSteerMessages(ctx context.Context, a *Agent, messages []llmtypes.MessageContent, steerMsgs []string, turn int, logMessage string) []llmtypes.MessageContent {
 	for _, sm := range steerMsgs {
 		messages = append(messages, llmtypes.MessageContent{
@@ -92,7 +116,7 @@ func isVirtualTool(toolName string) bool {
 	// Check hardcoded virtual tools (includes all possible virtual tools)
 	virtualTools := []string{
 		"get_prompt", "get_resource",
-		"read_large_output", "search_large_output", "query_large_output",
+		"search_large_output",
 		"get_api_spec",                                              // Code execution mode tools
 		"search_tools", "add_tool", "remove_tool", "show_all_tools", // Tool search mode tools
 	}
@@ -450,10 +474,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		userMessageForEvent = "conversation_with_history"
 	}
 
-	// NEW: Set the current query for hierarchy tracking
-	a.SetCurrentQuery(userMessageForEvent)
-
-	// NEW: Start agent session for hierarchy tracking
+	// Start the agent session event.
 	a.StartAgentSession(ctx)
 
 	// Emit user message event - this will appear in basic events (user_message is not in ADVANCED_MODE_EVENTS)
@@ -501,8 +522,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// conversationStartEventID := conversationStartEvent.EventID
 	// Metadata for processing tracking
 
-	// 🎯 SMART ROUTING APPLICATION - Apply smart routing with conversation context
-	// Reset filtered tools at the start of each conversation to ensure fresh evaluation
+	// Reset filtered tools at the start of each conversation to ensure fresh evaluation.
 	// In tool search mode, use getToolsForToolSearchMode() to include discovered tools
 	if a.UseToolSearchMode {
 		a.filteredTools = a.applyToolAllowList(a.getToolsForToolSearchMode())
@@ -523,10 +543,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		v2Logger.Debug("🔧 Available tools", loggerv2.Any("tools", toolNames))
 	}
 
-	// filteredTools was set above (tool-search mode or full Tools).
-	// The smart-routing per-turn re-filter previously lived here; it's
-	// gone, so what was set during the pre-call setup is what the LLM
-	// will see.
+	// filteredTools was set above (tool-search mode or full Tools), so what
+	// was selected during pre-call setup is what the LLM will see.
 
 	// Calculate token count for the system prompt if tool output handler is available
 	var tokenCount int
@@ -544,9 +562,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		if a.MaxTurns > 0 && turn >= a.MaxTurns {
 			break
 		}
-
-		// NEW: Start turn for hierarchy tracking
-		a.StartTurn(ctx, turn+1)
 
 		// Extract the last message from the conversation (could be user, assistant, or tool)
 		var lastMessage string
@@ -1021,18 +1036,25 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 			// Sequential execution (default path, or single tool call)
 			for i, tc := range choice.ToolCalls {
-				if tc.FunctionCall == nil {
+				functionCall, err := requireFunctionCall(tc)
+				if err != nil {
 					v2Logger.Warn("Tool call has nil FunctionCall", loggerv2.Int("tool_call_index", i+1))
+					v2Logger.Error("AskWithHistory Early return: invalid tool call: nil function call", nil)
+
+					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "invalid tool call: nil function call", turn+1, "invalid_tool_call", time.Since(conversationStartTime))
+					a.EmitTypedEvent(ctx, conversationErrorEvent)
+
+					return "", messages, err
 				}
 
 				// Determine server name for tool call events
-				serverName := a.toolToServer[tc.FunctionCall.Name]
-				if isVirtualTool(tc.FunctionCall.Name) {
+				serverName := a.toolToServer[functionCall.Name]
+				if isVirtualTool(functionCall.Name) {
 					// For get_api_spec, extract the actual server_name from arguments
 					// so error events show the correct server, making debugging easier.
-					if tc.FunctionCall.Name == "get_api_spec" && tc.FunctionCall.Arguments != "" {
+					if functionCall.Name == "get_api_spec" && functionCall.Arguments != "" {
 						var args map[string]interface{}
-						if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
+						if err := json.Unmarshal([]byte(functionCall.Arguments), &args); err == nil {
 							if srvName, ok := args["server_name"].(string); ok && srvName != "" {
 								serverName = srvName
 							} else {
@@ -1047,22 +1069,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 
 				// Emit tool call start event using typed event data with correlation
-				toolStartEvent := events.NewToolCallStartEventWithCorrelation(turn+1, tc.FunctionCall.Name, events.ToolParams{
-					Arguments: tc.FunctionCall.Arguments,
+				toolStartEvent := events.NewToolCallStartEventWithCorrelation(turn+1, functionCall.Name, events.ToolParams{
+					Arguments: functionCall.Arguments,
 				}, serverName, traceID, traceID) // Using traceID for both traceID and parentID correlation
 				toolStartEvent.ToolCallID = tc.ID
 
 				a.EmitTypedEvent(ctx, toolStartEvent)
-
-				if tc.FunctionCall == nil {
-					v2Logger.Error("AskWithHistory Early return: invalid tool call: nil function call", nil)
-
-					// 🎯 FIX: End the trace for invalid tool call error - replaced with event emission
-					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "invalid tool call: nil function call", turn+1, "invalid_tool_call", time.Since(conversationStartTime))
-					a.EmitTypedEvent(ctx, conversationErrorEvent)
-
-					return "", messages, fmt.Errorf("invalid tool call: nil function call")
-				}
 
 				// 🔧 ENHANCED: Check for empty tool name and provide feedback to LLM for self-correction
 				if tc.FunctionCall.Name == "" {
@@ -1131,7 +1143,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' identified as virtual tool", tc.FunctionCall.Name))
 				}
 
-				client := a.Client
+				var client mcpclient.ClientInterface
+				mappedServerName := ""
+				hasMappedServer := false
 				if a.toolToServer != nil {
 					if mapped, ok := a.toolToServer[tc.FunctionCall.Name]; ok {
 						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' mapped to server '%s' in toolToServer", tc.FunctionCall.Name, mapped))
@@ -1139,9 +1153,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							// Custom tool - no client needed
 							v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' is a custom tool (mapped to 'custom'), skipping client lookup", tc.FunctionCall.Name))
 							isCustomTool = true // Ensure it's marked as custom
-						} else if a.Clients != nil {
-							if c, exists := a.Clients[mapped]; exists {
-								client = c
+						} else {
+							client, mappedServerName, hasMappedServer = a.mappedMCPClient(tc.FunctionCall.Name)
+							if client != nil {
 								v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Found client for tool '%s' from server '%s'", tc.FunctionCall.Name, mapped))
 							} else {
 								v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Server '%s' mapped for tool '%s' but no client found in Clients map", mapped, tc.FunctionCall.Name))
@@ -1157,80 +1171,64 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Only check for client errors for non-custom tools and non-virtual tools
 				if !isCustomTool && !isVirtual && client == nil {
 					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' requires client but none found (isCustomTool=%v, isVirtual=%v, client=nil)", tc.FunctionCall.Name, isCustomTool, isVirtual))
-					// Check if we have no active connections
-					if len(a.Clients) == 0 {
-						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] No active clients (len(a.Clients)=%d), attempting on-demand connection for tool '%s'", len(a.Clients), tc.FunctionCall.Name))
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Attempting on-demand connection for tool '%s'", tc.FunctionCall.Name))
 
-						// Create connection on-demand for the specific server
-						serverName := ""
+					// Create a connection on demand for the mapped server even when other
+					// servers already have active clients.
+					if !hasMappedServer || mappedServerName == "" {
+						// Calculate counts for logging
+						customToolsCount := 0
+						if a.customTools != nil {
+							customToolsCount = len(a.customTools)
+						}
+						toolToServerCount := 0
 						if a.toolToServer != nil {
-							serverName = a.toolToServer[tc.FunctionCall.Name]
+							toolToServerCount = len(a.toolToServer)
 						}
-						if serverName == "" {
-							// Calculate counts for logging
-							customToolsCount := 0
-							if a.customTools != nil {
-								customToolsCount = len(a.customTools)
-							}
-							toolToServerCount := 0
-							if a.toolToServer != nil {
-								toolToServerCount = len(a.toolToServer)
-							}
-							v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not mapped to any server. isCustomTool=%v, isVirtual=%v, customTools has %d tools, toolToServer has %d entries",
-								tc.FunctionCall.Name, isCustomTool, isVirtual, customToolsCount, toolToServerCount))
-							v2Logger.Warn(fmt.Sprintf("[AGENT DEBUG] AskWithHistory Turn %d: Tool '%s' not mapped to any server. Providing feedback to LLM.", turn+1, tc.FunctionCall.Name))
+						v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not mapped to any server. isCustomTool=%v, isVirtual=%v, customTools has %d tools, toolToServer has %d entries",
+							tc.FunctionCall.Name, isCustomTool, isVirtual, customToolsCount, toolToServerCount))
+						v2Logger.Warn(fmt.Sprintf("[AGENT DEBUG] AskWithHistory Turn %d: Tool '%s' not mapped to any server. Providing feedback to LLM.", turn+1, tc.FunctionCall.Name))
 
-							// Generate helpful feedback instead of failing
-							feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- read_large_output, search_large_output, query_large_output (file tools)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
+						// Generate helpful feedback instead of failing
+						feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- search_large_output (read/search/query operations for offloaded files)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
 
-							// Emit tool call error event for observability
-							toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
-							toolNotFoundEvent.ToolCallID = tc.ID
-							a.EmitTypedEvent(ctx, toolNotFoundEvent)
+						// Emit tool call error event for observability
+						toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
+						toolNotFoundEvent.ToolCallID = tc.ID
+						a.EmitTypedEvent(ctx, toolNotFoundEvent)
 
-							// Add feedback to conversation so LLM can correct itself
-							messages = append(messages, llmtypes.MessageContent{
-								Role:  llmtypes.ChatMessageTypeTool,
-								Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
-							})
+						// Add feedback to conversation so LLM can correct itself
+						messages = append(messages, llmtypes.MessageContent{
+							Role:  llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
+						})
 
-							continue
-						}
-
-						onDemandClient, err := a.resolveOnDemandMCPClient(ctx, serverName, v2Logger)
-						if err != nil {
-							v2Logger.Error("AskWithHistory Early return: failed to create on-demand connection",
-								err,
-								loggerv2.String("server", serverName))
-							conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("failed to create on-demand connection for server %s: %v", serverName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
-							a.EmitTypedEvent(ctx, conversationErrorEvent)
-							return "", messages, fmt.Errorf("failed to create on-demand connection for server %s: %w", serverName, err)
-						}
-
-						// Store the on-demand client back into a.Clients so subsequent tool calls
-						// reuse this connection instead of spawning a new MCP process each time.
-						// Without this, every tool call sees len(a.Clients)==0 and creates a duplicate
-						// connection (e.g. 10+ Playwright browser instances for a single workflow).
-						a.clientsMu.Lock()
-						if a.Clients == nil {
-							a.Clients = make(map[string]mcpclient.ClientInterface)
-						}
-						a.Clients[serverName] = onDemandClient
-						a.clientsMu.Unlock()
-
-						// Use the on-demand client
-						client = onDemandClient
-					} else {
-						v2Logger.Error("AskWithHistory Early return: no MCP client found for tool", nil,
-							loggerv2.String("tool", tc.FunctionCall.Name))
-
-						// 🎯 FIX: End the trace for no MCP client error - replaced with event emission
-						conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("no MCP client found for tool %s", tc.FunctionCall.Name), turn+1, "no_mcp_client", time.Since(conversationStartTime))
-						a.EmitTypedEvent(ctx, conversationErrorEvent)
-
-						err := fmt.Errorf("no MCP client found for tool %s", tc.FunctionCall.Name)
-						return "", messages, err
+						continue
 					}
+
+					onDemandClient, err := a.resolveOnDemandMCPClient(ctx, mappedServerName, v2Logger)
+					if err != nil {
+						v2Logger.Error("AskWithHistory Early return: failed to create on-demand connection",
+							err,
+							loggerv2.String("server", mappedServerName))
+						conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("failed to create on-demand connection for server %s: %v", mappedServerName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
+						a.EmitTypedEvent(ctx, conversationErrorEvent)
+						return "", messages, fmt.Errorf("failed to create on-demand connection for server %s: %w", mappedServerName, err)
+					}
+
+					// Store the on-demand client back into a.Clients so subsequent tool calls
+					// reuse this connection instead of spawning a new MCP process each time.
+					// Without this, every call to this server would create a duplicate connection
+					// (e.g. 10+ Playwright browser instances for a single workflow).
+					a.clientsMu.Lock()
+					if a.Clients == nil {
+						a.Clients = make(map[string]mcpclient.ClientInterface)
+					}
+					a.Clients[mappedServerName] = onDemandClient
+					a.clientsMu.Unlock()
+
+					// Use the on-demand client
+					client = onDemandClient
 				}
 
 				// Check for context cancellation before tool execution
@@ -1345,16 +1343,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				var result *mcp.CallToolResult
 				var toolErr error
 
-				// Resolve disambiguated tool names (servername__toolname -> toolname)
-				// When duplicate tools from different servers are added, they get renamed
-				// to servername__toolname. We need to use the original name for MCP calls.
-				actualToolName := tc.FunctionCall.Name
-				if strings.Contains(actualToolName, "__") {
-					parts := strings.SplitN(actualToolName, "__", 2)
-					if len(parts) == 2 {
-						actualToolName = parts[1]
-						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Resolved disambiguated tool '%s' -> '%s' (server: %s)", tc.FunctionCall.Name, actualToolName, parts[0]))
-					}
+				// Resolve the LLM-facing disambiguated name to the name registered by MCP.
+				actualToolName := actualMCPToolName(tc.FunctionCall.Name, serverName)
+				if actualToolName != tc.FunctionCall.Name {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Resolved disambiguated tool '%s' -> '%s' (server: %s)", tc.FunctionCall.Name, actualToolName, serverName))
 				}
 
 				// Check if this is a virtual tool

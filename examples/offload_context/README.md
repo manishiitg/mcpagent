@@ -23,10 +23,7 @@ This pattern is inspired by [Manus's context engineering approach](https://rlanc
    - File path where data is saved
    - Preview (first 50% of threshold characters)
    - Instructions for using virtual tools
-4. **On-Demand Access**: The LLM can use virtual tools to access data incrementally:
-   - `read_large_output` - Read specific character ranges
-   - `search_large_output` - Search for patterns using ripgrep
-   - `query_large_output` - Execute jq queries on JSON files
+4. **On-Demand Access**: The LLM uses `search_large_output` with `read`, `search`, or `query` operations.
 
 ## Key Benefits
 
@@ -75,7 +72,7 @@ go run main.go mcp_servers.json "Search for comprehensive information about Reac
    - Saves full result to `tool_output_folder/{session-id}/tool_YYYYMMDD_HHMMSS_get_library_docs.json`
    - Replaces output with compact reference: file path + preview
    - LLM receives instructions for using virtual tools
-4. LLM can then use `read_large_output`, `search_large_output`, or `query_large_output` to access specific parts
+4. LLM can then use the appropriate `search_large_output` operation to access specific parts
 
 ### Scenario 2: Incremental Data Access
 
@@ -84,9 +81,10 @@ After a large output is offloaded, the LLM can:
 **Read specific ranges:**
 ```json
 {
-  "tool": "read_large_output",
+  "tool": "search_large_output",
   "args": {
     "filename": "tool_20250727_093045_get_library_docs.json",
+	"operation": "read",
     "start": 0,
     "end": 5000
   }
@@ -99,6 +97,7 @@ After a large output is offloaded, the LLM can:
   "tool": "search_large_output",
   "args": {
     "filename": "tool_20250727_093045_get_library_docs.json",
+	"operation": "search",
     "pattern": "useState|useEffect",
     "case_sensitive": false,
     "max_results": 50
@@ -109,18 +108,19 @@ After a large output is offloaded, the LLM can:
 **Query JSON data:**
 ```json
 {
-  "tool": "query_large_output",
+  "tool": "search_large_output",
   "args": {
     "filename": "tool_20250727_093045_get_library_docs.json",
+	"operation": "query",
     "query": ".sections[] | select(.title | contains(\"Hooks\"))",
     "compact": true
   }
 }
 ```
 
-## Virtual Tools
+## Virtual Tool Operations
 
-### 1. `read_large_output`
+### 1. `search_large_output` with `operation="read"`
 
 Reads a specific range of characters from an offloaded file.
 
@@ -131,7 +131,7 @@ Reads a specific range of characters from an offloaded file.
 
 **Use Case:** Reading file content incrementally (pagination).
 
-### 2. `search_large_output`
+### 2. `search_large_output` with `operation="search"`
 
 Searches for regex patterns within an offloaded file using `ripgrep` (rg).
 
@@ -143,7 +143,7 @@ Searches for regex patterns within an offloaded file using `ripgrep` (rg).
 
 **Use Case:** Finding specific keywords, error messages, or patterns in large text files.
 
-### 3. `query_large_output`
+### 3. `search_large_output` with `operation="query"`
 
 Executes `jq` queries on JSON files.
 
@@ -285,11 +285,9 @@ apt-get install ripgrep jq
 For more details, see:
 - [Context Offloading Documentation](../../docs/large_output_handling.md)
 - [Tool-Use Agent Documentation](../../docs/tool_use_agent.md)
-- [Smart Routing Documentation](../../docs/smart_routing.md)
 
 ## References
 
 - [Manus: Context Engineering](https://rlancemartin.github.io/2025/10/15/manus/) - Context engineering strategies including offload context
 - [Anthropic: Context Editing](https://docs.anthropic.com/claude/docs/context-editing) - Automatic context management
 - [Chroma: Context Rot Study](https://www.trychroma.com/blog/context-rot) - Performance degradation with large contexts
-

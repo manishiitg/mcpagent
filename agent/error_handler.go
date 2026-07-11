@@ -17,7 +17,6 @@ import (
 
 	"github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcpagent/mcpcache"
 	"github.com/manishiitg/mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -75,15 +74,13 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	// all associated MCP session IDs as "stopped". This catches the case where
 	// the sub-agent's context is NOT derived from the workflow context (e.g., tool
 	// calls dispatched via HTTP from claude-code CLI have independent contexts).
-	if h.agent.SessionID != "" {
-		registry := mcpclient.GetSessionRegistry()
-		if registry.IsSessionStopped(h.agent.SessionID) {
-			h.logger.Info("🔧 [BROKEN PIPE] Skipping retry — session was stopped (zombie prevention)",
-				loggerv2.String("tool", toolCall.FunctionCall.Name),
-				loggerv2.String("server", serverName),
-				loggerv2.String("session_id", h.agent.SessionID))
-			return nil, time.Since(startTime), fmt.Errorf("session stopped — broken pipe not retried: %w", originalErr)
-		}
+	registry := mcpclient.GetSessionRegistry()
+	if registry.IsSessionStopped(h.agent.SessionID) {
+		h.logger.Info("🔧 [BROKEN PIPE] Skipping retry — session was stopped (zombie prevention)",
+			loggerv2.String("tool", toolCall.FunctionCall.Name),
+			loggerv2.String("server", serverName),
+			loggerv2.String("session_id", h.agent.SessionID))
+		return nil, time.Since(startTime), fmt.Errorf("session stopped — broken pipe not retried: %w", originalErr)
 	}
 
 	h.logger.Info("Broken pipe detected, attempting connection recreation",
@@ -93,17 +90,9 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	// Emit broken pipe detection event
 	h.emitBrokenPipeEvent(ctx, toolCall, serverName, originalErr)
 
-	var freshClient mcpclient.ClientInterface
-	var freshErr error
-
-	if h.agent.SessionID != "" {
-		// Session-scoped mode: use the registry so the new connection is tracked
-		// and will be cleaned up by CloseAllSessions at shutdown.
-		freshClient, freshErr = h.recreateViaRegistry(ctx, serverName)
-	} else {
-		// Legacy mode: direct close + fresh connection (no registry)
-		freshClient, freshErr = h.recreateDirect(ctx, serverName)
-	}
+	// Recreate through the registry so the replacement remains tracked and is
+	// cleaned up with the rest of the session.
+	freshClient, freshErr := h.recreateViaRegistry(ctx, serverName)
 
 	if freshErr != nil {
 		h.logger.Error(fmt.Sprintf("🔧 [BROKEN PIPE] Failed to create fresh connection: %v", freshErr), freshErr)
@@ -166,20 +155,6 @@ func (h *BrokenPipeHandler) recreateViaRegistry(ctx context.Context, serverName 
 	return client, nil
 }
 
-// recreateDirect closes the old connection directly and creates a fresh one
-// via mcpcache. Used when there is no session registry (legacy mode).
-func (h *BrokenPipeHandler) recreateDirect(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
-	h.agent.clientsMu.Lock()
-	if oldClient, exists := h.agent.Clients[serverName]; exists && oldClient != nil {
-		h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Closing old broken connection for server: %s", serverName),
-			loggerv2.String("server", serverName))
-		_ = oldClient.Close()
-	}
-	h.agent.clientsMu.Unlock()
-
-	return mcpcache.GetFreshConnection(ctx, serverName, h.agent.configPath, h.logger)
-}
-
 // retryToolCall retries a tool call with a fresh connection
 func (h *BrokenPipeHandler) retryToolCall(
 	ctx context.Context,
@@ -212,8 +187,10 @@ func (h *BrokenPipeHandler) retryToolCall(
 	retryCtx, retryCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer retryCancel()
 
-	// Execute the retry
-	retryResult, retryErr := client.CallTool(retryCtx, toolCall.FunctionCall.Name, retryArgs)
+	// Execute the retry with the server's registered name, not the qualified
+	// LLM-facing name used to disambiguate duplicate tools.
+	actualToolName := actualMCPToolName(toolCall.FunctionCall.Name, serverName)
+	retryResult, retryErr := client.CallTool(retryCtx, actualToolName, retryArgs)
 	retryDuration := time.Since(startTime)
 
 	if retryErr == nil {

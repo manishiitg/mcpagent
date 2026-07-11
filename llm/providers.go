@@ -39,7 +39,6 @@ const (
 const (
 	ClaudeCodeTransportTmux         = llmproviders.ClaudeCodeTransportTmux
 	ClaudeCodeTransportExperimental = llmproviders.ClaudeCodeTransportExperimental
-	ClaudeCodeTransportPrint        = llmproviders.ClaudeCodeTransportPrint
 )
 
 type CodingAgentTransport = llmproviders.CodingAgentTransport
@@ -474,7 +473,7 @@ func convertConfig(config Config) llmproviders.Config {
 		eventEmitter = NewEventEmitterAdapter(nil)
 	}
 
-	// Create LoggerAdapter from ExtendedLogger
+	// Adapt the v2 logger to the provider logger interface.
 	var logger interfaces.Logger
 	if config.Logger != nil {
 		logger = NewLoggerAdapter(config.Logger)
@@ -515,47 +514,27 @@ func InitializeLLM(config Config) (llmtypes.Model, error) {
 	}
 
 	// Wrap the returned LLM to maintain backward compatibility with agent_go-specific fields
-	return wrapProviderAwareLLM(llm, config.Provider, config.ModelID, config.Tracers, config.TraceID, config.Logger, config.APIKeys), nil
+	return wrapProviderAwareLLM(llm, config.Provider, config.ModelID, config.Logger, config.APIKeys), nil
 }
 
-// wrapProviderAwareLLM wraps the llm-providers Model to maintain backward compatibility
-// Since both packages now use the same llmtypes, no conversion is needed
-func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, apiKeys *ProviderAPIKeys) *ProviderAwareLLM {
+// wrapProviderAwareLLM preserves the configuration metadata used by Agent.
+func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, logger loggerv2.Logger, apiKeys *ProviderAPIKeys) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
 		Model:    llm,
 		provider: provider,
 		modelID:  modelID,
-		tracers:  tracers,
-		traceID:  traceID,
 		logger:   logger,
 		apiKeys:  apiKeys,
 	}
 }
 
-// ProviderAwareLLM is a wrapper around LLM that preserves provider information
-// This maintains backward compatibility with agent_go code
+// ProviderAwareLLM preserves provider metadata and applies provider-specific call options.
 type ProviderAwareLLM struct {
 	llmtypes.Model
 	provider Provider
 	modelID  string
-	tracers  []observability.Tracer
-	traceID  observability.TraceID
 	logger   loggerv2.Logger
 	apiKeys  *ProviderAPIKeys
-}
-
-// NewProviderAwareLLM creates a new provider-aware LLM wrapper
-// This maintains backward compatibility with existing agent_go code
-func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, apiKeys *ProviderAPIKeys) *ProviderAwareLLM {
-	return &ProviderAwareLLM{
-		Model:    llm,
-		provider: provider,
-		modelID:  modelID,
-		tracers:  tracers,
-		traceID:  traceID,
-		logger:   logger,
-		apiKeys:  apiKeys,
-	}
 }
 
 // GetProvider returns the provider of this LLM
@@ -574,8 +553,7 @@ func (p *ProviderAwareLLM) GetAPIKeys() *ProviderAPIKeys {
 	return p.apiKeys
 }
 
-// GenerateContent wraps the underlying LLM's GenerateContent method
-// This maintains backward compatibility and adds OpenRouter usage parameter logic
+// GenerateContent wraps the underlying model and adds OpenRouter usage metadata.
 func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmtypes.MessageContent, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
 	// Automatically add usage parameter for OpenRouter requests to get cache token information
 	if p.provider == ProviderOpenRouter {

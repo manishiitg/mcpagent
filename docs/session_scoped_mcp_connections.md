@@ -301,7 +301,7 @@ type Agent struct {
 }
 ```
 
-#### Modify NewAgent() to use registry when SessionID is set
+#### Use the session registry for agent connections
 
 ```go
 func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
@@ -310,16 +310,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
     var clients map[string]mcpclient.ClientInterface
     var err error
 
-    // Check if session-scoped connection management is enabled
-    if ag.SessionID != "" {
-        // Use session registry - connections are shared and persist
-        clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-            NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
-    } else {
-        // Legacy behavior - connections are created fresh
-        clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-            NewAgentConnection(ctx, llm, serverName, configPath, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
-    }
+    // Connections are shared by the session registry and persist for the session.
+    clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+        NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache)
 
     if err != nil {
         return nil, err

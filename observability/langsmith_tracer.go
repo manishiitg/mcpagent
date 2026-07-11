@@ -68,37 +68,37 @@ var (
 
 // langsmithRun represents a run in LangSmith API format
 type langsmithRun struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	RunType      string                 `json:"run_type"` // "llm", "chain", "tool", "retriever"
-	StartTime    time.Time              `json:"start_time"`
-	EndTime      *time.Time             `json:"end_time,omitempty"`
-	Inputs       map[string]interface{} `json:"inputs,omitempty"`
-	Outputs      map[string]interface{} `json:"outputs,omitempty"`
-	ParentRunID  string                 `json:"parent_run_id,omitempty"`
-	SessionName  string                 `json:"session_name,omitempty"` // Maps to project
-	Tags         []string               `json:"tags,omitempty"`
-	Extra        map[string]interface{} `json:"extra,omitempty"`
-	Error        string                 `json:"error,omitempty"`
-	Serialized   map[string]interface{} `json:"serialized,omitempty"`
-	Events       []langsmithEvent       `json:"events,omitempty"`
-	InputsS3URLs map[string]string      `json:"inputs_s3_urls,omitempty"`
-	OutputsS3URLs map[string]string     `json:"outputs_s3_urls,omitempty"`
-	TraceID      string                 `json:"trace_id,omitempty"` // Root run ID for hierarchy
-	DottedOrder  string                 `json:"dotted_order,omitempty"` // Ordering for nested runs
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	RunType       string                 `json:"run_type"` // "llm", "chain", "tool", "retriever"
+	StartTime     time.Time              `json:"start_time"`
+	EndTime       *time.Time             `json:"end_time,omitempty"`
+	Inputs        map[string]interface{} `json:"inputs,omitempty"`
+	Outputs       map[string]interface{} `json:"outputs,omitempty"`
+	ParentRunID   string                 `json:"parent_run_id,omitempty"`
+	SessionName   string                 `json:"session_name,omitempty"` // Maps to project
+	Tags          []string               `json:"tags,omitempty"`
+	Extra         map[string]interface{} `json:"extra,omitempty"`
+	Error         string                 `json:"error,omitempty"`
+	Serialized    map[string]interface{} `json:"serialized,omitempty"`
+	Events        []langsmithEvent       `json:"events,omitempty"`
+	InputsS3URLs  map[string]string      `json:"inputs_s3_urls,omitempty"`
+	OutputsS3URLs map[string]string      `json:"outputs_s3_urls,omitempty"`
+	TraceID       string                 `json:"trace_id,omitempty"`     // Root run ID for hierarchy
+	DottedOrder   string                 `json:"dotted_order,omitempty"` // Ordering for nested runs
 
 	// LLM-specific fields (included in extra.invocation_params or tokens)
-	Model        string                 `json:"-"` // Stored separately, added to extra
-	PromptTokens int                    `json:"-"`
-	CompletionTokens int               `json:"-"`
-	TotalTokens  int                    `json:"-"`
+	Model            string `json:"-"` // Stored separately, added to extra
+	PromptTokens     int    `json:"-"`
+	CompletionTokens int    `json:"-"`
+	TotalTokens      int    `json:"-"`
 }
 
 // langsmithEvent represents an event within a run
 type langsmithEvent struct {
-	Name      string                 `json:"name"`
-	Time      time.Time              `json:"time"`
-	Kwargs    map[string]interface{} `json:"kwargs,omitempty"`
+	Name   string                 `json:"name"`
+	Time   time.Time              `json:"time"`
+	Kwargs map[string]interface{} `json:"kwargs,omitempty"`
 }
 
 // langsmithBatchPayload represents the batch ingestion payload
@@ -125,12 +125,6 @@ func newLangsmithTracerWithLogger(logger loggerv2.Logger) (Tracer, error) {
 	}
 
 	return sharedLangsmithClient, nil
-}
-
-// NewLangsmithTracer creates a new LangSmith tracer (public function for direct use)
-// DEPRECATED: Use NewLangsmithTracerWithLogger instead to provide a proper logger
-func NewLangsmithTracer() (Tracer, error) {
-	return nil, errors.New("NewLangsmithTracer() is deprecated. Use NewLangsmithTracerWithLogger(logger) instead to provide a proper logger")
 }
 
 // NewLangsmithTracerWithLogger creates a new LangSmith tracer with an injected logger
@@ -1018,7 +1012,6 @@ func (l *LangsmithTracer) EmitLLMEvent(event LLMEvent) error {
 // Helper functions for generating names
 // Note: Most helper functions have been moved to utils.go
 
-
 // Event handlers
 
 // getOrCreateUUID gets or creates a LangSmith UUID for an external trace ID.
@@ -1081,9 +1074,9 @@ func (l *LangsmithTracer) handleAgentStart(event AgentEvent) error {
 	}
 
 	l.mu.Lock()
-	l.traces[externalTraceID] = run       // Key by external ID for easy lookup
-	l.runs[langsmithUUID] = run           // Also store by LangSmith UUID
-	l.runs[externalTraceID] = run         // And by external ID for EndTrace lookup
+	l.traces[externalTraceID] = run // Key by external ID for easy lookup
+	l.runs[langsmithUUID] = run     // Also store by LangSmith UUID
+	l.runs[externalTraceID] = run   // And by external ID for EndTrace lookup
 	l.mu.Unlock()
 
 	// Create agent run as child (using LangSmith UUID as parent)
@@ -1207,7 +1200,7 @@ func (l *LangsmithTracer) handleConversationStart(event AgentEvent) error {
 			"name":   newName,
 			"inputs": trace.Inputs,
 		}
-		
+
 		// Send update asynchronously
 		l.wg.Add(1)
 		go func(id string, data map[string]interface{}) {

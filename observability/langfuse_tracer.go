@@ -87,10 +87,6 @@ const (
 	EventTypeContextSummarizationError     = "context_summarization_error"
 	EventTypeContextEditingCompleted       = "context_editing_completed"
 
-	// Smart routing events
-	EventTypeSmartRoutingStart = "smart_routing_start"
-	EventTypeSmartRoutingEnd   = "smart_routing_end"
-
 	// Streaming events
 	EventTypeStreamingStart          = "streaming_start"
 	EventTypeStreamingEnd            = "streaming_end"
@@ -121,7 +117,7 @@ type LangfuseTracer struct {
 
 	// Shared state for all instances (similar to Python class-level state)
 	traces map[string]*langfuseTrace
-	spans  map[string]*langfuseSpan
+	spans  map[string]*langfuseObservation
 
 	// Hierarchy tracking: traceID -> spanID mappings
 	agentSpans         map[string]string // traceID -> agent span ID
@@ -164,7 +160,6 @@ type langfuseTrace struct {
 	Version   string                 `json:"version,omitempty"`
 }
 
-// langfuseSpan represents a span/observation in Langfuse v2 API format
 // langfuseObservation represents a Langfuse observation following the proper data model
 type langfuseObservation struct {
 	ID                  string                 `json:"id"`
@@ -197,9 +192,6 @@ type langfuseObservation struct {
 	// Agent-specific fields
 	AgentName string `json:"agentName,omitempty"`
 }
-
-// langfuseSpan is kept for backward compatibility but now uses langfuseObservation
-type langfuseSpan = langfuseObservation
 
 // LangfuseUsage represents usage metrics in Langfuse format
 type LangfuseUsage struct {
@@ -247,12 +239,6 @@ func newLangfuseTracerWithLogger(logger loggerv2.Logger) (Tracer, error) {
 	return sharedLangfuseClient, nil
 }
 
-// NewLangfuseTracer creates a new Langfuse tracer (public function for direct use)
-// DEPRECATED: Use NewLangfuseTracerWithLogger instead to provide a proper logger
-func NewLangfuseTracer() (Tracer, error) {
-	return nil, errors.New("NewLangfuseTracer() is deprecated. Use NewLangfuseTracerWithLogger(logger) instead to provide a proper logger")
-}
-
 // NewLangfuseTracerWithLogger creates a new Langfuse tracer with an injected logger
 func NewLangfuseTracerWithLogger(logger loggerv2.Logger) (Tracer, error) {
 	return newLangfuseTracerWithLogger(logger)
@@ -298,7 +284,7 @@ func initializeSharedLangfuseClientWithLogger(logger loggerv2.Logger) error {
 		secretKey:          secretKey,
 		debug:              debug,
 		traces:             make(map[string]*langfuseTrace),
-		spans:              make(map[string]*langfuseSpan),
+		spans:              make(map[string]*langfuseObservation),
 		agentSpans:         make(map[string]string),
 		conversationSpans:  make(map[string]string),
 		llmGenerationSpans: make(map[string]string),
@@ -561,7 +547,7 @@ func (l *LangfuseTracer) cleanupTrace(traceID TraceID) {
 // CreateGenerationSpan creates a generation span for LLM calls
 func (l *LangfuseTracer) CreateGenerationSpan(traceID TraceID, parentID SpanID, name, model string, input interface{}) SpanID {
 	id := generateID()
-	span := &langfuseSpan{
+	span := &langfuseObservation{
 		ID:                  id,
 		TraceID:             string(traceID),
 		ParentObservationID: string(parentID),
@@ -982,12 +968,6 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 		return l.handleContextSummarizationError(event)
 	case EventTypeContextEditingCompleted:
 		return l.handleContextEditingCompleted(event)
-
-	// Smart routing events
-	case EventTypeSmartRoutingStart:
-		return l.handleSmartRoutingStart(event)
-	case EventTypeSmartRoutingEnd:
-		return l.handleSmartRoutingEnd(event)
 
 	// Streaming events
 	case EventTypeStreamingStart:
@@ -2170,88 +2150,6 @@ func (l *LangfuseTracer) handleContextEditingCompleted(event AgentEvent) error {
 	v2Logger.Debug("Langfuse: Created context editing completed span",
 		loggerv2.String("span_id", string(spanID)),
 		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// ============================================================================
-// Smart Routing Handlers
-// ============================================================================
-
-// handleSmartRoutingStart creates a span for smart routing start
-func (l *LangfuseTracer) handleSmartRoutingStart(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	// Get agent span as parent
-	l.mu.RLock()
-	parentSpanID := l.agentSpans[traceID]
-	l.mu.RUnlock()
-	if parentSpanID == "" {
-		parentSpanID = traceID
-	}
-
-	spanName := "smart_routing"
-	if srEvent, ok := event.GetData().(*events.SmartRoutingStartEvent); ok {
-		spanName = fmt.Sprintf("smart_routing_%d_servers_%d_tools", srEvent.TotalServers, srEvent.TotalTools)
-	}
-
-	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
-
-	// Store for later completion
-	l.mu.Lock()
-	l.mcpConnectionSpans["smart_routing_"+traceID] = string(spanID)
-	l.mu.Unlock()
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Started smart routing span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleSmartRoutingEnd ends the smart routing span
-func (l *LangfuseTracer) handleSmartRoutingEnd(event AgentEvent) error {
-	traceID := event.GetTraceID()
-	v2Logger := l.getV2Logger()
-
-	// Find the existing span
-	spanKey := "smart_routing_" + traceID
-	l.mu.RLock()
-	spanID := l.mcpConnectionSpans[spanKey]
-	l.mu.RUnlock()
-
-	var output map[string]interface{}
-	if srEvent, ok := event.GetData().(*events.SmartRoutingEndEvent); ok {
-		output = map[string]interface{}{
-			"selected_servers":      srEvent.SelectedServers,
-			"relevant_servers":      srEvent.RelevantServers,
-			"filtered_tools":        srEvent.FilteredTools,
-			"total_tools":           srEvent.TotalTools,
-			"routing_reasoning":     srEvent.RoutingReasoning,
-			"routing_duration":      srEvent.RoutingDuration.String(),
-			"has_appended_prompts":  srEvent.HasAppendedPrompts,
-			"appended_prompt_count": srEvent.AppendedPromptCount,
-			"success":               srEvent.Success,
-			"llm_response":          srEvent.LLMResponse,
-		}
-	}
-
-	if spanID != "" {
-		l.EndSpan(SpanID(spanID), output, nil)
-		l.mu.Lock()
-		delete(l.mcpConnectionSpans, spanKey)
-		l.mu.Unlock()
-		v2Logger.Info("Langfuse: Ended smart routing span",
-			loggerv2.String("span_id", spanID),
-			loggerv2.String("trace_id", traceID))
-	} else {
-		newSpanID := l.StartSpan(traceID, "smart_routing_completed", event.GetData())
-		l.EndSpan(newSpanID, output, nil)
-		v2Logger.Info("Langfuse: Created smart routing completed span",
-			loggerv2.String("span_id", string(newSpanID)),
-			loggerv2.String("trace_id", traceID))
-	}
 
 	return nil
 }

@@ -30,7 +30,7 @@ mcpagent-test test large-tool-output --log-level debug --log-file logs/large-too
 2. **Sets a lower threshold** (default: 1000 tokens) for testing large output detection
 3. **Tests large output detection**: Calls the tool with output that exceeds the threshold
 4. **Verifies file writing**: Checks that large outputs are written to `tool_output_folder`
-5. **Tests virtual tools**: Tests `read_large_output`, `search_large_output`, and `query_large_output`
+5. **Tests virtual tool operations**: Tests `search_large_output` with `read`, `search`, and `query`
 
 ## Test Scenarios
 
@@ -44,7 +44,7 @@ mcpagent-test test large-tool-output --log-level debug --log-file logs/large-too
 - Output size exceeds the threshold
 - **Expected**: Output is written to a file, agent receives file message with preview
 
-### Test 3: Virtual Tool - read_large_output
+### Test 3: `search_large_output` read operation
 - Agent is asked to read from the large output file
 - **Expected**: Virtual tool successfully reads the specified character range
 
@@ -52,7 +52,7 @@ mcpagent-test test large-tool-output --log-level debug --log-file logs/large-too
 - Agent is asked to search for patterns in the JSON file
 - **Expected**: Virtual tool successfully searches and returns matches
 
-### Test 5: Virtual Tool - query_large_output (JSON only)
+### Test 5: `search_large_output` query operation (JSON only)
 - Agent is asked to execute a jq query on the JSON file
 - **Expected**: Virtual tool successfully executes the query and returns results
 
@@ -94,7 +94,7 @@ In the agent's response, look for:
 - File path mentioned in the response
 - Preview content (first 50% of threshold characters)
 - Instructions about using virtual tools
-- References to `read_large_output`, `search_large_output`, `query_large_output`
+- References to `search_large_output` read/search/query operations
 
 Example response should contain:
 ```
@@ -106,7 +106,7 @@ Make sure to use the virtual tools next to read contents of this file...
 ```
 
 #### 5. Virtual Tools Execution
-For `read_large_output`:
+For `search_large_output` with `operation="read"`:
 - Look for successful file reads
 - Check that the correct character range was read
 - Verify the content matches the original file
@@ -116,7 +116,7 @@ For `search_large_output` (JSON only):
 - Verify pattern matching works
 - Check that results are formatted correctly
 
-For `query_large_output` (JSON only):
+For `search_large_output` with `operation="query"` (JSON only):
 - Look for jq query execution
 - Verify query results are correct
 - Check JSON parsing
@@ -174,9 +174,9 @@ Check that files were actually created:
 
 ### Successful Virtual Tool Usage
 ```
-[read_large_output] filename=... start=1 end=200
+[search_large_output/read] filename=... start=1 end=200
 [search_large_output] filename=... pattern=...
-[query_large_output] filename=... query=...
+[search_large_output/query] filename=... query=...
 ```
 
 ## Troubleshooting
@@ -243,4 +243,3 @@ After running the test, check:
 4. Virtual tools fail to execute
 5. File paths are incorrect
 6. Token counting is incorrect
-

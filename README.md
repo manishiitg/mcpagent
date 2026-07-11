@@ -322,23 +322,7 @@ The LLM calls `get_api_spec(server_name)` to discover per-tool HTTP endpoints, t
 
 **Note**: Code execution mode requires an HTTP server with bearer token auth running (configurable via `WithAPIConfig()`).
 
-### 4. **Smart Routing (DEPRECATED)**
-
-⚠️ **DEPRECATED**: This feature is deprecated and will be removed in a future version. Only use when explicitly needed for legacy compatibility.
-
-Dynamically filter tools based on conversation context to reduce token usage:
-
-```go
-agent, err := mcpagent.NewAgent(
-    ctx,
-    llmModel,
-    "config.json",
-    mcpagent.WithSmartRouting(true), // DEPRECATED
-    mcpagent.WithSmartRoutingThresholds(20, 3), // DEPRECATED
-)
-```
-
-### 5. **Context Offloading**
+### 4. **Context Offloading**
 
 Context offloading is a context engineering strategy that automatically saves large tool outputs to the filesystem instead of keeping them in the LLM's context window. This implements the **"offload context"** pattern, one of three primary context engineering approaches used in production agents like [Manus](https://rlancemartin.github.io/2025/10/15/manus/).
 
@@ -365,10 +349,7 @@ When tool outputs exceed the threshold:
 
 1. **External Storage**: Full content is saved to `tool_output_folder/{session-id}/` with unique filenames
 2. **Compact Reference**: LLM receives file path + preview (first 50% of threshold) instead of full content
-3. **On-Demand Access**: Agent uses virtual tools to access data incrementally:
-   - `read_large_output` - Read specific character ranges
-   - `search_large_output` - Search for patterns using ripgrep
-   - `query_large_output` - Execute jq queries on JSON files
+3. **On-Demand Access**: Agent uses `search_large_output` with `read`, `search`, or `query` operations to access data incrementally.
 
 **Example Token Savings:**
 
@@ -449,7 +430,7 @@ See the [Context Offloading example](examples/offload_context/) for a complete d
 
 See the [Context Offloading example](examples/offload_context/) for a complete demonstration.
 
-### 6. **Context Summarization**
+### 5. **Context Summarization**
 
 Automatically summarize conversation history when token usage exceeds a threshold to maintain long-running conversations:
 
@@ -469,7 +450,7 @@ agent, err := mcpagent.NewAgent(
 
 The agent monitors token usage and automatically replaces older messages with a concise LLM-generated summary when the threshold is reached, while preserving recent messages and tool call integrity. This enables "infinite" conversation depth within fixed context windows.
 
-### 7. **MCP Server Caching**
+### 6. **MCP Server Caching**
 
 Intelligent caching reduces connection times by 60-85%:
 
@@ -480,7 +461,7 @@ Intelligent caching reduces connection times by 60-85%:
 // MCP_CACHE_TTL_MINUTES=10080 (7 days)
 ```
 
-### 8. **Structured Output**
+### 7. **Structured Output**
 
 Get structured data from LLM responses in two ways:
 
@@ -519,7 +500,7 @@ if result.HasStructuredOutput {
 
 See [examples/structured_output/](examples/structured_output/) for complete examples.
 
-### 9. **Custom Tools**
+### 8. **Custom Tools**
 
 Register your own tools that work alongside MCP server tools. Custom tools work in both standard mode and code execution mode:
 
@@ -589,7 +570,7 @@ err := agent.RegisterCustomTool(
 
 See [examples/custom_tools/](examples/custom_tools/) for standard mode examples and [examples/code_execution/custom_tools/](examples/code_execution/custom_tools/) for code execution mode examples.
 
-### 10. **Parallel Tool Execution**
+### 9. **Parallel Tool Execution**
 
 When the LLM returns multiple tool calls in a single response, they can be executed concurrently using goroutines (fork-join pattern) instead of sequentially:
 
@@ -608,12 +589,15 @@ agent, err := mcpagent.NewAgent(
 
 **Observability:** `ToolCallStartEvent` includes an `IsParallel` field (`true` when the tool call is part of a parallel batch, `false` for sequential execution) so event listeners and tracers can distinguish between parallel and sequential tool calls.
 
-### 11. **Observability**
+### 10. **Observability**
 
 Built-in tracing with Langfuse support:
 
 ```go
-tracer := observability.NewLangfuseTracer(...)
+tracer, err := observability.NewLangfuseTracerWithLogger(logger)
+if err != nil {
+    return err
+}
 agent, err := mcpagent.NewAgent(
     ctx,
     llmModel,
@@ -633,7 +617,6 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 - **[Tool Search Mode](docs/tool_search_mode.md)** - Dynamic tool discovery for large tool catalogs
 - **[Tool-Use Agent](docs/tool_use_agent.md)** - Standard tool calling mode
 - **[Context Summarization](docs/context_summarization.md)** - Automatic history summarization
-- **[Smart Routing](docs/smart_routing.md)** (DEPRECATED) - Dynamic tool filtering
 - **[Context Offloading](docs/large_output_handling.md)** - Offload large tool outputs to filesystem (offload context pattern)
   - Implements the "offload context" strategy from [Manus's context engineering approach](https://rlancemartin.github.io/2025/10/15/manus/)
   - Prevents context window overflow and reduces token costs
@@ -688,7 +671,7 @@ Complete working examples are available in the [examples/](examples/) directory:
 - **[offload_context/](examples/offload_context/)** - Context offloading example
   - Demonstrates automatic offloading of large tool outputs to filesystem
   - Shows how tool results are stored externally and accessed on-demand
-  - Uses virtual tools (`read_large_output`, `search_large_output`, `query_large_output`) for efficient data exploration
+  - Uses `search_large_output` read/search/query operations for efficient data exploration
   - Example: Search operations that produce large results, automatically offloaded and accessed incrementally
 
 ### Tool Search Example
@@ -779,10 +762,6 @@ agent, err := mcpagent.NewAgent(
     mcpagent.WithToolSearchMode(true),
     mcpagent.WithPreDiscoveredTools([]string{"tool1", "tool2"}),
 
-    // Smart routing (DEPRECATED)
-    mcpagent.WithSmartRouting(true), // DEPRECATED
-    mcpagent.WithSmartRoutingThresholds(20, 3), // DEPRECATED
-    
     // Parallel tool execution (concurrent goroutines for multiple tool calls)
     mcpagent.WithParallelToolExecution(true),
 
@@ -794,16 +773,13 @@ agent, err := mcpagent.NewAgent(
     mcpagent.WithContextSummarization(true),
     mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
     
-    // Custom tools
-    mcpagent.WithCustomTools(customTools),
-    
     // Tool selection
     mcpagent.WithSelectedTools([]string{"server1:tool1", "server2:*"}),
     mcpagent.WithSelectedServers([]string{"server1", "server2"}),
-    
-    // Custom tool registration (after agent creation)
-    // agent.RegisterCustomTool(name, description, params, execFunc, category)
 )
+
+// Custom tools are registered after agent creation
+// agent.RegisterCustomTool(name, description, params, execFunc, category)
 
 // Folder guard paths are set on the created agent instance
 agent.SetFolderGuardPaths(allowedRead, allowedWrite)
@@ -821,7 +797,6 @@ go test ./...
 # Run specific test
 go run testing.go agent-mcp --log-file logs/test.log
 go run testing.go code-exec --log-file logs/test.log
-go run testing.go smart-routing --log-file logs/test.log
 go run testing.go parallel-tool-exec --provider vertex --model gemini-3-flash-preview
 ```
 
@@ -834,7 +809,7 @@ mcpagent/
 ├── agent/              # Core agent implementation
 │   ├── agent.go       # Main Agent struct and NewAgent()
 │   ├── conversation.go # Conversation loop and tool execution
-│   ├── connection.go   # MCP server connection management
+│   ├── connection_session.go # Session-scoped MCP connection management
 │   └── ...
 ├── grpcserver/        # gRPC server (for SDK communication)
 │   ├── server.go      # gRPC server setup

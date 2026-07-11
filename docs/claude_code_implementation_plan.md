@@ -33,7 +33,6 @@ Integrate the Claude Code CLI adapter into the MCP Agent system (`mcpagent`), en
 | Tool Search Mode | **Error if enabled** | CLI handles natively |
 | Code Execution Mode | **Error if enabled** | Not supported via CLI wrapper |
 | Structured Output (`AskStructured`, etc.) | **Error** | Requires second LLM call or tool-based extraction not available via CLI |
-| Smart Routing | **Runs but ignored** | CLI manages its own tool selection |
 | Parallel Tool Execution | **Flag ignored** | CLI manages its own parallel execution internally |
 
 ## Implementation Details

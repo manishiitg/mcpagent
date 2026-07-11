@@ -102,7 +102,7 @@ func WithTracer(tracer observability.Tracer) AgentOption {
 // Useful for correlating agent activities with external systems or requests
 // (e.g., setting the TraceID to match an incoming HTTP request ID).
 //
-// Default: Generated automatically (if using NewAgentWithObservability) or empty.
+// Default: Generated automatically by NewAgent.
 func WithTraceID(traceID observability.TraceID) AgentOption {
 	return func(a *Agent) {
 		a.TraceID = traceID
@@ -131,7 +131,7 @@ func WithClaudeCodePersistentInteractiveSession(enabled bool) AgentOption {
 
 // WithClaudeCodeTransport selects the Claude Code transport for this agent.
 // Use llm.ClaudeCodeTransportExperimental for the normal interactive tmux/no
-// -p path. llm.ClaudeCodeTransportPrint is a legacy test-only stream-json path.
+// -p path, or llm.ClaudeCodeTransportTmux for explicit tmux transport.
 func WithClaudeCodeTransport(transport string) AgentOption {
 	return func(a *Agent) {
 		a.ClaudeCodeTransport = transport
@@ -245,7 +245,7 @@ func WithCursorBridgeToolsMode(enabled bool) AgentOption {
 //   - maxTurns: The specific limit to set.
 //     Use a negative value to disable the turn cap.
 //
-// Default: Value returned by GetDefaultMaxTurns(SimpleAgent)
+// Default: Value returned by GetDefaultMaxTurns()
 func WithMaxTurns(maxTurns int) AgentOption {
 	return func(a *Agent) {
 		a.MaxTurns = maxTurns
@@ -455,16 +455,6 @@ func WithToolTimeout(timeout time.Duration) AgentOption {
 	}
 }
 
-// WithCustomTools injects custom tools into the agent.
-//
-// These tools are added to the list of available tools for the LLM.
-// Note: For dynamic tool registration after initialization, use RegisterCustomTool.
-func WithCustomTools(tools []llmtypes.Tool) AgentOption {
-	return func(a *Agent) {
-		a.Tools = append(a.Tools, tools...)
-	}
-}
-
 // WithSystemPrompt sets a custom system prompt.
 //
 // This overrides the default system prompt generation logic. The agent will use
@@ -502,18 +492,8 @@ func WithDiscoverPrompt(enabled bool) AgentOption {
 	}
 }
 
-// WithCrossProviderFallback configures automatic model fallback.
-//
-// If the primary LLM provider fails, the agent can switch to the configured fallback
-// provider and model(s).
-func WithCrossProviderFallback(crossProviderFallback *CrossProviderFallback) AgentOption {
-	return func(a *Agent) {
-		a.CrossProviderFallback = crossProviderFallback
-	}
-}
-
 // WithLLMConfig sets the full LLM configuration (primary + fallbacks).
-// This replaces provider, ModelID, and CrossProviderFallback legacy fields.
+// This is the canonical configuration for provider and model fallback routing.
 func WithLLMConfig(config AgentLLMConfiguration) AgentOption {
 	return func(a *Agent) {
 		a.LLMConfig = config
@@ -698,8 +678,8 @@ func WithServerName(serverName string) AgentOption {
 // multiple agents with the same SessionID. Agent.Close() does NOT close connections.
 // Call CloseSession(sessionID) explicitly when the workflow/conversation ends.
 //
-// When empty (default): Legacy behavior - each agent creates and owns its connections,
-// which are closed when Agent.Close() is called.
+// When empty, constructors normalize the value to "global" so connection management
+// always goes through the session registry.
 //
 // Usage:
 //
@@ -765,10 +745,7 @@ type Agent struct {
 	// Context for cancellation and lifecycle management
 	ctx context.Context
 
-	// Legacy single client (first in the list) kept for backward compatibility
-	Client mcpclient.ClientInterface
-
-	// NEW: multiple clients keyed by server name
+	// MCP clients keyed by server name.
 	Clients map[string]mcpclient.ClientInterface
 
 	// Map tool name → server name (quick dispatch)
@@ -797,8 +774,6 @@ type Agent struct {
 
 	// cached list of server names (for metadata convenience)
 	servers []string
-
-	// Event system for observability - REMOVED: No longer using event dispatchers
 
 	// Provider information
 	provider llm.Provider
@@ -1036,7 +1011,7 @@ type Agent struct {
 	// Session-scoped connection management
 	// When set: Connections are stored in SessionConnectionRegistry and shared across agents with same SessionID
 	//           Agent.Close() does NOT close connections - call CloseSession(sessionID) at workflow end
-	// When empty: Legacy behavior - each agent creates/owns its connections, closed on Agent.Close()
+	// Constructors normalize an empty value to "global".
 	SessionID string
 
 	// PromptLogLabel is an optional label used in prompt log filenames to identify
@@ -1074,9 +1049,6 @@ type Agent struct {
 	// These paths are validated at AST level before code execution
 	FolderGuardReadPaths  []string // Paths allowed for read operations
 	FolderGuardWritePaths []string // Paths allowed for write operations
-
-	// Cross-provider fallback configuration
-	CrossProviderFallback *CrossProviderFallback // Cross-provider fallback configuration from frontend
 
 	// API keys for providers (used for fallback LLM creation)
 	APIKeys *AgentAPIKeys
@@ -1136,12 +1108,6 @@ type LLMModel struct {
 type AgentLLMConfiguration struct {
 	Primary   LLMModel   `json:"primary"`
 	Fallbacks []LLMModel `json:"fallbacks"`
-}
-
-// CrossProviderFallback represents cross-provider fallback configuration
-type CrossProviderFallback struct {
-	Provider string   `json:"provider"`
-	Models   []string `json:"models"`
 }
 
 // AgentAPIKeys is an alias for llm.ProviderAPIKeys (canonical type).
@@ -1363,10 +1329,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	ag := &Agent{
 		ctx:                           ctx,
 		LLM:                           llm,
-		Tracers:                       []observability.Tracer{},        // Default: empty tracers array
-		MaxTurns:                      GetDefaultMaxTurns(SimpleAgent), // Default to simple mode
-		Temperature:                   0.0,                             // Default temperature
-		ToolChoice:                    "auto",                          // Default tool choice
+		Tracers:                       []observability.Tracer{}, // Default: empty tracers array
+		MaxTurns:                      GetDefaultMaxTurns(),
+		Temperature:                   0.0,    // Default temperature
+		ToolChoice:                    "auto", // Default tool choice
 		ModelID:                       modelID,
 		AgentMode:                     SimpleAgent,                      // Default to simple mode
 		TraceID:                       "",                               // Default: empty trace ID
@@ -1469,21 +1435,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			loggerv2.String("fallback", "unknown"))
 	}
 
-	// Enable code generation in cache manager if code execution mode is enabled
-	// This ensures MCP server code is only generated when needed
-	logger.Debug("Getting cache manager")
-	cacheManagerStartTime := time.Now()
-	cacheManager := mcpcache.GetCacheManager(logger)
-	cacheManagerDuration := time.Since(cacheManagerStartTime)
-	logger.Debug("Cache manager obtained", loggerv2.String("duration", cacheManagerDuration.String()))
-
-	logger.Debug("Setting code generation enabled", loggerv2.Any("enabled", ag.UseCodeExecutionMode))
-	setCodeGenStartTime := time.Now()
-	cacheManager.SetCodeGenerationEnabled(ag.UseCodeExecutionMode)
-	setCodeGenDuration := time.Since(setCodeGenStartTime)
-	logger.Debug("Code generation enabled set", loggerv2.String("duration", setCodeGenDuration.String()))
-
-	logger.Info("🔍 [DEBUG] NewAgent: About to call NewAgentConnection", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.DisableCache), loggerv2.String("session_id", ag.SessionID))
+	logger.Info("🔍 [DEBUG] NewAgent: About to call NewAgentConnectionWithSession", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.DisableCache), loggerv2.String("session_id", ag.SessionID))
 	connectionStartTime := time.Now()
 
 	// Check if session-scoped connection management is enabled
@@ -1509,19 +1461,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
-		logger.Error("❌ [DEBUG] NewAgent: NewAgentConnection failed", err, loggerv2.String("duration", connectionDuration.String()), loggerv2.String("server_name", serverName))
+		logger.Error("❌ [DEBUG] NewAgent: NewAgentConnectionWithSession failed", err, loggerv2.String("duration", connectionDuration.String()), loggerv2.String("server_name", serverName))
 		return nil, err
 	}
-	logger.Info("✅ [DEBUG] NewAgent: NewAgentConnection completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)), loggerv2.String("session_id", ag.SessionID))
-
-	// Use first client for legacy compatibility
-	var firstClient mcpclient.ClientInterface
-	if len(clients) > 0 {
-		for _, c := range clients {
-			firstClient = c
-			break
-		}
-	}
+	logger.Info("✅ [DEBUG] NewAgent: NewAgentConnectionWithSession completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)), loggerv2.String("session_id", ag.SessionID))
 
 	// Initialize tool output handler
 	toolOutputHandler := NewToolOutputHandler()
@@ -1543,7 +1486,6 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	toolOutputHandler.SetLLM(llm)
 
 	// Update the existing agent with connection data
-	ag.Client = firstClient
 	ag.Clients = clients
 	ag.toolToServer = toolToServer
 	ag.systemPrompt = systemPrompt
@@ -1569,7 +1511,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// If selectedTools is set, the user wants specific tool filtering, not all tools from the server
 	if len(ag.selectedServers) == 0 && len(ag.selectedTools) == 0 && serverName != "" && serverName != "all" {
 		// serverName was specified and no filtering was configured via options
-		// Use the servers list from NewAgentConnection (which already filtered based on serverName)
+		// Use the servers list from the session-scoped connection setup (already filtered by serverName).
 		ag.selectedServers = servers
 		logger.Debug("Set selectedServers from serverName parameter",
 			loggerv2.Any("selected_servers", ag.selectedServers))
@@ -1888,9 +1830,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 				}
 
 				// Context offloading tools must be immediately available
-				isContextOffloadingTool := toolName == "search_large_output" ||
-					toolName == "read_large_output" ||
-					toolName == "query_large_output"
+				isContextOffloadingTool := toolName == "search_large_output"
 
 				if toolName == "search_tools" || isContextOffloadingTool {
 					filteredVirtualTools = append(filteredVirtualTools, tool)
@@ -1961,8 +1901,6 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			loggerv2.Int("custom_tool_count", len(ag.customTools)),
 			loggerv2.String("agent_ptr", fmt.Sprintf("%p", ag)))
 	}
-
-	// No Go code generation needed — OpenAPI specs are generated on-demand via get_api_spec
 
 	// In code execution mode, build tool index from agent internal state
 	var toolStructureJSON string
@@ -2204,11 +2142,6 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	return ag, nil
 }
 
-// SetCurrentQuery sets the current query for hierarchy tracking
-func (a *Agent) SetCurrentQuery(query string) {
-	// This method is no longer needed as hierarchy is removed
-}
-
 // StartAgentSession initializes a new session for the agent.
 //
 // It emits an AgentStartEvent, which marks the beginning of a logical session in the
@@ -2217,12 +2150,6 @@ func (a *Agent) StartAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
 	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode, a.UseToolSearchMode)
 	a.EmitTypedEvent(ctx, agentStartEvent)
-}
-
-// StartTurn creates a new turn-level event tree
-func (a *Agent) StartTurn(ctx context.Context, turn int) {
-	// Emit conversation turn event (this is already being emitted in conversation.go)
-	// This method is kept for consistency but the actual turn event is emitted in AskWithHistory
 }
 
 // StartLLMGeneration marks the start of an LLM generation call.
@@ -2501,11 +2428,6 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 	}
 
 	a.EmitTypedEvent(ctx, llmEndEvent)
-}
-
-// EndTurn ends the current turn
-func (a *Agent) EndTurn(ctx context.Context) {
-	// This method is no longer needed as hierarchy is removed
 }
 
 // emitTotalTokenUsageEvent emits a total token usage event with all cumulative metrics
@@ -2931,9 +2853,9 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 
 // NewAgentWithObservability creates a new Agent with simplified observability defaults.
 //
-// Unlike NewAgent, this constructor automatically ensures a tracer is configured (using a noop tracer if none provided)
-// and generates a TraceID if one is not specified. This is useful for applications that need immediate
-// observability compliance without manual setup.
+// Unlike NewAgent, this constructor automatically ensures a tracer is configured
+// (using a noop tracer if none is provided). NewAgent already generates a TraceID
+// when one is not specified.
 //
 // Parameters:
 //   - ctx: Context for the agent.
@@ -2945,368 +2867,21 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 //   - *Agent: The initialized agent.
 //   - error: An error if initialization fails.
 func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
-	if llm == nil {
-		return nil, fmt.Errorf("LLM cannot be nil")
-	}
+	return NewAgent(ctx, llm, configPath, append(options, withDefaultObservability())...)
+}
 
-	// Extract model ID from LLM instance
-	modelID := extractModelIDFromLLM(llm)
-
-	// Create agent with default values first to apply options
-	ag := &Agent{
-		ctx:                               ctx,
-		LLM:                               llm,
-		Tracers:                           []observability.Tracer{}, // Default: empty tracers array
-		MaxTurns:                          GetDefaultMaxTurns(SimpleAgent),
-		Temperature:                       0.0,
-		ToolChoice:                        "auto",
-		ModelID:                           modelID,
-		AgentMode:                         SimpleAgent,
-		TraceID:                           "", // Will be generated if not set via options
-		EnableContextOffloading:           true,
-		ToolOutputRetentionPeriod:         DefaultToolOutputRetentionPeriod, // Default: 7 days
-		CleanupToolOutputOnSessionEnd:     false,                            // Default: false means files persist after session
-		cleanupDone:                       make(chan bool),                  // Initialize cleanup done channel
-		EnableContextSummarization:        false,                            // Default to disabled
-		SummarizeOnTokenThreshold:         false,                            // Default to disabled
-		TokenThresholdPercent:             0.8,                              // Default to 80% if enabled
-		SummaryKeepLastMessages:           0,                                // Default: 0 means use default (4 messages)
-		SummarizationCooldownTurns:        0,                                // Default: 0 means use default (3 turns)
-		lastSummarizationTurn:             -1,                               // Default: -1 means never summarized
-		Logger:                            loggerv2.NewDefault(),            // Default logger
-		customTools:                       make(map[string]CustomTool),
-		DiscoverResource:                  true,
-		DiscoverPrompt:                    true,
-		DisableCache:                      false,                // Default: cache enabled
-		EnableStreaming:                   false,                // Default: streaming disabled
-		SuppressGenerationStreamingEvents: false,                // Default: emit events when streaming is enabled
-		StreamingCallback:                 nil,                  // Default: no callback
-		serverName:                        mcpclient.AllServers, // Default: all servers
-	}
-
-	// Apply all options
-	for _, option := range options {
-		option(ag)
-	}
-
-	// If provider is not set, try to extract it from LLM
-	if ag.provider == "" {
-		ag.provider = extractProviderFromLLM(llm)
-	}
-
-	// Extract API keys from LLM if available
-	// This allows users to pass keys only when creating the LLM
-	if ag.APIKeys == nil {
-		ag.APIKeys = extractAPIKeysFromLLM(llm)
-	}
-
-	// Use logger from options (or default if not set)
-	logger := ag.Logger
-	if logger == nil {
-		logger = loggerv2.NewDefault()
-		ag.Logger = logger
-	}
-
-	// Use serverName from options (or default AllServers)
-	serverName := ag.serverName
-	if serverName == "" {
-		serverName = mcpclient.AllServers
-	}
-
-	if modelID == "unknown" {
-		logger.Warn("Could not extract model ID from LLM instance, using 'unknown'",
-			loggerv2.String("fallback", "unknown"))
-	}
-
-	// If no tracer was provided via options, create a noop tracer
-	if len(ag.Tracers) == 0 {
+func withDefaultObservability() AgentOption {
+	return func(a *Agent) {
+		if len(a.Tracers) != 0 {
+			return
+		}
+		logger := a.Logger
+		if logger == nil {
+			logger = loggerv2.NewDefault()
+		}
 		baseTracer := observability.GetTracerWithLogger("noop", logger)
-		streamingTracer := NewStreamingTracer(baseTracer, 100)
-		ag.Tracers = []observability.Tracer{streamingTracer}
+		a.Tracers = []observability.Tracer{NewStreamingTracer(baseTracer, 100)}
 	}
-
-	// If no trace ID was provided via options, generate one
-	if ag.TraceID == "" {
-		ag.TraceID = observability.TraceID(fmt.Sprintf("agent-session-%s-%d", modelID, time.Now().UnixNano()))
-	}
-
-	// Check if session-scoped connection management is enabled
-	var clients map[string]mcpclient.ClientInterface
-	var toolToServer map[string]string
-	var allLLMTools []llmtypes.Tool
-	var servers []string
-	var prompts map[string][]mcp.Prompt
-	var resources map[string][]mcp.Resource
-	var systemPrompt string
-	var err error
-
-	// SessionID is mandatory for connection management via the session registry.
-	// Default to "global" if not set, so all agents share connections and we never
-	// fall into the legacy path that spawns fresh subprocesses on every call.
-	if ag.SessionID == "" {
-		ag.SessionID = "global"
-		logger.Warn("SessionID not set — defaulting to 'global' for shared connection management")
-	}
-
-	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Use first client for legacy compatibility
-	var firstClient mcpclient.ClientInterface
-	if len(clients) > 0 {
-		for _, c := range clients {
-			firstClient = c
-			break
-		}
-	}
-
-	// Initialize tool output handler for context offloading
-	toolOutputHandler := NewToolOutputHandler()
-
-	// Apply custom threshold if set via WithLargeOutputThreshold option
-	if ag.LargeOutputThreshold > 0 {
-		toolOutputHandler.SetThreshold(ag.LargeOutputThreshold)
-		logger.Info("Context offloading threshold set", loggerv2.Int("threshold", ag.LargeOutputThreshold))
-	}
-
-	// Context offloading is done via virtual tools, not MCP server
-	// Virtual tools are enabled by default and handle file operations directly
-	toolOutputHandler.SetServerAvailable(true) // Always available with virtual tools
-
-	// Set session ID for organizing files by conversation
-	toolOutputHandler.SetSessionID(string(ag.TraceID))
-
-	// Set LLM for provider-aware token counting
-	toolOutputHandler.SetLLM(llm)
-
-	// Debug logging for context offloading (observability version)
-	// Use the logger we created earlier
-	logger.Info("🔍 Context offloading via virtual tools (observability)",
-		loggerv2.Any("virtual_tools_enabled", true),
-		loggerv2.Int("total_clients", len(clients)),
-		loggerv2.Any("client_names", getClientNames(clients)))
-
-	// Update the agent struct with connection data
-	ag.Client = firstClient
-	ag.Clients = clients
-	ag.toolToServer = toolToServer
-	ag.LLM = llm
-	ag.Tools = allLLMTools
-	ag.systemPrompt = systemPrompt
-	ag.servers = servers
-	ag.toolOutputHandler = toolOutputHandler
-	ag.prompts = prompts
-	ag.resources = resources
-
-	// Start periodic cleanup routine for tool output files
-	ag.startCleanupRoutine()
-
-	// No more event listeners - events go directly to tracer
-	// Tracing is handled by the tracer itself based on TRACING_PROVIDER
-
-	// 🔧 CLAUDE CODE INTEGRATION: Auto-disable incompatible features
-	logger.Debug("Checking provider for auto-disable",
-		loggerv2.String("current_provider", string(ag.provider)),
-		loggerv2.String("claude_code_provider", string(llmproviders.ProviderClaudeCode)),
-		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
-
-	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
-
-		if ag.UseToolSearchMode {
-			ag.UseToolSearchMode = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled natively by CLI)")
-		}
-
-		// Code execution mode is always enabled for Claude Code — MCP tools are
-		// accessed via the HTTP bridge (mcpbridge stdio binary)
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [CLAUDE_CODE] Auto-enabled Code Execution Mode (MCP tools via HTTP bridge)")
-		}
-
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Editing (handled natively by CLI)")
-		}
-
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Summarization (handled natively by CLI)")
-		}
-
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Offloading (handled natively by CLI)")
-		}
-
-		// Auto-enable streaming — required for tool call observability events
-		// (ToolCallStart/ToolCallEnd) since the CLI manages its own agentic loop
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
-			logger.Debug("🔧 [CLAUDE_CODE] Auto-enabled streaming (required for tool call observability)")
-		}
-	}
-
-	// Auto-configure Codex CLI provider (same constraints as Claude Code)
-	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
-
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [CODEX_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
-			logger.Debug("🔧 [CODEX_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [CODEX_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [CODEX_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
-			logger.Debug("🔧 [CODEX_CLI] Auto-enabled streaming (required for tool call observability)")
-		}
-	}
-
-	// Auto-configure Cursor CLI provider.
-	//
-	// The system prompt below steers cursor away from its built-in
-	// editToolCall / shell tools toward the declared MCP bridge tools so
-	// state-changing operations are observable (every write produces a
-	// tool_call_start/end event the host can see). Empirically verified to
-	// work in both transports against cursor-agent v2026.05.20-2b5dd59:
-	//
-	//   - tmux mode: TestCursorTmuxSystemPromptSteersWritesThroughBridge in
-	//     multi-llm-provider-go/pkg/adapters/cursorcli — system prompt is
-	//     delivered as a .cursor/rules/*.mdc with alwaysApply:true, which
-	//     cursor honors as session-wide guidance.
-	//   - structured mode: same nudge works, delivered as inline prefix on
-	//     the user message.
-	//
-	// Cursor stays in default agent mode (no --mode ask) because ask mode
-	// refuses natural-language write requests with "Switch to Agent mode".
-	// The system prompt is the soft lever; --mode ask is the hard lever we
-	// can't use for chat without breaking it.
-	if ag.provider == llmproviders.ProviderCursorCLI {
-		ag.AppendSystemPrompt("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
-
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
-			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
-			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled streaming (required for tool call observability)")
-		}
-	}
-
-	// Auto-configure Antigravity CLI provider (same constraints as the other CLI coding agents).
-	// Previously missing — agy was getting the generic system prompt
-	// without any "use the bridge instead of built-ins" guidance, so
-	// the model would occasionally call run_command / write_to_file
-	// and report "no MCP server configuration" when the bridge-only
-	// hook denied them.
-	if ag.provider == llmproviders.ProviderAgyCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools (view_file, write_to_file, replace_file_content, list_dir, find_by_name, grep_search, run_command, search_web, etc.) — they are denied by the orchestrator's bridge-only hook. Use the declared MCP bridge tools listed below instead. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [AGY_CLI] Provider detected - silently disabling incompatible features")
-
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [AGY_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
-			logger.Debug("🔧 [AGY_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [AGY_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [AGY_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
-			logger.Debug("🔧 [AGY_CLI] Auto-enabled streaming (required for tool call observability)")
-		}
-	}
-
-	// Auto-configure Pi CLI provider. Pi runs through tmux marker transport with
-	// pi-mcp-adapter mounted and built-in tools disabled by the adapter when the
-	// bridge config is available.
-	if ag.provider == llmproviders.ProviderPiCLI {
-		ag.AppendSystemPrompt("IMPORTANT: You are running inside Pi CLI with built-in tools disabled. Use the MCP bridge through Pi's MCP gateway: call mcp({ search: \"tool words\" }) to discover tools, mcp({ describe: \"api_bridge_execute_shell_command\" }) for schemas when needed, and mcp({ tool: \"api_bridge_execute_shell_command\", args: \"{...}\" }) or the direct api_bridge_* tools when available. If a built-in tool is unavailable, use the declared MCP bridge tools instead of reporting that no MCP server exists.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [PI_CLI] Provider detected - using tmux marker transport with MCP bridge")
-
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [PI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
-			logger.Debug("🔧 [PI_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [PI_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [PI_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
-			logger.Debug("🔧 [PI_CLI] Auto-enabled streaming (required for terminal observability)")
-		}
-	}
-
-	// Agent initialization complete
-
-	return ag, nil
 }
 
 // NewSimpleAgent creates a pre-configured Agent in "Simple" mode.
@@ -3327,11 +2902,6 @@ func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, configPath string, 
 	return NewAgent(ctx, llm, configPath, append(options, WithMode(SimpleAgent))...)
 }
 
-// Legacy constructors have been removed to enforce proper logger usage
-// Use NewAgent or NewSimpleAgent with functional options instead
-
-// AddEventListener and EmitEvent methods have been removed - events now go directly to tracers
-
 // AddEventListener adds an event listener to the agent
 func (a *Agent) AddEventListener(listener AgentEventListener) {
 	a.mu.Lock()
@@ -3342,8 +2912,8 @@ func (a *Agent) AddEventListener(listener AgentEventListener) {
 	}
 	a.listeners = append(a.listeners, listener)
 
-	// 🆕 NEW: Enable streaming tracer when event listeners are added
-	// This provides streaming capabilities to external systems
+	// Streaming tracers forward events to subscribers; direct listeners remain
+	// the integration point used by the builder and server event bridges.
 	if _, hasStreaming := a.GetStreamingTracer(); hasStreaming {
 		a.Logger.Info("🔍 Streaming tracer enabled for event listener", loggerv2.String("listener", listener.Name()))
 
@@ -3528,14 +3098,6 @@ func isStartOrEndEvent(eventType events.EventType) bool {
 		eventType == events.ToolCallStart || eventType == events.ToolCallEnd
 }
 
-// GetPrimaryTracer returns the first tracer for backward compatibility
-func (a *Agent) GetPrimaryTracer() observability.Tracer {
-	if len(a.Tracers) > 0 {
-		return a.Tracers[0]
-	}
-	return observability.NoopTracer{}
-}
-
 // GetStreamingTracer returns the streaming tracer if available
 func (a *Agent) GetStreamingTracer() (StreamingTracer, bool) {
 	if len(a.Tracers) > 0 {
@@ -3587,29 +3149,11 @@ func (a *Agent) Close() {
 	a.stopCleanupRoutine()
 	a.closeStreamingTracers()
 
-	// Check if using session-scoped connections
-	if a.SessionID != "" {
-		// Session-scoped mode: connections are shared and managed by session registry
-		// Do NOT close connections here - they persist until CloseSession(sessionID) is called
-		a.Logger.Info("Agent closed (session-scoped mode: connections persist in session registry)",
-			loggerv2.String("session_id", a.SessionID),
-			loggerv2.Int("client_count", len(a.Clients)))
-		return
-	}
-
-	// Legacy mode: agent owns its connections, close them on agent close
-	// Close all clients in the map
-	for serverName, client := range a.Clients {
-		if client != nil {
-			a.Logger.Info(fmt.Sprintf("🔌 Closing connection to %s", serverName), loggerv2.String("server_name", serverName))
-			_ = client.Close() // Ignore errors during cleanup
-		}
-	}
-
-	// Legacy single client cleanup (may be redundant but safe)
-	if a.Client != nil {
-		_ = a.Client.Close() // Ignore errors during cleanup
-	}
+	// Connections are shared and managed by the session registry. Do not close
+	// them here; they persist until CloseSession(sessionID) is called.
+	a.Logger.Info("Agent closed (connections persist in session registry)",
+		loggerv2.String("session_id", a.SessionID),
+		loggerv2.Int("client_count", len(a.Clients)))
 
 	// IsolatedSessionWorkspace cleanup: rm -rf the per-Agent tmp dir
 	// we created in ensureIsolatedWorkspaceDir. Errors are silently
@@ -4107,7 +3651,7 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 		return
 	}
 
-	// Track the appended prompt for smart routing
+	// Track appended prompt metadata for inspection and prompt restoration.
 	a.appendedSystemPrompts = append(a.appendedSystemPrompts, additionalPrompt)
 	a.hasAppendedPrompts = true
 
@@ -4387,7 +3931,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		// Normal mode: Add to the main Tools array so the LLM can see it
 		a.Tools = append(a.Tools, tool)
 
-		// Also add to filteredTools so custom tools are available even when smart routing is enabled
+		// Also add to filteredTools so the tool is available in the current conversation.
 		a.filteredTools = append(a.filteredTools, tool)
 	}
 

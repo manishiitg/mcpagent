@@ -311,107 +311,64 @@ func prepareToolExecution(
 		}
 	}
 
-	// Resolve client
-	plan.client = a.Client
+	// Resolve only the client mapped to this tool.
+	mappedServerName := ""
+	hasMappedServer := false
 	if a.toolToServer != nil {
 		if mapped, ok := a.toolToServer[tc.FunctionCall.Name]; ok {
 			if mapped == "custom" {
 				plan.isCustomTool = true
-			} else if a.Clients != nil {
-				a.clientsMu.RLock()
-				existingClient, exists := a.Clients[mapped]
-				a.clientsMu.RUnlock()
-				if exists {
-					plan.client = existingClient
-				} else {
-					// Lazy connect: server was deferred — connect on first tool call
-					registry := mcpclient.GetSessionRegistry()
-					if serverConfig, ok := registry.GetServerConfig(a.SessionID, mapped); ok {
-						connSessionID := registry.ResolveConnectionSessionID(a.SessionID, mapped)
-						v2Logger.Info(fmt.Sprintf("⚡ [LAZY] First tool call to %s — connecting now", mapped))
-						lazyClient, _, lazyErr := registry.GetOrCreateConnection(ctx, connSessionID, mapped, serverConfig, v2Logger)
-						if lazyErr != nil {
-							v2Logger.Error(fmt.Sprintf("Lazy connect failed for server %s", mapped), lazyErr)
-						} else {
-							a.clientsMu.Lock()
-							if a.Clients == nil {
-								a.Clients = make(map[string]mcpclient.ClientInterface)
-							}
-							a.Clients[mapped] = lazyClient
-							a.clientsMu.Unlock()
-							plan.client = lazyClient
-						}
-					}
-				}
+			} else {
+				plan.client, mappedServerName, hasMappedServer = a.mappedMCPClient(tc.FunctionCall.Name)
 			}
 		}
 	}
 
 	// Check for client requirement for non-custom, non-virtual tools
 	if !plan.isCustomTool && !plan.isVirtual && plan.client == nil {
-		if len(a.Clients) == 0 {
-			serverName := ""
-			if a.toolToServer != nil {
-				serverName = a.toolToServer[tc.FunctionCall.Name]
-			}
-			if serverName == "" {
-				feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- read_large_output, search_large_output, query_large_output (file tools)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
+		if !hasMappedServer || mappedServerName == "" {
+			feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- search_large_output (read/search/query operations for offloaded files)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
 
-				toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
-				toolNotFoundEvent.ToolCallID = tc.ID
-				a.EmitTypedEvent(ctx, toolNotFoundEvent)
-
-				msg := llmtypes.MessageContent{
-					Role:  llmtypes.ChatMessageTypeTool,
-					Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
-				}
-				plan.skipExecution = true
-				plan.preErrorMessage = &msg
-				return plan
-			}
-
-			onDemandClient, err := a.resolveOnDemandMCPClient(ctx, serverName, v2Logger)
-			if err != nil {
-				v2Logger.Error("Failed to create on-demand connection",
-					err,
-					loggerv2.String("server", serverName))
-				conversationErrorEvent := events.NewConversationErrorEvent(getLastUserMessageForEvent(), fmt.Sprintf("failed to create on-demand connection for server %s: %v", serverName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
-				a.EmitTypedEvent(ctx, conversationErrorEvent)
-				// Mark as fatal — this should abort the conversation
-				plan.skipExecution = true
-				msg := llmtypes.MessageContent{
-					Role:  llmtypes.ChatMessageTypeTool,
-					Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: fmt.Sprintf("Error: failed to create on-demand connection for server %s: %v", serverName, err), IsError: true}},
-				}
-				plan.preErrorMessage = &msg
-				return plan
-			}
-			// Store the on-demand client back into a.Clients so subsequent tool calls
-			// reuse this connection instead of spawning a new MCP process each time.
-			// Without this, every tool call sees len(a.Clients)==0 and creates a duplicate
-			// connection (e.g. 10+ Playwright browser instances for a single workflow).
-			a.clientsMu.Lock()
-			if a.Clients == nil {
-				a.Clients = make(map[string]mcpclient.ClientInterface)
-			}
-			a.Clients[serverName] = onDemandClient
-			a.clientsMu.Unlock()
-			plan.client = onDemandClient
-		} else {
-			v2Logger.Error("No MCP client found for tool", nil,
-				loggerv2.String("tool", tc.FunctionCall.Name))
-
-			conversationErrorEvent := events.NewConversationErrorEvent("", fmt.Sprintf("no MCP client found for tool %s", tc.FunctionCall.Name), turn+1, "no_mcp_client", time.Since(conversationStartTime))
-			a.EmitTypedEvent(ctx, conversationErrorEvent)
+			toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
+			toolNotFoundEvent.ToolCallID = tc.ID
+			a.EmitTypedEvent(ctx, toolNotFoundEvent)
 
 			msg := llmtypes.MessageContent{
 				Role:  llmtypes.ChatMessageTypeTool,
-				Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: fmt.Sprintf("Error: no MCP client found for tool %s", tc.FunctionCall.Name), IsError: true}},
+				Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage, IsError: true}},
 			}
 			plan.skipExecution = true
 			plan.preErrorMessage = &msg
 			return plan
 		}
+
+		onDemandClient, err := a.resolveOnDemandMCPClient(ctx, mappedServerName, v2Logger)
+		if err == nil && onDemandClient == nil {
+			err = fmt.Errorf("on-demand resolver returned no client")
+		}
+		if err != nil {
+			v2Logger.Error("Failed to create on-demand connection",
+				err,
+				loggerv2.String("server", mappedServerName))
+			conversationErrorEvent := events.NewConversationErrorEvent(getLastUserMessageForEvent(), fmt.Sprintf("failed to create on-demand connection for server %s: %v", mappedServerName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
+			a.EmitTypedEvent(ctx, conversationErrorEvent)
+			plan.skipExecution = true
+			msg := llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeTool,
+				Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: fmt.Sprintf("Error: failed to create on-demand connection for server %s: %v", mappedServerName, err), IsError: true}},
+			}
+			plan.preErrorMessage = &msg
+			return plan
+		}
+
+		// Cache the exact mapped client so subsequent calls reuse it.
+		a.clientsMu.Lock()
+		if a.Clients == nil {
+			a.Clients = make(map[string]mcpclient.ClientInterface)
+		}
+		a.Clients[mappedServerName] = onDemandClient
+		a.clientsMu.Unlock()
+		plan.client = onDemandClient
 	}
 
 	// Determine tool timeout
@@ -507,6 +464,7 @@ func executeToolCall(
 
 	var mcpResult *mcp.CallToolResult
 	var toolErr error
+	actualToolName := actualMCPToolName(tc.FunctionCall.Name, plan.serverName)
 
 	if isVirtualTool(tc.FunctionCall.Name) {
 		v2Logger.Debug("🔧 [TOOL_CALL] Executing virtual tool (parallel)",
@@ -542,10 +500,10 @@ func executeToolCall(
 			}
 		} else {
 			// Fallback to MCP client
-			mcpResult, toolErr = callToolWithTimeoutWrapper(toolCtx, plan.client, tc.FunctionCall.Name, plan.args, v2Logger, plan.serverName)
+			mcpResult, toolErr = callToolWithTimeoutWrapper(toolCtx, plan.client, actualToolName, plan.args, v2Logger, plan.serverName)
 		}
 	} else {
-		mcpResult, toolErr = callToolWithTimeoutWrapper(toolCtx, plan.client, tc.FunctionCall.Name, plan.args, v2Logger, plan.serverName)
+		mcpResult, toolErr = callToolWithTimeoutWrapper(toolCtx, plan.client, actualToolName, plan.args, v2Logger, plan.serverName)
 	}
 
 	result.duration = time.Since(startTime)

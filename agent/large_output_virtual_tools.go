@@ -167,17 +167,12 @@ func (a *Agent) HandleLargeOutputVirtualTool(ctx context.Context, toolName strin
 		default:
 			return "", fmt.Errorf("invalid operation: %s. Must be 'read', 'search', or 'query'", operation)
 		}
-	// Backward compatibility: support old tool names
-	case "read_large_output":
-		return a.handleReadLargeOutput(ctx, args)
-	case "query_large_output":
-		return a.handleQueryLargeOutput(ctx, args)
 	default:
 		return "", fmt.Errorf("unknown context offloading virtual tool: %s", toolName)
 	}
 }
 
-// handleReadLargeOutput handles the read_large_output virtual tool (context offloading)
+// handleReadLargeOutput handles search_large_output with operation="read".
 func (a *Agent) handleReadLargeOutput(ctx context.Context, args map[string]interface{}) (string, error) {
 	filename, ok := args["filename"].(string)
 	if !ok {
@@ -241,7 +236,7 @@ func (a *Agent) handleReadLargeOutput(ctx context.Context, args map[string]inter
 	return result, nil
 }
 
-// handleSearchLargeOutput handles the search_large_output virtual tool (context offloading)
+// handleSearchLargeOutput handles search_large_output with operation="search".
 func (a *Agent) handleSearchLargeOutput(ctx context.Context, args map[string]interface{}) (string, error) {
 	filename, ok := args["filename"].(string)
 	if !ok {
@@ -291,7 +286,7 @@ func (a *Agent) handleSearchLargeOutput(ctx context.Context, args map[string]int
 	return results, nil
 }
 
-// handleQueryLargeOutput handles the query_large_output virtual tool (context offloading)
+// handleQueryLargeOutput handles search_large_output with operation="query".
 func (a *Agent) handleQueryLargeOutput(ctx context.Context, args map[string]interface{}) (string, error) {
 	filename, ok := args["filename"].(string)
 	if !ok {

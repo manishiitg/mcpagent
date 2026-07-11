@@ -60,24 +60,10 @@ The execution logic resides in `pkg/mcpagent/conversation.go`.
 3.  **Routing**: The agent determines the type of tool (MCP, Virtual, or Custom).
 4.  **Execution**:
     *   **MCP Tools**: Forwarded to the appropriate MCP server via `client.CallTool`.
-    *   **Virtual Tools**: Executed locally by the agent (e.g., `get_prompt`, `read_large_output`).
+    *   **Virtual Tools**: Executed locally by the agent (e.g., `get_prompt`, `search_large_output`).
     *   **Custom Tools**: Executed as native Go functions.
 5.  **Result Handling**: The output is captured and appended to the conversation history.
 6.  **Iteration**: The loop continues until the LLM provides a final text response or `MaxTurns` is reached.
-
-### 3. Smart Routing
-When too many tools are available (exceeding context limits), the agent can use **Smart Routing**.
-
-```go
-mcpagent.WithSmartRouting(true)
-```
-
-**How it works:**
-- Analyzes the conversation context.
-- Filters the list of tools to only include those relevant to the current task.
-- Reduces token usage and improves LLM focus.
-
----
 
 ## 🛠️ Tool Types
 
@@ -93,7 +79,7 @@ Remote tools provided by connected MCP servers.
 Internal tools provided by the agent framework for system operations.
 - **Purpose**: Handling large outputs, prompt management, resource discovery.
 - **Examples**:
-    - `read_large_output`: Reads a file created by a tool that produced too much output.
+    - `search_large_output`: Reads, searches, or queries a file created by a tool that produced too much output.
     - `get_prompt`: Retrieves a prompt from the MCP server.
 
 ### 3. Custom Tools

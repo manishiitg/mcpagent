@@ -141,7 +141,7 @@ func main() {
 	fmt.Println("\nNote: If the tool output is large (>100 tokens), context offloading will:")
 	fmt.Println("  1. Save the full output to tool_output_folder/{session-id}/")
 	fmt.Println("  2. Replace it with file path + preview in LLM context")
-	fmt.Println("  3. Make it accessible via context offloading virtual tools (read_large_output, search_large_output, query_large_output)")
+	fmt.Println("  3. Make it accessible via search_large_output (read/search/query operations)")
 	fmt.Println()
 
 	// Log question to agent log file

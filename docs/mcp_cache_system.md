@@ -21,17 +21,16 @@ Connecting to multiple MCP servers and discovering their tools can be slow (5-30
 
 ### Core Implementation Files
 
-#### 1. `mcpagent/mcpcache/manager.go` (691 lines)
+#### 1. `mcpagent/mcpcache/manager.go`
 **Purpose**: Singleton cache manager that handles all cache storage and retrieval operations.
 
 **Key Types**:
 ```go
 type CacheManager struct {
-    cacheDir   string                      // Directory where cache files are stored
-    ttlMinutes int                         // Time-to-live for cache entries
-    logger     utils.ExtendedLogger        // Logger instance
-    mu         sync.RWMutex                // Read-write mutex for thread safety
-    cache      map[string]*CacheEntry      // In-memory cache (cacheKey -> entry)
+    cacheDir   string           // Directory where cache files are stored
+    ttlMinutes int              // Time-to-live for cache entries
+    logger     loggerv2.Logger  // Logger instance
+    cache      sync.Map         // Thread-safe cacheKey -> *CacheEntry
 }
 
 type CacheEntry struct {
@@ -42,7 +41,6 @@ type CacheEntry struct {
     SystemPrompt  string              // Generated system prompt fragment
     
     CreatedAt     time.Time           // When cache entry was created
-    LastAccessed  time.Time           // DEPRECATED - was causing race conditions
     TTLMinutes    int                 // TTL for this entry
     Protocol      string              // "stdio", "sse", or "http"
     
@@ -120,7 +118,6 @@ agent_go/cache/
   "resources": [...],
   "system_prompt": "AWS MCP server with 45 tools for EC2, S3, IAM...",
   "created_at": "2025-01-15T10:30:00Z",
-  "last_accessed": "2025-01-15T10:30:00Z",
   "ttl_minutes": 10080,
   "protocol": "stdio",
   "is_valid": true,
@@ -347,16 +344,14 @@ tools := cachedEntry.Tools  // Already normalized, no mutation needed
 ```
 
 #### 2. Deep Copies
-**File**: `mcpagent/mcpcache/manager.go` (Lines 337-386)
+**File**: `mcpagent/mcpcache/manager.go`
 
 `GetAllEntries()` returns deep copies:
 ```go
 func (cm *CacheManager) GetAllEntries() map[string]*CacheEntry {
-    cm.mu.RLock()
-    defer cm.mu.RUnlock()
-    
     result := make(map[string]*CacheEntry)
-    for key, entry := range cm.cache {
+    cm.cache.Range(func(key, value interface{}) bool {
+        entry := value.(*CacheEntry)
         entryCopy := *entry  // Copy struct
         
         // Deep copy slices
@@ -370,7 +365,9 @@ func (cm *CacheManager) GetAllEntries() map[string]*CacheEntry {
         }
         
         result[key] = &entryCopy
-    }
+        result[key.(string)] = &entryCopy
+        return true
+    })
     return result
 }
 ```

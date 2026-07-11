@@ -3,7 +3,6 @@ package main
 import (
 	"sync"
 
-	"github.com/manishiitg/mcpagent/logger"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
@@ -72,15 +71,6 @@ func GetTestLogger() loggerv2.Logger {
 	return testLogger
 }
 
-// GetTestLoggerExtended returns the test logger as ExtendedLogger for backward compatibility
-// This adapter allows existing code to continue using ExtendedLogger during migration
-//
-// Deprecated: Use GetTestLogger() which returns v2.Logger directly.
-// This function is kept only for backward compatibility.
-func GetTestLoggerExtended() logger.ExtendedLogger {
-	return loggerv2.ToExtendedLogger(GetTestLogger())
-}
-
 // SetTestLogger allows tests to override the shared logger
 // Useful for testing different logger configurations
 // Thread-safe setter
@@ -88,14 +78,4 @@ func SetTestLogger(l loggerv2.Logger) {
 	testLoggerMu.Lock()
 	defer testLoggerMu.Unlock()
 	testLogger = l
-}
-
-// SetTestLoggerExtended allows tests to set logger using ExtendedLogger (for backward compatibility)
-//
-// Deprecated: Use SetTestLogger() with v2.Logger directly.
-// This function is kept only for backward compatibility.
-func SetTestLoggerExtended(l logger.ExtendedLogger) {
-	testLoggerMu.Lock()
-	defer testLoggerMu.Unlock()
-	testLogger = loggerv2.FromExtendedLogger(l)
 }

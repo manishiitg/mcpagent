@@ -1,11 +1,10 @@
 // utils.go
 //
-// This file contains shared helper functions for the Agent, including system prompt construction, tool choice conversion, string truncation, and usage metrics extraction.
+// This file contains shared helper functions for the Agent, including tool choice conversion and usage metrics extraction.
 //
 // Exported:
 //   - BuildSystemPrompt
 //   - ConvertToolChoice
-//   - TruncateString
 //   - extractUsageMetrics
 //   - castToInt
 
@@ -20,9 +19,9 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// GetDefaultMaxTurns returns the default max turns for a given agent mode.
+// GetDefaultMaxTurns returns the configured default turn limit.
 // Checks MAX_TURNS environment variable, falls back to 500 if not set or invalid.
-func GetDefaultMaxTurns(mode AgentMode) int {
+func GetDefaultMaxTurns() int {
 	// Check MAX_TURNS environment variable
 	if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
 		if maxTurns, err := strconv.Atoi(envVal); err == nil && maxTurns > 0 {
@@ -50,14 +49,6 @@ func ConvertToolChoice(choice string) *llmtypes.ToolChoice {
 			Function: &llmtypes.FunctionName{Name: choice},
 		}
 	}
-}
-
-// TruncateString truncates a string to a maximum length, adding ellipsis if needed.
-func TruncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 // extractUsageMetrics extracts token usage metrics from an LLM response.

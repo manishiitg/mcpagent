@@ -12,7 +12,7 @@ import (
 )
 
 func isolatedWorkspaceTestAgent() *Agent {
-	return &Agent{Logger: loggerv2.NewDefault()}
+	return &Agent{Logger: loggerv2.NewDefault(), SessionID: "isolated-workspace-test"}
 }
 
 // TestEnsureIsolatedWorkspaceDirCreatesTmpDirOnceAndCleansUpOnClose

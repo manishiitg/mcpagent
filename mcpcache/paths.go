@@ -9,7 +9,7 @@ import (
 
 // GetGeneratedDirPath calculates the path to the generated/ directory
 // This is a pure function - no side effects, just path calculation
-// Returns the path where generated code should be stored
+// Returns the path where code-execution artifacts should be stored.
 func GetGeneratedDirPath() string {
 	// Use environment variable if set
 	if dir := os.Getenv("MCP_GENERATED_DIR"); dir != "" {
@@ -28,7 +28,7 @@ func GetGeneratedDirPath() string {
 // EnsureGeneratedDir creates the generated directory if it doesn't exist
 // Returns an error if directory creation fails
 func EnsureGeneratedDir(path string, logger loggerv2.Logger) error {
-	if err := os.MkdirAll(path, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for generated code directories
+	if err := os.MkdirAll(path, 0755); err != nil { //nolint:gosec // 0755 permissions are intentional for generated artifact directories
 		if logger != nil {
 			logger.Warn("Failed to create generated directory",
 				loggerv2.Error(err),

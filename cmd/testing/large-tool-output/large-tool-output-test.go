@@ -27,7 +27,7 @@ This test:
 2. Sets a lower threshold for testing (default: 1000 tokens)
 3. Verifies that large tool outputs are written to files
 4. Verifies that the agent receives file messages with previews
-5. Tests virtual tools: read_large_output, search_large_output, query_large_output
+5. Tests search_large_output read, search, and query operations
 
 Note: This test doesn't use traditional asserts. Logs are analyzed (manually or by LLM) to verify success.
 See criteria.md in the large-tool-output folder for detailed log analysis criteria.
@@ -185,9 +185,9 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 		loggerv2.String("duration", duration2.String()))
 
 	// Test 3: Test virtual tools with JSON file
-	log.Info("--- Test 3: Virtual Tools (read_large_output) ---")
-	question3 := "Use read_large_output to read the first 200 characters from the most recent large output file"
-	log.Info("Running agent to test read_large_output virtual tool...",
+	log.Info("--- Test 3: Virtual Tools (search_large_output read operation) ---")
+	question3 := "Use search_large_output with operation='read' to read the first 200 characters from the most recent large output file"
+	log.Info("Running agent to test search_large_output read operation...",
 		loggerv2.String("question", question3))
 
 	startTime = time.Now()
@@ -223,10 +223,10 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 				loggerv2.String("duration", duration4.String()))
 		}
 
-		// Test 5: Test query_large_output (if JSON file exists)
-		log.Info("--- Test 5: Virtual Tools (query_large_output) ---")
-		question5 := "Use query_large_output to query '.items[0].name' from the most recent large output JSON file"
-		log.Info("Running agent to test query_large_output virtual tool...",
+		// Test 5: Test search_large_output query operation (if JSON file exists)
+		log.Info("--- Test 5: Virtual Tools (search_large_output query operation) ---")
+		question5 := "Use search_large_output with operation='query' to query '.items[0].name' from the most recent large output JSON file"
+		log.Info("Running agent to test search_large_output query operation...",
 			loggerv2.String("question", question5))
 
 		startTime = time.Now()

@@ -816,7 +816,7 @@ func generationInfoIntValue(value interface{}) int {
 	}
 }
 
-// getEffectiveLLMConfig returns a unified LLM configuration, compatible with legacy settings
+// getEffectiveLLMConfig returns the agent's unified LLM configuration.
 func (a *Agent) getEffectiveLLMConfig() AgentLLMConfiguration {
 	var config AgentLLMConfiguration
 
@@ -833,16 +833,6 @@ func (a *Agent) getEffectiveLLMConfig() AgentLLMConfiguration {
 				// but executeLLM will handle this by checking Agent.APIKeys if model.APIKey is nil
 			},
 			Fallbacks: []LLMModel{},
-		}
-	}
-
-	// Merge legacy cross-provider fallbacks if available (backward compatibility).
-	if a.CrossProviderFallback != nil {
-		for _, model := range a.CrossProviderFallback.Models {
-			config.Fallbacks = append(config.Fallbacks, LLMModel{
-				Provider: a.CrossProviderFallback.Provider,
-				ModelID:  model,
-			})
 		}
 	}
 

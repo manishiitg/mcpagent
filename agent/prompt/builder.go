@@ -207,10 +207,8 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 	} else {
 		largeOutputHandlingSection = `
 CONTEXT OFFLOADING:
-Large tool outputs (>1000 chars) are automatically offloaded to filesystem (offload context pattern). Use virtual tools to access them:
-- 'read_large_output': Read specific characters from offloaded files
-- 'search_large_output': Search for patterns in offloaded files  
-- 'query_large_output': Execute jq queries on offloaded JSON files`
+Large tool outputs (>1000 chars) are automatically offloaded to filesystem (offload context pattern).
+Use 'search_large_output' with operation='read', operation='search', or operation='query' to access them.`
 	}
 
 	// Always use Simple system prompt template

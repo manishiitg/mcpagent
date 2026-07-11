@@ -42,12 +42,6 @@ const (
 	ToolOutput   EventType = "tool_output"
 	ToolResponse EventType = "tool_response"
 
-	// Event type aliases for backward compatibility
-	SystemPromptEventType EventType = "system_prompt"
-	ToolOutputEventType   EventType = "tool_output"
-	ToolResponseEventType EventType = "tool_response"
-	UserMessageEventType  EventType = "user_message"
-
 	// Streaming events
 	StreamingStart          EventType = "streaming_start"
 	StreamingChunk          EventType = "streaming_chunk"
@@ -64,11 +58,6 @@ const (
 	LLMTokenUsage EventType = "llm_token_usage" //nolint:gosec // Per-call token usage (advanced mode only) - false positive, not a credential
 	ErrorDetail   EventType = "error_detail"
 
-	// Event type aliases for backward compatibility
-	TokenUsageEventType    EventType = "token_usage"
-	LLMTokenUsageEventType EventType = "llm_token_usage" //nolint:gosec // false positive, not a credential
-	ErrorDetailEventType   EventType = "error_detail"
-
 	// Large output events
 	LargeToolOutputDetected    EventType = "large_tool_output_detected"
 	LargeToolOutputFileWritten EventType = "large_tool_output_file_written"
@@ -82,12 +71,6 @@ const (
 	ContextEditingCompleted EventType = "context_editing_completed"
 	ContextEditingError     EventType = "context_editing_error"
 
-	// Large output event type aliases for backward compatibility
-	LargeToolOutputDetectedEventType          EventType = "large_tool_output_detected"
-	LargeToolOutputFileWrittenEventType       EventType = "large_tool_output_file_written"
-	LargeToolOutputFileWriteErrorEventType    EventType = "large_tool_output_file_write_error"
-	LargeToolOutputServerUnavailableEventType EventType = "large_tool_output_server_unavailable"
-
 	// Fallback events
 	FallbackModelUsed  EventType = "fallback_model_used"
 	ThrottlingDetected EventType = "throttling_detected"
@@ -95,17 +78,6 @@ const (
 	TokenLimitExceeded EventType = "token_limit_exceeded"
 	MaxTurnsReached    EventType = "max_turns_reached"
 	ContextCancelled   EventType = "context_cancelled"
-
-	// Fallback event type aliases for backward compatibility
-	ModelChangeEventType        EventType = "model_change"
-	FallbackModelUsedEventType  EventType = "fallback_model_used"
-	ThrottlingDetectedEventType EventType = "throttling_detected"
-	//nolint:gosec // G101: This is an event type constant, not a credential
-	TokenLimitExceededEventType EventType = "token_limit_exceeded"
-	MaxTurnsReachedEventType    EventType = "max_turns_reached"
-	ContextCancelledEventType   EventType = "context_cancelled"
-	FallbackAttemptEventType    EventType = "fallback_attempt"
-	BrokenPipeEventType         EventType = "broken_pipe"
 
 	// MCP server events
 	MCPServerConnection      EventType = "mcp_server_connection"
@@ -124,6 +96,7 @@ const (
 	CacheError          EventType = "cache_error"
 	CacheOperationStart EventType = "cache_operation_start"
 	ComprehensiveCache  EventType = "comprehensive_cache"
+	GenericCache        EventType = "cache_event"
 
 	// Structured output events
 	StructuredOutputStart EventType = "structured_output_start"
@@ -144,15 +117,9 @@ const (
 	AgentProcessing                  EventType = "agent_processing"
 	ModelChange                      EventType = "model_change"
 	FallbackAttempt                  EventType = "fallback_attempt"
-	SmartRoutingStart                EventType = "smart_routing_start"
-	SmartRoutingEnd                  EventType = "smart_routing_end"
+	BrokenPipe                       EventType = "broken_pipe"
 	LargeToolOutputFileWriteError    EventType = "large_tool_output_file_write_error"
 	LargeToolOutputServerUnavailable EventType = "large_tool_output_server_unavailable"
-
-	// Additional event type aliases for backward compatibility
-	CacheEventType             EventType = "cache_event"
-	SmartRoutingStartEventType EventType = "smart_routing_start"
-	SmartRoutingEndEventType   EventType = "smart_routing_end"
 
 	// Unified completion event
 	EventTypeUnifiedCompletion EventType = "unified_completion"
@@ -270,8 +237,7 @@ func GetComponentFromEventType(eventType EventType) string {
 		return "orchestrator"
 	case AgentStart, AgentEnd, AgentError:
 		return "agent"
-	case LLMGenerationStart, LLMGenerationEnd, LLMGenerationError,
-		SmartRoutingStart, SmartRoutingEnd:
+	case LLMGenerationStart, LLMGenerationEnd, LLMGenerationError:
 		return "llm"
 	case ToolCallStart, ToolCallEnd, ToolCallError, WorkspaceFileOperation:
 		return "tool"

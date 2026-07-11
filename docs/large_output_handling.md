@@ -51,18 +51,18 @@ graph TD
     G --> H[Add Virtual Tools to LLM]
     H --> I{LLM Needs More Data?}
     I -->|Yes| J[Use Virtual Tools]
-    J --> K{Tool Type}
-    K -->|read_large_output| L[Read Chunk]
-    K -->|search_large_output| M[Ripgrep Search]
-    K -->|query_large_output| N[JQ Query]
+    J --> K{search_large_output operation}
+    K -->|read| L[Read Chunk]
+    K -->|search| M[Ripgrep Search]
+    K -->|query| N[JQ Query]
     I -->|No| O[Continue Conversation]
 ```
 
 ---
 
-## 🧰 Virtual Tools
+## 🧰 Virtual Tool Operations
 
-### 1. `read_large_output`
+### 1. `search_large_output` with `operation="read"`
 
 Reads a specific range of characters from the file.
 
@@ -76,16 +76,17 @@ Reads a specific range of characters from the file.
 **Example:**
 ```json
 {
-  "tool": "read_large_output",
+  "tool": "search_large_output",
   "args": {
     "filename": "tool_20250727_093045_tavily-search.json",
+	"operation": "read",
     "start": 0,
     "end": 5000
   }
 }
 ```
 
-### 2. `search_large_output`
+### 2. `search_large_output` with `operation="search"`
 
 Searches for regex patterns within the file using `ripgrep` (rg).
 
@@ -103,6 +104,7 @@ Searches for regex patterns within the file using `ripgrep` (rg).
   "tool": "search_large_output",
   "args": {
     "filename": "tool_20250727_093045_logs.txt",
+	"operation": "search",
     "pattern": "ERROR|FATAL",
     "case_sensitive": false,
     "max_results": 50
@@ -110,7 +112,7 @@ Searches for regex patterns within the file using `ripgrep` (rg).
 }
 ```
 
-### 3. `query_large_output`
+### 3. `search_large_output` with `operation="query"`
 
 Executes `jq` queries on JSON files.
 
@@ -125,9 +127,10 @@ Executes `jq` queries on JSON files.
 **Example:**
 ```json
 {
-  "tool": "query_large_output",
+  "tool": "search_large_output",
   "args": {
     "filename": "tool_20250727_093045_api-response.json",
+	"operation": "query",
     "query": ".results[] | select(.status == \"active\") | .name"
   }
 }
@@ -205,11 +208,11 @@ func main() {
 
 ### Tool Selection Guide
 
-| Tool | Best For | Example Use Case |
+| Operation | Best For | Example Use Case |
 |------|----------|------------------|
-| `read_large_output` | Sequential reading, pagination | Reading logs line by line |
-| `search_large_output` | Finding specific patterns | Searching for error messages in logs |
-| `query_large_output` | Extracting JSON fields | Getting specific object properties from API responses |
+| `read` | Sequential reading, pagination | Reading logs line by line |
+| `search` | Finding specific patterns | Searching for error messages in logs |
+| `query` | Extracting JSON fields | Getting specific object properties from API responses |
 
 ### Filename Format
 
@@ -221,22 +224,22 @@ Files are named: `tool_YYYYMMDD_HHMMSS_toolname.ext`
 
 **Pattern 1: Iterative Reading**
 ```
-1. Call read_large_output with start=0, end=10000
+1. Call search_large_output with operation="read", start=0, end=10000
 2. Analyze content
-3. Call read_large_output with start=10000, end=20000
+3. Call search_large_output with operation="read", start=10000, end=20000
 4. Continue until you have enough data
 ```
 
 **Pattern 2: Targeted Search**
 ```
-1. Call search_large_output with pattern="ERROR"
+1. Call search_large_output with operation="search", pattern="ERROR"
 2. Review matches
-3. If needed, call read_large_output at specific locations
+3. If needed, call search_large_output with operation="read" at specific locations
 ```
 
 **Pattern 3: JSON Extraction**
 ```
-1. Call query_large_output with query to get specific fields
+1. Call search_large_output with operation="query" to get specific fields
 2. Use compact=true for minimal output
 3. Use raw=true for raw string values (not JSON-encoded)
 ```
@@ -246,7 +249,7 @@ Files are named: `tool_YYYYMMDD_HHMMSS_toolname.ext`
 ✅ **Allowed:**
 - Reading any file in the output folder
 - Multiple sequential reads
-- Combining different virtual tools
+- Combining different operations
 
 ❌ **Forbidden:**
 - Path traversal (`../`) attempts
@@ -301,5 +304,5 @@ cmd := exec.Command("jq", query, filePath)
 ## 📖 Related Documentation
 
 - [doc_writing_guide.md](./doc_writing_guide.md) - Standards for writing technical documentation
-- [smart_routing.md](./smart_routing.md) - Tool filtering and routing system
+- [tool_search_mode.md](./tool_search_mode.md) - Dynamic discovery for large tool catalogs
 - [mcp_cache_system.md](./mcp_cache_system.md) - MCP server caching system
