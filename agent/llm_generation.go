@@ -2,11 +2,9 @@ package mcpagent
 
 import (
 	"context"
-	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,96 +30,6 @@ func isContextCanceledError(err error) bool {
 		errors.Is(err, context.DeadlineExceeded) ||
 		strings.Contains(err.Error(), "context canceled") ||
 		strings.Contains(err.Error(), "context deadline exceeded")
-}
-
-func geminiDebugHooksEnabled() bool {
-	v := strings.TrimSpace(os.Getenv("MCPAGENT_GEMINI_DEBUG_HOOKS"))
-	if v == "" {
-		return false
-	}
-	return v == "1" ||
-		strings.EqualFold(v, "true") ||
-		strings.EqualFold(v, "yes") ||
-		strings.EqualFold(v, "on")
-}
-
-func geminiHTTPRoutingHooksEnabled() bool {
-	v := strings.TrimSpace(os.Getenv("MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING"))
-	if v == "" {
-		return false
-	}
-	return v == "1" ||
-		strings.EqualFold(v, "true") ||
-		strings.EqualFold(v, "yes") ||
-		strings.EqualFold(v, "on")
-}
-
-func geminiRestrictToolsPolicyContent() string {
-	return `# Gemini CLI tool approvals are handled entirely by the Policy Engine.
-[[rule]]
-toolName = "mcp_api-bridge_*"
-decision = "allow"
-priority = 999
-
-[[rule]]
-toolName = "google_web_search"
-decision = "allow"
-priority = 997
-
-[[rule]]
-toolName = "*"
-decision = "deny"
-priority = 996
-deny_message = "Use only the declared tools available in this session or google_web_search. Do not switch to blocked built-in tools."
-`
-}
-
-func (a *Agent) ensureGeminiProjectDirID() string {
-	if strings.TrimSpace(a.GeminiProjectDirID) != "" {
-		return a.GeminiProjectDirID
-	}
-
-	if sessionID := strings.TrimSpace(a.SessionID); sessionID != "" {
-		a.GeminiProjectDirID = "session-" + sanitizeGeminiProjectDirID(sessionID)
-		return a.GeminiProjectDirID
-	}
-
-	projectSuffix, randErr := cryptorand.Int(cryptorand.Reader, big.NewInt(100000))
-	if randErr != nil {
-		if a.Logger != nil {
-			a.Logger.Warn("Failed to generate cryptographic random Gemini project suffix; using timestamp-only fallback", loggerv2.Error(randErr))
-		}
-		a.GeminiProjectDirID = fmt.Sprintf("%d-00000", time.Now().UnixMilli())
-		return a.GeminiProjectDirID
-	}
-	a.GeminiProjectDirID = fmt.Sprintf("%d-%05d", time.Now().UnixMilli(), projectSuffix.Int64())
-	return a.GeminiProjectDirID
-}
-
-func sanitizeGeminiProjectDirID(raw string) string {
-	var b strings.Builder
-	lastDash := false
-	for _, r := range strings.TrimSpace(raw) {
-		allowed := (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			r == '-' ||
-			r == '_'
-		if allowed {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "default"
-	}
-	return out
 }
 
 func claudeHTTPRoutingHooksEnabled() bool {
@@ -218,161 +126,6 @@ func buildClaudeHTTPRoutingSettings(hookPath string) (string, error) {
 		return "", fmt.Errorf("marshal claude hook settings: %w", err)
 	}
 	return string(settingsBytes), nil
-}
-
-func buildGeminiDebugHooks() map[string]interface{} {
-	return map[string]interface{}{
-		"BeforeTool": []map[string]interface{}{
-			{
-				"matcher": "*",
-				"hooks": []map[string]interface{}{
-					{
-						"name":        "log-before-tool",
-						"type":        "command",
-						"command":     "$GEMINI_PROJECT_DIR/.gemini/hooks/log-before-tool.py",
-						"timeout":     5000,
-						"description": "Log Gemini BeforeTool payloads to stderr for MCP bridge diagnostics",
-					},
-				},
-			},
-		},
-	}
-}
-
-func writeGeminiHookScripts(projectDir string, debugEnabled bool, enforceHTTPRouting bool) error {
-	hooksDir := filepath.Join(projectDir, ".gemini", "hooks")
-	if err := os.MkdirAll(hooksDir, 0750); err != nil {
-		return fmt.Errorf("create hooks dir: %w", err)
-	}
-
-	if enforceHTTPRouting {
-		enforcePath := filepath.Join(hooksDir, "enforce-http-tool-routing.py")
-		enforceScript := `#!/usr/bin/env python3
-import json
-import os
-import sys
-import datetime
-
-# Allowed tools — both bare names (Gemini built-ins) and MCP-prefixed names
-# (bridge tools exposed as mcp_api-bridge_<tool> by the api-bridge MCP server).
-# The server name "api-bridge" is hardcoded in BuildBridgeMCPConfig so these are stable.
-ALLOWED = {
-    # Gemini CLI built-in
-    "google_web_search",
-    # Bridge tools — bare name (for future direct calls)
-    "execute_shell_command",
-    "diff_patch_workspace_file",
-    "agent_browser",
-    "get_api_spec",
-    # Bridge tools — MCP-prefixed name (how Gemini CLI presents them from the api-bridge server)
-    "mcp_api-bridge_execute_shell_command",
-    "mcp_api-bridge_diff_patch_workspace_file",
-    "mcp_api-bridge_agent_browser",
-    "mcp_api-bridge_get_api_spec",
-}
-
-LOG_PATH = os.path.join(os.environ.get("TMPDIR", "/tmp"), "enforce-http-tool-routing.log")
-
-def log(msg):
-    try:
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.datetime.utcnow().isoformat()}] {msg}\n")
-    except Exception:
-        pass
-
-raw = sys.stdin.read()
-payload = {}
-
-try:
-    payload = json.loads(raw) if raw else {}
-except Exception:
-    pass
-
-tool_name = payload.get("tool_name", "")
-# Strip 'default_api:' prefix that some Gemini models add to MCP tool names
-if tool_name.startswith("default_api:"):
-    tool_name = tool_name[len("default_api:"):]
-mcp_context = payload.get("mcp_context") or {}
-server_name = mcp_context.get("server_name")
-
-if tool_name in ALLOWED:
-    log(f"BeforeTool ALLOW: tool_name={tool_name!r} server_name={server_name!r}")
-    sys.stdout.write("{}\n")
-    raise SystemExit(0)
-
-log(f"BeforeTool DENY: tool_name={tool_name!r} server_name={server_name!r}")
-
-reason = (
-    "Only execute_shell_command, diff_patch_workspace_file, agent_browser, get_api_spec, and google_web_search are allowed in this Gemini bridge session. "
-    "Do not call '" + tool_name + "' directly. "
-    "If you need another capability, call get_api_spec to discover the HTTP endpoint and "
-    "use execute_shell_command to invoke it via MCP_API_URL/MCP_API_TOKEN."
-)
-
-sys.stdout.write(json.dumps({
-    "decision": "deny",
-    "reason": reason
-}) + "\n")
-`
-		if err := writeExecutableHookScript(enforcePath, enforceScript); err != nil {
-			return fmt.Errorf("write enforce http routing hook: %w", err)
-		}
-	}
-
-	if !debugEnabled {
-		return nil
-	}
-
-	debugPath := filepath.Join(hooksDir, "log-before-tool.py")
-	debugScript := `#!/usr/bin/env python3
-import json
-import os
-from pathlib import Path
-import sys
-
-raw = sys.stdin.read()
-
-try:
-    payload = json.loads(raw)
-    debug_payload = {
-        "hook_event_name": payload.get("hook_event_name"),
-        "tool_name": payload.get("tool_name"),
-        "original_request_name": payload.get("original_request_name"),
-        "mcp_context": payload.get("mcp_context"),
-        "tool_input": payload.get("tool_input"),
-    }
-    project_dir = os.environ.get("GEMINI_PROJECT_DIR", "")
-    if project_dir:
-        log_path = Path(project_dir) / ".gemini" / "hooks" / "before-tool.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(debug_payload, ensure_ascii=True, sort_keys=True) + "\n")
-    sys.stderr.write(
-        "[GEMINI_DEBUG_HOOK BeforeTool] "
-        + json.dumps(debug_payload, ensure_ascii=True, sort_keys=True)
-        + "\n"
-    )
-except Exception as exc:
-    sys.stderr.write(
-        "[GEMINI_DEBUG_HOOK BeforeTool] failed to parse payload: %s\n" % exc
-    )
-    if raw:
-        sys.stderr.write(raw + "\n")
-
-sys.stdout.write("{}\n")
-`
-
-	if err := writeExecutableHookScript(debugPath, debugScript); err != nil {
-		return fmt.Errorf("write debug hook script: %w", err)
-	}
-	return nil
-}
-
-func writeExecutableHookScript(path, contents string) error {
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0700) //nolint:gosec // hook scripts must be executable
 }
 
 // retryOriginalModel handles retry logic for throttling and zero_candidates errors
@@ -708,7 +461,7 @@ type streamingManager struct {
 	suppressEvents    bool
 	startTime         time.Time
 	turn              int // conversation turn for event emission
-	// CLIToolCalls accumulates completed tool call chunks from CLI providers (Gemini CLI,
+	// CLIToolCalls accumulates completed tool call chunks from CLI providers (Claude Code,
 	// Claude Code, Codex CLI). Used by AskWithHistory to reconstruct conversation history
 	// with tool calls that ran inside the CLI subprocess.
 	CLIToolCalls []llmtypes.StreamChunk
@@ -988,7 +741,7 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 				}
 			}
 		}
-		// Extract provider-specific metadata (Gemini CLI / Claude Code)
+		// Extract provider-specific metadata.
 		if additional := genInfo.Additional; additional != nil {
 			if sm.sawTerminal && endEvent.Metadata != nil {
 				if retentionSeconds := terminalRetentionSecondsFromGenerationInfo(additional); retentionSeconds > 0 {
@@ -997,13 +750,6 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 				if tmuxSession := terminalTmuxSessionFromGenerationInfo(additional); tmuxSession != "" {
 					endEvent.Metadata["tmux_session"] = tmuxSession
 				}
-			}
-			// Gemini CLI metadata
-			if model, ok := additional["gemini_model"].(string); ok {
-				endEvent.ResolvedModel = model
-			}
-			if tc, ok := additional["gemini_tool_calls"].(int); ok {
-				endEvent.ToolCalls = tc
 			}
 			// Claude Code metadata
 			if model, ok := additional["claude_code_model"].(string); ok && endEvent.ResolvedModel == "" {
@@ -1548,7 +1294,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 			// After finishStreaming, processChunks has fully drained — sm.CLIToolCalls is
 			// complete. Attach the collected tool calls to the response so AskWithHistory
-			// can reconstruct a proper conversation history for CLI providers (Gemini CLI,
+			// can reconstruct a proper conversation history for CLI providers (Claude Code,
 			// Claude Code, Codex CLI) where tools run inside the subprocess.
 			if sm != nil && len(sm.CLIToolCalls) > 0 && resp != nil && len(resp.Choices) > 0 {
 				choice := resp.Choices[0]
@@ -1661,7 +1407,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					shouldRetrySameModel = true
 				}
 			} else if errorType == "empty_content_error" {
-				// Empty-content errors include both transient cases (Gemini CLI
+				// Empty-content errors include both transient cases (coding-agent CLIs
 				// status=error mid-stream with no detail, e.g. backend 5xx) and
 				// non-transient ones (context too large, safety filter). Retry
 				// up to 2 times — enough to ride out a transient hiccup without

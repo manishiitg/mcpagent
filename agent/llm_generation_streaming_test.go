@@ -426,13 +426,13 @@ func TestStreamingManagerSuppressesContentChunksWhenSuppressEventsTrue(t *testin
 // change to the chunk routing must update this test or break it loudly.
 func TestStreamingManagerChunkRoutingMatrixProductionConfig(t *testing.T) {
 	cases := []struct {
-		name              string
-		chunk             llmtypes.StreamChunk
-		wantCallback      bool
-		wantChunkEvent    bool   // StreamingChunkEvent expected?
-		wantToolStartEvt  bool   // ToolCallStartEvent expected?
-		wantToolEndEvt    bool   // ToolCallEndEvent expected?
-		wantChunkKind     string // metadata["kind"] check (if wantChunkEvent)
+		name             string
+		chunk            llmtypes.StreamChunk
+		wantCallback     bool
+		wantChunkEvent   bool   // StreamingChunkEvent expected?
+		wantToolStartEvt bool   // ToolCallStartEvent expected?
+		wantToolEndEvt   bool   // ToolCallEndEvent expected?
+		wantChunkKind    string // metadata["kind"] check (if wantChunkEvent)
 	}{
 		{
 			name:           "content_suppressed_under_production_config",
@@ -800,60 +800,6 @@ func TestFinishStreamingNilManager(t *testing.T) {
 		listeners: []AgentEventListener{&recordingAgentEventListener{}},
 	}
 	agent.finishStreaming(context.Background(), nil, nil)
-}
-
-func TestFinishStreamingGeminiMetadata(t *testing.T) {
-	listener := &recordingAgentEventListener{}
-	agent := &Agent{
-		SessionID: "session-gemini-meta-test",
-		ModelID:   "gemini-3.1-flash-lite",
-		listeners: []AgentEventListener{listener},
-	}
-
-	sm := &streamingManager{
-		streamChan:    make(chan llmtypes.StreamChunk, 1),
-		streamingDone: make(chan bool, 1),
-		startTime:     time.Now(),
-	}
-	go sm.processChunks(context.Background(), agent)
-
-	totalTokens := 100
-	resp := &llmtypes.ContentResponse{
-		Choices: []*llmtypes.ContentChoice{
-			{
-				Content:    "Gemini response",
-				StopReason: "stop",
-				GenerationInfo: &llmtypes.GenerationInfo{
-					TotalTokens: &totalTokens,
-					Additional: map[string]interface{}{
-						"gemini_model":      "gemini-3.1-flash-lite",
-						"gemini_tool_calls": 3,
-					},
-				},
-			},
-		},
-	}
-
-	agent.finishStreaming(context.Background(), sm, resp)
-
-	var endEvent *events.StreamingEndEvent
-	for _, e := range listener.events {
-		if ee, ok := e.Data.(*events.StreamingEndEvent); ok {
-			endEvent = ee
-		}
-	}
-	if endEvent == nil {
-		t.Fatal("StreamingEndEvent not emitted")
-	}
-	if endEvent.ResolvedModel != "gemini-3.1-flash-lite" {
-		t.Fatalf("ResolvedModel = %q, want gemini-3.1-flash-lite", endEvent.ResolvedModel)
-	}
-	if endEvent.ToolCalls != 3 {
-		t.Fatalf("ToolCalls = %d, want 3", endEvent.ToolCalls)
-	}
-	if endEvent.FinishReason != "stop" {
-		t.Fatalf("FinishReason = %q, want stop", endEvent.FinishReason)
-	}
 }
 
 func TestFinishStreamingNilResponse(t *testing.T) {

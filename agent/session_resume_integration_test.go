@@ -9,21 +9,18 @@ import (
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
 func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 	tests := []struct {
-		name         string
-		provider     llm.Provider
-		additional   map[string]interface{}
-		wantClaude   string
-		wantGemini   string
-		wantGeminiPD string
-		wantCodex    string
-		wantAgy      string
-		wantPi       string
+		name       string
+		provider   llm.Provider
+		additional map[string]interface{}
+		wantClaude string
+		wantCodex  string
+		wantAgy    string
+		wantPi     string
 	}{
 		{
 			name:     "claude code session ID extracted",
@@ -33,25 +30,6 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 				"provider":               "claude-code",
 			},
 			wantClaude: "claude-sess-abc123",
-		},
-		{
-			name:     "gemini session ID and project dir extracted",
-			provider: llm.ProviderGeminiCLI,
-			additional: map[string]interface{}{
-				"gemini_session_id":     "gemini-sess-xyz789",
-				"gemini_project_dir_id": "proj-dir-456",
-				"provider":              "gemini-cli",
-			},
-			wantGemini:   "gemini-sess-xyz789",
-			wantGeminiPD: "proj-dir-456",
-		},
-		{
-			name:     "gemini session ID without project dir",
-			provider: llm.ProviderGeminiCLI,
-			additional: map[string]interface{}{
-				"gemini_session_id": "gemini-sess-only",
-			},
-			wantGemini: "gemini-sess-only",
 		},
 		{
 			name:     "codex thread ID extracted",
@@ -89,14 +67,6 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 			wantClaude: "",
 		},
 		{
-			name:     "missing key not stored",
-			provider: llm.ProviderGeminiCLI,
-			additional: map[string]interface{}{
-				"provider": "gemini-cli",
-			},
-			wantGemini: "",
-		},
-		{
 			name:     "wrong type not stored",
 			provider: llm.ProviderCodexCLI,
 			additional: map[string]interface{}{
@@ -126,12 +96,6 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 			if agent.ClaudeCodeSessionID != tt.wantClaude {
 				t.Errorf("ClaudeCodeSessionID = %q, want %q", agent.ClaudeCodeSessionID, tt.wantClaude)
 			}
-			if agent.GeminiSessionID != tt.wantGemini {
-				t.Errorf("GeminiSessionID = %q, want %q", agent.GeminiSessionID, tt.wantGemini)
-			}
-			if agent.GeminiProjectDirID != tt.wantGeminiPD {
-				t.Errorf("GeminiProjectDirID = %q, want %q", agent.GeminiProjectDirID, tt.wantGeminiPD)
-			}
 			if agent.CodexSessionID != tt.wantCodex {
 				t.Errorf("CodexSessionID = %q, want %q", agent.CodexSessionID, tt.wantCodex)
 			}
@@ -151,8 +115,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 		provider                          llm.Provider
 		modelID                           string
 		claudeSessionID                   string
-		geminiSessionID                   string
-		geminiProjectDirID                string
 		codexSessionID                    string
 		cursorSessionID                   string
 		cursorBridgeToolsMode             bool
@@ -171,23 +133,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			claudeSessionID: "claude-resume-id",
 			wantResumeKey:   claudecode.MetadataKeyResumeSessionID,
 			wantResumeValue: "claude-resume-id",
-		},
-		{
-			name:            "gemini passes resume session ID",
-			provider:        llm.ProviderGeminiCLI,
-			geminiSessionID: "gemini-resume-id",
-			wantResumeKey:   geminicli.MetadataKeyResumeSessionID,
-			wantResumeValue: "gemini-resume-id",
-		},
-		{
-			name:                "gemini passes project dir ID when no working dir",
-			provider:            llm.ProviderGeminiCLI,
-			geminiSessionID:     "gemini-resume-id",
-			geminiProjectDirID:  "proj-dir-id",
-			wantResumeKey:       geminicli.MetadataKeyResumeSessionID,
-			wantResumeValue:     "gemini-resume-id",
-			wantProjectDirKey:   geminicli.MetadataKeyProjectDirID,
-			wantProjectDirValue: "proj-dir-id",
 		},
 		{
 			name:            "codex passes resume thread ID when no persistent interactive",
@@ -240,10 +185,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			provider: llm.ProviderClaudeCode,
 		},
 		{
-			name:     "gemini no resume when session ID empty",
-			provider: llm.ProviderGeminiCLI,
-		},
-		{
 			name:     "codex no resume when session ID empty",
 			provider: llm.ProviderCodexCLI,
 		},
@@ -256,8 +197,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 				ModelID:                           tt.modelID,
 				SessionID:                         tt.sessionID,
 				ClaudeCodeSessionID:               tt.claudeSessionID,
-				GeminiSessionID:                   tt.geminiSessionID,
-				GeminiProjectDirID:                tt.geminiProjectDirID,
 				CodexSessionID:                    tt.codexSessionID,
 				CursorSessionID:                   tt.cursorSessionID,
 				CursorBridgeToolsMode:             tt.cursorBridgeToolsMode,
@@ -301,12 +240,6 @@ func TestSessionIDRoundTrip(t *testing.T) {
 			provider:   llm.ProviderClaudeCode,
 			sessionKey: "claude_code_session_id",
 			resumeKey:  claudecode.MetadataKeyResumeSessionID,
-		},
-		{
-			name:       "gemini cli",
-			provider:   llm.ProviderGeminiCLI,
-			sessionKey: "gemini_session_id",
-			resumeKey:  geminicli.MetadataKeyResumeSessionID,
 		},
 		{
 			name:       "codex cli",

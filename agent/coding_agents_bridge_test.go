@@ -11,7 +11,6 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
@@ -41,7 +40,6 @@ func TestIsCodingCLIProviderExcludesKimiAPIProvider(t *testing.T) {
 		want     bool
 	}{
 		{name: "claude code", provider: llm.ProviderClaudeCode, want: true},
-		{name: "gemini cli", provider: llm.ProviderGeminiCLI, want: true},
 		{name: "codex cli", provider: llm.ProviderCodexCLI, want: true},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, want: true},
 		{name: "agy cli", provider: llm.ProviderAgyCLI, want: true},
@@ -65,29 +63,6 @@ func TestIsCodingCLIBridgeProviderIncludesPiWhenBridgeMounted(t *testing.T) {
 	}
 	if !isCodingCLIBridgeProvider(llm.ProviderPiCLI, "google/gemini-3.5-flash") {
 		t.Fatal("pi-cli should be treated as bridge-capable through pi-mcp-adapter")
-	}
-}
-
-func TestGeminiRestrictToolsPolicyUsesCurrentMCPToolSyntax(t *testing.T) {
-	policy := geminiRestrictToolsPolicyContent()
-
-	for _, want := range []string{
-		`toolName = "mcp_api-bridge_*"`,
-		`toolName = "google_web_search"`,
-		`toolName = "*"`,
-	} {
-		if !strings.Contains(policy, want) {
-			t.Fatalf("policy missing %q:\n%s", want, policy)
-		}
-	}
-
-	for _, deprecated := range []string{
-		"mcp__api-bridge__",
-		"tools.exclude",
-	} {
-		if strings.Contains(policy, deprecated) {
-			t.Fatalf("policy contains deprecated syntax %q:\n%s", deprecated, policy)
-		}
 	}
 }
 
@@ -472,35 +447,6 @@ func TestAppendCodexCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
 	agent := bridgeTestAgent()
 	if _, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{}); err == nil {
 		t.Fatal("appendCodexCLIIntegrationOptions() error = nil, want missing bridge config error")
-	}
-}
-
-func TestAppendGeminiCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
-	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
-	t.Setenv("MCP_API_URL", "http://localhost:8080")
-	t.Setenv("MCP_API_TOKEN", "test-token")
-
-	agent := bridgeTestAgent()
-	opts, err := agent.appendGeminiCLIIntegrationOptions(nil)
-	if err != nil {
-		t.Fatalf("appendGeminiCLIIntegrationOptions() error = %v", err)
-	}
-	got := metadataFromCallOptions(opts)
-	settingsJSON, ok := got[geminicli.MetadataKeyProjectSettings].(string)
-	if !ok || !strings.Contains(settingsJSON, `"api-bridge"`) {
-		t.Fatalf("Gemini project settings = %#v, want api-bridge settings", got[geminicli.MetadataKeyProjectSettings])
-	}
-}
-
-func TestAppendGeminiCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
-	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
-	t.Setenv("MCP_API_URL", "")
-	t.Setenv("MCP_BRIDGE_API_URL", "")
-	t.Setenv("MCP_API_TOKEN", "")
-
-	agent := bridgeTestAgent()
-	if _, err := agent.appendGeminiCLIIntegrationOptions(nil); err == nil {
-		t.Fatal("appendGeminiCLIIntegrationOptions() error = nil, want missing bridge config error")
 	}
 }
 

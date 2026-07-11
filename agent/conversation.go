@@ -1717,7 +1717,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// inject the steer as a follow-up user turn, and continue instead of
 			// dropping the steer on conversation exit.
 
-			// For CLI providers (Gemini CLI, Claude Code, Codex CLI): tool calls happen
+			// For CLI providers (Claude Code, Codex CLI): tool calls happen
 			// inside the subprocess and are not returned as ToolCalls in the response.
 			// GenerateContentWithRetry attaches completed StreamChunkTypeToolCallEnd chunks
 			// (collected by processChunks via streamingManager.CLIToolCalls) to
@@ -1763,7 +1763,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// so the persisted conversation_history captures what
 			// happened inside the CLI's hidden loop in the same shape
 			// as outer-loop messages. Tmux transports (claude-code,
-			// codex, cursor, gemini CLIs) populate this from their
+			// codex and cursor CLIs) populate this from their
 			// sidecar transcript; structured/API transports typically
 			// don't populate it because the agent layer already sees
 			// those turns directly. Empty/missing is a no-op.
@@ -2234,7 +2234,7 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInf
 
 // logConversationEnd writes tool calls and responses to a separate file after the LLM turn completes.
 // Uses the same directory and naming as logFinalPrompts with a "_conversation" suffix.
-// toolLog contains tool call entries collected via EmitTypedEvent (works for ALL providers including gemini-cli).
+// toolLog contains tool call entries collected via EmitTypedEvent across providers.
 func logConversationEnd(info *promptLogInfo, messages []llmtypes.MessageContent, startMsgCount int, toolLog []string) {
 	if info == nil {
 		return

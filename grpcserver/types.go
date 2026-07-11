@@ -37,7 +37,6 @@ type ProviderAPIKeys struct {
 	ZAI               *string         `json:"z-ai,omitempty"`
 	Kimi              *string         `json:"kimi,omitempty"`
 	Vertex            *string         `json:"vertex,omitempty"`
-	GeminiCLI         *string         `json:"gemini_cli,omitempty"`
 	CodexCLI          *string         `json:"codex_cli,omitempty"`
 	AgyCLI            *string         `json:"agy_cli,omitempty"`
 	MiniMax           *string         `json:"minimax,omitempty"`
@@ -72,7 +71,6 @@ func (k *ProviderAPIKeys) ToLLMKeys() *llm.ProviderAPIKeys {
 		ZAI:               k.ZAI,
 		Kimi:              k.Kimi,
 		Vertex:            k.Vertex,
-		GeminiCLI:         k.GeminiCLI,
 		CodexCLI:          k.CodexCLI,
 		AgyCLI:            k.AgyCLI,
 		MiniMax:           k.MiniMax,

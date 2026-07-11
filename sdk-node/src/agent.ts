@@ -219,7 +219,6 @@ export class MCPAgent {
     setIfPresent('ZAI_API_KEY', apiKeys['z-ai']);
     setIfPresent('KIMI_API_KEY', apiKeys.kimi);
     setIfPresent('VERTEX_API_KEY', apiKeys.vertex);
-    setIfPresent('GEMINI_API_KEY', apiKeys['gemini-cli']);
     setIfPresent('CODEX_API_KEY', apiKeys['codex-cli']);
     setIfPresent('MINIMAX_API_KEY', apiKeys.minimax);
     setIfPresent('MINIMAX_CODING_PLAN_API_KEY', apiKeys['minimax-coding-plan']);

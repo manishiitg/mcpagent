@@ -29,29 +29,25 @@ var codingAgentNativeSessionIDSetters = map[llm.Provider]func(*Agent, string){
 		}
 		a.CodexSessionID = id
 	},
-	llm.ProviderGeminiCLI: func(a *Agent, id string) { a.GeminiSessionID = id },
 	llm.ProviderCursorCLI: func(a *Agent, id string) { a.CursorSessionID = id },
 	llm.ProviderAgyCLI:    func(a *Agent, id string) { a.AgySessionID = id },
 	llm.ProviderPiCLI:     func(a *Agent, id string) { a.PiSessionID = id },
 }
 
 var codingAgentProjectDirIDSetters = map[llm.Provider]func(*Agent, string){
-	llm.ProviderCodexCLI:  func(a *Agent, dir string) { a.CodexProjectDirID = dir },
-	llm.ProviderGeminiCLI: func(a *Agent, dir string) { a.GeminiProjectDirID = dir },
+	llm.ProviderCodexCLI: func(a *Agent, dir string) { a.CodexProjectDirID = dir },
 }
 
 var codingAgentNativeSessionIDGetters = map[llm.Provider]func(*Agent) string{
 	llm.ProviderClaudeCode: func(a *Agent) string { return a.ClaudeCodeSessionID },
 	llm.ProviderCodexCLI:   func(a *Agent) string { return a.CodexSessionID },
-	llm.ProviderGeminiCLI:  func(a *Agent) string { return a.GeminiSessionID },
 	llm.ProviderCursorCLI:  func(a *Agent) string { return a.CursorSessionID },
 	llm.ProviderAgyCLI:     func(a *Agent) string { return a.AgySessionID },
 	llm.ProviderPiCLI:      func(a *Agent) string { return a.PiSessionID },
 }
 
 var codingAgentProjectDirIDGetters = map[llm.Provider]func(*Agent) string{
-	llm.ProviderCodexCLI:  func(a *Agent) string { return a.CodexProjectDirID },
-	llm.ProviderGeminiCLI: func(a *Agent) string { return a.GeminiProjectDirID },
+	llm.ProviderCodexCLI: func(a *Agent) string { return a.CodexProjectDirID },
 }
 
 func (h *AgentSessionHandle) Empty() bool {

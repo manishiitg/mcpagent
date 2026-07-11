@@ -57,7 +57,6 @@ await agent.destroy();
 Important inputs:
 
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, or other provider credentials depending on the example you run
-- `GEMINI_API_KEY` if you want to use the `gemini-cli` provider through the SDK
 - `mcp_servers.json` for MCP server definitions
 - Optional `serverOptions.goProjectPath` if you want the SDK to start the Go runtime from a non-default checkout
 

@@ -20,7 +20,7 @@ func TestCloneAgentEventDeepCopiesMetadata(t *testing.T) {
 				},
 			},
 			Turn:     1,
-			ModelID:  "gemini-cli/auto",
+			ModelID:  "codex-cli/high",
 			Error:    "choice.Content is empty",
 			Duration: time.Second,
 		},
