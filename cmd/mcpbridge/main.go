@@ -173,7 +173,7 @@ func main() {
 
 			if !result.Success {
 				// Return error as regular text (not IsError) so the LLM always sees the
-				// actual error details. Some CLI providers (Gemini CLI, Claude Code) show
+				// actual error details. Some CLI providers (for example Claude Code) show
 				// only a generic "MCP tool reported an error" when IsError=true, hiding
 				// the actual error content from the LLM.
 				errorMsg := result.Error

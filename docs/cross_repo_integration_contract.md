@@ -25,7 +25,7 @@ mcpagent sits between the HTTP API and the LLM adapters. It owns:
   `GenerationInfo.Additional` and re-injects on the next turn via
   `WithResumeSessionID()`.
 - **Provider-specific option fan-out**: per-provider option builders
-  in `executeLLM()` (claude-code, gemini-cli, codex-cli, cursor-cli,
+  in `executeLLM()` (claude-code, codex-cli, cursor-cli,
   agy-cli, pi-cli).
 - **Fallback chain**: cross-provider fallback parsing and adapter
   re-initialisation.

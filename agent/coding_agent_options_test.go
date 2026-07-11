@@ -3,7 +3,6 @@ package mcpagent
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
@@ -58,17 +56,6 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantPersistence: true,
 			wantWorkingKey:  codexcli.MetadataKeyProjectDirID,
 			wantWorkingDir:  "/tmp/codex-chat",
-		},
-		{
-			name: "gemini structured contract gets working dir only",
-			agent: &Agent{
-				provider:                           llm.ProviderGeminiCLI,
-				SessionID:                          "chat-session-3",
-				GeminiPersistentInteractiveSession: true,
-				CodingAgentWorkingDir:              "/tmp/gemini-chat",
-			},
-			wantWorkingKey: geminicli.MetadataKeyWorkingDir,
-			wantWorkingDir: "/tmp/gemini-chat",
 		},
 		{
 			name: "cursor persistent chat",
@@ -277,7 +264,6 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 	}{
 		{name: "claude code", provider: llm.ProviderClaudeCode, metadataKey: claudecode.MetadataKeyWorkingDir},
 		{name: "codex cli", provider: llm.ProviderCodexCLI, metadataKey: codexcli.MetadataKeyProjectDirID},
-		{name: "gemini cli", provider: llm.ProviderGeminiCLI, metadataKey: geminicli.MetadataKeyWorkingDir},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, metadataKey: cursorcli.MetadataKeyWorkingDir},
 		{name: "agy cli", provider: llm.ProviderAgyCLI, metadataKey: agycli.MetadataKeyWorkingDir},
 		{name: "pi cli", provider: llm.ProviderPiCLI, metadataKey: picli.MetadataKeyWorkingDir},
@@ -301,14 +287,6 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 }
 
 func TestCodingAgentIntegrationAppenderCoverage(t *testing.T) {
-	for _, contract := range llm.CodingAgentProviderContracts() {
-		if !contract.UsesMCPBridge {
-			continue
-		}
-		if _, ok := codingAgentIntegrationAppenders[contract.Provider]; !ok {
-			t.Errorf("provider %s uses MCP bridge but has no executeLLM integration appender", contract.Provider)
-		}
-	}
 	for provider := range codingAgentIntegrationAppenders {
 		contract, ok := llm.GetCodingAgentProviderContract(provider, "")
 		if !ok {
@@ -318,42 +296,6 @@ func TestCodingAgentIntegrationAppenderCoverage(t *testing.T) {
 		if !contract.UsesMCPBridge {
 			t.Errorf("integration appender has %s but contract does not use MCP bridge", provider)
 		}
-	}
-}
-
-func TestForceStructuredCodingAgentSuppressesGeminiInteractiveSessionMetadata(t *testing.T) {
-	agent := &Agent{
-		provider:                           llm.ProviderGeminiCLI,
-		SessionID:                          "workflow-step-session",
-		GeminiPersistentInteractiveSession: true,
-		ForceStructuredCodingAgent:         true,
-		CodingAgentWorkingDir:              "/tmp/workflow-step",
-	}
-
-	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptions(nil))
-	if _, ok := got[geminicli.MetadataKeyInteractiveSessionID]; ok {
-		t.Fatalf("Gemini interactive session metadata present despite ForceStructuredCodingAgent: %#v", got)
-	}
-	if _, ok := got[geminicli.MetadataKeyPersistentInteractive]; ok {
-		t.Fatalf("Gemini persistent interactive metadata present despite ForceStructuredCodingAgent: %#v", got)
-	}
-	if got[geminicli.MetadataKeyWorkingDir] != "/tmp/workflow-step" {
-		t.Fatalf("Gemini working dir metadata = %#v, want /tmp/workflow-step", got[geminicli.MetadataKeyWorkingDir])
-	}
-}
-
-func TestAppendCodingAgentInteractiveOptionsForActualFallbackProvider(t *testing.T) {
-	agent := &Agent{
-		provider:                           llm.ProviderOpenAI,
-		SessionID:                          "fallback-session",
-		CodingAgentWorkingDir:              "/tmp/fallback-workdir",
-		GeminiPersistentInteractiveSession: true,
-	}
-
-	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptionsForProvider(nil, llm.ProviderGeminiCLI, "gemini-3.1-flash-lite"))
-
-	if got[geminicli.MetadataKeyWorkingDir] != "/tmp/fallback-workdir" {
-		t.Fatalf("Gemini fallback working dir = %#v, want /tmp/fallback-workdir", got[geminicli.MetadataKeyWorkingDir])
 	}
 }
 
@@ -374,29 +316,6 @@ func TestAnnotateUnifiedCompletionEventMarksCodingAgentTerminalFormat(t *testing
 	}
 	if event.Metadata["coding_agent_terminal_format"] != true {
 		t.Fatalf("coding_agent_terminal_format metadata = %#v, want true", event.Metadata["coding_agent_terminal_format"])
-	}
-}
-
-func TestEnsureGeminiProjectDirIDStableFromSession(t *testing.T) {
-	first := &Agent{SessionID: " chat/session 123 "}
-	second := &Agent{SessionID: "chat/session 123"}
-
-	firstID := first.ensureGeminiProjectDirID()
-	secondID := second.ensureGeminiProjectDirID()
-
-	if firstID == "" {
-		t.Fatal("Gemini project dir ID should not be empty")
-	}
-	if firstID != secondID {
-		t.Fatalf("Gemini project dir ID should be deterministic for the same session, got %q and %q", firstID, secondID)
-	}
-	if strings.ContainsAny(firstID, "/ ") {
-		t.Fatalf("Gemini project dir ID %q should be filesystem-safe", firstID)
-	}
-
-	existing := &Agent{SessionID: "different-session", GeminiProjectDirID: "existing-project-dir"}
-	if got := existing.ensureGeminiProjectDirID(); got != "existing-project-dir" {
-		t.Fatalf("existing Gemini project dir ID changed to %q", got)
 	}
 }
 

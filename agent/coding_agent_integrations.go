@@ -3,9 +3,6 @@ package mcpagent
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -19,9 +16,6 @@ type codingAgentIntegrationAppender func(*Agent, []llmtypes.CallOption, LLMModel
 var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentIntegrationAppender{
 	llmproviders.ProviderClaudeCode: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 		return a.appendClaudeCodeIntegrationOptions(opts, model)
-	},
-	llmproviders.ProviderGeminiCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
-		return a.appendGeminiCLIIntegrationOptions(opts)
 	},
 	llmproviders.ProviderCodexCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 		return a.appendCodexCLIIntegrationOptions(opts, model)
@@ -86,94 +80,6 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 			opts = append(opts, llm.WithClaudeCodeEffort(effort))
 			a.Logger.Info(fmt.Sprintf("🧠 [CLAUDE_CODE] Effort level set to: %s", effort))
 		}
-	}
-	return opts, nil
-}
-
-func (a *Agent) appendGeminiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
-	a.ensureGeminiProjectDirID()
-	var projectDir string
-	if !a.IsolatedSessionWorkspace && strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
-		projectDir = filepath.Join(a.CodingAgentWorkingDir, ".gemini-main")
-	} else {
-		projectDir = filepath.Join(os.TempDir(), "gemini-cli-project-"+a.GeminiProjectDirID)
-	}
-
-	settings := map[string]interface{}{
-		"ui": map[string]interface{}{
-			"hideBanner":        true,
-			"hideTips":          true,
-			"showShortcutsHint": false,
-			"footer": map[string]interface{}{
-				"hideSandboxStatus": true,
-			},
-		},
-	}
-	debugHooksEnabled := geminiDebugHooksEnabled()
-	httpRoutingHooksEnabled := geminiHTTPRoutingHooksEnabled()
-	if debugHooksEnabled {
-		settings["hooks"] = buildGeminiDebugHooks()
-		a.Logger.Info("🪝 Gemini CLI BeforeTool debug hook enabled",
-			loggerv2.String("env", "MCPAGENT_GEMINI_DEBUG_HOOKS"),
-			loggerv2.String("project_dir", projectDir))
-	}
-	if httpRoutingHooksEnabled {
-		a.Logger.Info("🔒 Gemini CLI HTTP tool routing policy enabled",
-			loggerv2.String("env", "MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING"),
-			loggerv2.String("project_dir", projectDir))
-	}
-
-	bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
-	if bridgeErr != nil {
-		return nil, fmt.Errorf("Gemini CLI requires the MCP bridge: %w", bridgeErr)
-	}
-	var bridgeParsed map[string]interface{}
-	if err := json.Unmarshal([]byte(bridgeConfig), &bridgeParsed); err != nil {
-		return nil, fmt.Errorf("Gemini CLI requires valid MCP bridge config: %w", err)
-	}
-	mcpServers, ok := bridgeParsed["mcpServers"]
-	if !ok {
-		return nil, fmt.Errorf("Gemini CLI requires MCP bridge config with mcpServers")
-	}
-	settings["mcpServers"] = mcpServers
-
-	settingsBytes, _ := json.Marshal(settings)
-	opts = append(opts, llm.WithGeminiProjectSettings(string(settingsBytes)))
-
-	policiesDir := filepath.Join(projectDir, ".gemini", "policies")
-	if err := os.MkdirAll(policiesDir, 0750); err != nil {
-		a.Logger.Warn("Failed to create Gemini CLI policies directory", loggerv2.Error(err))
-	} else {
-		policyPath := filepath.Join(policiesDir, "restrict-tools.toml")
-		if err := os.WriteFile(policyPath, []byte(geminiRestrictToolsPolicyContent()), 0600); err != nil {
-			a.Logger.Warn("Failed to write Gemini CLI policy file", loggerv2.Error(err))
-		} else {
-			opts = append(opts, llm.WithGeminiAdminPolicyPath(policyPath))
-			a.Logger.Info(fmt.Sprintf("📋 Wrote Gemini CLI admin policy file to %s", policyPath))
-		}
-	}
-	if debugHooksEnabled {
-		if err := writeGeminiHookScripts(projectDir, true, false); err != nil {
-			a.Logger.Warn("Failed to write Gemini CLI hook scripts", loggerv2.Error(err))
-		} else {
-			a.Logger.Info("🪝 Gemini CLI BeforeTool debug hook script ready",
-				loggerv2.String("path", filepath.Join(projectDir, ".gemini", "hooks", "log-before-tool.py")))
-		}
-	}
-
-	a.Logger.Info("🌉 Using Gemini CLI with project settings (MCP bridge configured, policy engine active)")
-	if a.GeminiSessionID != "" {
-		opts = append(opts, llm.WithGeminiResumeSessionID(a.GeminiSessionID))
-	}
-	opts = append(opts, llm.WithGeminiProjectDirID(a.GeminiProjectDirID))
-	if !a.IsolatedSessionWorkspace && strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
-		opts = append(opts, llm.WithGeminiProjectDirAbsolute(projectDir))
-	}
-	if strings.TrimSpace(a.CodingAgentWorkingDir) != "" {
-		opts = append(opts, llm.WithGeminiWorkingDir(a.CodingAgentWorkingDir))
-		a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using working dir: %s, project dir: %s, project dir ID: %s (session: %s)", a.CodingAgentWorkingDir, projectDir, a.GeminiProjectDirID, a.GeminiSessionID))
-	} else {
-		a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Using project dir ID: %s (session: %s)", a.GeminiProjectDirID, a.GeminiSessionID))
 	}
 	return opts, nil
 }

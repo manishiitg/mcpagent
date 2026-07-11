@@ -189,7 +189,7 @@ func WithCodexPersistentInteractiveSession(enabled bool) AgentOption {
 }
 
 // WithForceStructuredCodingAgent forces the coding-agent CLI providers
-// (claude-code, codex-cli, cursor-cli, gemini-cli) to use the structured
+// (claude-code, codex-cli, cursor-cli) to use the structured
 // JSON transport (--print/--exec/stream-json) even when a session ID is
 // present. Without this, the adapter dispatcher defaults to tmux interactive
 // for these providers whenever a session ID is set. Used per workflow step
@@ -197,16 +197,6 @@ func WithCodexPersistentInteractiveSession(enabled bool) AgentOption {
 func WithForceStructuredCodingAgent(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.ForceStructuredCodingAgent = enabled
-	}
-}
-
-// WithGeminiPersistentInteractiveSession keeps Gemini CLI tmux sessions alive
-// across completed turns. Coding CLI providers now use this interactive path
-// whenever an owner session id is available; this option remains for callers
-// that set metadata explicitly.
-func WithGeminiPersistentInteractiveSession(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.GeminiPersistentInteractiveSession = enabled
 	}
 }
 
@@ -849,15 +839,6 @@ type Agent struct {
 	isolatedWorkspacePath string
 	isolatedWorkspaceOnce sync.Once
 
-	// Gemini CLI session ID for --resume on subsequent turns
-	GeminiSessionID string
-
-	// Gemini CLI project directory ID for per-invocation isolation
-	GeminiProjectDirID string
-
-	// Gemini CLI persistent tmux mode for interactive chat
-	GeminiPersistentInteractiveSession bool
-
 	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
 	CodexProjectDirID string
 
@@ -958,7 +939,7 @@ type Agent struct {
 
 	// Tool call log: accumulated tool call entries for prompt logging.
 	// Populated by EmitTypedEvent for tool_call_start/end events (works for ALL providers
-	// including gemini-cli where tool calls happen inside the CLI).
+	// including coding-agent CLIs where tool calls happen inside the CLI).
 	// Cleared at start of AskWithHistory, dumped by logConversationEnd.
 	ToolCallLog   []string
 	toolCallLogMu sync.Mutex
@@ -1249,8 +1230,6 @@ func (a *Agent) GetLLMModelConfig() LLMModel {
 			config.APIKey = a.APIKeys.ZAI
 		case llm.ProviderKimi:
 			config.APIKey = a.APIKeys.Kimi
-		case llm.ProviderGeminiCLI:
-			config.APIKey = a.APIKeys.GeminiCLI
 		case llm.ProviderCodexCLI:
 			config.APIKey = a.APIKeys.CodexCLI
 		case llm.ProviderCursorCLI:
@@ -1332,7 +1311,6 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 			ZAI:               providerKeys.ZAI,
 			Kimi:              providerKeys.Kimi,
 			Vertex:            providerKeys.Vertex,
-			GeminiCLI:         providerKeys.GeminiCLI,
 			CodexCLI:          providerKeys.CodexCLI,
 			PiCLI:             providerKeys.PiCLI,
 			MiniMax:           providerKeys.MiniMax,
@@ -2072,39 +2050,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 	}
 
-	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
-	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.\n\nCRITICAL: When calling MCP tools, use the EXACT tool name as declared (e.g. mcp_api-bridge_execute_shell_command). Do NOT add any prefix like 'default_api:' — calling 'default_api:mcp_api-bridge_execute_shell_command' will fail with tool_not_registered. Always use the bare tool name without namespace prefixes.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
-
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
-			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
-			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled streaming (required for tool call observability)")
-		}
-	}
-
-	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
+	// Auto-configure Codex CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderCodexCLI {
 		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
@@ -3209,39 +3155,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPa
 		}
 	}
 
-	// Auto-configure Gemini CLI provider (same constraints as Claude Code)
-	if ag.provider == llmproviders.ProviderGeminiCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. If a tool call fails or is blocked, try a different declared tool or stop and explain.\n\nCRITICAL: When calling MCP tools, use the EXACT tool name as declared (e.g. mcp_api-bridge_execute_shell_command). Do NOT add any prefix like 'default_api:' — calling 'default_api:mcp_api-bridge_execute_shell_command' will fail with tool_not_registered. Always use the bare tool name without namespace prefixes.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
-		logger.Debug("🔧 [GEMINI_CLI] Provider detected - silently disabling incompatible features")
-
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
-			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [GEMINI_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
-			logger.Debug("🔧 [GEMINI_CLI] Auto-enabled streaming (required for tool call observability)")
-		}
-	}
-
-	// Auto-configure Codex CLI provider (same constraints as Claude Code / Gemini CLI)
+	// Auto-configure Codex CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderCodexCLI {
 		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
@@ -3551,7 +3465,7 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 		event.CorrelationID = fmt.Sprintf("%s_%d", string(eventData.GetEventType()), time.Now().UnixNano())
 	}
 
-	// Collect tool call events for prompt logging (works for ALL providers including gemini-cli)
+	// Collect tool call events for prompt logging across providers.
 	if os.Getenv("LOG_AGENT_PROMPTS") == "true" {
 		switch e := eventData.(type) {
 		case *events.ToolCallStartEvent:

@@ -89,8 +89,8 @@ func TestHello(log loggerv2.Logger) error {
 	defer agent.Close()
 	log.Info("Agent created successfully")
 
-	// Step 3: Verify auto-disable for CLI providers (Claude Code / Gemini CLI)
-	if provider == llm.ProviderClaudeCode || provider == llm.ProviderGeminiCLI {
+	// Step 3: Verify auto-disable for Claude Code.
+	if provider == llm.ProviderClaudeCode {
 		log.Info("--- Step 3: CLI provider auto-disable check ---",
 			loggerv2.String("provider", string(provider)))
 		log.Info("Provider is CLI-based, agent created with auto-disable logic")
@@ -170,7 +170,7 @@ func TestMultiMCP(log loggerv2.Logger) error {
 	traceID := testutils.GenerateTestTraceID()
 
 	var options []mcpagent.AgentOption
-	if provider == llm.ProviderClaudeCode || provider == llm.ProviderGeminiCLI {
+	if provider == llm.ProviderClaudeCode {
 		options = append(options, mcpagent.WithProvider(provider))
 	}
 

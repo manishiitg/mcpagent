@@ -15,7 +15,6 @@ func TestIsCLIProvider(t *testing.T) {
 		want     bool
 	}{
 		{llm.ProviderClaudeCode, true},
-		{llm.ProviderGeminiCLI, true},
 		{llm.ProviderCodexCLI, true},
 		{llm.ProviderCursorCLI, true},
 		{llm.ProviderPiCLI, true},

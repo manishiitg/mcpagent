@@ -26,7 +26,6 @@ const (
 	ProviderZAI               = llmproviders.ProviderZAI
 	ProviderKimi              = llmproviders.ProviderKimi
 	ProviderClaudeCode        = llmproviders.ProviderClaudeCode
-	ProviderGeminiCLI         = llmproviders.ProviderGeminiCLI
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
 	ProviderCursorCLI         = llmproviders.ProviderCursorCLI
 	ProviderAgyCLI            = llmproviders.ProviderAgyCLI
@@ -153,12 +152,6 @@ func SendCodexCLIInteractiveInput(ctx context.Context, sessionID, message string
 	return llmproviders.SendCodexCLIInteractiveInput(ctx, sessionID, message)
 }
 
-// SendGeminiCLIInteractiveInput sends user input to a live Gemini CLI
-// interactive session registered for the owning application session.
-func SendGeminiCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
-	return llmproviders.SendGeminiCLIInteractiveInput(ctx, sessionID, message)
-}
-
 // SendCursorCLIInteractiveInput sends user input to a live Cursor CLI
 // interactive session registered for the owning application session.
 func SendCursorCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
@@ -229,14 +222,6 @@ func WithCodexProjectInstructionOnly(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithCodexProjectInstructionOnly(enabled)
 }
 
-// WithGeminiProjectInstructionOnly carries the gemini system prompt solely via
-// the projected GEMINI.md, skipping the GEMINI_SYSTEM_MD env injection, so the
-// prompt is applied once instead of doubled. Falls back to the env if the
-// projection is disabled/fails.
-func WithGeminiProjectInstructionOnly(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithGeminiProjectInstructionOnly(enabled)
-}
-
 // WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning
 // application session so live follow-up input can be sent to it.
 func WithCodexInteractiveSessionID(id string) llmtypes.CallOption {
@@ -247,18 +232,6 @@ func WithCodexInteractiveSessionID(id string) llmtypes.CallOption {
 // sessions alive across completed chat turns.
 func WithCodexPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithCodexPersistentInteractiveSession(enabled)
-}
-
-// WithGeminiInteractiveSessionID links a Gemini CLI interactive run to the
-// owning application session so live follow-up input can be sent to it.
-func WithGeminiInteractiveSessionID(id string) llmtypes.CallOption {
-	return llmproviders.WithGeminiInteractiveSessionID(id)
-}
-
-// WithGeminiPersistentInteractiveSession keeps Gemini CLI interactive tmux
-// sessions alive across completed chat turns.
-func WithGeminiPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithGeminiPersistentInteractiveSession(enabled)
 }
 
 // WithCursorInteractiveSessionID links a Cursor CLI interactive run to the
@@ -689,64 +662,6 @@ func WithClaudeCodeEffort(level string) CallOption {
 	return llmproviders.WithClaudeCodeEffort(level)
 }
 
-// --- Gemini CLI Wrapper Functions ---
-
-// WithGeminiResumeSessionID sets the --resume flag so the Gemini CLI resumes
-// an existing session instead of starting a new one.
-func WithGeminiResumeSessionID(id string) CallOption {
-	return llmproviders.WithGeminiResumeSessionID(id)
-}
-
-// WithGeminiApprovalMode sets the --approval-mode flag for the Gemini CLI.
-func WithGeminiApprovalMode(mode string) CallOption {
-	return llmproviders.WithGeminiApprovalMode(mode)
-}
-
-// WithGeminiSystemPromptFile sets the GEMINI_SYSTEM_MD environment variable path.
-func WithGeminiSystemPromptFile(path string) CallOption {
-	return llmproviders.WithGeminiSystemPromptFile(path)
-}
-
-// WithGeminiProjectSettings writes a .gemini/settings.json in a temp directory
-// and runs the Gemini CLI from there. Controls tool restrictions and MCP bridge config.
-func WithGeminiProjectSettings(settingsJSON string) CallOption {
-	return llmproviders.WithGeminiProjectSettings(settingsJSON)
-}
-
-// WithGeminiPolicyPath passes --policy to the Gemini CLI.
-func WithGeminiPolicyPath(path string) CallOption {
-	return llmproviders.WithGeminiPolicyPath(path)
-}
-
-// WithGeminiAdminPolicyPath passes --admin-policy to the Gemini CLI.
-func WithGeminiAdminPolicyPath(path string) CallOption {
-	return llmproviders.WithGeminiAdminPolicyPath(path)
-}
-
-// WithGeminiWorkingDir sets the Gemini CLI process working directory.
-func WithGeminiWorkingDir(dir string) CallOption {
-	return llmproviders.WithGeminiWorkingDir(dir)
-}
-
-// WithGeminiAllowedTools sets the deprecated --allowed-tools flag for the Gemini CLI.
-// Prefer WithGeminiProjectSettings plus Policy Engine rules instead.
-func WithGeminiAllowedTools(tools string) CallOption {
-	return llmproviders.WithGeminiAllowedTools(tools)
-}
-
-// WithGeminiProjectDirID sets an explicit project directory ID for the Gemini CLI.
-// This ensures resume calls use the same isolated project directory as the original invocation.
-func WithGeminiProjectDirID(id string) CallOption {
-	return llmproviders.WithGeminiProjectDirID(id)
-}
-
-// WithGeminiProjectDirAbsolute overrides the default /tmp project directory with
-// an absolute path. Used for workflow main_agent so GEMINI_PROJECT_DIR points at
-// a workflow-rooted location instead of /tmp.
-func WithGeminiProjectDirAbsolute(absPath string) CallOption {
-	return llmproviders.WithGeminiProjectDirAbsolute(absPath)
-}
-
 // --- Codex CLI Wrapper Functions ---
 
 // WithCodexResumeSessionID resumes a Codex CLI session by thread ID.
@@ -757,7 +672,7 @@ func WithCodexResumeSessionID(id string) CallOption {
 // WithCursorResumeSessionID resumes a Cursor CLI chat by session ID — the
 // id cursor-agent emits in its stream-json init event (and that is also the
 // directory name under ~/.cursor/chats/<md5(cwd)>/<id>). Mirrors the
-// claude-code / gemini / codex equivalents so a restored chat can pick up
+// claude-code / codex equivalents so a restored chat can pick up
 // cursor's native chat memory instead of starting fresh.
 func WithCursorResumeSessionID(id string) CallOption {
 	return llmproviders.WithCursorResumeSessionID(id)

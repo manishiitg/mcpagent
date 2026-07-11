@@ -12,7 +12,6 @@ import (
 var codingAgentPersistentInteractiveEnabledByProvider = map[llm.Provider]func(*Agent) bool{
 	llm.ProviderClaudeCode: func(a *Agent) bool { return a.ClaudeCodePersistentInteractiveSession },
 	llm.ProviderCodexCLI:   func(a *Agent) bool { return a.CodexPersistentInteractiveSession },
-	llm.ProviderGeminiCLI:  func(a *Agent) bool { return a.GeminiPersistentInteractiveSession },
 	llm.ProviderCursorCLI:  func(a *Agent) bool { return a.CursorPersistentInteractiveSession },
 	llm.ProviderAgyCLI:     func(a *Agent) bool { return a.AgyPersistentInteractiveSession },
 	llm.ProviderPiCLI:      func(a *Agent) bool { return a.PiPersistentInteractiveSession },
@@ -99,8 +98,8 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	opts = append(opts, option)
 
 	// CLI providers that ALSO project the per-session system prompt into a
-	// workspace instruction file (claude→CLAUDE.md, codex→AGENTS.md,
-	// gemini→GEMINI.md) would otherwise inject the prompt
+	// workspace instruction file (claude→CLAUDE.md, codex→AGENTS.md) would
+	// otherwise inject the prompt
 	// twice — once via the CLI flag/env/in-band channel and once via the
 	// projected file — doubling the (often large) builder prompt. Carry it
 	// through the projected file only; each adapter falls back to its normal
@@ -149,12 +148,6 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	if sid, ok := additional["claude_code_session_id"].(string); ok && sid != "" {
 		a.ClaudeCodeSessionID = sid
 	}
-	if sid, ok := additional["gemini_session_id"].(string); ok && sid != "" {
-		a.GeminiSessionID = sid
-	}
-	if dirID, ok := additional["gemini_project_dir_id"].(string); ok && dirID != "" {
-		a.GeminiProjectDirID = dirID
-	}
 	if sid, ok := additional["codex_thread_id"].(string); ok && sid != "" {
 		if a.Logger != nil && a.CodexSessionID != sid {
 			a.Logger.Debug(fmt.Sprintf("CodexSessionID set from response: session=%q old=%q new=%q isolated=%v", a.SessionID, a.CodexSessionID, sid, a.IsolatedSessionWorkspace))
@@ -181,13 +174,6 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 	if sessionID := strings.TrimSpace(handle.NativeSessionID); sessionID != "" {
 		if option := llm.NativeResumeOption(a.provider, sessionID); option != nil {
 			opts = append(opts, option)
-		}
-	}
-	if a.provider == llm.ProviderGeminiCLI && strings.TrimSpace(a.CodingAgentWorkingDir) == "" {
-		if projectDirID := strings.TrimSpace(handle.ProjectDirID); projectDirID != "" {
-			if option := llm.CodingAgentProjectDirIDOption(a.provider, projectDirID); option != nil {
-				opts = append(opts, option)
-			}
 		}
 	}
 	return opts

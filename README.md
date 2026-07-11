@@ -8,7 +8,7 @@ A production-ready Go library for building tool-using, code-executing agents acr
 ## ⚡ Why People Use It
 
 - Build one agent runtime instead of separate code paths for MCP tools, code execution, and provider switching
-- Mix API-native models and CLI-native coding agents like Claude Code, Gemini CLI, and Codex-style providers
+- Mix API-native models and CLI-native coding agents like Claude Code, Codex, Cursor, and Pi
 - Add production features such as summarization, large-output offloading, structured output, parallel tools, tracing, and caching
 - Reuse the same runtime from Go applications and from the Node.js SDK
 
@@ -18,7 +18,7 @@ MCPAgent is a general-purpose Go agent runtime. It gives you one agent abstracti
 
 - **Use MCP tools** across multiple servers and protocols (HTTP, SSE, stdio)
 - **Run in multiple execution modes** with `SimpleAgent`, tool search, and code execution
-- **Connect to coding-agent CLIs** such as Claude Code, Gemini CLI, and Codex-style providers
+- **Connect to coding-agent CLIs** such as Claude Code, Codex, Cursor, and Pi
 - **Route across model ecosystems** including OpenAI, Anthropic, OpenRouter, Bedrock, Vertex, Azure, MiniMax, and open-model gateways
 - **Execute tools efficiently** with optional parallel tool calls, caching, and dynamic tool discovery
 - **Stay productive in long sessions** with context summarization and large-output offloading
@@ -34,8 +34,6 @@ If you are evaluating the project for the first time, these are the best first e
 - **[basic/](examples/basic/)** - Smallest working MCP-backed agent example
 - **[workflow_model_routing/](examples/workflow_model_routing/)** - Compare Kimi, MiniMax M2.7, and GLM-5.1 on the same MCP-backed workflow task
 - **[basic_claude_code/](examples/basic_claude_code/)** - Coding-agent CLI flow through the MCP bridge
-- **[basic_gemini_cli/](examples/basic_gemini_cli/)** - Fast Gemini CLI bridge example
-- **[basic_gemini_cli_fallback_claude_code/](examples/basic_gemini_cli_fallback_claude_code/)** - Gemini CLI with Claude Code fallback
 - **[multi-turn/](examples/multi-turn/)** - Conversation history and cumulative token tracking
 - **[nodejs-sdk/](examples/nodejs-sdk/)** - JavaScript/TypeScript SDK examples over gRPC
 
@@ -112,8 +110,6 @@ See [examples/](examples/) for complete working examples:
 - **[basic/](examples/basic/)** - Basic agent setup with single MCP server
 - **[workflow_model_routing/](examples/workflow_model_routing/)** - Run the same MCP-backed prompt against Kimi, MiniMax M2.7, or GLM-5.1
 - **[basic_claude_code/](examples/basic_claude_code/)** - Basic Claude Code setup using the MCP bridge layer (defaults to `claude-haiku-4-5`)
-- **[basic_gemini_cli/](examples/basic_gemini_cli/)** - Basic Gemini CLI setup using the MCP bridge layer (defaults to `flash-lite`)
-- **[basic_gemini_cli_fallback_claude_code/](examples/basic_gemini_cli_fallback_claude_code/)** - Gemini CLI primary with Claude Code fallback (supports `FORCE_FALLBACK=1`)
 - **[basic_codex_cli/](examples/basic_codex_cli/)** - Basic Codex CLI setup using the MCP bridge layer (defaults to `gpt-5.3-codex-spark`)
 - **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with history
 - **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers
@@ -132,7 +128,7 @@ See [examples/](examples/) for complete working examples:
 
 ## 🟢 Node.js SDK
 
-The official Node.js/TypeScript SDK provides a simple interface for building MCP agents in JavaScript/TypeScript applications. The SDK communicates with the Go server via **gRPC over Unix sockets** for low-latency, bidirectional streaming, and it can route through API providers as well as CLI-native providers like `gemini-cli`.
+The official Node.js/TypeScript SDK provides a simple interface for building MCP agents in JavaScript/TypeScript applications. The SDK communicates with the Go server via **gRPC over Unix sockets** for low-latency, bidirectional streaming, and it can route through API providers as well as supported CLI-native providers.
 
 ### Installation
 
@@ -154,8 +150,8 @@ const agent = new MCPAgent({
 
 // Initialize with your LLM provider
 await agent.initialize({
-  provider: 'gemini-cli',
-  modelId: 'flash-lite',
+  provider: 'codex-cli',
+  modelId: 'high',
 });
 
 // Ask a question
@@ -238,7 +234,6 @@ See [examples/nodejs-sdk/](examples/nodejs-sdk/) for complete examples:
 - **[basic.ts](examples/nodejs-sdk/src/basic.ts)** - Basic agent setup and queries
 - **[custom-tools.ts](examples/nodejs-sdk/src/custom-tools.ts)** - Register and use custom tools
 - **[multi-turn.ts](examples/nodejs-sdk/src/multi-turn.ts)** - Multi-turn conversations
-- **Gemini CLI support** - The SDK now supports `provider: 'gemini-cli'` for CLI-native Gemini runs from Node.js
 
 For full SDK documentation, see [sdk-node/README.md](sdk-node/README.md).
 
@@ -664,14 +659,6 @@ Complete working examples are available in the [examples/](examples/) directory:
   - Uses `ProviderClaudeCode` with the `mcpbridge` flow
   - Starts a local executor API automatically for bridge-backed tool access
   - Defaults to the faster `claude-haiku-4-5` model
-- **[basic_gemini_cli/](examples/basic_gemini_cli/)** - Gemini CLI provider with bridge-backed MCP access
-  - Uses `ProviderGeminiCLI` with the `mcpbridge` flow
-  - Starts a local executor API automatically for bridge-backed tool access
-  - Defaults to the faster `flash-lite` model
-- **[basic_gemini_cli_fallback_claude_code/](examples/basic_gemini_cli_fallback_claude_code/)** - Gemini CLI primary with Claude Code fallback
-  - Uses `ProviderGeminiCLI` as primary and `ProviderClaudeCode` as cross-provider fallback
-  - Demonstrates `mcpagent.WithCrossProviderFallback(...)`
-  - Supports `FORCE_FALLBACK=1` to intentionally fail Gemini and verify the Claude Code handoff
 - **[basic_codex_cli/](examples/basic_codex_cli/)** - Codex CLI provider with bridge-backed MCP access
   - Uses `ProviderCodexCLI` with the `mcpbridge` flow
   - Starts a local executor API automatically for bridge-backed tool access
@@ -894,7 +881,7 @@ mcpagent/
 - **AWS Bedrock**: Claude, Llama, Mistral, and other Bedrock-served models
 - **Google Vertex AI**: Gemini and related Vertex-hosted models
 - **Azure**: Azure-hosted OpenAI and related model deployments
-- **Claude Code / Gemini CLI / Codex-style CLI providers**: Coding-agent integrations through provider abstractions
+- **Claude Code / Codex / Cursor / Pi CLI providers**: Coding-agent integrations through provider abstractions
 - **MiniMax**: MiniMax chat and coding-plan providers
 - **Custom Providers**: Extensible provider interface
 

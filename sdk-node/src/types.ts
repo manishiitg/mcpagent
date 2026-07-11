@@ -10,7 +10,6 @@ export type Provider =
   | 'z-ai'
   | 'kimi'
   | 'claude-code'
-  | 'gemini-cli'
   | 'codex-cli'
   | 'minimax'
   | 'minimax-coding-plan';
@@ -22,7 +21,6 @@ export interface AgentAPIKeys {
   'z-ai'?: string;
   kimi?: string;
   vertex?: string;
-  'gemini-cli'?: string;
   'codex-cli'?: string;
   minimax?: string;
   'minimax-coding-plan'?: string;

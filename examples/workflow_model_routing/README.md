@@ -56,5 +56,3 @@ go run main.go glm mcp_servers.json "Research React Server Components and return
 - For CLI-native coding-agent flows, see:
   - `../basic_claude_code`
   - `../basic_codex_cli`
-  - `../basic_gemini_cli`
-  - `../basic_gemini_cli_fallback_claude_code`

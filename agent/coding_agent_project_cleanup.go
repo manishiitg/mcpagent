@@ -23,20 +23,16 @@ func cleanupInactiveCodingAgentProjectArtifacts(workingDir string, activeProvide
 		removeManagedInstructionFile(filepath.Join(workingDir, "AGENTS.md"))
 		removeManagedDir(filepath.Join(workingDir, ".codex"))
 	}
-	if active != string(llm.ProviderGeminiCLI) {
-		removeManagedInstructionFile(filepath.Join(workingDir, "GEMINI.md"))
-		removeManagedDir(filepath.Join(workingDir, ".gemini"))
-		removeManagedDir(filepath.Join(workingDir, ".gemini-main"))
-	}
+	removeManagedInstructionFile(filepath.Join(workingDir, "GEMINI.md"))
+	removeManagedDir(filepath.Join(workingDir, ".gemini"))
+	removeManagedDir(filepath.Join(workingDir, ".gemini-main"))
 	if active != string(llm.ProviderCursorCLI) {
 		removeManagedDir(filepath.Join(workingDir, ".cursor"))
 	}
 	if active != string(llm.ProviderPiCLI) {
 		removeManagedDir(filepath.Join(workingDir, ".pi"))
 	}
-	if active != string(llm.ProviderAgyCLI) &&
-		active != string(llm.ProviderCodexCLI) &&
-		active != string(llm.ProviderGeminiCLI) {
+	if active != string(llm.ProviderAgyCLI) && active != string(llm.ProviderCodexCLI) {
 		removeManagedDir(filepath.Join(workingDir, ".agents"))
 	}
 	if active != string(llm.ProviderAgyCLI) {
