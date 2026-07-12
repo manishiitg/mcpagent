@@ -110,3 +110,46 @@ func TestCallVirtualToolWithSessionKeepsScopedNonEmptyDiscoveryErrors(t *testing
 		t.Fatalf("latest scope calls = %d, want 0", latestCalls)
 	}
 }
+
+func TestCallCustomToolWithSessionDoesNotBorrowGlobalExecutor(t *testing.T) {
+	resetRegistryForTest(t)
+
+	globalCalls := 0
+	InitRegistry(nil, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"call_generic_agent": func(context.Context, map[string]interface{}) (string, error) {
+			globalCalls++
+			return "wrong-workflow", nil
+		},
+	}, nil, nil)
+	InitRegistryForSession("workflow-a", map[string]func(context.Context, map[string]interface{}) (string, error){
+		"execute_shell_command": func(context.Context, map[string]interface{}) (string, error) {
+			return "ok", nil
+		},
+	}, nil)
+
+	_, err := CallCustomToolWithSession(context.Background(), "workflow-a", "call_generic_agent", nil)
+	if err == nil {
+		t.Fatal("CallCustomToolWithSession() error = nil, want missing session tool error")
+	}
+	if globalCalls != 0 {
+		t.Fatalf("global executor calls = %d, want 0", globalCalls)
+	}
+}
+
+func TestCallCustomToolWithSessionKeepsLegacyFallbackWithoutSessionRegistry(t *testing.T) {
+	resetRegistryForTest(t)
+
+	InitRegistry(nil, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"legacy_tool": func(context.Context, map[string]interface{}) (string, error) {
+			return "legacy-result", nil
+		},
+	}, nil, nil)
+
+	got, err := CallCustomToolWithSession(context.Background(), "uninitialized-session", "legacy_tool", nil)
+	if err != nil {
+		t.Fatalf("CallCustomToolWithSession() error = %v", err)
+	}
+	if got != "legacy-result" {
+		t.Fatalf("CallCustomToolWithSession() = %q, want legacy-result", got)
+	}
+}

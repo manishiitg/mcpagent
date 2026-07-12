@@ -702,9 +702,11 @@ func SetSessionToolAllowList(sessionID string, allowList map[string]bool) {
 	}
 }
 
-// CallCustomToolWithSession calls a custom tool with session scoping
-// It first checks session-scoped tools, then falls back to global tools
-// This prevents cross-workflow contamination when multiple workflows run concurrently
+// CallCustomToolWithSession calls a custom tool with session scoping.
+// Once a session registry exists it is authoritative: a missing tool must fail
+// instead of borrowing the most recently registered global executor, which may
+// belong to another concurrently running workflow. Global fallback is retained
+// only for callers that do not yet have a session registry.
 func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName string, args map[string]interface{}) (string, error) {
 	registry := GetRegistry()
 	if registry == nil {
@@ -745,10 +747,12 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 				}
 				return executor(ctx, args)
 			}
+			return "", fmt.Errorf("custom tool %s is not registered for session %s", toolName, sessionID)
 		}
-		// Session exists but tool not found in session scope - log and continue to global
+		// No registry exists for this session yet. Keep the legacy global path for
+		// non-workflow callers that have not initialized session-scoped tools.
 		if registry.logger != nil {
-			registry.logger.Debug("Tool not found in session scope, falling back to global",
+			registry.logger.Debug("Session registry not found, falling back to global",
 				loggerv2.String("session_id", sessionID),
 				loggerv2.String("tool", toolName))
 		}
