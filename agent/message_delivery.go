@@ -111,8 +111,9 @@ func (a *Agent) DeliverControlKey(ctx context.Context, req ControlKeyDeliveryReq
 
 // DeliverUserMessage routes a user message through the correct running-turn
 // mechanism for this agent. Tmux coding agents get provider-native live input;
-// API/structured/non-coding agents fall back to the agent's internal steer queue
-// so the message is injected between tool calls and the next LLM call.
+// a failed tmux submission is returned to the caller instead of being hidden in
+// the internal steer queue. API/structured/non-coding agents still use that
+// queue between tool calls and the next LLM call.
 func (a *Agent) DeliverUserMessage(ctx context.Context, req UserMessageDeliveryRequest) (UserMessageDeliveryResult, error) {
 	provider := a.GetProvider()
 	result := UserMessageDeliveryResult{Provider: provider}
@@ -132,14 +133,7 @@ func (a *Agent) DeliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 
 	if isCodingAgent && contract.SupportsLiveInput {
 		if err := llm.SendCodingAgentLiveInput(ctx, provider, a.ModelID, req.SessionID, message); err != nil {
-			// Live delivery failed (e.g. the foreground turn already exited, or
-			// there's no active pane to inject into). Fall back to the steer queue
-			// so the message is redelivered by the drain backstop instead of being
-			// lost — the caller treats QueuedForInjection as "not definitively
-			// delivered" and won't mark the completion notified.
-			a.AddSteerMessage(message)
-			result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
-			return result, nil
+			return result, fmt.Errorf("failed to submit live input to %s: %w", provider, err)
 		}
 		result.DeliveryStatus = UserMessageDeliveryStatusSentToCLI
 		return result, nil
