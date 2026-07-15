@@ -165,6 +165,26 @@ func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry
 }
 
+// IsBrowserScopedServer is retained for source compatibility.
+//
+// Deprecated: managed browser sessions no longer use MCP server connections,
+// so every MCP server now follows the global connection-pool path.
+func IsBrowserScopedServer(string) bool {
+	return false
+}
+
+// RegisterBrowserSessionOverride is retained for source compatibility.
+//
+// Deprecated: managed browser sessions are no longer represented in this
+// registry, so browser session overrides are ignored.
+func (r *SessionConnectionRegistry) RegisterBrowserSessionOverride(_, _ string) {}
+
+// ClearBrowserSessionOverride is retained for source compatibility.
+//
+// Deprecated: managed browser sessions are no longer represented in this
+// registry, so there is no override to clear.
+func (r *SessionConnectionRegistry) ClearBrowserSessionOverride(string) {}
+
 // ResolveConnectionSessionID returns the actual registry session key that should be
 // used for the given logical tool session + server combination.
 //
