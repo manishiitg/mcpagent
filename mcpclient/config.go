@@ -107,7 +107,7 @@ type RuntimeConfigOverride struct {
 	// EnvOverride adds or overrides environment variables
 	EnvOverride map[string]string `json:"env_override,omitempty"`
 	// WorkingDir sets the subprocess working directory (stdio only). Used so tools that resolve
-	// relative paths (e.g. Playwright MCP custom filenames) use the desired output directory.
+	// relative paths use the desired output directory.
 	WorkingDir string `json:"working_dir,omitempty"`
 }
 

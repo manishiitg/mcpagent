@@ -113,14 +113,12 @@ See [examples/](examples/) for complete working examples:
 - **[basic_codex_cli/](examples/basic_codex_cli/)** - Basic Codex CLI setup using the MCP bridge layer (defaults to `gpt-5.3-codex-spark`)
 - **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with history
 - **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers
-- **[browser-automation/](examples/browser-automation/)** - Browser automation with Playwright
 - **[structured_output/](examples/structured_output/)** - Structured output examples
   - **[fixed/](examples/structured_output/fixed/)** - Fixed conversion model (2 LLM calls)
   - **[tool/](examples/structured_output/tool/)** - Tool-based model (1 LLM call)
 - **[custom_tools/](examples/custom_tools/)** - Register and use custom tools
 - **[code_execution/](examples/code_execution/)** - Code execution mode examples
   - **[simple/](examples/code_execution/simple/)** - Basic code execution (no folder guards)
-  - **[browser-automation/](examples/code_execution/browser-automation/)** - Code execution with browser automation
   - **[multi-mcp-server/](examples/code_execution/multi-mcp-server/)** - Code execution with tool filtering
   - **[custom_tools/](examples/code_execution/custom_tools/)** - Custom tools in code execution mode
 - **[tool_search/](examples/tool_search/)** - Tool search mode for dynamic tool discovery
@@ -649,7 +647,6 @@ Complete working examples are available in the [examples/](examples/) directory:
 
 ### Advanced Examples
 - **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers simultaneously
-- **[browser-automation/](examples/browser-automation/)** - Browser automation using Playwright MCP server
 
 ### Structured Output Examples
 - **[structured_output/fixed/](examples/structured_output/fixed/)** - Fixed conversion model for structured output
@@ -690,11 +687,6 @@ Complete working examples are available in the [examples/](examples/) directory:
   - Per-tool HTTP endpoints for MCP tool access
   - No folder guards (simplest example)
   - HTTP server with auth required
-
-- **[code_execution/browser-automation/](examples/code_execution/browser-automation/)** - Code execution with browser automation
-  - Combines code execution mode with Playwright MCP server
-  - Complex multi-step browser automation tasks
-  - Example: IPO analysis with web scraping and data collection
 
 - **[code_execution/multi-mcp-server/](examples/code_execution/multi-mcp-server/)** - Code execution with tool filtering
   - Demonstrates tool filtering in code execution mode

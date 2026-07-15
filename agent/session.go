@@ -37,8 +37,8 @@ func CloseSession(sessionID string) {
 //
 // Example usage:
 //
-//	// Close just the playwright connection for reconnection
-//	mcpagent.CloseSessionServer("workflow-123", "playwright")
+//	// Close just one server connection for reconnection
+//	mcpagent.CloseSessionServer("workflow-123", "github")
 func CloseSessionServer(sessionID, serverName string) {
 	registry := mcpclient.GetSessionRegistry()
 	registry.CloseSessionServer(sessionID, serverName)
@@ -143,13 +143,6 @@ func HasSession(sessionID string) bool {
 func RegisterHTTPSession(httpSessionID, mcpSessionID string) {
 	registry := mcpclient.GetSessionRegistry()
 	registry.RegisterHTTPSession(httpSessionID, mcpSessionID)
-}
-
-// RegisterBrowserSessionOverride binds a logical tool session to a stable browser
-// session identity for stateful browser servers such as Playwright.
-func RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
-	registry := mcpclient.GetSessionRegistry()
-	registry.RegisterBrowserSessionOverride(sessionID, browserSessionID)
 }
 
 // ResolveConnectionSessionID returns the actual connection-session key used by the

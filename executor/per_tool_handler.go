@@ -116,7 +116,7 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 	// URL path segments are sanitized (hyphens→underscores via SanitizePathSegment),
 	// but the session registry stores server configs under the ORIGINAL name (with hyphens).
 	// Try the desanitized (hyphenated) name first so we hit the session registry / lazy connect
-	// path instead of falling through to mcpcache (which spawns a new browser for Playwright).
+	// path instead of falling through to mcpcache and spawning a duplicate process.
 	desanitizedServer := strings.ReplaceAll(server, "_", "-")
 	if desanitizedServer == server {
 		// No underscores to desanitize — just delegate directly

@@ -271,31 +271,31 @@ func TestComprehensiveFilterScenarios(log loggerv2.Logger) error {
 	}
 
 	// Scenario 6: Both selectedServers AND selectedTools with wildcard (the bug scenario)
-	// This tests the exact case that was failing: selectedServers=["playwright"] + selectedTools=["playwright:*"]
+	// This tests the exact case that was failing: selectedServers=["notion"] + selectedTools=["notion:*"]
 	log.Info("  Scenario 6: selectedServers + selectedTools with wildcard (bug scenario)")
 	{
 		selectedTools := []string{
-			"playwright:*", // ALL tools from playwright (wildcard pattern)
+			"notion:*", // ALL tools from notion (wildcard pattern)
 		}
-		selectedServers := []string{"playwright"} // Also in selectedServers
+		selectedServers := []string{"notion"} // Also in selectedServers
 
-		// Add playwright to mock clients
-		mockClientsWithPlaywright := map[string]mcpclient.ClientInterface{
+		// Add notion to mock clients
+		mockClientsWithNotion := map[string]mcpclient.ClientInterface{
 			"google-sheets": nil,
 			"aws":           nil,
 			"tavily":        nil,
-			"playwright":    nil, // Add playwright server
+			"notion":        nil, // Add notion server
 		}
 
-		tf := mcpagent.NewToolFilter(selectedTools, selectedServers, mockClientsWithPlaywright, []string{"workspace"}, log)
+		tf := mcpagent.NewToolFilter(selectedTools, selectedServers, mockClientsWithNotion, []string{"workspace"}, log)
 
 		testCases := []ToolFilterTestCase{
-			// playwright tools - ALL should be included (wildcard pattern should work even with selectedServers)
-			{"playwright with wildcard", "playwright", "navigate", false, false, true, "wildcard pattern includes all tools"},
-			{"playwright with wildcard", "playwright", "click", false, false, true, "wildcard pattern includes all tools"},
-			{"playwright with wildcard", "playwright", "fill", false, false, true, "wildcard pattern includes all tools"},
-			{"playwright with wildcard", "playwright", "screenshot", false, false, true, "wildcard pattern includes all tools"},
-			{"playwright with wildcard", "playwright", "AnyRandomPlaywrightTool", false, false, true, "wildcard pattern includes all tools"},
+			// notion tools - ALL should be included (wildcard pattern should work even with selectedServers)
+			{"notion with wildcard", "notion", "query", false, false, true, "wildcard pattern includes all tools"},
+			{"notion with wildcard", "notion", "create_page", false, false, true, "wildcard pattern includes all tools"},
+			{"notion with wildcard", "notion", "update_page", false, false, true, "wildcard pattern includes all tools"},
+			{"notion with wildcard", "notion", "search", false, false, true, "wildcard pattern includes all tools"},
+			{"notion with wildcard", "notion", "AnyRandomNotionTool", false, false, true, "wildcard pattern includes all tools"},
 
 			// Other servers - excluded
 			{"google-sheets not selected", "google_sheets", "GetSheetData", false, false, false, "not in selectedServers or selectedTools"},
@@ -352,27 +352,27 @@ func TestComprehensiveFilterScenarios(log loggerv2.Logger) error {
 	}
 
 	// Scenario 8: Mixed configuration - specific tools for one server, wildcard for another
-	// This tests the exact real-world case: selectedServers=[gmail playwright] +
-	// selectedTools=[gmail:read_email gmail:search_emails gmail:send_email playwright:*]
+	// This tests the exact real-world case: selectedServers=[gmail notion] +
+	// selectedTools=[gmail:read_email gmail:search_emails gmail:send_email notion:*]
 	// Expected: gmail has only 3 specific tools (specific tools take precedence),
-	//           playwright has all tools (wildcard pattern)
+	//           notion has all tools (wildcard pattern)
 	log.Info("  Scenario 8: Mixed configuration - specific tools + wildcard (real-world case)")
 	{
 		selectedTools := []string{
 			"gmail:read_email",    // Specific tool from gmail
 			"gmail:search_emails", // Specific tool from gmail
 			"gmail:send_email",    // Specific tool from gmail
-			"playwright:*",        // ALL tools from playwright (wildcard)
+			"notion:*",            // ALL tools from notion (wildcard)
 		}
-		selectedServers := []string{"gmail", "playwright"} // Both servers in selectedServers
+		selectedServers := []string{"gmail", "notion"} // Both servers in selectedServers
 
-		// Add gmail and playwright to mock clients
+		// Add gmail and notion to mock clients
 		mockClientsWithBoth := map[string]mcpclient.ClientInterface{
 			"google-sheets": nil,
 			"aws":           nil,
 			"tavily":        nil,
 			"gmail":         nil, // Add gmail server
-			"playwright":    nil, // Add playwright server
+			"notion":        nil, // Add notion server
 		}
 
 		tf := mcpagent.NewToolFilter(selectedTools, selectedServers, mockClientsWithBoth, []string{"workspace"}, log)
@@ -386,12 +386,12 @@ func TestComprehensiveFilterScenarios(log loggerv2.Logger) error {
 			{"gmail NOT in selectedTools", "gmail", "mark_as_read", false, false, false, "specific tools mode - only selected tools included"},
 			{"gmail NOT in selectedTools", "gmail", "AnyOtherGmailTool", false, false, false, "specific tools mode - only selected tools included"},
 
-			// playwright tools - ALL should be included (wildcard pattern)
-			{"playwright with wildcard", "playwright", "navigate", false, false, true, "wildcard pattern includes all tools"},
-			{"playwright with wildcard", "playwright", "click", false, false, true, "wildcard pattern includes all tools"},
-			{"playwright with wildcard", "playwright", "fill", false, false, true, "wildcard pattern includes all tools"},
-			{"playwright with wildcard", "playwright", "screenshot", false, false, true, "wildcard pattern includes all tools"},
-			{"playwright with wildcard", "playwright", "AnyRandomPlaywrightTool", false, false, true, "wildcard pattern includes all tools"},
+			// notion tools - ALL should be included (wildcard pattern)
+			{"notion with wildcard", "notion", "query", false, false, true, "wildcard pattern includes all tools"},
+			{"notion with wildcard", "notion", "create_page", false, false, true, "wildcard pattern includes all tools"},
+			{"notion with wildcard", "notion", "update_page", false, false, true, "wildcard pattern includes all tools"},
+			{"notion with wildcard", "notion", "search", false, false, true, "wildcard pattern includes all tools"},
+			{"notion with wildcard", "notion", "AnyRandomNotionTool", false, false, true, "wildcard pattern includes all tools"},
 
 			// Other servers - excluded
 			{"google-sheets not selected", "google_sheets", "GetSheetData", false, false, false, "not in selectedServers or selectedTools"},
