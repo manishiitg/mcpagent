@@ -37,8 +37,8 @@ func CloseSession(sessionID string) {
 //
 // Example usage:
 //
-//	// Close just the playwright connection for reconnection
-//	mcpagent.CloseSessionServer("workflow-123", "playwright")
+//	// Close just one server connection for reconnection
+//	mcpagent.CloseSessionServer("workflow-123", "github")
 func CloseSessionServer(sessionID, serverName string) {
 	registry := mcpclient.GetSessionRegistry()
 	registry.CloseSessionServer(sessionID, serverName)
@@ -145,8 +145,11 @@ func RegisterHTTPSession(httpSessionID, mcpSessionID string) {
 	registry.RegisterHTTPSession(httpSessionID, mcpSessionID)
 }
 
-// RegisterBrowserSessionOverride binds a logical tool session to a stable browser
-// session identity for stateful browser servers such as Playwright.
+// RegisterBrowserSessionOverride is retained for source compatibility.
+//
+// Deprecated: browser MCP servers are no longer session-scoped. Managed
+// agent-browser sessions are owned outside the MCP connection registry, so
+// this function intentionally has no effect.
 func RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
 	registry := mcpclient.GetSessionRegistry()
 	registry.RegisterBrowserSessionOverride(sessionID, browserSessionID)

@@ -32,7 +32,7 @@ type StdioManager struct {
 
 // NewStdioManager creates a new stdio manager.
 // workingDir is optional; when set, the MCP subprocess is started with this as its current
-// working directory so relative paths (e.g. Playwright custom filenames) resolve there.
+// working directory so relative paths resolve there.
 func NewStdioManager(command string, args []string, env []string, workingDir string, logger loggerv2.Logger) *StdioManager {
 	logger.Debug("Creating StdioManager",
 		loggerv2.String("command", command),
@@ -409,4 +409,3 @@ func hashEnvVars(env []string) string {
 	// Return first 16 characters of hex hash (enough for uniqueness)
 	return fmt.Sprintf("%x", hash)[:16]
 }
-

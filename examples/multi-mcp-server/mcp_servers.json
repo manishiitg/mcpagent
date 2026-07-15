@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"]
-    },
     "sequential-thinking": {
       "command": "npx",
       "args": ["--yes", "@modelcontextprotocol/server-sequential-thinking"]

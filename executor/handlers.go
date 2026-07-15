@@ -102,7 +102,7 @@ type ExecutorHandlers struct {
 	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
 	// before execution. This is the HTTP handler path (backup) — the primary interception
 	// happens in agent/conversation.go for agent-internal tool calls.
-	// Example: resolving workspace-relative file paths to absolute for Playwright MCP.
+	// Example: resolving workspace-relative file paths for an MCP tool.
 	toolArgTransformers map[string]func(args map[string]interface{})
 }
 
@@ -193,24 +193,22 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 
 	// Apply tool argument transformers before ANY execution path (session registry, codeexec, mcpcache).
 	// This mutates req.Args in-place so all downstream paths see the transformed values.
-	// Example: resolves "Downloads/file.pdf" → "/abs/path/workspace-docs/_users/default/Downloads/file.pdf"
-	// for Playwright's browser_file_upload tool which requires absolute host paths.
+	// Example: resolves "Downloads/file.pdf" to an absolute host path for a tool
+	// that cannot interpret workspace-relative paths.
 	if h.toolArgTransformers != nil {
 		if transformer, ok := h.toolArgTransformers[req.Tool]; ok {
-			h.logger.Info("[BROWSER_UPLOAD] Applying tool arg transformer before execution",
+			h.logger.Info("[TOOL_ARGS] Applying tool arg transformer before execution",
 				loggerv2.String("tool", req.Tool))
 			transformer(req.Args)
 		}
 	}
 
 	// 🛑 STOPPED SESSION GUARD: If this session was stopped (workflow ended/failed),
-	// refuse requests for browser-scoped servers immediately. This prevents in-flight
-	// curl calls from code-exec agents (still running in Docker) from spawning new
-	// browser processes after the session's connections have been torn down.
-	if req.SessionID != "" && mcpclient.IsBrowserScopedServer(req.Server) {
+	// refuse in-flight code-exec calls before they can recreate MCP processes.
+	if req.SessionID != "" {
 		registry := mcpclient.GetSessionRegistry()
 		if registry.IsSessionStopped(req.SessionID) {
-			h.logger.Info("🛑 [STOPPED SESSION] Refusing browser tool call for stopped session",
+			h.logger.Info("🛑 [STOPPED SESSION] Refusing MCP tool call for stopped session",
 				loggerv2.String("session_id", req.SessionID),
 				loggerv2.String("server", req.Server),
 				loggerv2.String("tool", req.Tool))
@@ -223,15 +221,15 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	}
 
 	// 🔧 STRATEGY: Try multiple connection sources in priority order
-	// 1. Session registry (if session_id provided) - enables Playwright browser reuse
+	// 1. Session registry (if session_id provided) - enables connection reuse
 	// 2. Codeexec global registry - has session-aware connections from agent initialization
-	// 3. mcpcache - creates new connection as fallback (NOT for browser-scoped servers)
+	// 3. mcpcache - creates a new connection as fallback
 
 	var client mcpclient.ClientInterface
 	var err error
 
 	// PRIORITY 1: If session_id is provided, try session registry first
-	// This is the primary mechanism for connection reuse (e.g., Playwright browser sharing)
+	// This is the primary mechanism for connection reuse.
 	if req.SessionID != "" {
 		registry := mcpclient.GetSessionRegistry()
 		connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
@@ -272,15 +270,14 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				client = lazyClient
 			}
 		} else if connSessionID != req.SessionID {
-			// Fallback: config may be stored under the shared browser session ID
-			// (e.g. chat session calling playwright — config was primed under browser session)
+			// Fallback: config may be stored under the resolved shared connection ID.
 			if serverConfig, hasConfig := registry.GetServerConfig(connSessionID, req.Server); hasConfig {
-				h.logger.Info("⚡ [LAZY] First tool call to "+req.Server+" — connecting via shared browser session config",
+				h.logger.Info("⚡ [LAZY] First tool call to "+req.Server+" — connecting via shared session config",
 					loggerv2.String("session_id", req.SessionID),
-					loggerv2.String("browser_session_id", connSessionID))
+					loggerv2.String("connection_session_id", connSessionID))
 				lazyClient, _, lazyErr := registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
 				if lazyErr != nil {
-					h.logger.Error("Lazy connect failed for server "+req.Server+" (shared browser config)", lazyErr)
+					h.logger.Error("Lazy connect failed for server "+req.Server+" (shared session config)", lazyErr)
 				} else {
 					client = lazyClient
 				}
@@ -320,8 +317,8 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 
 		// 🔒 SCOPE ENFORCEMENT: If the session registry is active (has MCP clients) but
 		// the requested server is not in scope, deny the request instead of spawning a
-		// new browser/process. This prevents agents from reaching MCP servers that are
-		// not configured for the current workflow (e.g. playwright in a non-browser workflow).
+		// new process. This prevents agents from reaching MCP servers that are not
+		// configured for the current workflow.
 		if req.SessionID != "" && !codeexec.IsServerInScope(req.Server) {
 			availableServers := codeexec.ScopedServerNames()
 			h.logger.Warn("🔒 [SCOPE DENIED] Server not in session scope, refusing mcpcache fallback",
@@ -336,20 +333,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// PRIORITY 3: Fall back to mcpcache (creates new connection)
-	// 🛑 BLOCK for browser-scoped servers: playwright must ONLY be created via
-	// the session registry (Priority 1). mcpcache creates standalone connections with
-	// default config (wrong --output-dir, no session tracking), causing extra browsers.
-	if client == nil && mcpclient.IsBrowserScopedServer(req.Server) {
-		h.logger.Warn("🛑 [BROWSER BLOCK] Refusing mcpcache fallback for browser-scoped server — must use session registry",
-			loggerv2.String("server", req.Server),
-			loggerv2.String("session_id", req.SessionID))
-		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec
-			Success: false,
-			Error:   fmt.Sprintf("No session connection found for browser server %s (session=%s). Browser servers can only be accessed through their owning session.", req.Server, req.SessionID),
-		})
-		return
-	}
+	// PRIORITY 3: Fall back to mcpcache (creates new connection).
 	if client == nil {
 		h.logger.Warn("⚠️ [SESSION MISS] Falling back to mcpcache - creating new connection",
 			loggerv2.String("server", req.Server),
@@ -411,45 +395,21 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				loggerv2.String("tool", req.Tool),
 				loggerv2.String("server", req.Server))
 
-			// Close the old broken connection first to kill the subprocess (prevents zombie browsers)
+			// Close the old broken connection first to kill the subprocess.
 			if client != nil {
 				h.logger.Info("🔧 [BROKEN PIPE] Closing old broken connection",
 					loggerv2.String("server", req.Server))
 				_ = client.Close()
 			}
 
-			// Also close via session registry if session-scoped (stateful servers like playwright)
+			// Also remove the stale connection from the session registry.
 			if req.SessionID != "" {
 				registry := mcpclient.GetSessionRegistry()
 				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
 				registry.CloseSessionServer(connSessionID, req.Server)
 			}
 
-			// For browser-scoped servers, use session registry to recreate the connection.
-			// This ensures the correct runtime overrides (--output-dir) are applied and
-			// the connection is tracked. GetFreshConnection creates standalone connections
-			// with default config which spawns extra browsers with wrong output paths.
-			var freshClient mcpclient.ClientInterface
-			var freshErr error
-			if req.SessionID != "" && mcpclient.IsBrowserScopedServer(req.Server) {
-				registry := mcpclient.GetSessionRegistry()
-				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
-				serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server)
-				if !hasConfig && connSessionID != req.SessionID {
-					serverConfig, hasConfig = registry.GetServerConfig(connSessionID, req.Server)
-				}
-				if hasConfig {
-					freshClient, _, freshErr = registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
-				} else {
-					h.logger.Warn("🔧 [BROKEN PIPE] No stored config for browser server, cannot retry via registry",
-						loggerv2.String("server", req.Server),
-						loggerv2.String("session_id", req.SessionID))
-					freshErr = fmt.Errorf("no stored config for browser server %s in session %s", req.Server, req.SessionID)
-				}
-			} else {
-				// Non-browser servers: use mcpcache as before
-				freshClient, freshErr = mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
-			}
+			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
 			if freshErr == nil {
 				h.logger.Info("🔧 [BROKEN PIPE] Retrying with fresh connection...",
 					loggerv2.String("tool", req.Tool))
@@ -514,31 +474,9 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				registry.CloseSessionServer(connSessionID, req.Server)
 			}
 
-			// Same browser-scoped logic as the main broken pipe handler:
-			// use session registry for browser servers to preserve runtime overrides.
-			var freshClient mcpclient.ClientInterface
-			var freshErr error
-			closeFreshClient := false
-			if req.SessionID != "" && mcpclient.IsBrowserScopedServer(req.Server) {
-				registry := mcpclient.GetSessionRegistry()
-				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
-				serverConfig, hasConfig := registry.GetServerConfig(req.SessionID, req.Server)
-				if !hasConfig && connSessionID != req.SessionID {
-					serverConfig, hasConfig = registry.GetServerConfig(connSessionID, req.Server)
-				}
-				if hasConfig {
-					freshClient, _, freshErr = registry.GetOrCreateConnection(ctx, connSessionID, req.Server, serverConfig, h.logger)
-				} else {
-					freshErr = fmt.Errorf("no stored config for browser server %s in session %s", req.Server, req.SessionID)
-				}
-			} else {
-				freshClient, freshErr = mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
-				closeFreshClient = true // non-registry connections need explicit close
-			}
+			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
 			if freshErr == nil {
-				if closeFreshClient {
-					defer freshClient.Close() //nolint:errcheck
-				}
+				defer freshClient.Close() //nolint:errcheck
 				h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Retrying with fresh connection...",
 					loggerv2.String("tool", req.Tool))
 				retryResult, retryErr := freshClient.CallTool(ctx, req.Tool, req.Args)

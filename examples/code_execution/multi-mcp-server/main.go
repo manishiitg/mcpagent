@@ -200,7 +200,7 @@ func main() {
 	// Step 8: Create the agent with code execution mode and tool filters
 	// Tool filtering example:
 	// - Only allow read_email and search_emails from gmail (specific tools)
-	// - Allow all tools from playwright, sequential-thinking, context7, aws-knowledge-mcp (all tools from these servers)
+	// - Allow all tools from sequential-thinking and aws-knowledge-mcp
 	// - google-sheets is excluded from the filter
 	agent, err := mcpagent.NewAgent(
 		ctx,
@@ -208,12 +208,12 @@ func main() {
 		configPath,
 		mcpagent.WithDisableCache(true),
 		mcpagent.WithLogger(agentLogger),
-		mcpagent.WithCodeExecutionMode(true),        // Enable code execution mode
+		mcpagent.WithCodeExecutionMode(true), // Enable code execution mode
 		mcpagent.WithAPIConfig(apiBaseURL, apiToken), // Pass API URL and auth token
 		// Filter gmail to only allow read_email and search_emails
 		mcpagent.WithSelectedTools([]string{"gmail:read_email", "gmail:search_emails"}),
 		// Allow all tools from other servers (google-sheets, context7 excluded)
-		mcpagent.WithSelectedServers([]string{"playwright", "sequential-thinking", "aws-knowledge-mcp"}),
+		mcpagent.WithSelectedServers([]string{"sequential-thinking", "aws-knowledge-mcp"}),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create agent: %v\n", err)
@@ -250,7 +250,7 @@ func main() {
 	// Step 9: Example questions that will trigger code execution
 	// The agent will automatically use code execution mode when appropriate
 	questions := []string{
-		"Research cloud computing trends using browser automation, analyze the findings with sequential thinking, and access AWS documentation for relevant services",
+		"Research cloud computing architecture using AWS documentation and analyze the findings with sequential thinking",
 		"Get React documentation from context7 and use sequential thinking to analyze the key concepts",
 	}
 
