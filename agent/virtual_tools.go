@@ -131,7 +131,7 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"server_name": map[string]interface{}{
 						"type":        "string",
-						"description": "Server name from the available tools index (e.g., 'google_sheets', 'playwright').",
+						"description": "Server name from the available tools index (e.g., 'google_sheets', 'github').",
 					},
 					"tool_name": map[string]interface{}{
 						"description": "Tool name(s) to get the API spec for. Pass a single string (e.g., 'search_issues') or an array of strings (e.g., ['create_spreadsheet', 'update_values']).",

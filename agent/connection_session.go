@@ -161,8 +161,6 @@ func NewAgentConnectionWithSession(
 				result.err = err
 				return
 			}
-			baseServerConfig := serverConfig // capture before any overrides for cache fallback
-
 			// Apply runtime overrides if provided for this server
 			if runtimeOverrides != nil {
 				if override, hasOverride := runtimeOverrides[srvName]; hasOverride {
@@ -193,15 +191,7 @@ func NewAgentConnectionWithSession(
 				cacheKey := mcpcache.GenerateUnifiedCacheKey(srvName, serverConfig)
 				var cachedEntry *mcpcache.CacheEntry
 				var exists bool
-				if cachedEntry, exists = cacheManager.Get(cacheKey); !exists || len(cachedEntry.Tools) == 0 {
-					// Playwright: runtime overrides change --output-dir which affects the
-					// cache key hash, but tool schemas are identical. Fall back to base
-					// config cache key so the startup-populated cache entry is reused.
-					if srvName == "playwright" {
-						baseKey := mcpcache.GenerateUnifiedCacheKey(srvName, baseServerConfig)
-						cachedEntry, exists = cacheManager.Get(baseKey)
-					}
-				}
+				cachedEntry, exists = cacheManager.Get(cacheKey)
 				if exists && len(cachedEntry.Tools) > 0 {
 					logger.Info(fmt.Sprintf("💤 [LAZY] Cache hit for %s — deferring connection until first tool call (%d tools)", srvName, len(cachedEntry.Tools)))
 					for _, llmTool := range cachedEntry.Tools {
@@ -225,8 +215,7 @@ func NewAgentConnectionWithSession(
 				}
 			}
 
-			// Browser-capable servers can be remapped onto a stable browser session
-			// identity, while non-browser servers use the shared global session.
+			// MCP subprocesses use the shared global connection pool.
 			connSessionID := registry.ResolveConnectionSessionID(sessionID, srvName)
 
 			// Get or create connection via registry
@@ -413,7 +402,7 @@ func NewAgentConnectionWithSession(
 
 // resolveOnDemandMCPClient returns the MCP client for an on-demand server connection.
 // It prefers the session registry (lazy-connect, reuses existing connections) over
-// spawning a fresh process — critical for stateful servers like Playwright.
+// spawning a fresh process, preserving normal session-registry reuse.
 func (a *Agent) resolveOnDemandMCPClient(ctx context.Context, serverName string, logger loggerv2.Logger) (mcpclient.ClientInterface, error) {
 	if a.SessionID != "" {
 		registry := mcpclient.GetSessionRegistry()

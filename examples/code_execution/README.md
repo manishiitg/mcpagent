@@ -10,7 +10,7 @@ The simplest code execution example without folder guards or additional security
 
 **Features:**
 - Basic code execution mode setup
-- Multiple MCP servers (playwright, sequential-thinking, context7, etc.)
+- Multiple MCP servers (sequential-thinking, context7, etc.)
 - Python code generation and execution via `execute_shell_command`
 - OpenAPI spec discovery via `get_api_spec`
 
@@ -19,30 +19,13 @@ The simplest code execution example without folder guards or additional security
 - You don't need file system restrictions
 - You want to see how MCP tools become HTTP API endpoints
 
-### 2. **[browser-automation/](browser-automation/)** - Code Execution with Browser Automation
-
-Code execution mode combined with browser automation using Playwright MCP server.
-
-**Features:**
-- Code execution mode with browser automation
-- Playwright MCP server for web browsing
-- Automatic Python code generation for web tasks
-- Multi-turn conversations with `AskWithHistory`
-- Default task: IPO analysis from Indian financial websites
-
-**Use this when:**
-- You want to combine code execution with web automation
-- You need to perform complex web research tasks
-- You want to see how browser tools work via Python HTTP calls
-- You're building web scraping or research automation
-
-### 3. **[multi-mcp-server/](multi-mcp-server/)** - Code Execution with Tool Filtering
+### 2. **[multi-mcp-server/](multi-mcp-server/)** - Code Execution with Tool Filtering
 
 Code execution mode with multiple MCP servers and selective tool filtering.
 
 **Features:**
 - Code execution mode with tool filtering
-- Multiple MCP servers (playwright, sequential-thinking, context7, aws-knowledge-mcp, google-sheets, gmail, everything)
+- Multiple MCP servers (sequential-thinking, context7, aws-knowledge-mcp, google-sheets, gmail, everything)
 - Selective tool access:
   - Specific tools from servers (e.g., only `read_email` and `search_emails` from gmail)
   - All tools from other servers
@@ -55,7 +38,7 @@ Code execution mode with multiple MCP servers and selective tool filtering.
 - You want to understand how tool filtering works in code execution mode
 - You're building applications that need controlled tool access
 
-### 4. **[custom_tools/](custom_tools/)** - Code Execution with Custom Tools
+### 3. **[custom_tools/](custom_tools/)** - Code Execution with Custom Tools
 
 Code execution mode with custom Go functions registered as tools.
 

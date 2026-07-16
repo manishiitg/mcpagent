@@ -608,8 +608,8 @@ func WithDisableCache(disable bool) AgentOption {
 // Example:
 //
 //	overrides := mcpclient.RuntimeOverrides{
-//	    "playwright": {
-//	        ArgsReplace: map[string]string{"--output-dir": "/path/to/workflow/downloads"},
+//	    "custom-server": {
+//	        EnvOverride: map[string]string{"WORKFLOW_ID": "workflow-123"},
 //	    },
 //	}
 //	agent, _ := mcpagent.NewAgent(ctx, llm, configPath, mcpagent.WithRuntimeOverrides(overrides))
@@ -1271,16 +1271,17 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 		}
 		// Convert llm.ProviderAPIKeys to AgentAPIKeys
 		agentKeys := &AgentAPIKeys{
-			OpenRouter:        providerKeys.OpenRouter,
-			OpenAI:            providerKeys.OpenAI,
-			Anthropic:         providerKeys.Anthropic,
-			ZAI:               providerKeys.ZAI,
-			Kimi:              providerKeys.Kimi,
-			Vertex:            providerKeys.Vertex,
-			CodexCLI:          providerKeys.CodexCLI,
-			PiCLI:             providerKeys.PiCLI,
-			MiniMax:           providerKeys.MiniMax,
-			MiniMaxCodingPlan: providerKeys.MiniMaxCodingPlan,
+			OpenRouter:           providerKeys.OpenRouter,
+			OpenAI:               providerKeys.OpenAI,
+			Anthropic:            providerKeys.Anthropic,
+			ClaudeCodeOAuthToken: providerKeys.ClaudeCodeOAuthToken,
+			ZAI:                  providerKeys.ZAI,
+			Kimi:                 providerKeys.Kimi,
+			Vertex:               providerKeys.Vertex,
+			CodexCLI:             providerKeys.CodexCLI,
+			PiCLI:                providerKeys.PiCLI,
+			MiniMax:              providerKeys.MiniMax,
+			MiniMaxCodingPlan:    providerKeys.MiniMaxCodingPlan,
 		}
 		if providerKeys.Bedrock != nil {
 			agentKeys.Bedrock = &AgentBedrockConfig{
@@ -3732,9 +3733,8 @@ func systemPromptPreview(s string) string {
 // backend (virtual, custom, or MCP). This is the primary interception point for
 // agent-driven tool calls. For HTTP API tool calls, see ExecutorHandlers.SetToolArgTransformer.
 //
-// Use case: Playwright's browser_file_upload requires absolute host paths, but the LLM
-// only knows workspace-relative paths. A transformer resolves "Downloads/file.pdf" to
-// the full absolute path before the call reaches the Playwright MCP server.
+// Use case: a tool requires absolute host paths, but the LLM only knows
+// workspace-relative paths. A transformer resolves the path before dispatch.
 func (a *Agent) SetToolArgTransformer(toolName string, fn func(args map[string]interface{})) {
 	if a.toolArgTransformers == nil {
 		a.toolArgTransformers = make(map[string]func(args map[string]interface{}))

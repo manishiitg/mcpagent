@@ -110,7 +110,7 @@ func main() {
 
 	// Step 7: Create the agent with a reliable multi-server collaboration setup.
 	// We deliberately expose only a minimal tool set for this example so it stays
-	// focused and deterministic instead of wandering through a broad Playwright surface.
+	// focused and deterministic instead of wandering through a broad tool surface.
 
 	agent, err := mcpagent.NewAgent(
 		ctx,
@@ -118,8 +118,6 @@ func main() {
 		configPath,                       // path to MCP config file
 		mcpagent.WithLogger(agentLogger), // Use file logger for agent operations
 		mcpagent.WithSelectedTools([]string{
-			"playwright:browser_navigate",
-			"playwright:browser_snapshot",
 			"sequential-thinking:sequentialthinking",
 			"context7:resolve-library-id",
 			"context7:query-docs",
@@ -133,11 +131,9 @@ func main() {
 
 	// Step 8: Default task - demonstrates a focused multi-server collaboration flow.
 	// The prompt is intentionally narrow so the example reliably shows:
-	// - one browser navigation
-	// - one page snapshot
 	// - one reasoning pass
 	// - one documentation lookup
-	task := "Open https://www.cncf.io/ with browser automation and capture a single page snapshot. From that snapshot, identify exactly three cloud-native themes visible on the page. Then use sequential thinking once to organize them into a concise summary. After that, use Context7 to retrieve supporting Kubernetes documentation as one representative technology. Return exactly three key insights and exactly two practical takeaways. Do not browse beyond the initial page, and do not repeat snapshot or search steps unless a tool call fails."
+	task := "Use Context7 to retrieve Kubernetes documentation about deployments and services. Then use sequential thinking once to organize the material. Return exactly three key insights and exactly two practical takeaways, citing which documentation topic supports each insight."
 	if len(os.Args) > 2 {
 		// Allow custom task via command line
 		task = os.Args[2]

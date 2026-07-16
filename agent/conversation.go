@@ -1219,7 +1219,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Store the on-demand client back into a.Clients so subsequent tool calls
 					// reuse this connection instead of spawning a new MCP process each time.
 					// Without this, every call to this server would create a duplicate connection
-					// (e.g. 10+ Playwright browser instances for a single workflow).
+					// (e.g. many duplicate subprocesses for a single workflow).
 					a.clientsMu.Lock()
 					if a.Clients == nil {
 						a.Clients = make(map[string]mcpclient.ClientInterface)
@@ -1330,11 +1330,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Apply per-tool argument transformer if registered.
 				// This runs BEFORE any execution branch (virtual → custom → MCP) so all paths
 				// see transformed args. Primary use case: resolve workspace-relative paths
-				// (e.g. "Downloads/file.pdf") to absolute host paths for Playwright browser_file_upload.
+				// (e.g. "Downloads/file.pdf") to absolute host paths for tools that require them.
 				// Transformers are registered via Agent.SetToolArgTransformer().
 				if a.toolArgTransformers != nil {
 					if transformer, ok := a.toolArgTransformers[tc.FunctionCall.Name]; ok {
-						v2Logger.Info("[BROWSER_UPLOAD] Applying tool arg transformer",
+						v2Logger.Info("[TOOL_ARGS] Applying tool arg transformer",
 							loggerv2.String("tool_name", tc.FunctionCall.Name))
 						transformer(args)
 					}

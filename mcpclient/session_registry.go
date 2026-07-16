@@ -22,16 +22,12 @@ import (
 // Usage:
 //
 //	registry := GetSessionRegistry()
-//	client, wasCreated, err := registry.GetOrCreateConnection(ctx, "session-123", "playwright", config, logger)
+//	client, wasCreated, err := registry.GetOrCreateConnection(ctx, "session-123", "github", config, logger)
 //	// ... use client ...
 //	registry.CloseSession("session-123") // At workflow end
 type SessionConnectionRegistry struct {
 	// sessionID -> *sessionConnections
 	sessions sync.Map
-	// tool session ID -> browser session ID override for stateful browser servers.
-	// This lets tool routing stay scoped to the caller session while browser reuse
-	// can intentionally converge on a stable workflow/group browser identity.
-	browserSessionOverrides sync.Map
 	// Per-key mutexes to serialize connection creation for the same (session, server) pair.
 	// Prevents N goroutines from spawning N subprocesses for the same server.
 	connLocks   map[string]*sync.Mutex
@@ -169,50 +165,13 @@ func GetSessionRegistry() *SessionConnectionRegistry {
 	return globalSessionRegistry
 }
 
-// IsBrowserScopedServer returns true for stateful browser servers (playwright)
-// that require dedicated per-session connections and should never be created via mcpcache fallback.
-func IsBrowserScopedServer(serverName string) bool {
-	switch serverName {
-	case "playwright":
-		return true
-	default:
-		return false
-	}
-}
-
 // ResolveConnectionSessionID returns the actual registry session key that should be
 // used for the given logical tool session + server combination.
 //
-// Browser servers can be remapped onto a shared browser session identity, while
-// non-browser servers continue to use the global shared session.
-func (r *SessionConnectionRegistry) ResolveConnectionSessionID(sessionID, serverName string) string {
-	if IsBrowserScopedServer(serverName) {
-		if override, ok := r.browserSessionOverrides.Load(sessionID); ok {
-			if browserSessionID, ok := override.(string); ok && browserSessionID != "" {
-				return browserSessionID
-			}
-		}
-		return sessionID
-	}
+// MCP subprocess connections are shared globally; logical session IDs still scope
+// pending configuration, stop tracking, and tool-call metadata.
+func (r *SessionConnectionRegistry) ResolveConnectionSessionID(_, _ string) string {
 	return "global"
-}
-
-// RegisterBrowserSessionOverride binds a logical tool session to a stable browser
-// session identity for stateful browser servers like Playwright.
-func (r *SessionConnectionRegistry) RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
-	if sessionID == "" || browserSessionID == "" {
-		return
-	}
-	r.browserSessionOverrides.Store(sessionID, browserSessionID)
-}
-
-// ClearBrowserSessionOverride removes any browser-session override for the given
-// logical tool session.
-func (r *SessionConnectionRegistry) ClearBrowserSessionOverride(sessionID string) {
-	if sessionID == "" {
-		return
-	}
-	r.browserSessionOverrides.Delete(sessionID)
 }
 
 // getConnLock returns a mutex for the given (session, server) key, creating one if needed.
@@ -234,7 +193,7 @@ func (r *SessionConnectionRegistry) getConnLock(key string) *sync.Mutex {
 // Parameters:
 //   - ctx: context for connection timeout
 //   - sessionID: unique identifier for the session (workflow/conversation)
-//   - serverName: MCP server name (e.g., "playwright", "context7")
+//   - serverName: MCP server name (e.g., "github", "context7")
 //   - config: MCP server configuration
 //   - logger: logger for connection events
 //
@@ -387,7 +346,6 @@ func (r *SessionConnectionRegistry) GetServerConfig(sessionID, serverName string
 // This is the ONLY way connections get closed when using sessions.
 // Agent.Close() does NOT close connections when SessionID is set.
 func (r *SessionConnectionRegistry) CloseSession(sessionID string) {
-	r.ClearBrowserSessionOverride(sessionID)
 	sessionConnsRaw, ok := r.sessions.LoadAndDelete(sessionID)
 	if !ok {
 		return
