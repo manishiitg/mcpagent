@@ -3,9 +3,11 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
@@ -15,15 +17,6 @@ import (
 	"github.com/manishiitg/mcpagent/toolcalllog"
 )
 
-func isLongRunningDelegationTool(tool string) bool {
-	switch tool {
-	case "call_sub_agent", "call_generic_agent":
-		return true
-	default:
-		return false
-	}
-}
-
 func resolveCustomToolTimeout(tool string) time.Duration {
 	if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
 		if d, err := time.ParseDuration(envVal); err == nil {
@@ -31,6 +24,17 @@ func resolveCustomToolTimeout(tool string) time.Duration {
 		}
 	}
 	return 0
+}
+
+func toolExecutionError(layer, tool, sessionID string, timeout time.Duration, err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Sprintf("tool execution canceled: layer=%s tool=%s session=%s", layer, tool, sessionID)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Sprintf("tool execution timed out: layer=%s tool=%s session=%s timeout=%s", layer, tool, sessionID, toolTimeoutString(timeout))
+	default:
+		return fmt.Sprintf("tool execution failed: layer=%s tool=%s session=%s: %v", layer, tool, sessionID, err)
+	}
 }
 
 func toolTimeoutString(timeout time.Duration) string {
@@ -73,9 +77,20 @@ type CustomExecuteRequest struct {
 
 // CustomExecuteResponse represents the response from a custom tool execution
 type CustomExecuteResponse struct {
-	Success bool   `json:"success"`
-	Result  string `json:"result,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Success bool              `json:"success"`
+	Result  string            `json:"result,omitempty"`
+	Data    map[string]string `json:"data,omitempty"`
+	Error   string            `json:"error,omitempty"`
+}
+
+var executionIDPattern = regexp.MustCompile(`(?m)execution_id"?\s*[:=]\s*"?([A-Za-z0-9._:/-]+)`)
+
+func customToolResponseData(result string) map[string]string {
+	match := executionIDPattern.FindStringSubmatch(result)
+	if len(match) != 2 || match[1] == "" {
+		return nil
+	}
+	return map[string]string{"execution_id": match[1]}
 }
 
 // VirtualExecuteRequest represents a request to execute a virtual tool
@@ -177,18 +192,11 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Long-running workflow delegation tools must not inherit cancellation from the
-	// caller's HTTP connection. A bridge/client timeout should not kill the delegated
-	// workflow after it has already started.
+	// The request context is authoritative. Durable asynchronous child executions
+	// return an execution ID immediately; there is no reason to detach the bridge
+	// request from parent cancellation while starting them.
 	toolTimeout := resolveCustomToolTimeout(req.Tool)
-	baseCtx := r.Context()
-	if isLongRunningDelegationTool(req.Tool) {
-		baseCtx = context.Background()
-		h.logger.Info("⏱️ Using detached long-running context for delegation custom tool",
-			loggerv2.String("tool", req.Tool),
-			loggerv2.String("timeout", toolTimeoutString(toolTimeout)))
-	}
-	ctx, cancel := contextWithOptionalTimeout(baseCtx, toolTimeout)
+	ctx, cancel := contextWithOptionalTimeout(r.Context(), toolTimeout)
 	defer cancel()
 
 	// Apply tool argument transformers before ANY execution path (session registry, codeexec, mcpcache).
@@ -550,18 +558,11 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Create context with timeout — reuse resolveCustomToolTimeout so delegation
-	// custom tools (call_sub_agent, call_generic_agent) get the same 90-min
-	// detached context as their MCP-handler counterparts.
+	// Preserve request cancellation. Async delegation tools return quickly and
+	// persist their child lifecycle separately; detaching here would let a stopped
+	// parent continue launching work.
 	toolTimeout := resolveCustomToolTimeout(req.Tool)
-	baseCtx := r.Context()
-	if isLongRunningDelegationTool(req.Tool) {
-		baseCtx = context.Background()
-		h.logger.Info("⏱️ Using detached long-running context for delegation custom tool",
-			loggerv2.String("tool", req.Tool),
-			loggerv2.String("timeout", toolTimeoutString(toolTimeout)))
-	}
-	ctx, cancel := contextWithOptionalTimeout(baseCtx, toolTimeout)
+	ctx, cancel := contextWithOptionalTimeout(r.Context(), toolTimeout)
 	defer cancel()
 
 	// Execute custom tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
@@ -583,12 +584,13 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION END - Time: %s, Tool: %s, Duration: %v", time.Now().Format(time.RFC3339), req.Tool, toolDuration))
 	if err != nil {
 		h.logger.Error("Custom tool execution failed", err, loggerv2.String("tool", req.Tool))
+		errorText := toolExecutionError("custom_tool_handler", req.Tool, req.SessionID, toolTimeout, err)
 		if req.SessionID != "" {
-			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), fmt.Sprintf("Custom tool execution failed: %v", err), toolStartedAt)
+			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), errorText, toolStartedAt)
 		}
 		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
-			Error:   fmt.Sprintf("Custom tool execution failed: %v", err),
+			Error:   errorText,
 		})
 		return
 	}
@@ -606,6 +608,7 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 		Success: true,
 		Result:  result,
+		Data:    customToolResponseData(result),
 	})
 }
 
@@ -648,18 +651,11 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Create context with timeout — reuse resolveCustomToolTimeout so delegation
-	// virtual tools (call_sub_agent, call_generic_agent) get the same 90-min
-	// detached context as their custom-tool counterparts.
+	// Preserve request cancellation for virtual tools as well. This keeps Stop
+	// behavior identical regardless of whether a tool is exposed as custom or
+	// virtual in the coding-agent bridge.
 	toolTimeout := resolveCustomToolTimeout(req.Tool)
-	baseCtx := r.Context()
-	if isLongRunningDelegationTool(req.Tool) {
-		baseCtx = context.Background()
-		h.logger.Info("⏱️ Using detached long-running context for delegation virtual tool",
-			loggerv2.String("tool", req.Tool),
-			loggerv2.String("timeout", toolTimeoutString(toolTimeout)))
-	}
-	ctx, cancel := contextWithOptionalTimeout(baseCtx, toolTimeout)
+	ctx, cancel := contextWithOptionalTimeout(r.Context(), toolTimeout)
 	defer cancel()
 
 	// Execute virtual tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
@@ -669,9 +665,10 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 	result, err := codeexec.CallVirtualToolWithSession(ctx, req.SessionID, req.Tool, req.Args)
 	if err != nil {
 		h.logger.Error("Virtual tool execution failed", err, loggerv2.String("tool", req.Tool))
+		errorText := toolExecutionError("virtual_tool_handler", req.Tool, req.SessionID, toolTimeout, err)
 		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
-			Error:   fmt.Sprintf("Virtual tool execution failed: %v", err),
+			Error:   errorText,
 		})
 		return
 	}

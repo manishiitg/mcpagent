@@ -145,6 +145,16 @@ func RegisterHTTPSession(httpSessionID, mcpSessionID string) {
 	registry.RegisterHTTPSession(httpSessionID, mcpSessionID)
 }
 
+// RegisterBrowserSessionOverride is retained for source compatibility.
+//
+// Deprecated: browser MCP servers are no longer session-scoped. Managed
+// agent-browser sessions are owned outside the MCP connection registry, so
+// this function intentionally has no effect.
+func RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
+	registry := mcpclient.GetSessionRegistry()
+	registry.RegisterBrowserSessionOverride(sessionID, browserSessionID)
+}
+
 // ResolveConnectionSessionID returns the actual connection-session key used by the
 // session registry for the given logical session + server combination.
 func ResolveConnectionSessionID(sessionID, serverName string) string {
