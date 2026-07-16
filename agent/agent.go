@@ -1271,16 +1271,17 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 		}
 		// Convert llm.ProviderAPIKeys to AgentAPIKeys
 		agentKeys := &AgentAPIKeys{
-			OpenRouter:        providerKeys.OpenRouter,
-			OpenAI:            providerKeys.OpenAI,
-			Anthropic:         providerKeys.Anthropic,
-			ZAI:               providerKeys.ZAI,
-			Kimi:              providerKeys.Kimi,
-			Vertex:            providerKeys.Vertex,
-			CodexCLI:          providerKeys.CodexCLI,
-			PiCLI:             providerKeys.PiCLI,
-			MiniMax:           providerKeys.MiniMax,
-			MiniMaxCodingPlan: providerKeys.MiniMaxCodingPlan,
+			OpenRouter:           providerKeys.OpenRouter,
+			OpenAI:               providerKeys.OpenAI,
+			Anthropic:            providerKeys.Anthropic,
+			ClaudeCodeOAuthToken: providerKeys.ClaudeCodeOAuthToken,
+			ZAI:                  providerKeys.ZAI,
+			Kimi:                 providerKeys.Kimi,
+			Vertex:               providerKeys.Vertex,
+			CodexCLI:             providerKeys.CodexCLI,
+			PiCLI:                providerKeys.PiCLI,
+			MiniMax:              providerKeys.MiniMax,
+			MiniMaxCodingPlan:    providerKeys.MiniMaxCodingPlan,
 		}
 		if providerKeys.Bedrock != nil {
 			agentKeys.Bedrock = &AgentBedrockConfig{

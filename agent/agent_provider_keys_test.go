@@ -96,13 +96,15 @@ func TestExtractAPIKeysFromLLMPreservesCodingCLIKeys(t *testing.T) {
 	kimiKey := "kimi-key"
 	codexKey := "codex-key"
 	piKey := "pi-key"
+	claudeOAuthToken := "claude-workflow-token"
 
 	model := &providerKeyCarrierModel{
 		keys: &llm.ProviderAPIKeys{
-			ZAI:      &zaiKey,
-			Kimi:     &kimiKey,
-			CodexCLI: &codexKey,
-			PiCLI:    &piKey,
+			ZAI:                  &zaiKey,
+			Kimi:                 &kimiKey,
+			CodexCLI:             &codexKey,
+			PiCLI:                &piKey,
+			ClaudeCodeOAuthToken: &claudeOAuthToken,
 		},
 	}
 
@@ -121,6 +123,9 @@ func TestExtractAPIKeysFromLLMPreservesCodingCLIKeys(t *testing.T) {
 	}
 	if keys.PiCLI == nil || *keys.PiCLI != piKey {
 		t.Fatalf("expected Pi CLI key %q, got %#v", piKey, keys.PiCLI)
+	}
+	if keys.ClaudeCodeOAuthToken == nil || *keys.ClaudeCodeOAuthToken != claudeOAuthToken {
+		t.Fatalf("expected Claude Code OAuth token to be preserved, got %#v", keys.ClaudeCodeOAuthToken)
 	}
 }
 
