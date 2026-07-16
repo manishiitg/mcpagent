@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/multi-llm-provider-go/pkg/codingtimeout"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -49,6 +51,18 @@ func truncateBridgeErrorText(s string) string {
 	return s[:maxBytes] + fmt.Sprintf("\n... truncated %d bytes ...", len(s)-maxBytes)
 }
 
+func bridgeRequestError(toolType, toolName, sessionID string, timeout time.Duration, err error) string {
+	layer := "mcpbridge_http"
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Sprintf("CANCELED: layer=%s type=%s tool=%s session=%s: %v", layer, toolType, toolName, sessionID, err)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Sprintf("TIMEOUT: layer=%s type=%s tool=%s session=%s timeout=%s: %v", layer, toolType, toolName, sessionID, timeout, err)
+	default:
+		return fmt.Sprintf("ERROR: layer=%s type=%s tool=%s session=%s: HTTP request failed: %v", layer, toolType, toolName, sessionID, err)
+	}
+}
+
 func main() {
 	// If MCP_BRIDGE_LOG is set, tee all log output to that file in addition to stderr.
 	// This lets the Go server capture mcpbridge startup/crash messages for debugging.
@@ -79,8 +93,9 @@ func main() {
 		server.WithToolCapabilities(false),
 	)
 
-	defaultHTTPClient := &http.Client{Timeout: 5 * time.Minute}
-	longRunningHTTPClient := &http.Client{Timeout: 90 * time.Minute}
+	defaultHTTPClient := &http.Client{Timeout: codingtimeout.DefaultBridgeHTTPTimeout}
+	longRunningTimeout := codingtimeout.LongRunningMCPToolTimeout()
+	longRunningHTTPClient := &http.Client{Timeout: longRunningTimeout}
 
 	for _, td := range toolDefs {
 		def := td // capture loop variable
@@ -146,7 +161,7 @@ func main() {
 			resp, err := httpClient.Do(httpReq)
 			if err != nil {
 				log.Printf("mcpbridge: tool call http error type=%s tool=%s duration=%s error=%v", def.Type, def.Name, time.Since(started), err)
-				return mcp.NewToolResultText(fmt.Sprintf("ERROR: HTTP request failed: %v", err)), nil
+				return mcp.NewToolResultText(bridgeRequestError(def.Type, def.Name, sessionID, httpClient.Timeout, err)), nil
 			}
 			defer resp.Body.Close()
 
@@ -186,7 +201,7 @@ func main() {
 		})
 	}
 
-	log.Printf("mcpbridge: starting with %d tools, API URL: %s", len(toolDefs), apiURL)
+	log.Printf("mcpbridge: starting with %d tools, API URL: %s, default_http_timeout=%s, long_running_http_timeout=%s", len(toolDefs), apiURL, defaultHTTPClient.Timeout, longRunningTimeout)
 
 	if err := server.ServeStdio(s); err != nil {
 		log.Fatalf("mcpbridge: stdio server error: %v", err)

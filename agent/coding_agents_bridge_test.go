@@ -419,6 +419,7 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token")
+	t.Setenv("CODING_AGENT_MCP_TOOL_TIMEOUT", "17m")
 
 	agent := bridgeTestAgent()
 	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
@@ -431,7 +432,7 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 		t.Fatalf("Codex config overrides = %#v, want []string", got[codexcli.MetadataKeyConfigOverrides])
 	}
 	joined := strings.Join(overrides, "\n")
-	for _, want := range []string{"mcp_servers.api-bridge.command", "mcp_servers.api-bridge.env.MCP_API_URL", "mcp_servers.api-bridge.env.MCP_API_TOKEN"} {
+	for _, want := range []string{"mcp_servers.api-bridge.command", "mcp_servers.api-bridge.env.MCP_API_URL", "mcp_servers.api-bridge.env.MCP_API_TOKEN", "mcp_servers.api-bridge.tool_timeout_sec=1020"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("Codex config overrides missing %q:\n%s", want, joined)
 		}

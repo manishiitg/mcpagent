@@ -3,12 +3,14 @@ package mcpagent
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/codingtimeout"
 )
 
 type codingAgentIntegrationAppender func(*Agent, []llmtypes.CallOption, LLMModel) ([]llmtypes.CallOption, error)
@@ -119,9 +121,10 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 			}
 		}
 	}
-	configOverrides = append(configOverrides, "mcp_servers.api-bridge.tool_timeout_sec=5400")
+	mcpToolTimeout := codingtimeout.LongRunningMCPToolTimeout()
+	configOverrides = append(configOverrides, fmt.Sprintf("mcp_servers.api-bridge.tool_timeout_sec=%d", int64(mcpToolTimeout/time.Second)))
 	opts = append(opts, llm.WithCodexConfigOverrides(configOverrides))
-	a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge with %d config overrides", len(configOverrides)))
+	a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge with %d config overrides (MCP tool timeout=%s, layer=codex_mcp_client)", len(configOverrides), mcpToolTimeout))
 
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {

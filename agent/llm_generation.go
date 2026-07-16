@@ -956,6 +956,7 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 	if a.PiSessionID != "" {
 		opts = append(opts, llm.WithPiResumeSessionID(a.PiSessionID))
 	}
+	a.Logger.Info("⏱️ [PI_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
 	a.Logger.Info("🌉 Using Pi CLI in tmux marker mode with MCP bridge and live input support")
 	return opts, nil
 }
