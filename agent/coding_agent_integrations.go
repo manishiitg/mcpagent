@@ -110,21 +110,15 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	if !ok {
 		return nil, fmt.Errorf("Codex CLI requires MCP bridge config with api-bridge server")
 	}
-	var configOverrides []string
-	if cmd, ok := apiBridge["command"].(string); ok {
-		configOverrides = append(configOverrides, fmt.Sprintf("mcp_servers.api-bridge.command=%q", cmd))
-	}
-	if envMap, ok := apiBridge["env"].(map[string]interface{}); ok {
-		for k, v := range envMap {
-			if vStr, ok := v.(string); ok {
-				configOverrides = append(configOverrides, fmt.Sprintf("mcp_servers.api-bridge.env.%s=%q", k, vStr))
-			}
-		}
-	}
 	mcpToolTimeout := codingtimeout.LongRunningMCPToolTimeout()
-	configOverrides = append(configOverrides, fmt.Sprintf("mcp_servers.api-bridge.tool_timeout_sec=%d", int64(mcpToolTimeout/time.Second)))
-	opts = append(opts, llm.WithCodexConfigOverrides(configOverrides))
-	a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge with %d config overrides (MCP tool timeout=%s, layer=codex_mcp_client)", len(configOverrides), mcpToolTimeout))
+	apiBridge["tool_timeout_sec"] = int64(mcpToolTimeout / time.Second)
+	apiBridge["default_tools_approval_mode"] = "approve"
+	mcpServersJSON, err := json.Marshal(mcpServers)
+	if err != nil {
+		return nil, fmt.Errorf("Codex CLI requires serializable MCP bridge servers: %w", err)
+	}
+	opts = append(opts, llm.WithCodexMCPServers(string(mcpServersJSON)))
+	a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge through a session TOML profile (MCP tool timeout=%s, layer=codex_mcp_client)", mcpToolTimeout))
 
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {

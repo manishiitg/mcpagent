@@ -696,6 +696,13 @@ func WithCodexConfigOverrides(overrides []string) CallOption {
 	return llmproviders.WithCodexConfigOverrides(overrides)
 }
 
+// WithCodexMCPServers passes per-session MCP server configuration to Codex via
+// a temporary profile TOML. It must not be flattened into -c arguments because
+// bridge tool schemas and credentials can exceed tmux command limits.
+func WithCodexMCPServers(mcpJSON string) CallOption {
+	return llmproviders.WithCodexMCPServers(mcpJSON)
+}
+
 // WithCodexEnableFeatures enables one or more Codex CLI features (comma-separated).
 func WithCodexEnableFeatures(features string) CallOption {
 	return llmproviders.WithCodexEnableFeatures(features)
