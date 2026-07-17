@@ -741,16 +741,18 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 				}
 			}
 		}
-		// Extract provider-specific metadata.
-		if additional := genInfo.Additional; additional != nil {
-			if sm.sawTerminal && endEvent.Metadata != nil {
-				if retentionSeconds := terminalRetentionSecondsFromGenerationInfo(additional); retentionSeconds > 0 {
-					endEvent.Metadata["terminal_retention_seconds"] = retentionSeconds
-				}
-				if tmuxSession := terminalTmuxSessionFromGenerationInfo(additional); tmuxSession != "" {
-					endEvent.Metadata["tmux_session"] = tmuxSession
-				}
+		// Extract provider-specific metadata. Prefer the normalized typed session
+		// handle for process identity; legacy provider keys remain fallbacks for
+		// older adapters and persisted responses.
+		if sm.sawTerminal && endEvent.Metadata != nil {
+			if retentionSeconds := terminalRetentionSecondsFromGenerationInfo(genInfo.Additional); retentionSeconds > 0 {
+				endEvent.Metadata["terminal_retention_seconds"] = retentionSeconds
 			}
+			if tmuxSession := terminalTmuxSessionFromGenerationInfo(genInfo); tmuxSession != "" {
+				endEvent.Metadata["tmux_session"] = tmuxSession
+			}
+		}
+		if additional := genInfo.Additional; additional != nil {
 			// Claude Code metadata
 			if model, ok := additional["claude_code_model"].(string); ok && endEvent.ResolvedModel == "" {
 				endEvent.ResolvedModel = model
@@ -771,6 +773,8 @@ func terminalRetentionSecondsFromGenerationInfo(additional map[string]interface{
 		"codex_interactive_retention_seconds",
 		"gemini_interactive_retention_seconds",
 		"cursor_interactive_retention_seconds",
+		"pi_interactive_retention_seconds",
+		"agy_interactive_retention_seconds",
 	} {
 		if seconds := generationInfoIntValue(additional[key]); seconds > 0 {
 			return seconds
@@ -779,12 +783,24 @@ func terminalRetentionSecondsFromGenerationInfo(additional map[string]interface{
 	return 0
 }
 
-func terminalTmuxSessionFromGenerationInfo(additional map[string]interface{}) string {
+func terminalTmuxSessionFromGenerationInfo(genInfo *llmtypes.GenerationInfo) string {
+	if handle, ok := llmtypes.ExtractCodingProviderSessionHandle(genInfo); ok {
+		if tmuxSession := strings.TrimSpace(handle.TmuxSession); tmuxSession != "" {
+			return tmuxSession
+		}
+	}
+	if genInfo == nil {
+		return ""
+	}
+	additional := genInfo.Additional
 	for _, key := range []string{
+		"claude_code_interactive_session",
 		"claude_code_session",
 		"codex_interactive_session",
 		"gemini_interactive_session",
 		"cursor_interactive_session",
+		"pi_interactive_session",
+		"agy_interactive_session",
 	} {
 		if value := strings.TrimSpace(fmt.Sprint(additional[key])); value != "" && value != "<nil>" {
 			return value
