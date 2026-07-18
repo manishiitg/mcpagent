@@ -53,7 +53,9 @@ func TestPerToolCustomUsesTrustedHeaderSession(t *testing.T) {
 
 	toolName := "session_probe_custom"
 	codeexec.InitRegistryForSession("trusted-session", map[string]func(context.Context, map[string]interface{}) (string, error){
-		toolName: func(context.Context, map[string]interface{}) (string, error) { return "trusted", nil },
+		toolName: func(ctx context.Context, _ map[string]interface{}) (string, error) {
+			return SessionIDFromContext(ctx), nil
+		},
 	}, logger)
 	codeexec.InitRegistryForSession("body-session", map[string]func(context.Context, map[string]interface{}) (string, error){
 		toolName: func(context.Context, map[string]interface{}) (string, error) { return "body", nil },
@@ -73,8 +75,8 @@ func TestPerToolCustomUsesTrustedHeaderSession(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("response failed: %s", resp.Error)
 	}
-	if resp.Result != "trusted" {
-		t.Fatalf("result = %q, want trusted", resp.Result)
+	if resp.Result != "trusted-session" {
+		t.Fatalf("trusted context session = %q, want trusted-session", resp.Result)
 	}
 }
 

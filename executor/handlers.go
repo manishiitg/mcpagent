@@ -564,6 +564,7 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	toolTimeout := resolveCustomToolTimeout(req.Tool)
 	ctx, cancel := contextWithOptionalTimeout(r.Context(), toolTimeout)
 	defer cancel()
+	ctx = WithSessionID(ctx, req.SessionID)
 
 	// Execute custom tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
 	var argsJSON []byte
