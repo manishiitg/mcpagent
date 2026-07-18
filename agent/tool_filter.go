@@ -12,7 +12,7 @@ import (
 type ToolFilter struct {
 	selectedTools        []string        // "server:tool" or "package:tool" format
 	selectedServers      []string        // server names for "all tools" mode
-	customToolCategories map[string]bool // known custom tool categories (e.g., "workspace", "human")
+	customToolCategories map[string]bool // known custom tool categories (e.g., "workspace", "human_tools")
 	mcpServerNames       map[string]bool // known MCP server names from Clients
 	logger               loggerv2.Logger
 
@@ -31,7 +31,7 @@ type ToolFilter struct {
 //   - selectedTools: list of "server:tool" or "package:*" patterns
 //   - selectedServers: list of server names (for "all tools" mode)
 //   - clients: MCP client map to identify MCP servers
-//   - customCategories: list of custom tool category names (e.g., "workspace", "human")
+//   - customCategories: list of custom tool category names (e.g., "workspace", "human_tools")
 //   - logger: for debug logging
 func NewToolFilter(
 	selectedTools []string,
@@ -58,31 +58,35 @@ func NewToolFilter(
 	}
 
 	// Initialize system categories that should always be included (like virtual tools)
-	// These are workspace_* and human_* categories - system tools that should be available
+	// These are workspace and app-provided categories - system tools that should be available
 	// regardless of MCP tool filtering, unless explicitly excluded
 	// Note: workspace has sub-categories (workspace_basic, workspace_browser, workspace_advanced, workspace_git)
-	// and human has sub-categories (human_tools)
 	systemCats := []string{
-		"workspace",           // legacy/generic
-		"workspace_basic",     // read_workspace_file, update_workspace_file, etc.
-		"workspace_browser",   // agent_browser
-		"workspace_advanced",  // execute_shell_command
-		"workspace_git",       // git tools
-		"workspace_image_gen", // AI image generation tool (workspace_image_gen)
+		"workspace",            // legacy/generic
+		"workspace_basic",      // read_workspace_file, update_workspace_file, etc.
+		"workspace_browser",    // agent_browser
+		"workspace_advanced",   // execute_shell_command
+		"workspace_git",        // git tools
+		"workspace_image_gen",  // AI image generation tool (workspace_image_gen)
 		"workspace_image_edit", // AI image editing tool (workspace_image_edit)
-		"human",               // human_feedback, etc.
-		"workflow",            // plan modification tools (update_regular_step, add_regular_step, etc.)
+		"human_tools",          // human_feedback, notify_user, etc.
+		"delegation_tools",     // delegate, send_message_to_agent, etc.
+		"workflow",             // plan modification tools (update_regular_step, add_regular_step, etc.)
 	}
 	for _, cat := range systemCats {
 		tf.systemCategories[cat] = true
-		tf.systemCategories[cat+"_tools"] = true
+		if !strings.HasSuffix(cat, "_tools") {
+			tf.systemCategories[cat+"_tools"] = true
+		}
 	}
 
 	// Build custom category lookup
 	for _, cat := range customCategories {
 		tf.customToolCategories[cat] = true
 		// Also add the _tools suffix version for directory matching
-		tf.customToolCategories[cat+"_tools"] = true
+		if !strings.HasSuffix(cat, "_tools") {
+			tf.customToolCategories[cat+"_tools"] = true
+		}
 	}
 
 	// Build MCP server name lookup (normalized)
@@ -192,7 +196,7 @@ func (tf *ToolFilter) IsCategoryDirectory(dirName string) bool {
 		return true
 	}
 
-	// Direct category match (e.g., "workspace", "human")
+	// Direct category match (e.g., "workspace", "human_tools")
 	if tf.customToolCategories[normalized] {
 		return true
 	}
@@ -240,7 +244,7 @@ func (tf *ToolFilter) IsVirtualToolsDirectory(dirName string) bool {
 // Parameters:
 //   - packageOrServer: the server name (for MCP tools) or package name (for custom tools)
 //   - toolName: the tool/function name
-//   - isCustomTool: true if this is a custom tool (workspace, human, etc.), false for MCP tools
+//   - isCustomTool: true if this is a custom tool (workspace, human_tools, etc.), false for MCP tools
 //   - isVirtualTool: true if this is a virtual tool (get_prompt, get_resource, etc.)
 //
 // Returns true if the tool should be included
@@ -442,11 +446,15 @@ func (tf *ToolFilter) ShouldIncludeServer(serverName string) bool {
 func (tf *ToolFilter) GetToolCategory(packageName string) string {
 	normalized := tf.NormalizeServerName(packageName)
 
-	// Remove _tools suffix to get category name
+	// Preserve generated aliases such as workspace_tools -> workspace, but keep
+	// canonical categories that already end in _tools (human_tools and
+	// delegation_tools) intact when no unsuffixed category was registered.
 	category := strings.TrimSuffix(normalized, "_tools")
-
-	if tf.customToolCategories[category] || tf.customToolCategories[normalized] {
+	if category != normalized && tf.customToolCategories[category] {
 		return category
+	}
+	if tf.customToolCategories[normalized] {
+		return normalized
 	}
 
 	return ""
@@ -467,7 +475,9 @@ func (tf *ToolFilter) AddCustomCategory(category string) {
 		return
 	}
 	tf.customToolCategories[category] = true
-	tf.customToolCategories[category+"_tools"] = true
+	if !strings.HasSuffix(category, "_tools") {
+		tf.customToolCategories[category+"_tools"] = true
+	}
 }
 
 // getMapKeys is a helper function to extract keys from a map for logging

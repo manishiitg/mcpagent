@@ -30,7 +30,7 @@ import (
 type CustomTool struct {
 	Definition llmtypes.Tool
 	Execution  func(ctx context.Context, args map[string]interface{}) (string, error)
-	Category   string        // Tool category (e.g., "workspace", "human", "virtual", "custom", etc.)
+	Category   string        // Tool category (e.g., "workspace", "human_tools", "virtual", "custom", etc.)
 	Timeout    time.Duration // Per-tool timeout. 0 = no timeout (tool runs indefinitely). -1 = use agent default.
 }
 
@@ -3752,7 +3752,7 @@ func (a *Agent) SetToolArgTransformer(toolName string, fn func(args map[string]i
 //   - description: A description of what the tool does (used by LLM).
 //   - parameters: JSON schema defining the tool's expected arguments.
 //   - executionFunc: The Go function to execute when the tool is called.
-//   - category: REQUIRED. The tool's category (e.g., "workspace", "human", "virtual").
+//   - category: REQUIRED. The tool's category (e.g., "workspace", "human_tools", "virtual").
 //     Compile-time required (was previously variadic with a runtime check; the
 //     runtime check turned silent registration failures into a category of bug
 //     that only surfaced in server_debug.log — making it required enforces
@@ -3845,17 +3845,19 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	}
 
 	// Determine tool category flags for special handling
-	// Structured output tools and human tools are always added regardless of mode
+	// Structured output and app control tools are always added regardless of mode.
+	// Keep human interaction and agent delegation as distinct categories; historically
+	// both were overloaded onto "human", which made registration bugs hard to spot.
 	isStructuredOutputTool := toolCategory == "structured_output"
-	isHumanTool := toolCategory == "human"
+	isAlwaysAvailableAppTool := toolCategory == "human_tools" || toolCategory == "delegation_tools"
 
 	// 🔍 TOOL SEARCH MODE: Handle custom tools differently
 	// Custom tools should be added to allDeferredTools so they can be discovered via search_tools
 	// Pre-discovered tools or special categories should be immediately available
 	if a.UseToolSearchMode {
 		// Check tool filter first - if filtering is active and tool doesn't pass, skip adding to deferred
-		// Special categories (structured_output, human) bypass filtering as they're system tools
-		shouldIncludeInDeferred := isStructuredOutputTool || isHumanTool
+		// Special app categories bypass filtering because they are system tools.
+		shouldIncludeInDeferred := isStructuredOutputTool || isAlwaysAvailableAppTool
 		if !shouldIncludeInDeferred && a.toolFilter != nil && !a.toolFilter.IsNoFilteringActive() {
 			// Apply tool filter - use category as package name for custom tools
 			shouldIncludeInDeferred = a.toolFilter.ShouldIncludeTool(toolCategory, name, true, false)
@@ -3881,9 +3883,9 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 				}
 			}
 
-			// Special categories (structured_output, human) are always immediately available
+			// Special categories are always immediately available.
 			// Pre-discovered tools are also immediately available
-			if isStructuredOutputTool || isHumanTool || isPreDiscovered {
+			if isStructuredOutputTool || isAlwaysAvailableAppTool || isPreDiscovered {
 				// Add to discoveredTools map so it's immediately available
 				if a.discoveredTools == nil {
 					a.discoveredTools = make(map[string]llmtypes.Tool)
@@ -4030,7 +4032,7 @@ func (a *Agent) GetCustomToolExecutor(name string) func(ctx context.Context, arg
 	return nil
 }
 
-//   - category: REQUIRED. The tool's category (e.g., "workspace", "human", "virtual").
+//   - category: REQUIRED. The tool's category (e.g., "workspace", "human_tools", "virtual").
 //
 // Returns:
 //   - error: An error if registration fails (e.g., missing category).

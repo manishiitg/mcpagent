@@ -13,7 +13,7 @@ func GetWorkspaceToolCategory() string {
 
 // GetHumanToolCategory returns the category name for human tools
 func GetHumanToolCategory() string {
-	return "human"
+	return "human_tools"
 }
 
 // GetToolSearchToolCategory returns the category name for tool search tools

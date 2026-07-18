@@ -79,6 +79,12 @@ func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
 		"$MCP_CUSTOM/list_provider_models",
 		"$MCP_CUSTOM/save_published_llm",
 		"Do not read or edit config/ files for LLM/provider configuration",
+		"$MCP_CUSTOM/human_feedback",
+		"curl in the FOREGROUND",
+		"Never use nohup",
+		"poll for completion",
+		"returned body resumes your turn automatically",
+		"at most 45 seconds",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("bridge routing prompt missing %q:\n%s", want, prompt)
