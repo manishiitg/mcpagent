@@ -31,6 +31,7 @@ var bridgeTools = []struct {
 	{"execute_shell_command", "custom"},
 	{"diff_patch_workspace_file", "custom"},
 	{"agent_browser", "custom"},
+	{"set_subject_topic", "custom"},
 	{"get_api_spec", "virtual"},
 }
 
