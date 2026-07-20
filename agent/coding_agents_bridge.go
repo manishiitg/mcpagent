@@ -38,6 +38,8 @@ var bridgeTools = []struct {
 	{"web_search", "custom"},
 	{"read_image", "custom"},
 	{"notify_user", "custom"},
+	{"approve_for_child", "custom"},
+	{"generate_image", "custom"},
 	{"get_api_spec", "virtual"},
 }
 
