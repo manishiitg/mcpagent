@@ -34,6 +34,7 @@ var bridgeTools = []struct {
 	{"set_subject_topic", "custom"},
 	{"set_child_profile", "custom"},
 	{"open_file", "custom"},
+	{"suggest_actions", "custom"},
 	{"get_api_spec", "virtual"},
 }
 
