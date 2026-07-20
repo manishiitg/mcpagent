@@ -37,6 +37,7 @@ var bridgeTools = []struct {
 	{"suggest_actions", "custom"},
 	{"web_search", "custom"},
 	{"read_image", "custom"},
+	{"notify_user", "custom"},
 	{"get_api_spec", "virtual"},
 }
 
