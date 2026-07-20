@@ -33,6 +33,7 @@ var bridgeTools = []struct {
 	{"agent_browser", "custom"},
 	{"set_subject_topic", "custom"},
 	{"set_child_profile", "custom"},
+	{"open_file", "custom"},
 	{"get_api_spec", "virtual"},
 }
 
