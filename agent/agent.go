@@ -468,6 +468,52 @@ func WithSystemPrompt(systemPrompt string) AgentOption {
 	}
 }
 
+// WithBridgeRoutingInstructions overrides the default bridge-tool-routing
+// system-prompt text mcpagent appends for EVERY CLI coding-agent provider —
+// Claude Code, Codex CLI, Cursor CLI, Agy CLI, and Pi CLI each get their own
+// provider-specific preamble plus the shared bridgeRoutingExplicitInstructions
+// block (see coding_agent_bridge_routing_prompt.go and the per-provider
+// auto-configure sections in NewAgent). The default is tuned for AgentWorks'
+// large, dynamic tool catalog — discovering tools via get_api_spec and
+// calling them through execute_shell_command + curl with $MCP_CUSTOM/$MCP_AUTH
+// — and uses urgent "CRITICAL"/"DO NOT"/override-style language to make sure
+// the model doesn't give up on a denied built-in. That same language is
+// close enough to a textbook prompt-injection shape that some providers'
+// (notably Claude Code's) own safety training can flag it to the user, and
+// no caller-side system prompt reliably talks it out of that once triggered
+// — asking a model to stand down on a suspected injection is exactly the
+// kind of instruction safety training is built to resist.
+//
+// Callers with a SMALL, fixed, natively-registered tool set (e.g.
+// agentsession-based apps, where every custom tool is directly callable by
+// name — see docs/core/mcp_bridge_layer.md) don't need the discovery/curl
+// routing at all, and can pass calmer, app-specific wording here instead —
+// or "" to suppress the block entirely for this agent. Applies uniformly to
+// whichever provider this agent ends up using, not just Claude Code.
+func WithBridgeRoutingInstructions(text string) AgentOption {
+	return func(a *Agent) {
+		a.bridgeRoutingInstructionsOverride = &text
+	}
+}
+
+// WithAdditionalBridgeTools exposes the named custom tools (already
+// registered via RegisterCustomTool) as NATIVE MCP bridge tools for THIS
+// agent instance — callable directly by name, without the get_api_spec +
+// execute_shell_command+curl discovery route. Scoped to this agent only; it
+// does NOT touch the shared package-level bridgeTools list (execute_shell_command,
+// diff_patch_workspace_file, agent_browser, get_api_spec), which stays fixed
+// across every consumer of this module.
+//
+// Use this for a small, app-specific, known-in-advance tool set (e.g. an
+// agentsession-based app) where native calling is more reliable than asking
+// the model to discover-then-curl each tool. Do not use the shared
+// bridgeTools var for this — see coding_agents_bridge.go.
+func WithAdditionalBridgeTools(names ...string) AgentOption {
+	return func(a *Agent) {
+		a.additionalBridgeTools = append(a.additionalBridgeTools, names...)
+	}
+}
+
 // WithDiscoverResource enables/disables automatic resource discovery.
 //
 // If enabled, the agent will query all connected MCP servers for their available resources
@@ -933,8 +979,26 @@ type Agent struct {
 	// Flag to track if a custom system prompt was provided
 	hasCustomSystemPrompt bool
 
+	// bridgeRoutingInstructionsOverride replaces the default per-provider
+	// bridge-tool-routing preamble + bridgeRoutingExplicitInstructions text
+	// (appended for every CLI coding-agent provider: Claude Code, Codex,
+	// Cursor, Agy, Pi) when set via WithBridgeRoutingInstructions. nil means
+	// use the default for whichever provider this agent runs; a pointer to
+	// "" suppresses the block entirely for this agent.
+	bridgeRoutingInstructionsOverride *string
+
 	// Custom tools that are handled as virtual tools
 	customTools map[string]CustomTool
+
+	// additionalBridgeTools are custom tool names exposed as NATIVE MCP bridge
+	// tools for THIS agent instance only, on top of the small fixed set in
+	// bridgeTools (execute_shell_command, diff_patch_workspace_file,
+	// agent_browser, get_api_spec). Set via WithAdditionalBridgeTools —
+	// callers must NOT edit the shared package-level bridgeTools var to add
+	// their own tools, since that list is global across every consumer of
+	// this module (see docs/core/mcp_bridge_layer.md and
+	// TestBridgeToolsList, which pins bridgeTools to exactly those 4 entries).
+	additionalBridgeTools []string
 
 	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
 	// before execution. This is the PRIMARY interception point — agent-internal tool calls
@@ -1949,8 +2013,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.AppendSystemPrompt("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
+		ag.appendBridgeRoutingInstructions("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		if ag.UseToolSearchMode {
@@ -1991,8 +2054,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
+		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2041,8 +2103,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// The system prompt is the soft lever; --mode ask is the hard lever we
 	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
-		ag.AppendSystemPrompt("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
+		ag.appendBridgeRoutingInstructions("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2078,8 +2139,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// and report "no MCP server configuration" when the bridge-only
 	// hook denied them.
 	if ag.provider == llmproviders.ProviderAgyCLI {
-		ag.AppendSystemPrompt("IMPORTANT: Do NOT use your built-in tools (view_file, write_to_file, replace_file_content, list_dir, find_by_name, grep_search, run_command, search_web, etc.) — they are denied by the orchestrator's bridge-only hook. Use the declared MCP bridge tools listed below instead. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
+		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools (view_file, write_to_file, replace_file_content, list_dir, find_by_name, grep_search, run_command, search_web, etc.) — they are denied by the orchestrator's bridge-only hook. Use the declared MCP bridge tools listed below instead. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [AGY_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.UseCodeExecutionMode {
@@ -2108,8 +2168,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// pi-mcp-adapter mounted and built-in tools disabled by the adapter when the
 	// bridge config is available.
 	if ag.provider == llmproviders.ProviderPiCLI {
-		ag.AppendSystemPrompt("IMPORTANT: You are running inside Pi CLI with built-in tools disabled. Use the MCP bridge through Pi's MCP gateway: call mcp({ search: \"tool words\" }) to discover tools, mcp({ describe: \"api_bridge_execute_shell_command\" }) for schemas when needed, and mcp({ tool: \"api_bridge_execute_shell_command\", args: \"{...}\" }) or the direct api_bridge_* tools when available. If a built-in tool is unavailable, use the declared MCP bridge tools instead of reporting that no MCP server exists.")
-		ag.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
+		ag.appendBridgeRoutingInstructions("IMPORTANT: You are running inside Pi CLI with built-in tools disabled. Use the MCP bridge through Pi's MCP gateway: call mcp({ search: \"tool words\" }) to discover tools, mcp({ describe: \"api_bridge_execute_shell_command\" }) for schemas when needed, and mcp({ tool: \"api_bridge_execute_shell_command\", args: \"{...}\" }) or the direct api_bridge_* tools when available. If a built-in tool is unavailable, use the declared MCP bridge tools instead of reporting that no MCP server exists.")
 		logger.Debug("🔧 [PI_CLI] Provider detected - using tmux marker transport with MCP bridge")
 
 		if !ag.UseCodeExecutionMode {
@@ -3614,6 +3673,23 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 		a.Logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
 	}
 	a.hasCustomSystemPrompt = true
+}
+
+// appendBridgeRoutingInstructions appends the bridge-tool-routing block for
+// the calling provider's default preamble, UNLESS the caller supplied its own
+// override via WithBridgeRoutingInstructions (an empty-string override
+// suppresses the block entirely; a non-empty one replaces both the
+// provider-specific preamble AND the shared bridgeRoutingExplicitInstructions
+// text with the caller's own).
+func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
+	if a.bridgeRoutingInstructionsOverride != nil {
+		if *a.bridgeRoutingInstructionsOverride != "" {
+			a.AppendSystemPrompt(*a.bridgeRoutingInstructionsOverride)
+		}
+		return
+	}
+	a.AppendSystemPrompt(defaultPreamble)
+	a.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 }
 
 // AppendSystemPrompt appends additional content to the existing system prompt

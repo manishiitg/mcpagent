@@ -40,7 +40,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// bridge tools and WebSearch to run without prompts.
 	allowedTools := "mcp__api-bridge__*,WebSearch"
 	if claudeHTTPHooksEnabled {
-		allowedTools = "mcp__api-bridge__execute_shell_command,mcp__api-bridge__diff_patch_workspace_file,mcp__api-bridge__agent_browser,mcp__api-bridge__set_subject_topic,mcp__api-bridge__get_api_spec,WebSearch"
+		allowedTools = "mcp__api-bridge__execute_shell_command,mcp__api-bridge__diff_patch_workspace_file,mcp__api-bridge__agent_browser,mcp__api-bridge__get_api_spec,WebSearch"
 	}
 	opts = append(opts, llm.WithAllowedTools(allowedTools))
 

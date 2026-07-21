@@ -31,15 +31,6 @@ var bridgeTools = []struct {
 	{"execute_shell_command", "custom"},
 	{"diff_patch_workspace_file", "custom"},
 	{"agent_browser", "custom"},
-	{"set_subject_topic", "custom"},
-	{"set_child_profile", "custom"},
-	{"open_file", "custom"},
-	{"suggest_actions", "custom"},
-	{"web_search", "custom"},
-	{"read_image", "custom"},
-	{"notify_user", "custom"},
-	{"approve_for_child", "custom"},
-	{"generate_image", "custom"},
 	{"get_api_spec", "virtual"},
 }
 
@@ -73,14 +64,40 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 		}
 	}
 
-	// 2. Collect the bridge tools by name
+	// 2. Collect the bridge tools by name — the fixed shared set (bridgeTools)
+	// plus whatever this agent instance registered via WithAdditionalBridgeTools.
 	logger.Debug("BuildBridgeMCPConfig: agent state",
 		loggerv2.Int("tools_count", len(a.Tools)),
 		loggerv2.Int("custom_tools_count", len(a.customTools)),
+		loggerv2.Int("additional_bridge_tools_count", len(a.additionalBridgeTools)),
 		loggerv2.Any("use_code_execution_mode", a.UseCodeExecutionMode))
 
-	var toolDefs []BridgeToolDef
+	seen := make(map[string]bool, len(bridgeTools)+len(a.additionalBridgeTools))
+	wanted := make([]struct {
+		name     string
+		toolType string
+	}, 0, len(bridgeTools)+len(a.additionalBridgeTools))
 	for _, want := range bridgeTools {
+		seen[want.name] = true
+		wanted = append(wanted, want)
+	}
+	for _, name := range a.additionalBridgeTools {
+		// A caller's additional-tools list may legitimately name one of the
+		// fixed defaults above (e.g. it registers its own "agent_browser"
+		// executor) — skip the duplicate rather than emitting the same tool
+		// name twice in the generated MCP config.
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		wanted = append(wanted, struct {
+			name     string
+			toolType string
+		}{name, "custom"})
+	}
+
+	var toolDefs []BridgeToolDef
+	for _, want := range wanted {
 		def := a.lookupBridgeTool(want.name, want.toolType, logger)
 		if def == nil {
 			def = defaultBridgeToolDef(want.name, want.toolType, logger)
