@@ -30,10 +30,23 @@ func realBridgeRandHex(n int) string {
 }
 
 // startRealExecutorServer boots the executor HTTP API the mcpbridge posts tool
-// calls to — the SAME wiring examples/basic_claude_code uses — and exports
-// MCP_API_URL / MCP_API_TOKEN. Returns a shutdown func.
+// calls to and registers cleanup. t-based convenience wrapper around bootRealExecutor.
 func startRealExecutorServer(t *testing.T, configPath string) (string, string) {
 	t.Helper()
+	url, token, stop, err := bootRealExecutor(configPath)
+	if err != nil {
+		t.Fatalf("executor boot: %v", err)
+	}
+	t.Cleanup(stop)
+	return url, token
+}
+
+// bootRealExecutor is the t-less core (usable from concurrency goroutines): it
+// boots the executor HTTP API — the SAME wiring examples/basic_claude_code uses —
+// on 127.0.0.1:0 and returns its URL, token, and a stop func. It does NOT set any
+// global env, so multiple executors can run in parallel; each Agent gets its
+// URL/token via WithAPIConfig.
+func bootRealExecutor(configPath string) (string, string, func(), error) {
 	apiToken := executor.GenerateAPIToken()
 	handlers := executor.NewExecutorHandlers(configPath, nil)
 
@@ -69,18 +82,18 @@ func startRealExecutorServer(t *testing.T, configPath string) (string, string) {
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("executor listen: %v", err)
+		return "", "", nil, err
 	}
 	server := &http.Server{Handler: executor.AuthMiddleware(apiToken)(mux)} //nolint:gosec // test server, no timeouts needed
 	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() {
+	stop := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
-	})
+	}
 	apiBaseURL := "http://" + listener.Addr().String()
 	time.Sleep(300 * time.Millisecond)
-	return apiBaseURL, apiToken
+	return apiBaseURL, apiToken, stop, nil
 }
 
 // ensureRealBridgeBinary builds cmd/mcpbridge from source into a temp path so the
