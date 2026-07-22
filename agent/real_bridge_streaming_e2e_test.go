@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	"github.com/manishiitg/mcpagent/agent/codeexec"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/executor"
@@ -97,19 +99,33 @@ func ensureRealBridgeBinary(t *testing.T) string {
 
 // realBridgeProviderCase is one coding-agent provider exercised through the REAL
 // bridge. streamEnv is the transcript-streaming opt-in env var (empty when the
-// provider streams structured chunks natively, e.g. pi's markers).
+// provider streams structured chunks natively, e.g. pi's markers). apiKeyEnvs, if
+// set, names the env vars to source the provider key from (pi); CLI-native-auth
+// providers (claude/codex/cursor) leave it empty.
 type realBridgeProviderCase struct {
-	name      string
-	provider  llm.Provider
-	modelID   string
-	cliBin    string
-	streamEnv string
+	name       string
+	provider   llm.Provider
+	modelID    string
+	cliBin     string
+	streamEnv  string
+	apiKeyEnvs []string
+	makeKeys   func(key string) *llm.ProviderAPIKeys
 }
 
 func realBridgeProviderCases() []realBridgeProviderCase {
 	return []realBridgeProviderCase{
 		{name: "claude", provider: llm.ProviderClaudeCode, modelID: "claude-haiku-4-5", cliBin: "claude", streamEnv: "CLAUDE_CODE_STREAM_TRANSCRIPT"},
 		{name: "codex", provider: llm.ProviderCodexCLI, modelID: "gpt-5.6-luna", cliBin: "codex", streamEnv: "CODEX_CLI_STREAM_TRANSCRIPT"},
+		// cursor reaches the bridge via its GetMcpTools/CallMcpTool meta-tools; the
+		// mcpagent cursor integration auto-approves the MCP bridge (WithCursorApproveMCPs).
+		{name: "cursor", provider: llm.ProviderCursorCLI, modelID: "cursor-cli", cliBin: "cursor-agent", streamEnv: "CURSOR_CLI_STREAM_TRANSCRIPT"},
+		// pi streams structured chunks natively via its injected marker hook (no
+		// streamEnv) and needs a Gemini/Pi key.
+		{
+			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.5-flash", cliBin: "pi", streamEnv: "",
+			apiKeyEnvs: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY"},
+			makeKeys:   func(k string) *llm.ProviderAPIKeys { return &llm.ProviderAPIKeys{PiCLI: &k} },
+		},
 	}
 }
 
@@ -154,7 +170,26 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	}
 	apiURL, apiToken := startRealExecutorServer(t, configPath)
 
-	llmModel, err := llm.InitializeLLM(llm.Config{Provider: pc.provider, ModelID: pc.modelID})
+	cfg := llm.Config{Provider: pc.provider, ModelID: pc.modelID}
+	if len(pc.apiKeyEnvs) > 0 {
+		for _, envPath := range []string{"../.env", "../../multi-llm-provider-go/.env"} {
+			_ = godotenv.Load(envPath)
+		}
+		var key string
+		for _, e := range pc.apiKeyEnvs {
+			if v := strings.TrimSpace(os.Getenv(e)); v != "" {
+				key = v
+				break
+			}
+		}
+		if key == "" {
+			t.Skipf("one of %v required for %s", pc.apiKeyEnvs, pc.name)
+		}
+		if pc.makeKeys != nil {
+			cfg.APIKeys = pc.makeKeys(key)
+		}
+	}
+	llmModel, err := llm.InitializeLLM(cfg)
 	if err != nil {
 		t.Fatalf("InitializeLLM: %v", err)
 	}

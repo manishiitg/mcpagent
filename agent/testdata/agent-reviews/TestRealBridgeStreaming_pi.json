@@ -1,0 +1,50 @@
+{
+  "test": "TestRealBridgeStreaming_pi",
+  "summary": "pi via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_d2954ce0b5f7 |\n| status | ok |",
+    "build_id_only_via_tool": "BUILD_ID_d2954ce0b5f7",
+    "clean_content_count": 8,
+    "clean_transcript_content": [
+      "I will run a shell command to print the project build ID from the",
+      " build_id.txt file.",
+      "I will create the markdown report file containing the build ID and status table",
+      ".",
+      "I will now display the contents of the newly created report",
+      ".md file.",
+      "| Field | Value |\n|-------|-------|\n| build_id |",
+      " BUILD_ID_d2954ce0b5f7 |\n| status | ok |"
+    ],
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_d2954ce0b5f7 |\n| status | ok |\n",
+    "tool_call_events": 5,
+    "tool_names": [
+      "mcp",
+      "mcp",
+      "mcp",
+      "mcp",
+      "mcp"
+    ],
+    "total_content_chunks": 18,
+    "went_through_real_bridge": true
+  },
+  "fingerprint": "564124321e6d3085",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "564124321e6d3085",
+    "reviewer": "claude-opus-4-8 (agentic P0 review)",
+    "issues": [
+      "DELTA MARKER NOT PROPAGATED TO mcpagent LAYER: pi streams token-level deltas (visible here: '...print the project build ID from the' + ' build_id.txt file.'; and the table split '...| build_id |' + ' BUILD_ID_d2954ce0b5f7 |...'). The provider-layer StreamAssistantText fix concatenates such deltas verbatim, but processChunks does NOT copy the ContentDeltaMetadataKey onto the content StreamingChunkEvent, so a mcpagent-layer consumer cannot tell pi's chunks are deltas and a naive '\\n'-join would garble them. Follow-up: carry the delta marker (like Source) onto StreamingChunkEvent.",
+      "pi surfaces the bridge tool under the generic marker name 'mcp' (5x) rather than execute_shell_command."
+    ],
+    "notes": "Real-bridge path exercised end to end: pi's 'mcp' calls went mcpbridge → executor → real execute_shell_command to read build_id.txt, write report.md, and read it back. report.md on disk is a correct markdown table with BUILD_ID_d2954ce0b5f7 (only ever in the file), and pi's final reply is itself a clean GFM markdown table. The clean stream (Source != terminal) carries the interleaved narration + the table. Signed good; the two granularity items above are tracked follow-ups, not failures of the bridge path."
+  }
+}
