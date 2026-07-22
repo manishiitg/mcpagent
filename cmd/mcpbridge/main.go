@@ -14,13 +14,42 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/manishiitg/multi-llm-provider-go/pkg/codingtimeout"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// writeReadyFileOnce, when MCP_READY_FILE is set, creates that file the first
+// time the CLI completes its tools/list handshake — i.e. the instant the bridge
+// tools become connected and callable. The parent adapter waits for this file
+// before sending a cold session's first prompt, closing the race where the
+// model's opening turn runs before its tools exist. Best-effort and idempotent:
+// a failed write must never take down the bridge, and repeated tools/list calls
+// only write once.
+func makeReadyFileWriter(readyPath string) func() {
+	var once sync.Once
+	return func() {
+		if strings.TrimSpace(readyPath) == "" {
+			return
+		}
+		once.Do(func() {
+			if dir := filepath.Dir(readyPath); dir != "" {
+				//nolint:gosec // dir derives from a parent-controlled temp path.
+				_ = os.MkdirAll(dir, 0o750)
+			}
+			if err := os.WriteFile(readyPath, []byte("ready\n"), 0o600); err != nil {
+				log.Printf("mcpbridge: failed to write MCP_READY_FILE %q: %v", readyPath, err)
+				return
+			}
+			log.Printf("mcpbridge: wrote MCP readiness marker %q (tools connected)", readyPath)
+		})
+	}
+}
 
 // ToolDef is the serialized tool definition passed via MCP_TOOLS env var.
 type ToolDef struct {
@@ -89,8 +118,19 @@ func main() {
 		log.Fatalf("Failed to parse MCP_TOOLS: %v", err)
 	}
 
+	// Signal readiness the moment the CLI finishes its tools/list handshake, so
+	// the parent adapter can hold a cold session's first prompt until the tools
+	// are actually connected. tools/list is the precise "tools are now callable"
+	// signal; initialize is used as an earlier belt-and-suspenders fallback.
+	markReady := makeReadyFileWriter(os.Getenv("MCP_READY_FILE"))
+	hooks := &server.Hooks{}
+	hooks.AddAfterListTools(func(_ context.Context, _ any, _ *mcp.ListToolsRequest, _ *mcp.ListToolsResult) {
+		markReady()
+	})
+
 	s := server.NewMCPServer("mcpbridge", "1.0.0",
 		server.WithToolCapabilities(false),
+		server.WithHooks(hooks),
 	)
 
 	defaultHTTPClient := &http.Client{Timeout: codingtimeout.DefaultBridgeHTTPTimeout}

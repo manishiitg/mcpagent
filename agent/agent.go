@@ -1000,6 +1000,16 @@ type Agent struct {
 	// TestBridgeToolsList, which pins bridgeTools to exactly those 4 entries).
 	additionalBridgeTools []string
 
+	// bridgeReadyFile is the per-launch path the mcpbridge subprocess creates
+	// once the CLI completes its tools/list handshake (the tools-connected
+	// marker). BuildBridgeMCPConfig allocates a fresh unique path each call and
+	// stores it here; the coding-agent option builders read it immediately after
+	// and hand it to the adapter via WithMCPReadyFile so a cold session holds its
+	// first prompt until the tools are connected. A fresh unique temp path per
+	// call guarantees a stale marker from a prior session can never satisfy the
+	// gate. Empty when no bridge is in use.
+	bridgeReadyFile string
+
 	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
 	// before execution. This is the PRIMARY interception point — agent-internal tool calls
 	// go through conversation.go (not the HTTP handler), so transformers must live here.

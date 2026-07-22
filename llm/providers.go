@@ -598,6 +598,13 @@ func WithMCPConfig(config string) CallOption {
 	return llmproviders.WithMCPConfig(config)
 }
 
+// WithMCPReadyFile sets the path the session's MCP bridge creates once the CLI
+// completes its tools/list handshake, so a cold interactive session holds its
+// first prompt until the tools are connected. See llmproviders.WithMCPReadyFile.
+func WithMCPReadyFile(path string) CallOption {
+	return llmproviders.WithMCPReadyFile(path)
+}
+
 // WithDangerouslySkipPermissions enables the --dangerously-skip-permissions flag for the Claude Code CLI.
 // CAUTION: This allows the agent to execute any tool without user confirmation.
 func WithDangerouslySkipPermissions() CallOption {

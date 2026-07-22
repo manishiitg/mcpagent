@@ -160,6 +160,22 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 	// Claude Code swallows the subprocess stderr, so without this there is no
 	// record of why the bridge failed (e.g. empty MCP_TOOLS, parse errors, crashes).
 	bridgeEnv["MCP_BRIDGE_LOG"] = os.TempDir() + "/mcpbridge.log"
+	// Allocate a fresh, unique readiness-marker path for THIS launch. The bridge
+	// creates it on tools/list (tools connected); the adapter waits for it before
+	// a cold session's first prompt. A unique temp path per call (removed here so
+	// only this launch's bridge can create it) means a stale marker from a prior
+	// session in the same workspace can never falsely satisfy the gate.
+	a.bridgeReadyFile = ""
+	if f, tmpErr := os.CreateTemp("", "mcpbridge-ready-*.marker"); tmpErr == nil {
+		readyPath := f.Name()
+		_ = f.Close()
+		_ = os.Remove(readyPath)
+		a.bridgeReadyFile = readyPath
+		bridgeEnv["MCP_READY_FILE"] = readyPath
+	} else {
+		logger.Warn("Failed to allocate MCP readiness marker; cold-turn tool-connect gate disabled for this launch",
+			loggerv2.Error(tmpErr))
+	}
 	// Pass per-agent virtual tool scope so the bridge can route get_api_spec
 	// to the correct agent's handler (prevents parent/child overwrite)
 	if virtualScopeID := a.GetVirtualToolScopeID(); virtualScopeID != "" {

@@ -69,6 +69,12 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		return nil, fmt.Errorf("Claude Code requires the MCP bridge: %w", err)
 	}
 	opts = append(opts, llm.WithMCPConfig(bridgeConfig))
+	if a.bridgeReadyFile != "" {
+		// Hold the cold session's first prompt until the bridge reports the tools
+		// are connected (tools/list answered), so the model never opens with no
+		// tools. BuildBridgeMCPConfig set this path just above.
+		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
+	}
 	a.Logger.Info("🌉 Using MCP bridge for Claude Code tool access via HTTP API")
 
 	if a.MaxTurns > 0 {
