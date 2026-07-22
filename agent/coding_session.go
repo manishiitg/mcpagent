@@ -1,0 +1,378 @@
+package mcpagent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/manishiitg/mcpagent/llm"
+)
+
+// coding_session.go is the mcpagent-owned coding-agent conversation abstraction.
+// It centralizes the two decisions a product layer (AgentWorks, sparkquill, …)
+// should NOT have to reimplement:
+//
+//  1. CONTINUITY (keep-alive vs --resume): a chat conversation reuses a live tmux
+//     session on the fast path, and transparently relaunches + --resumes from the
+//     provider-native session id when that live session is gone. Products differ
+//     only in how DURABLY they persist the handle — that is what CodingSessionStore
+//     abstracts (in-memory for a single process, on-disk for restart survival).
+//
+//  2. DELIVERY (steer vs query): a user message that arrives WHILE a turn is
+//     running is steered straight into the running turn on transports that accept
+//     live input (all tmux CLI providers today), queued for the next boundary on
+//     query-only transports (future API/JSON streaming), and a message that
+//     arrives IDLE simply starts the next (resumed) turn.
+//
+// The continuity fast path (warm tmux reuse) and the relaunch+--resume fallback
+// already live in the provider adapters; ContinueConversation is the thin,
+// store-backed wrapper that makes them usable across process restarts. The
+// delivery routing is decideDelivery + Deliver.
+
+// CodingSessionStore persists an AgentSessionHandle per conversation so a coding
+// agent chat can be continued later — including after the host process restarts.
+// Implementations must be safe for concurrent use. Load returns (nil, nil) when
+// no handle has been stored yet for the conversation (a cold start).
+type CodingSessionStore interface {
+	Load(ctx context.Context, conversationID string) (*AgentSessionHandle, error)
+	Save(ctx context.Context, conversationID string, h *AgentSessionHandle) error
+	Delete(ctx context.Context, conversationID string) error
+}
+
+// --- in-memory store ---------------------------------------------------------
+
+type memoryCodingSessionStore struct {
+	mu      sync.RWMutex
+	handles map[string]*AgentSessionHandle
+}
+
+// NewMemoryCodingSessionStore returns a process-local CodingSessionStore. It
+// keeps conversation continuity alive for the lifetime of the process (the tmux
+// keep-alive fast path); it does NOT survive a restart. Use it when the live
+// session and the store share a lifetime — e.g. a single long-running server
+// that never needs to --resume a cold conversation.
+func NewMemoryCodingSessionStore() CodingSessionStore {
+	return &memoryCodingSessionStore{handles: make(map[string]*AgentSessionHandle)}
+}
+
+func (s *memoryCodingSessionStore) Load(_ context.Context, conversationID string) (*AgentSessionHandle, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h, ok := s.handles[strings.TrimSpace(conversationID)]
+	if !ok || h == nil {
+		return nil, nil
+	}
+	clone := *h // AgentSessionHandle is all value fields — a copy fully detaches it
+	return &clone, nil
+}
+
+func (s *memoryCodingSessionStore) Save(_ context.Context, conversationID string, h *AgentSessionHandle) error {
+	id := strings.TrimSpace(conversationID)
+	if id == "" {
+		return fmt.Errorf("coding session store: conversationID is empty")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h == nil {
+		delete(s.handles, id)
+		return nil
+	}
+	clone := *h
+	s.handles[id] = &clone
+	return nil
+}
+
+func (s *memoryCodingSessionStore) Delete(_ context.Context, conversationID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.handles, strings.TrimSpace(conversationID))
+	return nil
+}
+
+// --- on-disk store -----------------------------------------------------------
+
+type fileCodingSessionStore struct {
+	dir string
+	mu  sync.Mutex
+}
+
+// NewFileCodingSessionStore returns a CodingSessionStore that persists each
+// conversation's handle as JSON under dir, so a conversation can be --resumed
+// after the host process (and its tmux sessions) are gone. This is the durable
+// path for products that outlive their live sessions (a restarting server, a
+// scheduled worker). The directory is created lazily on first Save.
+func NewFileCodingSessionStore(dir string) CodingSessionStore {
+	return &fileCodingSessionStore{dir: dir}
+}
+
+// fileName maps a conversation id to a safe, collision-resistant filename: a
+// sanitized human-readable prefix (for eyeballing the directory) plus a stable
+// fnv-64a hash of the raw id (so distinct ids never collide and no id can
+// escape dir via path separators or "..").
+func (s *fileCodingSessionStore) fileName(conversationID string) string {
+	id := strings.TrimSpace(conversationID)
+	var b strings.Builder
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	prefix := b.String()
+	if len(prefix) > 48 {
+		prefix = prefix[:48]
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(id))
+	return fmt.Sprintf("%s-%016x.json", prefix, h.Sum64())
+}
+
+func (s *fileCodingSessionStore) path(conversationID string) string {
+	return filepath.Join(s.dir, s.fileName(conversationID))
+}
+
+func (s *fileCodingSessionStore) Load(_ context.Context, conversationID string) (*AgentSessionHandle, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := os.ReadFile(s.path(conversationID)) //nolint:gosec // path is derived from a sanitized+hashed id, never raw input
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // cold start — no handle stored yet
+		}
+		return nil, fmt.Errorf("coding session store: read handle: %w", err)
+	}
+	var h AgentSessionHandle
+	if err := json.Unmarshal(data, &h); err != nil {
+		return nil, fmt.Errorf("coding session store: decode handle: %w", err)
+	}
+	return &h, nil
+}
+
+func (s *fileCodingSessionStore) Save(_ context.Context, conversationID string, h *AgentSessionHandle) error {
+	id := strings.TrimSpace(conversationID)
+	if id == "" {
+		return fmt.Errorf("coding session store: conversationID is empty")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h == nil {
+		if err := os.Remove(s.path(id)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("coding session store: clear handle: %w", err)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return fmt.Errorf("coding session store: create dir: %w", err)
+	}
+	data, err := json.MarshalIndent(h, "", "  ")
+	if err != nil {
+		return fmt.Errorf("coding session store: encode handle: %w", err)
+	}
+	// Write-and-rename so a concurrent Load never sees a half-written file.
+	tmp := s.path(id) + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("coding session store: write handle: %w", err)
+	}
+	if err := os.Rename(tmp, s.path(id)); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("coding session store: commit handle: %w", err)
+	}
+	return nil
+}
+
+func (s *fileCodingSessionStore) Delete(_ context.Context, conversationID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path(conversationID)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("coding session store: delete handle: %w", err)
+	}
+	return nil
+}
+
+// --- continuity: ContinueConversation ---------------------------------------
+
+// ContinueConversation runs the next turn of a coding-agent conversation,
+// carrying forward the provider-native session so the model keeps its history.
+//
+// It loads the conversation's stored handle (if any) and applies it — restoring
+// both the keep-alive identity (a.SessionID) and the provider-native resume id
+// (a.<Provider>SessionID). The tmux keep-alive fast path reuses a still-live
+// session; if that session is gone, the adapter relaunches and --resumes from
+// the native id transparently. This is the layered keep-alive-vs-resume decision,
+// owned here so products don't reimplement it. On success the refreshed handle
+// is saved back so the NEXT turn (even after a process restart) can continue.
+//
+// conversationID is the durable identity of the chat; it doubles as the tmux
+// keep-alive session key. store may be nil for a fire-and-forget turn with no
+// persistence.
+func (a *Agent) ContinueConversation(ctx context.Context, conversationID, message string, store CodingSessionStore) (string, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return "", fmt.Errorf("ContinueConversation: conversationID is empty")
+	}
+	if strings.TrimSpace(message) == "" {
+		return "", fmt.Errorf("ContinueConversation: message is empty")
+	}
+
+	if store != nil {
+		if h, err := store.Load(ctx, conversationID); err != nil {
+			if a.Logger != nil {
+				a.Logger.Warn(fmt.Sprintf("ContinueConversation: load handle failed (starting cold): conversation=%q err=%v", conversationID, err))
+			}
+		} else if h != nil && !h.Empty() {
+			a.ApplyAgentSessionHandle(h)
+		}
+	}
+
+	// The conversation id IS the keep-alive identity: the adapter reuses a live
+	// tmux session keyed by it (fast path), or relaunches + --resumes from the
+	// native session id restored above (fallback).
+	a.SessionID = conversationID
+	a.enablePersistentInteractiveForProvider()
+
+	a.setTurnInFlight(true)
+	defer a.setTurnInFlight(false)
+
+	answer, err := a.Ask(ctx, message)
+	if err != nil {
+		return answer, err
+	}
+
+	if store != nil {
+		if h := a.CurrentAgentSessionHandle(); h != nil {
+			if saveErr := store.Save(ctx, conversationID, h); saveErr != nil && a.Logger != nil {
+				a.Logger.Warn(fmt.Sprintf("ContinueConversation: save handle failed (continuity may be lost): conversation=%q err=%v", conversationID, saveErr))
+			}
+		}
+	}
+	return answer, nil
+}
+
+// enablePersistentInteractiveForProvider turns on the tmux keep-alive mode for
+// the agent's coding-CLI provider so the session stays warm for the fast path
+// between turns. It is a no-op for non-coding-CLI providers.
+func (a *Agent) enablePersistentInteractiveForProvider() {
+	switch a.provider {
+	case llm.ProviderClaudeCode:
+		a.ClaudeCodePersistentInteractiveSession = true
+	case llm.ProviderCodexCLI:
+		a.CodexPersistentInteractiveSession = true
+	case llm.ProviderCursorCLI:
+		a.CursorPersistentInteractiveSession = true
+	case llm.ProviderAgyCLI:
+		a.AgyPersistentInteractiveSession = true
+	case llm.ProviderPiCLI:
+		a.PiPersistentInteractiveSession = true
+	}
+}
+
+func (a *Agent) setTurnInFlight(v bool) {
+	a.turnInFlightMu.Lock()
+	a.turnInFlight = v
+	a.turnInFlightMu.Unlock()
+}
+
+// TurnInFlight reports whether a ContinueConversation turn is currently running
+// for this agent.
+func (a *Agent) TurnInFlight() bool {
+	a.turnInFlightMu.Lock()
+	defer a.turnInFlightMu.Unlock()
+	return a.turnInFlight
+}
+
+// --- delivery: steer vs query -----------------------------------------------
+
+// SupportsSteering reports whether the agent's transport accepts live input into
+// a running turn (true mid-turn steering). All tmux CLI providers support it
+// today; future query-only transports (API/JSON streaming) will not.
+func (a *Agent) SupportsSteering() bool {
+	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.ModelID)
+	return ok && contract.SupportsLiveInput
+}
+
+// DeliveryMode reports how Deliver routed a message.
+type DeliveryMode string
+
+const (
+	// DeliveryModeStartedTurn: no turn was in flight, so the message started the
+	// next (warm-reused or --resumed) turn, which ran to completion.
+	DeliveryModeStartedTurn DeliveryMode = "started_turn"
+	// DeliveryModeSteered: a turn was in flight and the transport accepts live
+	// input, so the message was injected straight into the running turn.
+	DeliveryModeSteered DeliveryMode = "steered"
+	// DeliveryModeQueued: a turn was in flight on a query-only transport, so the
+	// message was queued for the next turn boundary.
+	DeliveryModeQueued DeliveryMode = "queued"
+)
+
+// Delivered is the outcome of Deliver.
+type Delivered struct {
+	Mode DeliveryMode
+	// Answer is the completed turn's final text; populated only for
+	// DeliveryModeStartedTurn (steer/queue return immediately, before any answer).
+	Answer string
+}
+
+type deliveryDecision string
+
+const (
+	decideStartTurn deliveryDecision = "start_turn"
+	decideSteer     deliveryDecision = "steer"
+	decideQueue     deliveryDecision = "queue"
+)
+
+// decideDelivery is the pure steer-vs-query routing rule, factored out so it is
+// deterministically testable without a live session:
+//
+//	idle                    -> start the next (resumed) turn
+//	busy + steerable        -> steer into the running turn
+//	busy + not steerable    -> queue for the next boundary
+func decideDelivery(turnInFlight, supportsSteering bool) deliveryDecision {
+	if !turnInFlight {
+		return decideStartTurn
+	}
+	if supportsSteering {
+		return decideSteer
+	}
+	return decideQueue
+}
+
+// Deliver routes a user message using the steer-vs-query decision. If no turn is
+// in flight it starts the next turn via ContinueConversation (blocking until the
+// turn completes, and returning its answer). If a turn is in flight it steers the
+// message into the running turn (steerable transports) or queues it for the next
+// boundary (query-only transports), returning immediately.
+//
+// Deliver is safe to call from a different goroutine than the one running the
+// in-flight turn — that is the point of steering while busy.
+func (a *Agent) Deliver(ctx context.Context, conversationID, message string, store CodingSessionStore) (Delivered, error) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return Delivered{}, fmt.Errorf("Deliver: message is empty")
+	}
+
+	switch decideDelivery(a.TurnInFlight(), a.SupportsSteering()) {
+	case decideStartTurn:
+		answer, err := a.ContinueConversation(ctx, conversationID, message, store)
+		return Delivered{Mode: DeliveryModeStartedTurn, Answer: answer}, err
+	case decideSteer:
+		if _, err := a.DeliverUserMessage(ctx, UserMessageDeliveryRequest{
+			SessionID: strings.TrimSpace(conversationID),
+			Message:   message,
+			Intent:    UserMessageDeliveryIntentAuto,
+		}); err != nil {
+			return Delivered{}, err
+		}
+		return Delivered{Mode: DeliveryModeSteered}, nil
+	default: // decideQueue
+		a.AddSteerMessage(message)
+		return Delivered{Mode: DeliveryModeQueued}, nil
+	}
+}

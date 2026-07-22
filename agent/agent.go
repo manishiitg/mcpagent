@@ -881,6 +881,15 @@ type Agent struct {
 	// Pi CLI native session ID for --session-id resume on subsequent turns.
 	PiSessionID string
 
+	// turnInFlight tracks whether a ContinueConversation turn is currently
+	// running for this agent. Deliver reads it to make the steer-vs-query
+	// decision: a message that arrives while a turn is in flight is steered
+	// into the running turn (or queued for query-only transports); a message
+	// that arrives idle starts a fresh (warm-reused or --resumed) turn.
+	// Guarded by turnInFlightMu. See coding_session.go.
+	turnInFlight   bool
+	turnInFlightMu sync.Mutex
+
 	// Antigravity CLI conversation ID for --conversation on subsequent turns.
 	AgySessionID string
 
