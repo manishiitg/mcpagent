@@ -95,27 +95,58 @@ func ensureRealBridgeBinary(t *testing.T) string {
 	return bin
 }
 
-// TestRealBridgeStreamingClaudeE2E is the production-fidelity streaming test the
-// stand-in-MCP-server tests were missing: a real Claude Code turn whose tools go
+// realBridgeProviderCase is one coding-agent provider exercised through the REAL
+// bridge. streamEnv is the transcript-streaming opt-in env var (empty when the
+// provider streams structured chunks natively, e.g. pi's markers).
+type realBridgeProviderCase struct {
+	name      string
+	provider  llm.Provider
+	modelID   string
+	cliBin    string
+	streamEnv string
+}
+
+func realBridgeProviderCases() []realBridgeProviderCase {
+	return []realBridgeProviderCase{
+		{name: "claude", provider: llm.ProviderClaudeCode, modelID: "claude-haiku-4-5", cliBin: "claude", streamEnv: "CLAUDE_CODE_STREAM_TRANSCRIPT"},
+		{name: "codex", provider: llm.ProviderCodexCLI, modelID: "gpt-5.6-luna", cliBin: "codex", streamEnv: "CODEX_CLI_STREAM_TRANSCRIPT"},
+	}
+}
+
+// TestRealBridgeStreamingE2E is the production-fidelity streaming test the
+// stand-in-MCP-server tests were missing: a real coding-agent turn whose tools go
 // through the REAL mcpbridge → executor HTTP API → a REAL mcpagent tool
 // (execute_shell_command running an actual shell), with structured streaming
 // captured at the mcpagent layer (events.StreamingChunkEvent). It proves the
 // whole production path streams: bridge tool-call chunks reach the app AND the
-// real shell tool actually ran (wrote + read a file on disk).
+// real shell tool actually ran — per provider.
 //
-// Gated by RUN_MCPAGENT_REAL_BRIDGE_E2E=1; requires an authenticated `claude`
-// CLI, tmux, and go (to build the bridge). No node / stand-in server.
-func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
+// Gated by RUN_MCPAGENT_REAL_BRIDGE_E2E=1 (optional MCPAGENT_REAL_BRIDGE_ONLY=<name>);
+// requires the provider's authenticated CLI, tmux, and go (to build the bridge).
+// No node / stand-in server.
+func TestRealBridgeStreamingE2E(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
 		t.Skip("set RUN_MCPAGENT_REAL_BRIDGE_E2E=1 to run the real-bridge streaming e2e")
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
-		t.Skip("authenticated `claude` CLI required")
+	only := os.Getenv("MCPAGENT_REAL_BRIDGE_ONLY")
+	bridgeBin := ensureRealBridgeBinary(t)
+	for _, pc := range realBridgeProviderCases() {
+		if only != "" && only != pc.name {
+			continue
+		}
+		t.Run(pc.name, func(t *testing.T) { runRealBridgeStreaming(t, pc, bridgeBin) })
+	}
+}
+
+func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin string) {
+	if _, err := exec.LookPath(pc.cliBin); err != nil {
+		t.Skipf("authenticated %q CLI required", pc.cliBin)
 	}
 
-	t.Setenv("MCP_BRIDGE_BINARY", ensureRealBridgeBinary(t))
-	// Structured transcript streaming is opt-in on the claude adapter.
-	t.Setenv("CLAUDE_CODE_STREAM_TRANSCRIPT", "1")
+	t.Setenv("MCP_BRIDGE_BINARY", bridgeBin)
+	if pc.streamEnv != "" {
+		t.Setenv(pc.streamEnv, "1")
+	}
 
 	configPath := filepath.Join(t.TempDir(), "mcp_servers.json")
 	if err := os.WriteFile(configPath, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
@@ -123,7 +154,7 @@ func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
 	}
 	apiURL, apiToken := startRealExecutorServer(t, configPath)
 
-	llmModel, err := llm.InitializeLLM(llm.Config{Provider: llm.ProviderClaudeCode, ModelID: "claude-haiku-4-5"})
+	llmModel, err := llm.InitializeLLM(llm.Config{Provider: pc.provider, ModelID: pc.modelID})
 	if err != nil {
 		t.Fatalf("InitializeLLM: %v", err)
 	}
@@ -133,7 +164,7 @@ func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
 	defer cancel()
 
 	agent, err := NewAgent(ctx, llmModel, configPath,
-		WithProvider(llm.ProviderClaudeCode),
+		WithProvider(pc.provider),
 		WithAPIConfig(apiURL, apiToken),
 		WithStreaming(true),
 		WithCodingAgentWorkingDir(workDir),
@@ -160,20 +191,26 @@ func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent.AddEventListener(listener)
 
-	// The secret lives ONLY in a pre-seeded file, NEVER in the prompt, so the
-	// model cannot answer without actually running the shell tool through the
-	// bridge. Absolute path so it's independent of the shell tool's cwd.
-	secret := "REALBRIDGE_SECRET_" + realBridgeRandHex(6)
-	secretPath := filepath.Join(workDir, "secret.txt")
-	if err := os.WriteFile(secretPath, []byte(secret), 0o600); err != nil {
+	// A rich, real multi-step task: READ a real file (a project build-id that is
+	// only in the file, not the prompt — anti-cheat, benign framing so safety-tuned
+	// models don't refuse), WRITE a real file (a markdown table), then read it back.
+	// Absolute paths so they're independent of the shell tool's cwd.
+	codeWord := "BUILD_ID_" + realBridgeRandHex(6)
+	buildIDPath := filepath.Join(workDir, "build_id.txt")
+	reportPath := filepath.Join(workDir, "report.md")
+	if err := os.WriteFile(buildIDPath, []byte(codeWord), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	task := fmt.Sprintf(
-		"You have one tool: execute_shell_command, which runs a shell command and returns its output. "+
-			"Write one short sentence of narration, then use execute_shell_command to run EXACTLY this command:\n"+
-			"  cat %s\n"+
-			"Then reply on one line with the exact output of that command (a token you do not otherwise know).",
-		secretPath)
+		"You are a build assistant with one tool: execute_shell_command, which runs a shell command and returns its output. "+
+			"Do these steps in order, writing one short sentence of narration BEFORE each command:\n"+
+			"1. Run: cat %[1]s   — this prints the project build id.\n"+
+			"2. Using a shell command, write a GitHub-flavored markdown report table to the file %[2]s with EXACTLY this "+
+			"structure, substituting <BUILD_ID> with the build id from step 1:\n"+
+			"| Field | Value |\n|-------|-------|\n| build_id | <BUILD_ID> |\n| status | ok |\n"+
+			"3. Run: cat %[2]s\n"+
+			"Finally, reply with the exact contents of %[2]s (the markdown table).",
+		buildIDPath, reportPath)
 
 	answer, err := agent.Ask(ctx, task)
 	if err != nil {
@@ -214,25 +251,40 @@ func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
 		}
 	}
 
-	// Real work through the REAL bridge: the ONLY way to know the secret is to
-	// have actually run `cat secret.txt` via execute_shell_command → mcpbridge →
-	// executor → real shell. Its presence in the answer proves the whole path ran
-	// (the secret was never in the prompt).
-	if !strings.Contains(answer, secret) {
-		t.Fatalf("answer %q does not contain the file secret %q — the real shell tool did not run through the bridge", answer, secret)
+	// Real READ through the bridge: the build id (never in the prompt) proves the
+	// tool genuinely ran the `cat build_id.txt` step.
+	if !strings.Contains(answer, codeWord) {
+		t.Fatalf("answer %q does not contain the file build id %q — the real shell tool did not run through the bridge", answer, codeWord)
+	}
+	// Real WRITE through the bridge: the model actually created report.md on disk.
+	//nolint:gosec // G304: reportPath is a test-controlled temp path (t.TempDir()).
+	report, readErr := os.ReadFile(reportPath)
+	if readErr != nil {
+		t.Fatalf("report.md was not written by the real shell tool through the bridge: %v", readErr)
+	}
+	reportStr := string(report)
+	// The written file is a real markdown table carrying the build id it just read.
+	if !strings.Contains(reportStr, codeWord) || !strings.Contains(reportStr, "|") ||
+		!strings.Contains(reportStr, "build_id") || !strings.Contains(reportStr, "status") {
+		t.Fatalf("report.md is not the expected markdown table with the build id: %q", reportStr)
 	}
 	// Streaming through the real bridge: the tool call streamed as its own event...
 	if toolChunks == 0 {
 		t.Fatalf("no ToolCallStartEvent — the real bridge tool call did not stream to the mcpagent layer")
 	}
-	// ...and CLEAN transcript content (not merely raw terminal frames) reached the
-	// app — the assistant's actual words that a no-terminal UI would render.
+	// ...and CLEAN transcript content (no raw terminal frames) reached the app,
+	// INCLUDING the rich markdown table the model produced — i.e. a no-terminal UI
+	// receives the renderable table, not just plain lines.
 	if cleanContentChunks == 0 {
 		t.Fatalf("no clean transcript content streamed (%d content chunks were all raw terminal frames)", contentChunks)
 	}
+	cleanJoined := strings.Join(cleanTexts, "\n")
+	if !strings.Contains(cleanJoined, "|") || !strings.Contains(cleanJoined, codeWord) {
+		t.Fatalf("the markdown table (pipes + build id) did not stream as clean content; clean stream:\n%s", cleanJoined)
+	}
 
-	rec := agentreview.Write(t, "TestRealBridgeStreamingClaudeE2E",
-		"Claude via the REAL mcpbridge → executor → real execute_shell_command (cat a pre-seeded secret), streamed at the mcpagent layer",
+	rec := agentreview.Write(t, "TestRealBridgeStreaming_"+pc.name,
+		pc.name+" via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",
 		map[string]any{
 			"clean_transcript_content": cleanTexts,
 			"clean_content_count":      cleanContentChunks,
@@ -240,10 +292,11 @@ func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
 			"tool_call_events":         toolChunks,
 			"tool_names":               toolNames,
 			"answer":                   strings.TrimSpace(answer),
-			"secret_only_via_tool":     secret,
+			"report_md_on_disk":        reportStr,
+			"build_id_only_via_tool":   codeWord,
 			"went_through_real_bridge": true,
 		},
-		map[string]any{"streamed_clean_content": cleanContentChunks > 0, "streamed_tool": toolChunks > 0},
+		map[string]any{"streamed_clean_content": cleanContentChunks > 0, "streamed_tool": toolChunks > 0, "streamed_table": strings.Contains(cleanJoined, "|")},
 	)
 	agentreview.RequireReviewed(t, rec)
 }
