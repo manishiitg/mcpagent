@@ -5,29 +5,30 @@
     "no duplicated lines or chunks",
     "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
     "human-readable — reads like an assistant working, coherent and natural",
-    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "correct text <-> tool interleaving order (narration then the tool it describes)",
     "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
     "the final answer is coherent and matches the work performed",
     "real work actually happened (e.g. the file was written to disk)"
   ],
   "output": {
-    "answer": "Report complete:\n\n┌──────────┬───────────────────────┐\n│  Field   │         Value         │\n├──────────┼───────────────────────┤\n│ build_id │ BUILD_ID_b83c7eae7d12 │\n├──────────┼───────────────────────┤\n│ status   │ ok                    │\n└──────────┴───────────────────────┘",
-    "build_id_only_via_tool": "BUILD_ID_b83c7eae7d12",
+    "answer": "┌──────────┬───────────────────────┐\n│  Field   │         Value         │\n├──────────┼───────────────────────┤\n│ build_id │ BUILD_ID_07c40d80a7fc │\n├──────────┼───────────────────────┤\n│ status   │ ok                    │\n└──────────┴───────────────────────┘",
+    "build_id_only_via_tool": "BUILD_ID_07c40d80a7fc",
     "clean_content_count": 4,
     "clean_transcript_content": [
-      "Reading the project build ID.",
-      "Now writing the report table with the build ID.",
-      "Reading back the report file.",
-      "Report complete:\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_b83c7eae7d12 |\n| status | ok |"
+      "I'll read the build ID and create the report table.",
+      "Now I'll write the report with the build ID.",
+      "Now I'll verify the report was created correctly.",
+      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_07c40d80a7fc |\n| status | ok |"
     ],
-    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_b83c7eae7d12 |\n| status | ok |\n",
+    "delta_content_count": 0,
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_07c40d80a7fc |\n| status | ok |\n",
     "tool_call_events": 3,
     "tool_names": [
       "mcp__api-bridge__execute_shell_command",
       "mcp__api-bridge__execute_shell_command",
       "mcp__api-bridge__execute_shell_command"
     ],
-    "total_content_chunks": 15,
+    "total_content_chunks": 16,
     "went_through_real_bridge": true
   },
   "fingerprint": "564124321e6d3085",
@@ -36,6 +37,6 @@
     "reviewed_fingerprint": "564124321e6d3085",
     "reviewer": "claude-opus-4-8 (agentic P0 review)",
     "issues": null,
-    "notes": "PRODUCTION-FIDELITY, RICH TASK: claude ran a real 3-step file workflow entirely through the REAL bridge — 3x mcp__api-bridge__execute_shell_command (read build_id.txt → write report.md → read it back), each streamed as a ToolCallStartEvent. The build id BUILD_ID_b83c7eae7d12 was only in the file (never the prompt), and report.md on disk is a correct markdown table containing it, proving the write actually happened. The clean stream (Source != terminal) is exactly right: three narration lines interleaved BEFORE each tool ('Reading the project build ID.' / 'Now writing the report table with the build ID.' / 'Reading back the report file.') and a final reply that carries the full markdown table verbatim — so a no-terminal UI receives the renderable table, no ANSI noise. Clean end to end."
+    "notes": "PRODUCTION-FIDELITY, RICH TASK: claude ran the real read/write/table workflow through the REAL bridge — 3x mcp__api-bridge__execute_shell_command (read build_id.txt -> write report.md -> read it back), each a ToolCallStartEvent. build id BUILD_ID_07c40d80a7fc was only in the file; report.md on disk is a correct markdown table with it. The clean stream (Source != terminal) is interleaved narration + the final markdown table verbatim, no ANSI. As a block provider claude shows delta_content_count=0 (confirming the new IsDelta marker is per-provider correct — pi shows all deltas, claude none). Clean end to end."
   }
 }

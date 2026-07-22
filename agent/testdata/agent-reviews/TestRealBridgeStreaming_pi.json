@@ -11,29 +11,42 @@
     "real work actually happened (e.g. the file was written to disk)"
   ],
   "output": {
-    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_9d7560f911db |\n| status | ok |",
-    "build_id_only_via_tool": "BUILD_ID_9d7560f911db",
-    "clean_content_count": 8,
+    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_3ff7ad76e877 |\n| status | ok |",
+    "build_id_only_via_tool": "BUILD_ID_3ff7ad76e877",
+    "clean_content_count": 17,
     "clean_transcript_content": [
-      "I will read the build ID from the build_id.txt file.",
-      "I will write",
-      " the markdown report table with the retrieved build ID to the report.md file.",
-      "I will display the contents of the generated",
-      " report.md file.",
-      "| Field | Value |\n|-------|-------|",
-      "\n| build_id | BUILD_ID_9d7560f911db |\n|",
+      "I will retrieve the tool specification to understand the exact parameters of the ",
+      "`execute_shell_command` tool.",
+      "I will list the tools available on the `workspace_",
+      "advanced` server.",
+      "I will request the list of available servers from the",
+      " MCP gateway.",
+      "I will list the tools available in the `api-bridge` server.",
+      "I will retrieve the tool specification for `api_bridge_execute_shell_command`.",
+      "I will run a command to print the contents of",
+      " the project build ID file.",
+      "I will write the GitHub",
+      "-flavored markdown report table containing the build ID to the designated file.",
+      "I will display the",
+      " contents of the newly created report markdown file to verify its structure.",
+      "| Field | Value |\n|-------|-------",
+      "|\n| build_id | BUILD_ID_3ff7ad76e877 |\n|",
       " status | ok |"
     ],
-    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_9d7560f911db |\n| status | ok |\n",
-    "tool_call_events": 5,
+    "delta_content_count": 17,
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_3ff7ad76e877 |\n| status | ok |\n",
+    "tool_call_events": 8,
     "tool_names": [
+      "mcp",
+      "mcp",
+      "mcp",
       "mcp",
       "mcp",
       "mcp",
       "mcp",
       "mcp"
     ],
-    "total_content_chunks": 19,
+    "total_content_chunks": 29,
     "went_through_real_bridge": true
   },
   "fingerprint": "564124321e6d3085",
@@ -42,9 +55,8 @@
     "reviewed_fingerprint": "564124321e6d3085",
     "reviewer": "claude-opus-4-8 (agentic P0 review)",
     "issues": [
-      "DELTA MARKER NOT PROPAGATED TO mcpagent LAYER: pi streams token-level deltas (visible: 'I will write' + ' the markdown report table...'; and the table split '| Field | Value |\\n|-------|-------|' + '\\n| build_id | BUILD_ID_9d7560f911db |\\n|' + ' status | ok |'). processChunks does not copy ContentDeltaMetadataKey onto the content StreamingChunkEvent, so a mcpagent-layer consumer can't tell pi's chunks are deltas and a naive '\\n'-join would garble them. Follow-up: carry the delta marker (like Source) onto StreamingChunkEvent.",
-      "pi surfaces the bridge tool under the generic marker name 'mcp' (5x) rather than execute_shell_command."
+      "pi surfaces the bridge tool under the generic marker name 'mcp' (8x here) rather than execute_shell_command."
     ],
-    "notes": "Real-bridge path exercised end to end (now with the cold-turn readiness gate wired for pi too): pi's 'mcp' calls went mcpbridge → executor → real execute_shell_command to read build_id.txt, write report.md, and read it back. report.md on disk is a correct markdown table with BUILD_ID_9d7560f911db (only ever in the file), and pi's final reply is itself a clean GFM markdown table. Signed good; the two granularity items above are tracked follow-ups."
+    "notes": "DELTA-MARKER PROPAGATION NOW FIXED — verified on real output: all 17 clean content chunks are marked IsDelta=true (visible mid-word splits like '...workspace_' + 'advanced server.' and the table split '| Field | Value |\\n|-------' + '|\\n| build_id | ... |\\n|' + ' status | ok |'). processChunks now carries the delta marker onto StreamingChunkEvent.IsDelta, so a mcpagent-layer consumer can concatenate pi's delta run verbatim and reassemble the message without garbling (block providers like claude show delta_content_count=0). Real-bridge path clean end to end: pi's 'mcp' calls went mcpbridge → executor → real execute_shell_command; report.md on disk is a correct markdown table with BUILD_ID_3ff7ad76e877 (only ever in the file) and pi's final reply is a clean GFM table. Only the generic 'mcp' tool label remains."
   }
 }

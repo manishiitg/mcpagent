@@ -3,6 +3,7 @@ package mcpagent
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -907,5 +908,78 @@ func TestStreamingManagerLabelsChunkSource(t *testing.T) {
 	// A no-terminal UI drops Source=="terminal" and gets ONLY the clean text.
 	if len(noTerminal) != 2 || noTerminal[0] != "I'll read the file." || noTerminal[1] != "plain content" {
 		t.Fatalf("no-terminal view = %v, want the two clean content chunks", noTerminal)
+	}
+}
+
+// TestStreamingManagerPropagatesDeltaMarker proves processChunks carries the
+// token-level DELTA marker onto StreamingChunkEvent.IsDelta, so a mcpagent-layer
+// consumer can reassemble pi's mid-word deltas without garbling them (the
+// real-bridge review finding). Regression guard.
+func TestStreamingManagerPropagatesDeltaMarker(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{SessionID: "session-delta-marker-test", listeners: []AgentEventListener{listener}}
+
+	sm := &streamingManager{
+		streamChan:    make(chan llmtypes.StreamChunk, 8),
+		streamingDone: make(chan bool, 1),
+		startTime:     time.Now(),
+	}
+	go sm.processChunks(context.Background(), agent)
+
+	delta := func(s string) llmtypes.StreamChunk {
+		return llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeContent, Content: s, Metadata: map[string]interface{}{llmtypes.ContentDeltaMetadataKey: true}}
+	}
+	// A pi-style token split mid-word across two deltas, then a block chunk.
+	sm.streamChan <- delta("The id is PI_STREAM_B_cea332")
+	sm.streamChan <- delta("c7")
+	sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeContent, Content: "Done."}
+	sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeTerminal, Content: "\x1b[2J[pane]"}
+	close(sm.streamChan)
+	<-sm.streamingDone
+
+	var evs []*events.StreamingChunkEvent
+	for _, e := range listener.events {
+		if sc, ok := e.Data.(*events.StreamingChunkEvent); ok {
+			evs = append(evs, sc)
+		}
+	}
+	if len(evs) != 4 {
+		t.Fatalf("got %d StreamingChunkEvents, want 4", len(evs))
+	}
+	wantDelta := []bool{true, true, false, false}
+	for i, sc := range evs {
+		if sc.IsDelta != wantDelta[i] {
+			t.Fatalf("event[%d] (%q) IsDelta=%v, want %v", i, sc.Content, sc.IsDelta, wantDelta[i])
+		}
+	}
+
+	// A consumer reassembles using IsDelta: concatenate delta runs verbatim, join
+	// blocks with "\n", drop terminal frames. The mid-word token must survive.
+	var blocks []string
+	var buf strings.Builder
+	flush := func() {
+		if buf.Len() > 0 {
+			blocks = append(blocks, buf.String())
+			buf.Reset()
+		}
+	}
+	for _, sc := range evs {
+		if sc.Source == events.StreamingChunkSourceTerminal {
+			continue
+		}
+		if sc.IsDelta {
+			buf.WriteString(sc.Content)
+			continue
+		}
+		flush()
+		blocks = append(blocks, sc.Content)
+	}
+	flush()
+	msg := strings.Join(blocks, "\n")
+	if !strings.Contains(msg, "PI_STREAM_B_cea332c7") {
+		t.Fatalf("delta reassembly garbled the token: %q", msg)
+	}
+	if msg != "The id is PI_STREAM_B_cea332c7\nDone." {
+		t.Fatalf("unexpected reassembled message: %q", msg)
 	}
 }

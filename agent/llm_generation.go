@@ -543,6 +543,18 @@ func contentChunkSource(chunk llmtypes.StreamChunk) string {
 	return events.StreamingChunkSourceContent
 }
 
+// contentChunkIsDelta reports whether a provider content chunk is a token-level
+// delta (marked with llmtypes.ContentDeltaMetadataKey by providers whose stream
+// splits mid-word, e.g. pi's markers) so the mcpagent StreamingChunkEvent can
+// carry that granularity to downstream consumers.
+func contentChunkIsDelta(chunk llmtypes.StreamChunk) bool {
+	if chunk.Metadata == nil {
+		return false
+	}
+	v, ok := chunk.Metadata[llmtypes.ContentDeltaMetadataKey].(bool)
+	return ok && v
+}
+
 func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 	defer func() {
 		if sm.streamDebugFile != nil {
@@ -572,6 +584,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 						ChunkIndex:    sm.contentChunkIndex,
 						IsToolCall:    false,
 						Source:        contentChunkSource(chunk),
+						IsDelta:       contentChunkIsDelta(chunk),
 					})
 				}
 

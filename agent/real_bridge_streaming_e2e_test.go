@@ -257,7 +257,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	// event type at this layer) — both must appear for a streamed tool turn.
 	// StreamingChunkEvent.Source now separates raw terminal frames from clean
 	// content, so a no-terminal UI selects Source != "terminal" (no heuristics).
-	var contentChunks, cleanContentChunks, toolChunks int
+	var contentChunks, cleanContentChunks, deltaContentChunks, toolChunks int
 	var cleanTexts, toolNames []string
 	for _, ev := range listener.events {
 		switch d := ev.Data.(type) {
@@ -269,14 +269,17 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 			if d.Source != events.StreamingChunkSourceTerminal {
 				cleanContentChunks++
 				cleanTexts = append(cleanTexts, d.Content)
+				if d.IsDelta {
+					deltaContentChunks++
+				}
 			}
 		case *events.ToolCallStartEvent:
 			toolChunks++
 			toolNames = append(toolNames, d.ToolName)
 		}
 	}
-	t.Logf("real-bridge stream: %d content chunk(s) (%d clean transcript, rest terminal), %d tool-call event(s) %v; answer=%q",
-		contentChunks, cleanContentChunks, toolChunks, toolNames, strings.TrimSpace(answer))
+	t.Logf("real-bridge stream: %d content chunk(s) (%d clean transcript, %d delta, rest terminal), %d tool-call event(s) %v; answer=%q",
+		contentChunks, cleanContentChunks, deltaContentChunks, toolChunks, toolNames, strings.TrimSpace(answer))
 
 	// The clean view must be free of raw terminal frames (ANSI escapes) now that
 	// Source separates them — proves the fix on real output, not a heuristic.
@@ -323,6 +326,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		map[string]any{
 			"clean_transcript_content": cleanTexts,
 			"clean_content_count":      cleanContentChunks,
+			"delta_content_count":      deltaContentChunks,
 			"total_content_chunks":     contentChunks,
 			"tool_call_events":         toolChunks,
 			"tool_names":               toolNames,

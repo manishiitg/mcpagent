@@ -1954,6 +1954,13 @@ type StreamingChunkEvent struct {
 	// A no-terminal UI keeps Source != "terminal"; a raw-terminal UI keeps
 	// Source == "terminal". Empty is treated as "content" for backward compat.
 	Source string `json:"source,omitempty"`
+	// IsDelta reports whether Content is a token-level DELTA (a fragment that may
+	// split mid-word, as pi's marker stream emits) rather than a whole assistant
+	// text BLOCK (as the transcript-tailing providers emit). A consumer
+	// reassembling the message MUST concatenate a run of deltas VERBATIM (never
+	// "\n"-join them, which would split tokens) and treat block chunks as
+	// separate lines. False for block chunks and terminal snapshots.
+	IsDelta bool `json:"is_delta,omitempty"`
 }
 
 // StreamingChunkSource constants for StreamingChunkEvent.Source.
