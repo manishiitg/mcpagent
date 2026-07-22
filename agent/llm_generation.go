@@ -526,6 +526,23 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 }
 
 // processChunks runs in a goroutine to handle incoming streaming chunks
+// contentChunkSource labels a content StreamingChunkEvent so consumers can tell
+// clean transcript-tailed text from other content without heuristics. Providers
+// that stream from the CLI transcript/markers tag chunks with a
+// "<provider>_stream_source":"transcript" metadata key; when present this returns
+// "transcript", otherwise "content". Terminal snapshots are labelled separately.
+func contentChunkSource(chunk llmtypes.StreamChunk) string {
+	for k, v := range chunk.Metadata {
+		if !strings.HasSuffix(k, "_stream_source") {
+			continue
+		}
+		if s, ok := v.(string); ok && s == events.StreamingChunkSourceTranscript {
+			return events.StreamingChunkSourceTranscript
+		}
+	}
+	return events.StreamingChunkSourceContent
+}
+
 func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 	defer func() {
 		if sm.streamDebugFile != nil {
@@ -554,6 +571,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 						Content:       chunk.Content,
 						ChunkIndex:    sm.contentChunkIndex,
 						IsToolCall:    false,
+						Source:        contentChunkSource(chunk),
 					})
 				}
 
@@ -594,6 +612,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					Content:    chunk.Content,
 					ChunkIndex: sm.contentChunkIndex,
 					IsToolCall: false,
+					Source:     events.StreamingChunkSourceTerminal,
 				})
 
 				if a.StreamingCallback != nil {

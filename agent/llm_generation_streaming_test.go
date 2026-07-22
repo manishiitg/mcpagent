@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -853,5 +854,58 @@ func TestFinishStreamingNilResponse(t *testing.T) {
 	}
 	if endEvent.ResolvedModel != "" {
 		t.Fatalf("ResolvedModel = %q, want empty (nil resp)", endEvent.ResolvedModel)
+	}
+}
+
+// TestStreamingManagerLabelsChunkSource proves processChunks stamps
+// StreamingChunkEvent.Source so a no-terminal UI can select transcript-only
+// content without heuristics: transcript-tailed content -> "transcript", plain
+// content -> "content", terminal snapshots -> "terminal". Regression guard for the
+// real-bridge finding that terminal frames were indistinguishable from clean text.
+func TestStreamingManagerLabelsChunkSource(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{SessionID: "session-source-label-test", listeners: []AgentEventListener{listener}}
+
+	sm := &streamingManager{
+		streamChan:    make(chan llmtypes.StreamChunk, 4),
+		streamingDone: make(chan bool, 1),
+		startTime:     time.Now(),
+	}
+	go sm.processChunks(context.Background(), agent)
+
+	sm.streamChan <- llmtypes.StreamChunk{
+		Type:     llmtypes.StreamChunkTypeContent,
+		Content:  "I'll read the file.",
+		Metadata: map[string]interface{}{"claude_code_stream_source": "transcript"},
+	}
+	sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeContent, Content: "plain content"}
+	sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeTerminal, Content: "\x1b[2J[raw pane frame]"}
+	close(sm.streamChan)
+	<-sm.streamingDone
+
+	var sources []string
+	var noTerminal []string
+	for _, e := range listener.events {
+		sc, ok := e.Data.(*events.StreamingChunkEvent)
+		if !ok {
+			continue
+		}
+		sources = append(sources, sc.Source)
+		if sc.Source != events.StreamingChunkSourceTerminal {
+			noTerminal = append(noTerminal, sc.Content)
+		}
+	}
+
+	want := []string{
+		events.StreamingChunkSourceTranscript,
+		events.StreamingChunkSourceContent,
+		events.StreamingChunkSourceTerminal,
+	}
+	if !reflect.DeepEqual(sources, want) {
+		t.Fatalf("chunk sources = %v, want %v", sources, want)
+	}
+	// A no-terminal UI drops Source=="terminal" and gets ONLY the clean text.
+	if len(noTerminal) != 2 || noTerminal[0] != "I'll read the file." || noTerminal[1] != "plain content" {
+		t.Fatalf("no-terminal view = %v, want the two clean content chunks", noTerminal)
 	}
 }

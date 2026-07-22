@@ -183,9 +183,8 @@ func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
 	// Collect the structured stream the mcpagent layer emitted. Content arrives as
 	// StreamingChunkEvent; tool calls arrive as ToolCallStartEvent (a distinct
 	// event type at this layer) — both must appear for a streamed tool turn.
-	// NOTE: at this layer StreamingChunkEvent carries BOTH clean transcript content
-	// AND raw terminal-snapshot frames (ANSI escapes), so we separate them: a
-	// no-terminal UI needs the CLEAN ones. `\x1b` (ESC) marks a raw terminal frame.
+	// StreamingChunkEvent.Source now separates raw terminal frames from clean
+	// content, so a no-terminal UI selects Source != "terminal" (no heuristics).
 	var contentChunks, cleanContentChunks, toolChunks int
 	var cleanTexts, toolNames []string
 	for _, ev := range listener.events {
@@ -195,7 +194,7 @@ func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
 				continue
 			}
 			contentChunks++
-			if !strings.Contains(d.Content, "\x1b") {
+			if d.Source != events.StreamingChunkSourceTerminal {
 				cleanContentChunks++
 				cleanTexts = append(cleanTexts, d.Content)
 			}
@@ -206,6 +205,14 @@ func TestRealBridgeStreamingClaudeE2E(t *testing.T) {
 	}
 	t.Logf("real-bridge stream: %d content chunk(s) (%d clean transcript, rest terminal), %d tool-call event(s) %v; answer=%q",
 		contentChunks, cleanContentChunks, toolChunks, toolNames, strings.TrimSpace(answer))
+
+	// The clean view must be free of raw terminal frames (ANSI escapes) now that
+	// Source separates them — proves the fix on real output, not a heuristic.
+	for _, c := range cleanTexts {
+		if strings.Contains(c, "\x1b") {
+			t.Fatalf("a Source!=terminal chunk still contained raw terminal ANSI: %q", c)
+		}
+	}
 
 	// Real work through the REAL bridge: the ONLY way to know the secret is to
 	// have actually run `cat secret.txt` via execute_shell_command → mcpbridge →

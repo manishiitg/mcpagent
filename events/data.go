@@ -1945,7 +1945,23 @@ type StreamingChunkEvent struct {
 	ChunkIndex   int    `json:"chunk_index"`             // Sequential index of this chunk
 	IsToolCall   bool   `json:"is_tool_call"`            // Whether this chunk is part of a tool call
 	FinishReason string `json:"finish_reason,omitempty"` // Reason for finishing (if this is the last chunk)
+	// Source distinguishes what KIND of chunk this is so a consumer can select
+	// the right stream without heuristics:
+	//   "transcript" — clean assistant text tailed from the CLI transcript/markers
+	//   "content"    — assistant text with no transcript-source marker
+	//   "terminal"   — a raw terminal-pane snapshot (ANSI frames), a separate UX
+	//                  channel; a design-first / no-terminal UI MUST drop these.
+	// A no-terminal UI keeps Source != "terminal"; a raw-terminal UI keeps
+	// Source == "terminal". Empty is treated as "content" for backward compat.
+	Source string `json:"source,omitempty"`
 }
+
+// StreamingChunkSource constants for StreamingChunkEvent.Source.
+const (
+	StreamingChunkSourceTranscript = "transcript"
+	StreamingChunkSourceContent    = "content"
+	StreamingChunkSourceTerminal   = "terminal"
+)
 
 func (e *StreamingChunkEvent) GetEventType() EventType {
 	return StreamingChunk
