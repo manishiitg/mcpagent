@@ -95,7 +95,17 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 	opts = append(opts, llm.WithCodexDisableShellTool())
 	opts = append(opts, llm.WithCodexApprovalPolicy("never"))
-	opts = append(opts, llm.WithCodexSandbox("workspace-write"))
+	// Bridge-only posture for codex. Unlike claude/cursor/pi, codex ALWAYS
+	// advertises a core `functions.exec` tool that cannot be removed by any flag
+	// or config (verified: it survives --disable unified_exec/shell_tool/
+	// multi_agent/code_mode_*, read-only sandbox, and -c tools.exec=false). So we
+	// cannot make codex strictly tool-only-through-the-bridge. Instead we run it
+	// READ-ONLY: native exec can read but CANNOT write or mutate the host, so every
+	// state change is forced through the MCP bridge (execute_shell_command runs in
+	// the executor process, not codex's sandbox, so bridge writes still work).
+	// Net guarantee for codex: no native WRITES — all mutations are bridge-routed.
+	// See TestRealBridgeStreamingE2E (codex case) which enforces this.
+	opts = append(opts, llm.WithCodexSandbox("read-only"))
 	if a.CodexSessionID != "" {
 		opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 	}

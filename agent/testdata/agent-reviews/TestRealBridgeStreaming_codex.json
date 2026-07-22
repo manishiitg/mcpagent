@@ -11,16 +11,17 @@
     "real work actually happened (e.g. the file was written to disk)"
   ],
   "output": {
-    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_88491f7bf274 |\n| status | ok |",
-    "build_id_only_via_tool": "BUILD_ID_88491f7bf274",
+    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_e2319cbe9b8a |\n| status | ok |",
+    "build_id_only_via_tool": "BUILD_ID_e2319cbe9b8a",
     "clean_content_count": 4,
     "clean_transcript_content": [
       "I’ll read the project build ID first.",
-      "The build ID is `BUILD_ID_88491f7bf274`; I’ll write the required report table.",
-      "I’ll read back the completed report to verify its exact contents.",
-      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_88491f7bf274 |\n| status | ok |"
+      "The build ID is `BUILD_ID_e2319cbe9b8a`; I’ll write the requested report table.",
+      "The report has been written; I’ll read it back for verification.",
+      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_e2319cbe9b8a |\n| status | ok |"
     ],
-    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_88491f7bf274 |\n| status | ok |\n",
+    "delta_content_count": 0,
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_e2319cbe9b8a |\n| status | ok |\n",
     "tool_call_events": 7,
     "tool_names": [
       "exec",
@@ -31,7 +32,7 @@
       "exec",
       "execute_shell_command"
     ],
-    "total_content_chunks": 6,
+    "total_content_chunks": 15,
     "went_through_real_bridge": true
   },
   "fingerprint": "564124321e6d3085",
@@ -40,8 +41,9 @@
     "reviewed_fingerprint": "564124321e6d3085",
     "reviewer": "claude-opus-4-8 (agentic P0 review)",
     "issues": [
-      "codex interleaves its native exec shell (4x) with the bridge tool execute_shell_command (3x); the bridge path genuinely ran (read/write/read report.md) but the run is codex-shell + bridge, not bridge-only (the executor config does not disable codex native shell). Non-blocking."
+      "codex still emits native `exec` calls (it uses them for READS): codex's core functions.exec tool cannot be removed by any flag/config (verified). This is the documented bridge-only EXCEPTION for codex.",
+      "pi-style caveat n/a; generic naming n/a for codex."
     ],
-    "notes": "Real-bridge path exercised end to end (now with the cold-turn readiness gate wired for codex too): execute_shell_command via mcpbridge -> executor -> real shell read build_id.txt, wrote report.md, and read it back. report.md on disk is a correct markdown table with the build id, and codex final reply is a clean GFM markdown table that streamed as clean content (Source != terminal). Signed good; the exec/bridge interleave is the tracked caveat."
+    "notes": "BRIDGE-ONLY POLICY (P0): codex runs READ-ONLY sandbox, so its unremovable native functions.exec can read but CANNOT write/mutate the host. The rich task still completed: report.md on disk is a correct markdown table with the build id, and under read-only sandbox only the BRIDGE tool (execute_shell_command via mcpbridge -> executor) could have written it. tool stream = [exec, exec, execute_shell_command, exec, execute_shell_command, exec, execute_shell_command]: the 3 execute_shell_command are bridge (writes/controlled), the exec are native reads. assertNoNativeWrites passes (bridge used, no native write/edit/patch tool). Net guarantee for codex: no native WRITES — all mutations are bridge-routed. claude/cursor/pi remain STRICTLY bridge-only (no native tools)."
   }
 }

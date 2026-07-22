@@ -29,6 +29,85 @@ func realBridgeRandHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// isBridgeOrWebsearchTool reports whether a streamed tool name is ALLOWED under
+// the bridge-only policy: an mcpbridge tool (execute_shell_command,
+// diff_patch_workspace_file, agent_browser, get_api_spec — directly or via
+// claude's mcp__api-bridge__ prefix), a provider's MCP-access meta-tool (how
+// cursor/pi reach the bridge), or websearch — the ONE built-in tool we permit.
+// Anything else is a NATIVE tool (codex exec/shell, claude Bash/Read/Write,
+// cursor Shell/Edit, ...) that ran OUTSIDE the bridge — no executor, no
+// session-scoping, no controlled tool set — which the policy forbids.
+func isBridgeOrWebsearchTool(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, b := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec"} {
+		if strings.Contains(n, b) {
+			return true
+		}
+	}
+	switch n {
+	case "getmcptools", "callmcptool", "listmcptools", "listmcpresources", "readmcpresource", "mcp":
+		// cursor's MCP meta-tools and pi's generic "mcp" bridge label.
+		return true
+	}
+	if strings.Contains(n, "web_search") || strings.Contains(n, "websearch") {
+		return true
+	}
+	return false
+}
+
+// assertBridgeOrWebsearchOnly fails if any streamed tool is a native tool — the
+// strict bridge-only-plus-websearch policy. Empty toolNames is fine (no tools used).
+func assertBridgeOrWebsearchOnly(t *testing.T, toolNames []string) {
+	t.Helper()
+	var native []string
+	for _, tn := range toolNames {
+		if !isBridgeOrWebsearchTool(tn) {
+			native = append(native, tn)
+		}
+	}
+	if len(native) > 0 {
+		t.Fatalf("BRIDGE-ONLY POLICY VIOLATED: native (non-bridge, non-websearch) tools ran, bypassing the bridge: %v (all tools: %v)", native, toolNames)
+	}
+}
+
+// isNativeWriteTool reports whether a native tool name implies a WRITE/mutation
+// (as opposed to a read/exec). Used for codex's no-native-writes guarantee.
+func isNativeWriteTool(name string) bool {
+	n := strings.ToLower(name)
+	for _, w := range []string{"write", "edit", "apply_patch", "patch", "create_file", "create-file", "replace"} {
+		if strings.Contains(n, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// assertNoNativeWrites is the codex-specific policy check (see the P0 note): codex
+// cannot drop its core functions.exec tool, so it runs read-only. This asserts the
+// remaining guarantee — that WRITES are bridge-routed: a bridge tool was actually
+// used, and no native WRITE/edit/patch tool appears. Native read-only exec is a
+// documented, tolerated exception (harmless under the read-only sandbox).
+func assertNoNativeWrites(t *testing.T, toolNames []string) {
+	t.Helper()
+	usedBridge := false
+	var nativeWrites []string
+	for _, tn := range toolNames {
+		if isBridgeOrWebsearchTool(tn) {
+			usedBridge = true
+			continue
+		}
+		if isNativeWriteTool(tn) {
+			nativeWrites = append(nativeWrites, tn)
+		}
+	}
+	if !usedBridge {
+		t.Fatalf("no bridge tool was used — the file write did not go through the bridge; tools=%v", toolNames)
+	}
+	if len(nativeWrites) > 0 {
+		t.Fatalf("NATIVE WRITE tools used (mutations must be bridge-routed): %v (all tools: %v)", nativeWrites, toolNames)
+	}
+}
+
 // startRealExecutorServer boots the executor HTTP API the mcpbridge posts tool
 // calls to and registers cleanup. t-based convenience wrapper around bootRealExecutor.
 func startRealExecutorServer(t *testing.T, configPath string) (string, string) {
@@ -123,21 +202,58 @@ type realBridgeProviderCase struct {
 	streamEnv  string
 	apiKeyEnvs []string
 	makeKeys   func(key string) *llm.ProviderAPIKeys
+	// strictBridgeOnly enforces the BRIDGE-ONLY tool policy: EVERY tool the model
+	// uses must be an mcpbridge tool or websearch, with NO native shell/exec/edit/
+	// read tools that bypass the executor (no session-scoping, no controlled tool
+	// set, arbitrary host access). True for providers whose native tools can be
+	// disabled (claude via bridge-only tools, cursor via deny-builtins, pi via
+	// bridge-only-tools). FALSE for codex — see the P0 policy note below.
+	strictBridgeOnly bool
 }
 
+// ---- BRIDGE-ONLY TOOL POLICY (P0) ----
+//
+// Coding agents must route ALL tool use through the mcpbridge (→ executor → the
+// controlled, session-scoped tool set) plus at most the websearch built-in.
+// Native tools (a CLI's own shell/exec/edit/read) bypass that control and are
+// forbidden. TestRealBridgeStreamingE2E enforces this per provider:
+//
+//	claude / cursor / pi : STRICT — assertBridgeOrWebsearchOnly fails on ANY
+//	                       native tool. Their native tools are fully disabled
+//	                       (claude bridge-only tools, cursor deny-builtins, pi
+//	                       bridge-only-tools), so they use only mcp__api-bridge__*
+//	                       / CallMcpTool / mcp.
+//
+//	codex                : DOCUMENTED EXCEPTION. Codex ALWAYS advertises a core
+//	                       `functions.exec` tool that CANNOT be removed by any
+//	                       flag or config — verified that it survives
+//	                       --disable unified_exec/shell_tool/multi_agent/
+//	                       code_mode_*, read-only sandbox, and -c tools.exec=false.
+//	                       So codex cannot be strictly tool-only-through-the-bridge.
+//	                       Mitigation (appendCodexCLIIntegrationOptions): run codex
+//	                       READ-ONLY, so native exec can read but CANNOT write or
+//	                       mutate the host — every state change is forced through
+//	                       the bridge (which runs in the executor, not codex's
+//	                       sandbox). The codex case therefore asserts the weaker
+//	                       but safety-relevant guarantee: NO NATIVE WRITES — a real
+//	                       file was written (report.md on disk) which, under the
+//	                       read-only sandbox, only the bridge tool could have done.
 func realBridgeProviderCases() []realBridgeProviderCase {
 	return []realBridgeProviderCase{
-		{name: "claude", provider: llm.ProviderClaudeCode, modelID: "claude-haiku-4-5", cliBin: "claude", streamEnv: "CLAUDE_CODE_STREAM_TRANSCRIPT"},
-		{name: "codex", provider: llm.ProviderCodexCLI, modelID: "gpt-5.6-luna", cliBin: "codex", streamEnv: "CODEX_CLI_STREAM_TRANSCRIPT"},
+		{name: "claude", provider: llm.ProviderClaudeCode, modelID: "claude-haiku-4-5", cliBin: "claude", streamEnv: "CLAUDE_CODE_STREAM_TRANSCRIPT", strictBridgeOnly: true},
+		// codex: strictBridgeOnly=false — functions.exec is unremovable; read-only
+		// sandbox makes it read-only so writes are bridge-routed (see policy above).
+		{name: "codex", provider: llm.ProviderCodexCLI, modelID: "gpt-5.6-luna", cliBin: "codex", streamEnv: "CODEX_CLI_STREAM_TRANSCRIPT", strictBridgeOnly: false},
 		// cursor reaches the bridge via its GetMcpTools/CallMcpTool meta-tools; the
 		// mcpagent cursor integration auto-approves the MCP bridge (WithCursorApproveMCPs).
-		{name: "cursor", provider: llm.ProviderCursorCLI, modelID: "cursor-cli", cliBin: "cursor-agent", streamEnv: "CURSOR_CLI_STREAM_TRANSCRIPT"},
+		{name: "cursor", provider: llm.ProviderCursorCLI, modelID: "cursor-cli", cliBin: "cursor-agent", streamEnv: "CURSOR_CLI_STREAM_TRANSCRIPT", strictBridgeOnly: true},
 		// pi streams structured chunks natively via its injected marker hook (no
 		// streamEnv) and needs a Gemini/Pi key.
 		{
 			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.5-flash", cliBin: "pi", streamEnv: "",
-			apiKeyEnvs: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY"},
-			makeKeys:   func(k string) *llm.ProviderAPIKeys { return &llm.ProviderAPIKeys{PiCLI: &k} },
+			apiKeyEnvs:       []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY"},
+			makeKeys:         func(k string) *llm.ProviderAPIKeys { return &llm.ProviderAPIKeys{PiCLI: &k} },
+			strictBridgeOnly: true,
 		},
 	}
 }
@@ -328,6 +444,17 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	// receives the renderable table, not just plain lines.
 	if cleanContentChunks == 0 {
 		t.Fatalf("no clean transcript content streamed (%d content chunks were all raw terminal frames)", contentChunks)
+	}
+	// Bridge-only tool policy (see the P0 policy note above realBridgeProviderCases).
+	if pc.strictBridgeOnly {
+		// claude/cursor/pi: NO native tools at all.
+		assertBridgeOrWebsearchOnly(t, toolNames)
+	} else {
+		// codex: functions.exec is unremovable, so it runs read-only. Assert the
+		// weaker guarantee — NO NATIVE WRITES: a bridge tool was used and report.md
+		// on disk (asserted above) could only have been written by the bridge under
+		// the read-only sandbox; no native write/edit/patch tool appears.
+		assertNoNativeWrites(t, toolNames)
 	}
 	cleanJoined := strings.Join(cleanTexts, "\n")
 	if !strings.Contains(cleanJoined, "|") || !strings.Contains(cleanJoined, codeWord) {
