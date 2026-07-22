@@ -191,6 +191,12 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	// for a human to click through. Required whenever WithCursorMCPConfig
 	// is set in a headless context.
 	opts = append(opts, llm.WithCursorApproveMCPs())
+	if a.bridgeReadyFile != "" {
+		// Hold a cold cursor session's first prompt until the bridge reports the
+		// tools connected (tools/list answered) — closes the cold-turn race where
+		// cursor's first bridge call fails and it falls back to its Shell tool.
+		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
+	}
 	// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
 	// that denies cursor's built-in Shell/Read/Edit/Write/etc. tools at the
 	// hook layer, forcing the agent to route tool calls through the MCP

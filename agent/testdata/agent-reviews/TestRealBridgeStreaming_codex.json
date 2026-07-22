@@ -5,22 +5,22 @@
     "no duplicated lines or chunks",
     "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
     "human-readable — reads like an assistant working, coherent and natural",
-    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "correct text <-> tool interleaving order (narration then the tool it describes)",
     "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
     "the final answer is coherent and matches the work performed",
     "real work actually happened (e.g. the file was written to disk)"
   ],
   "output": {
-    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_246be08b814f |\n| status | ok |",
-    "build_id_only_via_tool": "BUILD_ID_246be08b814f",
+    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_88491f7bf274 |\n| status | ok |",
+    "build_id_only_via_tool": "BUILD_ID_88491f7bf274",
     "clean_content_count": 4,
     "clean_transcript_content": [
-      "I’ll run the requested command to read the project build ID.",
-      "I’ll write the required markdown table using the retrieved build ID.",
-      "I’ll read back the completed report file.",
-      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_246be08b814f |\n| status | ok |"
+      "I’ll read the project build ID first.",
+      "The build ID is `BUILD_ID_88491f7bf274`; I’ll write the required report table.",
+      "I’ll read back the completed report to verify its exact contents.",
+      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_88491f7bf274 |\n| status | ok |"
     ],
-    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_246be08b814f |\n| status | ok |\n",
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_88491f7bf274 |\n| status | ok |\n",
     "tool_call_events": 7,
     "tool_names": [
       "exec",
@@ -40,8 +40,8 @@
     "reviewed_fingerprint": "564124321e6d3085",
     "reviewer": "claude-opus-4-8 (agentic P0 review)",
     "issues": [
-      "codex interleaves its native `exec` shell (4x) with the bridge tool `execute_shell_command` (3x). The bridge path genuinely ran (3 execute_shell_command calls read+write+read report.md), but the run is codex-shell + bridge rather than bridge-only — the executor config does not disable codex's native shell. Non-blocking; same observation as the provider-layer codex streaming test."
+      "codex interleaves its native exec shell (4x) with the bridge tool execute_shell_command (3x); the bridge path genuinely ran (read/write/read report.md) but the run is codex-shell + bridge, not bridge-only (the executor config does not disable codex native shell). Non-blocking."
     ],
-    "notes": "PRODUCTION-FIDELITY, RICH TASK: codex ran the real 3-step file workflow through the REAL bridge — execute_shell_command (via mcpbridge → executor → real shell) read build_id.txt, wrote report.md, and read it back. The build id BUILD_ID_246be08b814f was only in the file, and report.md on disk is a correct markdown table containing it. codex's final reply is a clean GitHub-flavored markdown table ('| Field | Value | ... | build_id | BUILD_ID_246be08b814f | ... | status | ok |') that streamed as clean content (Source != terminal), no ANSI noise. Signed good; the exec/bridge interleave above is the tracked caveat."
+    "notes": "Real-bridge path exercised end to end (now with the cold-turn readiness gate wired for codex too): execute_shell_command via mcpbridge -> executor -> real shell read build_id.txt, wrote report.md, and read it back. report.md on disk is a correct markdown table with the build id, and codex final reply is a clean GFM markdown table that streamed as clean content (Source != terminal). Signed good; the exec/bridge interleave is the tracked caveat."
   }
 }

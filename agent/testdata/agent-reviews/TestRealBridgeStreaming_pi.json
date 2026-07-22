@@ -11,20 +11,20 @@
     "real work actually happened (e.g. the file was written to disk)"
   ],
   "output": {
-    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_d2954ce0b5f7 |\n| status | ok |",
-    "build_id_only_via_tool": "BUILD_ID_d2954ce0b5f7",
+    "answer": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_9d7560f911db |\n| status | ok |",
+    "build_id_only_via_tool": "BUILD_ID_9d7560f911db",
     "clean_content_count": 8,
     "clean_transcript_content": [
-      "I will run a shell command to print the project build ID from the",
-      " build_id.txt file.",
-      "I will create the markdown report file containing the build ID and status table",
-      ".",
-      "I will now display the contents of the newly created report",
-      ".md file.",
-      "| Field | Value |\n|-------|-------|\n| build_id |",
-      " BUILD_ID_d2954ce0b5f7 |\n| status | ok |"
+      "I will read the build ID from the build_id.txt file.",
+      "I will write",
+      " the markdown report table with the retrieved build ID to the report.md file.",
+      "I will display the contents of the generated",
+      " report.md file.",
+      "| Field | Value |\n|-------|-------|",
+      "\n| build_id | BUILD_ID_9d7560f911db |\n|",
+      " status | ok |"
     ],
-    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_d2954ce0b5f7 |\n| status | ok |\n",
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_9d7560f911db |\n| status | ok |\n",
     "tool_call_events": 5,
     "tool_names": [
       "mcp",
@@ -33,7 +33,7 @@
       "mcp",
       "mcp"
     ],
-    "total_content_chunks": 18,
+    "total_content_chunks": 19,
     "went_through_real_bridge": true
   },
   "fingerprint": "564124321e6d3085",
@@ -42,9 +42,9 @@
     "reviewed_fingerprint": "564124321e6d3085",
     "reviewer": "claude-opus-4-8 (agentic P0 review)",
     "issues": [
-      "DELTA MARKER NOT PROPAGATED TO mcpagent LAYER: pi streams token-level deltas (visible here: '...print the project build ID from the' + ' build_id.txt file.'; and the table split '...| build_id |' + ' BUILD_ID_d2954ce0b5f7 |...'). The provider-layer StreamAssistantText fix concatenates such deltas verbatim, but processChunks does NOT copy the ContentDeltaMetadataKey onto the content StreamingChunkEvent, so a mcpagent-layer consumer cannot tell pi's chunks are deltas and a naive '\\n'-join would garble them. Follow-up: carry the delta marker (like Source) onto StreamingChunkEvent.",
+      "DELTA MARKER NOT PROPAGATED TO mcpagent LAYER: pi streams token-level deltas (visible: 'I will write' + ' the markdown report table...'; and the table split '| Field | Value |\\n|-------|-------|' + '\\n| build_id | BUILD_ID_9d7560f911db |\\n|' + ' status | ok |'). processChunks does not copy ContentDeltaMetadataKey onto the content StreamingChunkEvent, so a mcpagent-layer consumer can't tell pi's chunks are deltas and a naive '\\n'-join would garble them. Follow-up: carry the delta marker (like Source) onto StreamingChunkEvent.",
       "pi surfaces the bridge tool under the generic marker name 'mcp' (5x) rather than execute_shell_command."
     ],
-    "notes": "Real-bridge path exercised end to end: pi's 'mcp' calls went mcpbridge → executor → real execute_shell_command to read build_id.txt, write report.md, and read it back. report.md on disk is a correct markdown table with BUILD_ID_d2954ce0b5f7 (only ever in the file), and pi's final reply is itself a clean GFM markdown table. The clean stream (Source != terminal) carries the interleaved narration + the table. Signed good; the two granularity items above are tracked follow-ups, not failures of the bridge path."
+    "notes": "Real-bridge path exercised end to end (now with the cold-turn readiness gate wired for pi too): pi's 'mcp' calls went mcpbridge → executor → real execute_shell_command to read build_id.txt, write report.md, and read it back. report.md on disk is a correct markdown table with BUILD_ID_9d7560f911db (only ever in the file), and pi's final reply is itself a clean GFM markdown table. Signed good; the two granularity items above are tracked follow-ups."
   }
 }

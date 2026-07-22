@@ -11,27 +11,23 @@
     "real work actually happened (e.g. the file was written to disk)"
   ],
   "output": {
-    "answer": "Field    │ Value\nbuild_id │ BUILD_ID_300b30d7ba09\nstatus   │ ok",
-    "build_id_only_via_tool": "BUILD_ID_300b30d7ba09",
-    "clean_content_count": 5,
+    "answer": "Field    │ Value\nbuild_id │ BUILD_ID_818fee834e94\nstatus   │ ok",
+    "build_id_only_via_tool": "BUILD_ID_818fee834e94",
+    "clean_content_count": 4,
     "clean_transcript_content": [
-      "Reading the build id from `build_id.txt`.\n",
-      "Retrying with the shell tool after the bridge connection failed.\n",
-      "Writing the markdown report table with the build id substituted.\n",
-      "Verifying the report by printing `report.md`.\n",
-      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_300b30d7ba09 |\n| status | ok |"
+      "I'll read the build id first, then create the report from it.\n",
+      "Next I'll write the markdown report table with that build id.\n",
+      "I'll display the report file to confirm it was written correctly.\n",
+      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_818fee834e94 |\n| status | ok |"
     ],
-    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_300b30d7ba09 |\n| status | ok |\n",
-    "tool_call_events": 6,
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_818fee834e94 |\n| status | ok |\n",
+    "tool_call_events": 3,
     "tool_names": [
-      "CallMcpTool",
-      "Shell",
-      "GetMcpTools",
       "CallMcpTool",
       "CallMcpTool",
       "CallMcpTool"
     ],
-    "total_content_chunks": 23,
+    "total_content_chunks": 17,
     "went_through_real_bridge": true
   },
   "fingerprint": "564124321e6d3085",
@@ -40,9 +36,8 @@
     "reviewed_fingerprint": "564124321e6d3085",
     "reviewer": "claude-opus-4-8 (agentic P0 review)",
     "issues": [
-      "COLD-TURN BRIDGE RACE: cursor's FIRST bridge tool call failed — the clean stream literally says 'Retrying with the shell tool after the bridge connection failed.' It fell back to its native Shell, then re-ran GetMcpTools and the bridge worked (CallMcpTool x3 wrote/read report.md). This is the same cold-turn MCP-readiness race the claude adapter's WithMCPReadyFile gate fixes — that gate is NOT yet wired into the cursor adapter, so cursor's opening bridge call can race the connection. Actionable: extend the readiness gate (MCP_READY_FILE) to cursor/codex/pi.",
-      "cursor reaches the bridge via GetMcpTools/CallMcpTool meta-tools and also uses its native Shell; the run is bridge + shell, not bridge-only."
+      "cursor reaches the bridge tool via its CallMcpTool meta-tool (not a direct execute_shell_command name); this is cursor's intended MCP path, not a defect."
     ],
-    "notes": "Real-bridge path exercised end to end: after the initial retry, cursor's CallMcpTool went mcpbridge → executor → real execute_shell_command to write report.md, which on disk is a correct markdown table with the build id BUILD_ID_300b30d7ba09 (only ever in the file). The clean stream (Source != terminal) is coherent narration interleaved with the tools plus the final markdown table verbatim — a no-terminal UI gets the renderable table, no ANSI. Signed good; the cold-turn race above is the tracked follow-up."
+    "notes": "COLD-TURN RACE FIXED: after wiring the WithMCPReadyFile readiness gate into the cursor adapter, cursor's first bridge call now SUCCEEDS — 3 clean CallMcpTool bridge calls (read build_id.txt → write report.md → read it back), no Shell fallback, no GetMcpTools re-discovery, and the earlier 'Retrying with the shell tool after the bridge connection failed' narration is GONE. report.md on disk is a correct markdown table with BUILD_ID_818fee834e94 (only ever in the file), and the clean stream (Source != terminal) is coherent narration interleaved with the tools plus the final markdown table verbatim. Real-bridge path clean end to end."
   }
 }

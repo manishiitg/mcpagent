@@ -124,6 +124,11 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		return nil, fmt.Errorf("Codex CLI requires serializable MCP bridge servers: %w", err)
 	}
 	opts = append(opts, llm.WithCodexMCPServers(string(mcpServersJSON)))
+	if a.bridgeReadyFile != "" {
+		// Hold a cold codex session's first prompt until the bridge reports the
+		// tools connected (tools/list answered) — see BuildBridgeMCPConfig.
+		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
+	}
 	a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge through a session TOML profile (MCP tool timeout=%s, layer=codex_mcp_client)", mcpToolTimeout))
 
 	if model.Options != nil {
