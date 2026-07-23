@@ -3,6 +3,7 @@ package mcpagent
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -99,13 +100,28 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	// advertises a core `functions.exec` tool that cannot be removed by any flag
 	// or config (verified: it survives --disable unified_exec/shell_tool/
 	// multi_agent/code_mode_*, read-only sandbox, and -c tools.exec=false). So we
-	// cannot make codex strictly tool-only-through-the-bridge. Instead we run it
-	// READ-ONLY: native exec can read but CANNOT write or mutate the host, so every
-	// state change is forced through the MCP bridge (execute_shell_command runs in
-	// the executor process, not codex's sandbox, so bridge writes still work).
-	// Net guarantee for codex: no native WRITES — all mutations are bridge-routed.
-	// See TestRealBridgeStreamingE2E (codex case) which enforces this.
-	opts = append(opts, llm.WithCodexSandbox("read-only"))
+	// cannot make codex strictly tool-only-through-the-bridge. By DEFAULT we run
+	// it READ-ONLY: native exec can read but CANNOT write or mutate the host, so
+	// every state change is forced through the MCP bridge (execute_shell_command
+	// runs in the executor process, not codex's sandbox, so bridge writes still
+	// work). Net guarantee for codex: no native WRITES — all mutations are
+	// bridge-routed. See TestRealBridgeStreamingE2E (codex case) which enforces
+	// this for the default.
+	//
+	// This containment is only worth its cost (no native network under
+	// read-only — there is no read-only+network mode — and codex tends to
+	// disengage from tools when its own preamble says "read-only, no network")
+	// for autonomous/unattended/multi-tenant use. An interactive, single-owner
+	// caller (see Agent.CodexSandboxMode doc) can opt into "workspace-write" via
+	// WithCodexSandbox, optionally with WithCodexNetworkAccess.
+	sandboxMode := a.CodexSandboxMode
+	if strings.TrimSpace(sandboxMode) == "" {
+		sandboxMode = "read-only"
+	}
+	opts = append(opts, llm.WithCodexSandbox(sandboxMode))
+	if sandboxMode == "workspace-write" && a.CodexNetworkAccess {
+		opts = append(opts, llm.WithCodexConfigOverrides([]string{"sandbox_workspace_write.network_access=true"}))
+	}
 	if a.CodexSessionID != "" {
 		opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 	}

@@ -188,6 +188,24 @@ func WithCodexPersistentInteractiveSession(enabled bool) AgentOption {
 	}
 }
 
+// WithCodexSandbox overrides codex's sandbox mode ("read-only" [default],
+// "workspace-write", or "danger-full-access"). See the CodexSandboxMode field
+// doc comment on Agent for when to change this from the default.
+func WithCodexSandbox(mode string) AgentOption {
+	return func(a *Agent) {
+		a.CodexSandboxMode = mode
+	}
+}
+
+// WithCodexNetworkAccess enables codex's native network access under
+// "workspace-write" sandbox mode. No effect under "read-only" or
+// "danger-full-access". See the CodexNetworkAccess field doc comment on Agent.
+func WithCodexNetworkAccess(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.CodexNetworkAccess = enabled
+	}
+}
+
 // WithForceStructuredCodingAgent forces the coding-agent CLI providers
 // (claude-code, codex-cli, cursor-cli) to use the structured
 // JSON transport (--print/--exec/stream-json) even when a session ID is
@@ -859,6 +877,30 @@ type Agent struct {
 	// WithIsolatedSessionWorkspace.
 	isolatedWorkspacePath string
 	isolatedWorkspaceOnce sync.Once
+
+	// Codex CLI sandbox mode ("read-only", "workspace-write", or
+	// "danger-full-access"). Defaults to "read-only" (see
+	// appendCodexCLIIntegrationOptions): codex always ships an unremovable native
+	// `functions.exec` shell tool, so this is the only lever that keeps native
+	// exec from bypassing the MCP bridge — read-only means native exec can read
+	// but never write, forcing every mutation through the audited bridge. That
+	// containment is the right default for autonomous/unattended/multi-tenant
+	// use (AgentWorks workflow content run with no one watching each turn), but
+	// it costs codex its native network access too (read-only has none, and
+	// there's no read-only+network mode), and codex tends to disengage from
+	// tools when it sees "read-only, no network" in its own preamble. For an
+	// interactive, single-owner app where the human is driving every turn and
+	// bridge-only writes buy no real safety (sparkquill), set this to
+	// "workspace-write" via WithCodexSandbox so codex gets native writes +
+	// (optionally, via WithCodexNetworkAccess) native network.
+	CodexSandboxMode string
+
+	// CodexNetworkAccess enables codex's native network access when
+	// CodexSandboxMode is "workspace-write" (via `-c
+	// sandbox_workspace_write.network_access=true`). Meaningless under
+	// "read-only" (network is unconditionally off there) or
+	// "danger-full-access" (network is unconditionally on there).
+	CodexNetworkAccess bool
 
 	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
 	CodexProjectDirID string

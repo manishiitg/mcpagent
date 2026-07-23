@@ -447,6 +447,68 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 	}
 }
 
+// TestAppendCodexCLIIntegrationOptionsSandboxDefault pins the default posture:
+// no CodexSandboxMode set -> "read-only" (bridge-only containment), the right
+// default for autonomous/unattended/multi-tenant use. See the CodexSandboxMode
+// field doc on Agent.
+func TestAppendCodexCLIIntegrationOptionsSandboxDefault(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+	if err != nil {
+		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
+	}
+	got := metadataFromCallOptions(opts)
+	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "read-only" {
+		t.Fatalf("default sandbox = %q, want %q", sandbox, "read-only")
+	}
+	if _, ok := got[codexcli.MetadataKeyConfigOverrides]; ok {
+		t.Fatalf("default (read-only) sandbox must not set network-access config overrides: %#v", got[codexcli.MetadataKeyConfigOverrides])
+	}
+}
+
+// TestAppendCodexCLIIntegrationOptionsSandboxOverride proves an interactive,
+// single-owner caller (e.g. sparkquill/family-server) can opt into
+// workspace-write + native network via WithCodexSandbox/WithCodexNetworkAccess.
+func TestAppendCodexCLIIntegrationOptionsSandboxOverride(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	agent.CodexSandboxMode = "workspace-write"
+	agent.CodexNetworkAccess = true
+	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+	if err != nil {
+		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
+	}
+	got := metadataFromCallOptions(opts)
+	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "workspace-write" {
+		t.Fatalf("sandbox = %q, want %q", sandbox, "workspace-write")
+	}
+	overrides, ok := got[codexcli.MetadataKeyConfigOverrides].([]string)
+	if !ok || !strings.Contains(strings.Join(overrides, "\n"), "sandbox_workspace_write.network_access=true") {
+		t.Fatalf("config overrides = %#v, want sandbox_workspace_write.network_access=true", overrides)
+	}
+}
+
+// TestWithCodexSandboxAgentOption proves the AgentOption wires into the field
+// the appender reads.
+func TestWithCodexSandboxAgentOption(t *testing.T) {
+	a := &Agent{}
+	WithCodexSandbox("workspace-write")(a)
+	if a.CodexSandboxMode != "workspace-write" {
+		t.Fatalf("CodexSandboxMode = %q, want %q", a.CodexSandboxMode, "workspace-write")
+	}
+	WithCodexNetworkAccess(true)(a)
+	if !a.CodexNetworkAccess {
+		t.Fatal("CodexNetworkAccess = false, want true")
+	}
+}
+
 func TestAppendCodexCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "")

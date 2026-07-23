@@ -230,14 +230,25 @@ type realBridgeProviderCase struct {
 //	                       --disable unified_exec/shell_tool/multi_agent/
 //	                       code_mode_*, read-only sandbox, and -c tools.exec=false.
 //	                       So codex cannot be strictly tool-only-through-the-bridge.
-//	                       Mitigation (appendCodexCLIIntegrationOptions): run codex
-//	                       READ-ONLY, so native exec can read but CANNOT write or
-//	                       mutate the host — every state change is forced through
-//	                       the bridge (which runs in the executor, not codex's
-//	                       sandbox). The codex case therefore asserts the weaker
-//	                       but safety-relevant guarantee: NO NATIVE WRITES — a real
-//	                       file was written (report.md on disk) which, under the
-//	                       read-only sandbox, only the bridge tool could have done.
+//	                       Mitigation (appendCodexCLIIntegrationOptions): BY
+//	                       DEFAULT run codex READ-ONLY, so native exec can read
+//	                       but CANNOT write or mutate the host — every state
+//	                       change is forced through the bridge (which runs in
+//	                       the executor, not codex's sandbox). The codex case
+//	                       therefore asserts the weaker but safety-relevant
+//	                       guarantee: NO NATIVE WRITES — a real file was written
+//	                       (report.md on disk) which, under the read-only
+//	                       sandbox, only the bridge tool could have done. This
+//	                       default is a deliberate tradeoff for
+//	                       autonomous/unattended/multi-tenant callers (it costs
+//	                       codex its native network access, and codex can
+//	                       disengage from tools when its own preamble reads
+//	                       "read-only, no network"); an interactive, single-owner
+//	                       caller can opt into "workspace-write" (+ native
+//	                       network) via Agent.CodexSandboxMode /
+//	                       WithCodexSandbox / WithCodexNetworkAccess — see those
+//	                       doc comments and TestAppendCodexCLIIntegrationOptions
+//	                       SandboxOverride.
 func realBridgeProviderCases() []realBridgeProviderCase {
 	return []realBridgeProviderCase{
 		{name: "claude", provider: llm.ProviderClaudeCode, modelID: "claude-haiku-4-5", cliBin: "claude", streamEnv: "CLAUDE_CODE_STREAM_TRANSCRIPT", strictBridgeOnly: true},
