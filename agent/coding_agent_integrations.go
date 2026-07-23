@@ -96,27 +96,33 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 	opts = append(opts, llm.WithCodexDisableShellTool())
 	opts = append(opts, llm.WithCodexApprovalPolicy("never"))
-	// Bridge-only posture for codex. Unlike claude/cursor/pi, codex ALWAYS
-	// advertises a core `functions.exec` tool that cannot be removed by any flag
-	// or config (verified: it survives --disable unified_exec/shell_tool/
-	// multi_agent/code_mode_*, read-only sandbox, and -c tools.exec=false). So we
-	// cannot make codex strictly tool-only-through-the-bridge. By DEFAULT we run
-	// it READ-ONLY: native exec can read but CANNOT write or mutate the host, so
-	// every state change is forced through the MCP bridge (execute_shell_command
-	// runs in the executor process, not codex's sandbox, so bridge writes still
-	// work). Net guarantee for codex: no native WRITES — all mutations are
-	// bridge-routed. See TestRealBridgeStreamingE2E (codex case) which enforces
-	// this for the default.
+	// Codex ALWAYS advertises a core `functions.exec` tool that cannot be removed
+	// by any flag or config (verified: it survives --disable unified_exec/
+	// shell_tool/multi_agent/code_mode_*, read-only sandbox, and
+	// -c tools.exec=false). So codex, unlike claude/cursor/pi, can never be made
+	// strictly tool-only-through-the-bridge — its native exec is always a second
+	// path to the same host.
 	//
-	// This containment is only worth its cost (no native network under
-	// read-only — there is no read-only+network mode — and codex tends to
-	// disengage from tools when its own preamble says "read-only, no network")
-	// for autonomous/unattended/multi-tenant use. An interactive, single-owner
-	// caller (see Agent.CodexSandboxMode doc) can opt into "workspace-write" via
-	// WithCodexSandbox, optionally with WithCodexNetworkAccess.
+	// DEFAULT is WORKSPACE-WRITE (native writes + no network unless requested):
+	// this matches how codex ran for most of this project's life and is right
+	// for the common case — an interactive session, or one where the bridge
+	// already grants shell access anyway (native write containment buys nothing
+	// there; the bridge can already write). Only a session that deliberately
+	// restricts its tool set (e.g. "web_search only, no shell on the bridge") or
+	// needs every action to hit an audit trail that native exec would bypass
+	// needs the stronger guarantee — that caller opts INTO "read-only" via
+	// Agent.CodexSandboxMode / WithCodexSandbox. Under read-only, native exec can
+	// read but CANNOT write or mutate the host, so every state change is forced
+	// through the MCP bridge (execute_shell_command runs in the executor
+	// process, not codex's sandbox, so bridge writes still work) — but note
+	// there is no read-only+network mode (network is unconditionally off), and
+	// codex tends to disengage from tools entirely when its own preamble says
+	// "read-only, no network", so read-only is a deliberate, narrow opt-in, not
+	// something to reach for casually. See TestRealBridgeStreamingE2E (codex
+	// case), which explicitly opts into read-only to keep that guarantee tested.
 	sandboxMode := a.CodexSandboxMode
 	if strings.TrimSpace(sandboxMode) == "" {
-		sandboxMode = "read-only"
+		sandboxMode = "workspace-write"
 	}
 	opts = append(opts, llm.WithCodexSandbox(sandboxMode))
 	if sandboxMode == "workspace-write" && a.CodexNetworkAccess {

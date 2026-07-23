@@ -879,26 +879,29 @@ type Agent struct {
 	isolatedWorkspaceOnce sync.Once
 
 	// Codex CLI sandbox mode ("read-only", "workspace-write", or
-	// "danger-full-access"). Defaults to "read-only" (see
-	// appendCodexCLIIntegrationOptions): codex always ships an unremovable native
-	// `functions.exec` shell tool, so this is the only lever that keeps native
-	// exec from bypassing the MCP bridge — read-only means native exec can read
-	// but never write, forcing every mutation through the audited bridge. That
-	// containment is the right default for autonomous/unattended/multi-tenant
-	// use (AgentWorks workflow content run with no one watching each turn), but
-	// it costs codex its native network access too (read-only has none, and
-	// there's no read-only+network mode), and codex tends to disengage from
-	// tools when it sees "read-only, no network" in its own preamble. For an
-	// interactive, single-owner app where the human is driving every turn and
-	// bridge-only writes buy no real safety (sparkquill), set this to
-	// "workspace-write" via WithCodexSandbox so codex gets native writes +
-	// (optionally, via WithCodexNetworkAccess) native network.
+	// "danger-full-access"). Defaults to "workspace-write" (see
+	// appendCodexCLIIntegrationOptions) — codex gets native writes, matching how
+	// it ran for most of this project's life, and the right default for the
+	// common case: an interactive caller, or one where the bridge already grants
+	// shell access anyway (so blocking codex's NATIVE writes stops nothing real —
+	// the bridge can already write; see codex's unremovable `functions.exec`
+	// tool, which is why this containment exists at all). Only opt into
+	// "read-only" for a session that deliberately restricts its tool set (e.g.
+	// "web_search only, no shell on the bridge" — read-only is the only thing
+	// that makes that restriction hold for codex) or needs every action to hit
+	// an audit trail native exec would otherwise bypass. Read-only is a narrow,
+	// deliberate opt-in, not a safe-by-default choice: it also kills codex's
+	// native network (there is no read-only+network mode), and codex tends to
+	// disengage from tools entirely when its own preamble says "read-only, no
+	// network".
 	CodexSandboxMode string
 
 	// CodexNetworkAccess enables codex's native network access when
 	// CodexSandboxMode is "workspace-write" (via `-c
-	// sandbox_workspace_write.network_access=true`). Meaningless under
-	// "read-only" (network is unconditionally off there) or
+	// sandbox_workspace_write.network_access=true`). Off by default — codex
+	// never had native network before either; bridge tools (web_search etc.) get
+	// network via the executor process regardless of this setting. Meaningless
+	// under "read-only" (network is unconditionally off there) or
 	// "danger-full-access" (network is unconditionally on there).
 	CodexNetworkAccess bool
 

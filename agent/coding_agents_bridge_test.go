@@ -448,9 +448,12 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 }
 
 // TestAppendCodexCLIIntegrationOptionsSandboxDefault pins the default posture:
-// no CodexSandboxMode set -> "read-only" (bridge-only containment), the right
-// default for autonomous/unattended/multi-tenant use. See the CodexSandboxMode
-// field doc on Agent.
+// no CodexSandboxMode set -> "workspace-write" (native writes; network still
+// off unless CodexNetworkAccess is also set) — matching how codex ran for most
+// of this project's life, and the right default for the common case (an
+// interactive caller, or one where the bridge already grants shell access
+// anyway, so blocking codex's native writes stops nothing real). See the
+// CodexSandboxMode field doc on Agent.
 func TestAppendCodexCLIIntegrationOptionsSandboxDefault(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
@@ -462,24 +465,23 @@ func TestAppendCodexCLIIntegrationOptionsSandboxDefault(t *testing.T) {
 		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
 	}
 	got := metadataFromCallOptions(opts)
-	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "read-only" {
-		t.Fatalf("default sandbox = %q, want %q", sandbox, "read-only")
+	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "workspace-write" {
+		t.Fatalf("default sandbox = %q, want %q", sandbox, "workspace-write")
 	}
 	if _, ok := got[codexcli.MetadataKeyConfigOverrides]; ok {
-		t.Fatalf("default (read-only) sandbox must not set network-access config overrides: %#v", got[codexcli.MetadataKeyConfigOverrides])
+		t.Fatalf("default sandbox must not set network-access config overrides unless CodexNetworkAccess is also set: %#v", got[codexcli.MetadataKeyConfigOverrides])
 	}
 }
 
-// TestAppendCodexCLIIntegrationOptionsSandboxOverride proves an interactive,
-// single-owner caller (e.g. sparkquill/family-server) can opt into
-// workspace-write + native network via WithCodexSandbox/WithCodexNetworkAccess.
-func TestAppendCodexCLIIntegrationOptionsSandboxOverride(t *testing.T) {
+// TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess proves a caller that
+// also wants native network under the default workspace-write sandbox can opt
+// in via WithCodexNetworkAccess, without needing to also set WithCodexSandbox.
+func TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	agent := bridgeTestAgent()
-	agent.CodexSandboxMode = "workspace-write"
 	agent.CodexNetworkAccess = true
 	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
 	if err != nil {
@@ -492,6 +494,35 @@ func TestAppendCodexCLIIntegrationOptionsSandboxOverride(t *testing.T) {
 	overrides, ok := got[codexcli.MetadataKeyConfigOverrides].([]string)
 	if !ok || !strings.Contains(strings.Join(overrides, "\n"), "sandbox_workspace_write.network_access=true") {
 		t.Fatalf("config overrides = %#v, want sandbox_workspace_write.network_access=true", overrides)
+	}
+}
+
+// TestAppendCodexCLIIntegrationOptionsSandboxReadOnlyOptIn proves the narrow
+// containment case still works: a caller that deliberately restricts its tool
+// set (e.g. "web_search only, no shell on the bridge") or needs an audit-trail
+// guarantee can opt INTO "read-only" via WithCodexSandbox. This is no longer
+// the default, but it must remain available and correctly wired.
+func TestAppendCodexCLIIntegrationOptionsSandboxReadOnlyOptIn(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	agent.CodexSandboxMode = "read-only"
+	// CodexNetworkAccess is meaningless under read-only (network is
+	// unconditionally off there) — set it anyway to prove it's correctly
+	// ignored rather than producing a bogus config override.
+	agent.CodexNetworkAccess = true
+	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+	if err != nil {
+		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
+	}
+	got := metadataFromCallOptions(opts)
+	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "read-only" {
+		t.Fatalf("sandbox = %q, want %q", sandbox, "read-only")
+	}
+	if _, ok := got[codexcli.MetadataKeyConfigOverrides]; ok {
+		t.Fatalf("read-only sandbox must not set network-access config overrides even with CodexNetworkAccess=true: %#v", got[codexcli.MetadataKeyConfigOverrides])
 	}
 }
 

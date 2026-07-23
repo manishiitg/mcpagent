@@ -230,25 +230,32 @@ type realBridgeProviderCase struct {
 //	                       --disable unified_exec/shell_tool/multi_agent/
 //	                       code_mode_*, read-only sandbox, and -c tools.exec=false.
 //	                       So codex cannot be strictly tool-only-through-the-bridge.
-//	                       Mitigation (appendCodexCLIIntegrationOptions): BY
-//	                       DEFAULT run codex READ-ONLY, so native exec can read
-//	                       but CANNOT write or mutate the host — every state
-//	                       change is forced through the bridge (which runs in
-//	                       the executor, not codex's sandbox). The codex case
-//	                       therefore asserts the weaker but safety-relevant
-//	                       guarantee: NO NATIVE WRITES — a real file was written
-//	                       (report.md on disk) which, under the read-only
-//	                       sandbox, only the bridge tool could have done. This
-//	                       default is a deliberate tradeoff for
-//	                       autonomous/unattended/multi-tenant callers (it costs
-//	                       codex its native network access, and codex can
-//	                       disengage from tools when its own preamble reads
-//	                       "read-only, no network"); an interactive, single-owner
-//	                       caller can opt into "workspace-write" (+ native
-//	                       network) via Agent.CodexSandboxMode /
-//	                       WithCodexSandbox / WithCodexNetworkAccess — see those
-//	                       doc comments and TestAppendCodexCLIIntegrationOptions
-//	                       SandboxOverride.
+//	                       mcpagent's DEFAULT (appendCodexCLIIntegrationOptions) is
+//	                       WORKSPACE-WRITE — native writes allowed, matching how
+//	                       codex ran for most of this project's life, and correct
+//	                       for the common case where blocking codex's native
+//	                       writes stops nothing real (the bridge already grants
+//	                       shell access, or the caller is interactive/single-owner
+//	                       and bridge-only containment buys no real safety). This
+//	                       test's codex case explicitly opts INTO "read-only" (see
+//	                       the WithCodexSandbox call above) specifically to keep
+//	                       the narrower containment guarantee under live test
+//	                       coverage: under read-only, native exec can read but
+//	                       CANNOT write or mutate the host — every state change is
+//	                       forced through the bridge (which runs in the executor,
+//	                       not codex's sandbox). The codex case therefore asserts
+//	                       the weaker but safety-relevant guarantee: NO NATIVE
+//	                       WRITES — a real file was written (report.md on disk)
+//	                       which, under the read-only sandbox, only the bridge
+//	                       tool could have done. Read-only is for a caller that
+//	                       deliberately restricts its tool set (e.g. "web_search
+//	                       only, no shell on the bridge" — read-only is the only
+//	                       thing that makes that restriction hold for codex) or
+//	                       needs an audit trail native exec would bypass — see
+//	                       Agent.CodexSandboxMode / WithCodexSandbox /
+//	                       WithCodexNetworkAccess and
+//	                       TestAppendCodexCLIIntegrationOptionsSandbox
+//	                       ReadOnlyOptIn.
 func realBridgeProviderCases() []realBridgeProviderCase {
 	return []realBridgeProviderCase{
 		{name: "claude", provider: llm.ProviderClaudeCode, modelID: "claude-haiku-4-5", cliBin: "claude", streamEnv: "CLAUDE_CODE_STREAM_TRANSCRIPT", strictBridgeOnly: true},
@@ -338,12 +345,21 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	agent, err := NewAgent(ctx, llmModel, configPath,
+	agentOpts := []AgentOption{
 		WithProvider(pc.provider),
 		WithAPIConfig(apiURL, apiToken),
 		WithStreaming(true),
 		WithCodingAgentWorkingDir(workDir),
-	)
+	}
+	if pc.provider == llm.ProviderCodexCLI {
+		// The P0 guarantee this test enforces for codex (assertNoNativeWrites,
+		// below) only holds under read-only — mcpagent's DEFAULT is
+		// workspace-write (see Agent.CodexSandboxMode doc), so opt in explicitly
+		// to keep this containment actually tested rather than silently
+		// untested once the default changed.
+		agentOpts = append(agentOpts, WithCodexSandbox("read-only"))
+	}
+	agent, err := NewAgent(ctx, llmModel, configPath, agentOpts...)
 	if err != nil {
 		t.Fatalf("NewAgent: %v", err)
 	}

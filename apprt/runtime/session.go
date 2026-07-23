@@ -82,17 +82,11 @@ type Config struct {
 	// everywhere this Config is built; this field only exists so a caller can
 	// opt into custom wording later without further agentsession changes.
 	BridgeRoutingInstructions *string
-	// CodexWritableWithNetwork switches codex's sandbox from mcpagent's default
-	// ("read-only" -- no native writes, and, since codex has no read-only+network
-	// mode, no native network either) to "workspace-write" with native network
-	// access enabled. The read-only default exists to keep codex's unremovable
-	// native shell from bypassing the MCP bridge in autonomous/unattended/
-	// multi-tenant use; it buys no real safety for an interactive, single-owner
-	// app where the human drives every turn on their own machine, and it does
-	// cost real capability -- codex disengages from tools entirely when its own
-	// preamble says "read-only, no network". Set true for that case. No effect
-	// on non-codex providers. See mcpagent's Agent.CodexSandboxMode doc.
-	CodexWritableWithNetwork bool
+	// CodexNetworkAccess enables codex's native network access. mcpagent's
+	// default codex sandbox is already "workspace-write" (native writes on), so
+	// this only needs to add network — no separate "writable" flag required. No
+	// effect on non-codex providers. See mcpagent's Agent.CodexNetworkAccess doc.
+	CodexNetworkAccess bool
 }
 
 // Session bundles a live agent with its in-process executor server. Not safe
@@ -187,8 +181,8 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	if cfg.BridgeRoutingInstructions != nil {
 		opts = append(opts, mcpagent.WithBridgeRoutingInstructions(*cfg.BridgeRoutingInstructions))
 	}
-	if cfg.CodexWritableWithNetwork && cfg.Provider == llm.ProviderCodexCLI {
-		opts = append(opts, mcpagent.WithCodexSandbox("workspace-write"), mcpagent.WithCodexNetworkAccess(true))
+	if cfg.CodexNetworkAccess && cfg.Provider == llm.ProviderCodexCLI {
+		opts = append(opts, mcpagent.WithCodexNetworkAccess(true))
 	}
 	if len(cfg.Tools) > 0 {
 		// Expose every app-registered custom tool as a NATIVE bridge tool for
