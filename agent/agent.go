@@ -1617,7 +1617,20 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Update the existing agent with connection data
 	ag.Clients = clients
 	ag.toolToServer = toolToServer
-	ag.systemPrompt = systemPrompt
+	// Only take the connection-derived default system prompt when the caller
+	// didn't supply one via WithSystemPrompt/AppendSystemPrompt. Unconditionally
+	// overwriting here clobbered a caller's custom prompt (set by an AgentOption
+	// applied earlier in this same constructor, before this connection setup
+	// runs) with whatever NewAgentConnectionWithSession computed on its own —
+	// confirmed live: ag.systemPrompt held the real ~14k-char custom prompt
+	// right after WithSystemPrompt ran, then dropped to just the much shorter
+	// bridge-routing preamble by the time the LLM call was built, because this
+	// line reset it in between with no guard. Mirrors the same
+	// hasCustomSystemPrompt check already used at the BuildSystemPromptWithoutTools
+	// call site below.
+	if !ag.hasCustomSystemPrompt {
+		ag.systemPrompt = systemPrompt
+	}
 	ag.servers = servers
 	ag.toolOutputHandler = toolOutputHandler
 	ag.prompts = prompts
