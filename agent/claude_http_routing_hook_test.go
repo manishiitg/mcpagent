@@ -76,6 +76,9 @@ func TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool(t *testing.T) {
 	runHook := func(toolName string) (denied bool, stdout string) {
 		t.Helper()
 		payload, _ := json.Marshal(map[string]any{"tool_name": toolName})
+		// #nosec G204 - hookPath is our own content-addressed path under
+		// os.TempDir()/claude-code-hooks/, written by writeClaudeHTTPRoutingHook
+		// moments earlier in this same test, not external/attacker input.
 		cmd := exec.Command("python3", hookPath)
 		cmd.Stdin = bytes.NewReader(payload)
 		var out bytes.Buffer

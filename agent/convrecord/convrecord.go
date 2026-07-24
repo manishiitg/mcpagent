@@ -1,10 +1,9 @@
-// Package convrecord provides a shared, pluggable conversation/cost recorder
-// for mcpagent consumers. It exists to close a real, observed duplication:
+// Package convrecord provides a shared, pluggable conversation recorder for
+// mcpagent consumers. It exists to close a real, observed duplication:
 // AgentWorks (agent_go/cmd/server) and sparkquill (agent_go/cmd/family-server,
 // same repo, different branch) each independently reimplemented "extract this
-// turn's messages/tool-calls/tokens/cost, marshal it, write it somewhere, know
-// how to read it back for resume" — in two different, incompatible shapes,
-// with sparkquill's version tracking no cost at all.
+// turn's messages/tool-calls/tokens, marshal it, write it somewhere, know how
+// to read it back for resume" — in two different, incompatible shapes.
 //
 // mcpagent owns the boilerplate (computing a correct, complete TurnRecord)
 // and exposes the one thing that's genuinely app-specific as an extension
@@ -105,6 +104,21 @@ type fileJSONDocument struct {
 	Turns               []TurnRecord              `json:"turns"`
 }
 
+// WriteTurn is safe against concurrent callers of THIS *FileJSONSink
+// instance (s.mu serializes them), and the write itself is atomic against any
+// reader (LoadHistory on this instance, a second sink instance, or an
+// external process reading the file directly) — see writeFileAtomic. It is
+// NOT safe against two separate *FileJSONSink instances (e.g. two Agent
+// processes, or two Agents in one process) writing the SAME path
+// concurrently: each does its own read-modify-write, so the second writer's
+// read can miss the first writer's not-yet-flushed turn, and whichever
+// writes last wins — a classic lost-update race, not something an
+// in-process mutex or an atomic single-file write can fix on its own. This
+// mirrors the package's stated scope: one file per conversation, a single
+// owning writer. A caller that genuinely needs multiple concurrent writers
+// on the same conversation record should reach for a Sink backed by a real
+// datastore (see NewFileJSONSink's doc comment on the SQLite alternative),
+// not FileJSONSink.
 func (s *FileJSONSink) WriteTurn(rec TurnRecord) error {
 	if s == nil {
 		return fmt.Errorf("convrecord: nil FileJSONSink")
@@ -129,8 +143,42 @@ func (s *FileJSONSink) WriteTurn(rec TurnRecord) error {
 	if err != nil {
 		return fmt.Errorf("convrecord: marshal %s: %w", s.path, err)
 	}
-	if err := os.WriteFile(s.path, b, 0o600); err != nil {
+	if err := writeFileAtomic(s.path, b, 0o600); err != nil {
 		return fmt.Errorf("convrecord: write %s: %w", s.path, err)
+	}
+	return nil
+}
+
+// writeFileAtomic writes to a temp file in the SAME directory as path (so the
+// final rename stays on one filesystem) and renames it into place. A plain
+// os.WriteFile on an existing file is effectively truncate-then-write — a
+// concurrent reader can observe a partially-written or empty file mid-write.
+// POSIX (and Go's os.Rename on all platforms this repo targets) guarantees
+// rename is atomic: a reader always sees either the complete old content or
+// the complete new content, never a torn file.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	// On any early return, remove the temp file if the rename never happened
+	// (a successful rename leaves nothing at tmpPath to remove).
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename into place: %w", err)
 	}
 	return nil
 }
