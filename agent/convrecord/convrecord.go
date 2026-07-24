@@ -7,12 +7,16 @@
 // with sparkquill's version tracking no cost at all.
 //
 // mcpagent owns the boilerplate (computing a correct, complete TurnRecord)
-// and exposes exactly the two things that are genuinely app-specific as
-// extension points:
-//   - Sink: where the data goes (a file, SQLite, anything).
-//   - BillingBasisFunc: whether a given provider's cost is a real invoice, a
-//     computed estimate, or a subscription "shadow" cost — a product
-//     judgment, not a fact the library can know on its own.
+// and exposes the one thing that's genuinely app-specific as an extension
+// point: Sink, where the data goes (a file, SQLite, anything).
+//
+// TurnRecord deliberately carries only token counts, not a computed USD cost.
+// Pricing (which rate table, which provider's number to trust, whether a
+// subscription CLI's cost is real or a shadow estimate) is a product/billing
+// decision that varies per caller and per provider — not something this
+// library can know on its own. A caller that wants a dollar figure computes
+// it itself from TokenUsage, using whatever rate table and policy it already
+// has (a costledger, a pricing table, provider-reported figures, etc.).
 package convrecord
 
 import (
@@ -46,46 +50,19 @@ type TokenUsage struct {
 	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
 }
 
-// Cost is a cost breakdown, with an explicit billing-basis label so a reader
-// never has to guess whether a number is a real bill or an estimate.
-//
-// BillingBasis values (matching agent_go/pkg/costledger's established
-// vocabulary, so consumers migrating to this recorder don't have to relearn
-// one): "provider_actual" (a real invoice figure from the provider),
-// "token_estimate" (computed from token counts × registry rates),
-// "subscription_shadow" (a token_estimate for a flat-rate-subscription CLI —
-// what the workload would cost via metered billing, NOT the real bill), or
-// "unpriced" (no rate available).
-type Cost struct {
-	InputUSD     float64 `json:"input_usd,omitempty"`
-	OutputUSD    float64 `json:"output_usd,omitempty"`
-	ReasoningUSD float64 `json:"reasoning_usd,omitempty"`
-	CacheUSD     float64 `json:"cache_usd,omitempty"`
-	TotalUSD     float64 `json:"total_usd"`
-	BillingBasis string  `json:"billing_basis,omitempty"`
-}
-
 // TurnRecord is everything mcpagent knows about one completed LLM call,
 // fully computed — a consumer's Sink only has to decide where it goes.
 type TurnRecord struct {
-	SessionID      string                     `json:"session_id,omitempty"`
-	Turn           int                        `json:"turn"`
-	Timestamp      time.Time                  `json:"timestamp"`
-	Provider       string                     `json:"provider,omitempty"`
-	ModelID        string                     `json:"model_id,omitempty"`
-	DurationMS     int64                      `json:"duration_ms"`
-	Messages       []llmtypes.MessageContent  `json:"messages,omitempty"`
-	ToolCalls      []ToolCallRecord           `json:"tool_calls,omitempty"`
-	TokenUsage     TokenUsage                 `json:"token_usage"`
-	Cost           Cost                       `json:"cost"`
-	CumulativeCost Cost                       `json:"cumulative_cost"`
+	SessionID  string                    `json:"session_id,omitempty"`
+	Turn       int                       `json:"turn"`
+	Timestamp  time.Time                 `json:"timestamp"`
+	Provider   string                    `json:"provider,omitempty"`
+	ModelID    string                    `json:"model_id,omitempty"`
+	DurationMS int64                     `json:"duration_ms"`
+	Messages   []llmtypes.MessageContent `json:"messages,omitempty"`
+	ToolCalls  []ToolCallRecord          `json:"tool_calls,omitempty"`
+	TokenUsage TokenUsage                `json:"token_usage"`
 }
-
-// BillingBasisFunc lets a caller inject the product judgment of how to label
-// a provider's cost. A nil func (the default) labels everything
-// "token_estimate" — the honest default when no caller has stated an
-// opinion about subscription-shadow pricing for their specific providers.
-type BillingBasisFunc func(provider string) string
 
 // Sink is the only thing an app needs to implement — where the data goes.
 // Deliberately not keyed by a session ID parameter: a Sink implementation

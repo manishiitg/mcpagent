@@ -14,12 +14,12 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// runConversationRecordingCase proves convrecord records a real turn (real token
-// usage + cost + billing basis, against a live CLI call — not a hand-built
-// TurnRecord) and that LoadHistory can seed a SECOND agent so resume genuinely
-// works end to end. Transport-agnostic: the recording hook lives in
-// AskWithHistory, so the same assertions hold on tmux and structured/json. The
-// extra options carry the structured-transport flag for the json cases.
+// runConversationRecordingCase proves convrecord records a real turn (real
+// token usage, against a live CLI call — not a hand-built TurnRecord) and that
+// LoadHistory can seed a SECOND agent so resume genuinely works end to end.
+// Transport-agnostic: the recording hook lives in AskWithHistory, so the same
+// assertions hold on tmux and structured/json. The extra options carry the
+// structured-transport flag for the json cases.
 func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, binary string, extra ...AgentOption) {
 	if _, err := exec.LookPath(binary); err != nil {
 		t.Skipf("%s CLI required", binary)
@@ -56,7 +56,6 @@ func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, 
 		WithProvider(provider),
 		WithAPIConfig(apiURL, apiToken),
 		WithConversationSink(sink),
-		WithBillingBasis(func(provider string) string { return "provider_actual" }),
 		WithIsolatedSessionWorkspace(true),
 	}, extra...)
 	agent, err := NewAgent(ctx, llmModel, configPath, opts...)
@@ -87,14 +86,11 @@ func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, 
 		t.Fatal("LoadHistory returned no messages — conversation was not actually persisted")
 	}
 
-	// Real token usage must be recorded (cost may legitimately be 0 for a
-	// subscription/unpriced provider like Cursor, so we assert on tokens +
-	// billing basis, not on a non-zero dollar amount).
+	// Real token usage must be recorded. convrecord deliberately carries no USD
+	// cost (see convrecord.go doc) — pricing is the caller's own decision, made
+	// from these token counts using whatever rate table/policy it has.
 	if !strings.Contains(string(raw), `"prompt_tokens"`) || strings.Contains(string(raw), `"prompt_tokens": 0`) {
 		t.Fatalf("expected non-zero prompt_tokens in recorded turn, got: %s", raw)
-	}
-	if !strings.Contains(string(raw), `"billing_basis": "provider_actual"`) {
-		t.Fatalf("expected billing_basis=provider_actual (from WithBillingBasis) in recorded turn, got: %s", raw)
 	}
 
 	// HARD proof of convrecord's actual contract — faithful record + reload:

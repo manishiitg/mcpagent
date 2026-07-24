@@ -558,19 +558,6 @@ func WithConversationSink(sink convrecord.Sink) AgentOption {
 	}
 }
 
-// WithBillingBasis lets a caller label cost figures with the correct
-// billing-basis for their own providers — e.g. a subscription-billed CLI
-// (Cursor, Codex Pro) has no real per-call invoice, so its computed cost is
-// a "subscription_shadow" estimate, not a real bill. This is a product
-// judgment mcpagent cannot make on the caller's behalf (see convrecord.Cost
-// doc for the vocabulary); the default (no func set) labels every provider
-// "token_estimate".
-func WithBillingBasis(fn convrecord.BillingBasisFunc) AgentOption {
-	return func(a *Agent) {
-		a.billingBasisFunc = fn
-	}
-}
-
 // WithAdditionalBridgeTools exposes the named custom tools (already
 // registered via RegisterCustomTool) as NATIVE MCP bridge tools for THIS
 // agent instance — callable directly by name, without the get_api_spec +
@@ -1110,10 +1097,6 @@ type Agent struct {
 	// convrecord.TurnRecord per completed LLM call. nil (the default) means
 	// no persistence happens at all.
 	conversationSink convrecord.Sink
-	// billingBasisFunc, when set via WithBillingBasis, labels each provider's
-	// cost with the correct billing-basis semantics. nil defaults every
-	// provider to "token_estimate".
-	billingBasisFunc convrecord.BillingBasisFunc
 	// lastToolCallRecordedAt tracks the most recent tool-call CompletedAt this
 	// agent has already included in a TurnRecord, so repeated non-destructive
 	// toolcalllog.Snapshot reads (required — GetAndClear would break
@@ -2820,25 +2803,6 @@ func (a *Agent) recordConversationTurn(turn int, duration time.Duration, message
 		}
 	}
 
-	basis := "token_estimate"
-	if a.billingBasisFunc != nil {
-		if b := strings.TrimSpace(a.billingBasisFunc(string(a.provider))); b != "" {
-			basis = b
-		}
-	}
-
-	a.tokenTrackingMutex.RLock()
-	cumulative := convrecord.Cost{
-		InputUSD:     a.cumulativeInputCost,
-		OutputUSD:    a.cumulativeOutputCost,
-		ReasoningUSD: a.cumulativeReasoningCost,
-		CacheUSD:     a.cumulativeCacheCost,
-		TotalUSD:     a.cumulativeTotalCost,
-		BillingBasis: basis,
-	}
-	turnCost := convrecord.Cost{TotalUSD: a.lastTurnCost, BillingBasis: basis}
-	a.tokenTrackingMutex.RUnlock()
-
 	rec := convrecord.TurnRecord{
 		SessionID:  a.SessionID,
 		Turn:       turn,
@@ -2855,8 +2819,6 @@ func (a *Agent) recordConversationTurn(turn int, duration time.Duration, message
 			CacheTokens:      cacheTokens,
 			ReasoningTokens:  reasoningTokens,
 		},
-		Cost:           turnCost,
-		CumulativeCost: cumulative,
 	}
 
 	if err := a.conversationSink.WriteTurn(rec); err != nil && a.Logger != nil {
