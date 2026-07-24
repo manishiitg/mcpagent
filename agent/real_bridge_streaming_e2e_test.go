@@ -45,8 +45,14 @@ func isBridgeOrWebsearchTool(name string) bool {
 		}
 	}
 	switch n {
-	case "getmcptools", "callmcptool", "listmcptools", "listmcpresources", "readmcpresource", "mcp":
-		// cursor's MCP meta-tools and pi's generic "mcp" bridge label.
+	case "getmcptools", "callmcptool", "listmcptools", "listmcpresources", "readmcpresource", "mcp",
+		"calldynamictool", "getdynamictools":
+		// cursor's MCP meta-tools and pi's generic "mcp" bridge label. Current
+		// cursor-agent builds surface a bridge/MCP tool invocation as the
+		// dynamic-tool pair GetDynamicTools (discovery) + CallDynamicTool
+		// (dispatch) rather than the older get/callmcptool names — these are the
+		// bridge-routing mechanism, NOT native tools (proven by the injected
+		// bridge handler recording calls>=2 whenever they appear).
 		return true
 	}
 	if strings.Contains(n, "web_search") || strings.Contains(n, "websearch") {
