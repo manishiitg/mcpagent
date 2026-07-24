@@ -102,3 +102,37 @@ func TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool(t *testing.T) {
 		t.Errorf("unregistered tool was NOT denied: %s", out)
 	}
 }
+
+// TestClaudeHTTPRoutingHookPathIsContentAddressed pins the fix for a real
+// concurrency bug: writeClaudeHTTPRoutingHook always wrote to the SAME fixed
+// path regardless of the allowlist content. Before WithAdditionalBridgeTools
+// was wired into the allowlist (the fix this test file's first two tests
+// pin), every agent wrote byte-identical content there, so the shared path
+// was harmless. Once the content genuinely varies per agent, two concurrent
+// agents with DIFFERENT registered tools would silently overwrite each
+// other's allowlist file — whichever wrote last would govern BOTH sessions'
+// enforcement. The path is now content-addressed: two DIFFERENT allowlists
+// must never collide on the same file, and two agents with the SAME
+// allowlist should safely share one (no needless growth, and no possibility
+// of one clobbering the other since the bytes are identical either way).
+func TestClaudeHTTPRoutingHookPathIsContentAddressed(t *testing.T) {
+	pathA, err := writeClaudeHTTPRoutingHook([]string{"tool_a"})
+	if err != nil {
+		t.Fatalf("writeClaudeHTTPRoutingHook(tool_a): %v", err)
+	}
+	pathB, err := writeClaudeHTTPRoutingHook([]string{"tool_b"})
+	if err != nil {
+		t.Fatalf("writeClaudeHTTPRoutingHook(tool_b): %v", err)
+	}
+	if pathA == pathB {
+		t.Fatalf("two DIFFERENT allowlists produced the SAME hook path — a concurrent agent race would silently overwrite the other's allowlist: %s", pathA)
+	}
+
+	pathA2, err := writeClaudeHTTPRoutingHook([]string{"tool_a"})
+	if err != nil {
+		t.Fatalf("writeClaudeHTTPRoutingHook(tool_a) again: %v", err)
+	}
+	if pathA != pathA2 {
+		t.Errorf("the SAME allowlist produced two different paths (expected content-addressed sharing): %s vs %s", pathA, pathA2)
+	}
+}

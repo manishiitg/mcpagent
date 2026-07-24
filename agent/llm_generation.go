@@ -2,6 +2,8 @@ package mcpagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,7 +64,18 @@ func writeClaudeHTTPRoutingHook(additional []string) (string, error) {
 		return "", fmt.Errorf("marshal claude hook allowlist: %w", err)
 	}
 
-	hookPath := filepath.Join(hooksDir, "enforce-http-tool-routing.py")
+	// The hook filename is content-addressed by the allowlist it enforces.
+	// Before WithAdditionalBridgeTools was wired into this allowlist, every
+	// agent wrote byte-identical content to this fixed path, so a race was
+	// harmless. Now that the content genuinely varies per agent, two
+	// concurrent agents with DIFFERENT registered tools would otherwise
+	// overwrite each other's allowlist file — whichever wrote last would
+	// silently govern BOTH sessions' enforcement. Hashing the content instead
+	// of using a fixed name means agents with the SAME allowlist safely share
+	// one file (no needless growth), while agents with different allowlists
+	// never collide.
+	hookHash := sha256.Sum256(allowedJSON)
+	hookPath := filepath.Join(hooksDir, "enforce-http-tool-routing-"+hex.EncodeToString(hookHash[:8])+".py")
 	hookScript := `#!/usr/bin/env python3
 import json
 from pathlib import Path
