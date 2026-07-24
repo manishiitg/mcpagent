@@ -43,6 +43,9 @@ const (
 
 type CodingAgentTransport = llmproviders.CodingAgentTransport
 type CodingAgentProviderContract = llmproviders.CodingAgentProviderContract
+type CodingAgentSecurityProfile = llmproviders.CodingAgentSecurityProfile
+type CLISecurityMode = llmtypes.CLISecurityMode
+type CLISecurityPolicy = llmtypes.CLISecurityPolicy
 
 const (
 	CodingAgentTransportTmux       = llmproviders.CodingAgentTransportTmux
@@ -63,6 +66,18 @@ func IsTmuxCodingAgentProvider(provider Provider, modelID string) bool {
 
 func CodingAgentProviderContracts() []CodingAgentProviderContract {
 	return llmproviders.CodingAgentProviderContracts()
+}
+
+func CodingAgentSecurityProfiles() []CodingAgentSecurityProfile {
+	return llmproviders.CodingAgentSecurityProfiles()
+}
+
+func GetCodingAgentSecurityProfile(provider Provider) (CodingAgentSecurityProfile, bool) {
+	return llmproviders.GetCodingAgentSecurityProfile(provider)
+}
+
+func WithCLISecurityPolicy(policy CLISecurityPolicy) llmtypes.CallOption {
+	return llmproviders.WithCLISecurityPolicy(policy)
 }
 
 func CodingAgentInteractiveSessionOption(provider Provider, ownerSessionID string) llmtypes.CallOption {
