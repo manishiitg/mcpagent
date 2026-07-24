@@ -1,0 +1,35 @@
+{
+  "test": "TestStructuredTransportToolFailureGiveUp_Codex",
+  "summary": "Codex (structured/json) gives up gracefully on a PERMANENTLY failing bridge tool: bounded retry, turn ends without fabricating the build id",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "The build ID could NOT be read.",
+    "content_chunks": 2,
+    "injected_failure": "PERMANENT_TOOL_FAILURE on every call",
+    "provider": "Codex",
+    "streamed_tool_events": 2,
+    "tool_handler_calls": 2,
+    "tool_names": [
+      "",
+      ""
+    ],
+    "transport": "structured/json",
+    "unreachable_build_id": "BUILD_ID_61e63b1757b9"
+  },
+  "fingerprint": "02596416ce1c9d90",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "02596416ce1c9d90",
+    "reviewer": "claude-opus-4-8",
+    "issues": [],
+    "notes": "Genuine structured give-up now that codex is contained via --disable shell_tool. tool_handler_calls=2 shows codex attempted the (permanently failing) bridge tool with bounded retry rather than bypassing via native exec; the final answer 'The build ID could NOT be read.' does NOT contain the unreachable build id (BUILD_ID_61e63b1757b9), so no fabrication. tool_names are empty strings — a codex structured quirk where the mcp_tool_call events carry no name — but the 2 streamed events confirm the tool was really attempted. Falsifiable and correct."
+  }
+}

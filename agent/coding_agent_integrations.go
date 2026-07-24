@@ -96,12 +96,28 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 	opts = append(opts, llm.WithCodexDisableShellTool())
 	opts = append(opts, llm.WithCodexApprovalPolicy("never"))
-	// Codex ALWAYS advertises a core `functions.exec` tool that cannot be removed
-	// by any flag or config (verified: it survives --disable unified_exec/
-	// shell_tool/multi_agent/code_mode_*, read-only sandbox, and
-	// -c tools.exec=false). So codex, unlike claude/cursor/pi, can never be made
-	// strictly tool-only-through-the-bridge — its native exec is always a second
-	// path to the same host.
+	// Shell/exec containment: WithCodexDisableShellTool above turns OFF codex's
+	// built-in shell_tool + the other native code-exec features (unified_exec,
+	// tool_search, browser/computer use, …) via codex's first-class `--disable`
+	// flags. Verified live against codex v0.145.0: with those disabled and only
+	// the MCP bridge in the session, codex has NO native way to run a command and
+	// is forced through the bridge (it reports it has no shell rather than
+	// shelling out; TestStructuredTransportToolFailure{Recovery,GiveUp}/Codex now
+	// route through the bridge with calls>=2). This CORRECTS a long-standing
+	// belief — previously baked into this comment and the transport docs — that
+	// codex's native `functions.exec` was "unremovable by any flag". That was
+	// true of an older codex; it is not true of the current one. For SHELL, codex
+	// is now containable to the bridge exactly like claude/cursor/pi.
+	//
+	// IMPORTANT caveat: containment only holds while the session exposes no OTHER
+	// code-exec tool. Codex will use any available one (e.g. a node_repl-style MCP
+	// that can child_process out) as an escape hatch, so the bridge-only guarantee
+	// is "shell_tool disabled AND the MCP set is the bridge alone".
+	//
+	// Native WRITES are a separate axis: disabling shell_tool does not necessarily
+	// disable every mutating native tool codex may expose (e.g. apply_patch), so
+	// the sandbox mode below still governs whether codex can mutate the host
+	// directly vs. having to route writes through the bridge.
 	//
 	// DEFAULT is WORKSPACE-WRITE (native writes + no network unless requested):
 	// this matches how codex ran for most of this project's life and is right

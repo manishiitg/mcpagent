@@ -155,14 +155,14 @@ func TestStructuredTransportToolFailureGiveUp(t *testing.T) {
 			if _, err := exec.LookPath(tc.binary); err != nil {
 				t.Skipf("%s CLI required", tc.binary)
 			}
-			if tc.provider == llm.ProviderCodexCLI {
-				// Codex's native functions.exec is unremovable by any flag, so it
-				// bypasses the (always-failing) bridge tool and reads build_id.txt
-				// directly — the give-up premise (no way to obtain the id) is
-				// unfalsifiable for Codex. Recovery IS tested for Codex; this mirrors
-				// the tmux give-up test's strictBridgeOnly=false handling.
-				t.Skip("Codex native exec bypasses the failing bridge tool; give-up is unfalsifiable (see strictBridgeOnly).")
-			}
+			// (Codex used to be skipped here on the belief its native functions.exec
+			// was unremovable and would bypass the failing bridge. That is no longer
+			// true: the codex adapter now disables shell_tool + the other native
+			// code-exec features for bridge-only sessions (WithCodexDisableShellTool),
+			// so codex has ONLY the failing bridge tool and must genuinely give up.
+			// Verified live: structured recovery is forced through the bridge
+			// (calls>=2) and give-up no longer obtains the id. So Codex is now a real
+			// give-up case like the others.)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 			defer cancel()
@@ -212,15 +212,15 @@ func TestStructuredTransportToolFailureGiveUp(t *testing.T) {
 			rec := agentreview.Write(t, "TestStructuredTransportToolFailureGiveUp_"+tc.name,
 				tc.name+" (structured/json) gives up gracefully on a PERMANENTLY failing bridge tool: bounded retry, turn ends without fabricating the build id",
 				map[string]any{
-					"provider":          tc.name,
-					"transport":         "structured/json",
-					"tool_handler_calls": nCalls,
+					"provider":             tc.name,
+					"transport":            "structured/json",
+					"tool_handler_calls":   nCalls,
 					"streamed_tool_events": len(toolNames),
-					"tool_names":        toolNames,
-					"content_chunks":    contentChunks,
-					"answer":            strings.TrimSpace(answer),
+					"tool_names":           toolNames,
+					"content_chunks":       contentChunks,
+					"answer":               strings.TrimSpace(answer),
 					"unreachable_build_id": unreachable,
-					"injected_failure":  "PERMANENT_TOOL_FAILURE on every call",
+					"injected_failure":     "PERMANENT_TOOL_FAILURE on every call",
 				},
 				map[string]any{"attempted": nCalls > 0 || len(toolNames) > 0, "did_not_fabricate": !strings.Contains(answer, unreachable)},
 			)
