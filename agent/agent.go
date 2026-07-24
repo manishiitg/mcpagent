@@ -903,6 +903,11 @@ type Agent struct {
 	// Process working directory for interactive coding CLI providers.
 	CodingAgentWorkingDir string
 
+	// CLISecurityPolicy is resolved by the owning application before launch.
+	// Providers receive an immutable copy through CallOptions. Nil preserves the
+	// backward-compatible compatibility mode.
+	CLISecurityPolicy *llmtypes.CLISecurityPolicy
+
 	// IsolatedSessionWorkspace, when true, asks the coding-CLI session
 	// to run in a fresh os.MkdirTemp directory instead of
 	// CodingAgentWorkingDir. The tmp dir is created at session launch

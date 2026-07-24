@@ -22,6 +22,7 @@ func (a *Agent) appendCodingAgentInteractiveOptions(opts []llmtypes.CallOption) 
 
 func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
 	opts = a.appendCodingAgentWorkingDirOptionForProvider(opts, provider, modelID)
+	opts = a.appendCLISecurityPolicyOption(opts, provider)
 
 	sessionID := strings.TrimSpace(a.SessionID)
 	if sessionID == "" || !codingAgentInteractiveEnabledForProvider(provider, modelID, sessionID) {
