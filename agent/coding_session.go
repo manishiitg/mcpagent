@@ -3,6 +3,7 @@ package mcpagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -221,6 +222,21 @@ func (a *Agent) ContinueConversation(ctx context.Context, conversationID, messag
 		return "", fmt.Errorf("ContinueConversation: message is empty")
 	}
 
+	// Claim the turn-in-flight slot ATOMICALLY, before any I/O or shared-state
+	// mutation below (store.Load is real I/O — a real, non-trivial-latency race
+	// window, not a nanosecond one; a.SessionID / a.enablePersistentInteractive...
+	// mutate shared *Agent fields with no lock of their own). A prior version
+	// only set the flag well after this point via setTurnInFlight(true), so two
+	// concurrent callers (e.g. two Deliver calls that both observed
+	// TurnInFlight()==false before either had started) could both pass the
+	// caller-side check and both proceed to run overlapping turns here,
+	// corrupting shared Agent state along the way. See Deliver's doc comment
+	// for how it uses ErrTurnAlreadyInFlight to recover from losing this race.
+	if !a.tryClaimTurnInFlight() {
+		return "", ErrTurnAlreadyInFlight
+	}
+	defer a.setTurnInFlight(false)
+
 	if store != nil {
 		if h, err := store.Load(ctx, conversationID); err != nil {
 			if a.Logger != nil {
@@ -236,9 +252,6 @@ func (a *Agent) ContinueConversation(ctx context.Context, conversationID, messag
 	// native session id restored above (fallback).
 	a.SessionID = conversationID
 	a.enablePersistentInteractiveForProvider()
-
-	a.setTurnInFlight(true)
-	defer a.setTurnInFlight(false)
 
 	answer, err := a.Ask(ctx, message)
 	if err != nil {
@@ -269,6 +282,28 @@ func (a *Agent) enablePersistentInteractiveForProvider() {
 	case llm.ProviderPiCLI:
 		a.PiPersistentInteractiveSession = true
 	}
+}
+
+// ErrTurnAlreadyInFlight is returned by ContinueConversation when another
+// turn is already running on this Agent. ContinueConversation claims the
+// turn-in-flight slot ATOMICALLY at entry (a single mutex-guarded
+// compare-and-set), so of any two concurrent callers exactly one wins the
+// claim and proceeds; the other gets this error immediately, before doing any
+// work. Deliver uses this to distinguish "lost the race, fall back to
+// steer/queue" from a real failure inside the turn itself.
+var ErrTurnAlreadyInFlight = errors.New("mcpagent: a turn is already in flight on this agent")
+
+// tryClaimTurnInFlight atomically transitions turnInFlight false->true under
+// one lock acquisition, reporting whether THIS call won the claim. Two
+// concurrent callers can never both receive true.
+func (a *Agent) tryClaimTurnInFlight() bool {
+	a.turnInFlightMu.Lock()
+	defer a.turnInFlightMu.Unlock()
+	if a.turnInFlight {
+		return false
+	}
+	a.turnInFlight = true
+	return true
 }
 
 func (a *Agent) setTurnInFlight(v bool) {
@@ -400,17 +435,31 @@ func decideDelivery(turnInFlight, supportsSteering bool) deliveryDecision {
 // boundary (query-only transports), returning immediately.
 //
 // Deliver is safe to call from a different goroutine than the one running the
-// in-flight turn — that is the point of steering while busy.
+// in-flight turn — that is the point of steering while busy. It is ALSO safe
+// against two Deliver calls racing each other: the a.TurnInFlight() check
+// below is only a fast-path hint (skip the attempt when we're confident it's
+// busy) — correctness comes from ContinueConversation's own atomic claim.
+// If two goroutines both see TurnInFlight()==false and both attempt to start
+// a turn, exactly one wins ContinueConversation's claim; the other gets
+// ErrTurnAlreadyInFlight back and falls through to the normal steer/queue
+// path below using freshly-confirmed (not stale) in-flight state — it never
+// silently starts a second, overlapping turn.
 func (a *Agent) Deliver(ctx context.Context, conversationID, message string, store CodingSessionStore) (Delivered, error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return Delivered{}, fmt.Errorf("Deliver: message is empty")
 	}
 
-	switch decideDelivery(a.TurnInFlight(), a.SupportsSteering()) {
-	case decideStartTurn:
+	if !a.TurnInFlight() {
 		answer, err := a.ContinueConversation(ctx, conversationID, message, store)
-		return Delivered{Mode: DeliveryModeStartedTurn, Answer: answer}, err
+		if !errors.Is(err, ErrTurnAlreadyInFlight) {
+			return Delivered{Mode: DeliveryModeStartedTurn, Answer: answer}, err
+		}
+		// Lost the race to another Deliver/ContinueConversation call — fall
+		// through to steer/queue below, now with certainty a turn is in flight.
+	}
+
+	switch decideDelivery(true, a.SupportsSteering()) {
 	case decideSteer:
 		if _, err := a.DeliverUserMessage(ctx, UserMessageDeliveryRequest{
 			SessionID: strings.TrimSpace(conversationID),

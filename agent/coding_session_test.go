@@ -2,7 +2,9 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -149,9 +151,9 @@ func TestSupportsSteeringMatchesContract(t *testing.T) {
 // three ways a call ends up structured, with a tmux control for contrast.
 func TestSupportsSteeringFalseOnStructuredTransport(t *testing.T) {
 	cases := []struct {
-		name     string
-		agent    *Agent
-		want     bool
+		name  string
+		agent *Agent
+		want  bool
 	}{
 		// Control: no structured flag → steerable (tmux), same as the contract test.
 		{"codex tmux (control)", &Agent{provider: llm.ProviderCodexCLI}, true},
@@ -258,5 +260,65 @@ func TestDeliverEmptyMessageRejected(t *testing.T) {
 	a := &Agent{provider: llm.ProviderOpenAI}
 	if _, err := a.Deliver(context.Background(), "conv-x", "   ", nil); err == nil {
 		t.Fatalf("expected an error for an empty message")
+	}
+}
+
+// TestTryClaimTurnInFlightIsAtomic pins the core guarantee the Deliver/
+// ContinueConversation race fix rests on: of any number of concurrent
+// callers, EXACTLY ONE ever wins the claim. Before this fix, Deliver's
+// "should I start a turn?" check (a.TurnInFlight()) and the actual claim
+// (setTurnInFlight(true), deep inside ContinueConversation, after real I/O
+// like store.Load) were two separate, non-atomic steps — two concurrent
+// Deliver calls could both observe "not in flight" and both proceed to start
+// overlapping turns. Run with -race to also catch any unsynchronized access.
+func TestTryClaimTurnInFlightIsAtomic(t *testing.T) {
+	a := &Agent{provider: llm.ProviderOpenAI}
+
+	const n = 50
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make([]bool, n)
+	for i := 0; i < n; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start // maximize actual overlap rather than sequential scheduling
+			results[i] = a.tryClaimTurnInFlight()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	wins := 0
+	for _, won := range results {
+		if won {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("tryClaimTurnInFlight: %d of %d concurrent callers won the claim; want exactly 1", wins, n)
+	}
+}
+
+// TestContinueConversationReturnsErrTurnAlreadyInFlightWhenBusy proves
+// ContinueConversation checks the claim BEFORE doing any work (I/O, state
+// mutation) rather than after — the specific ordering bug this fix closes.
+// A turn is already marked in flight; ContinueConversation must refuse
+// immediately with ErrTurnAlreadyInFlight, never silently proceed to run a
+// second, overlapping turn on top of it.
+func TestContinueConversationReturnsErrTurnAlreadyInFlightWhenBusy(t *testing.T) {
+	a := &Agent{provider: llm.ProviderOpenAI}
+	if !a.tryClaimTurnInFlight() {
+		t.Fatal("setup: expected the first claim to succeed")
+	}
+
+	_, err := a.ContinueConversation(context.Background(), "conv-x", "hello", nil)
+	if !errors.Is(err, ErrTurnAlreadyInFlight) {
+		t.Fatalf("ContinueConversation error = %v; want ErrTurnAlreadyInFlight", err)
+	}
+	// Must not have released a claim it never held.
+	if !a.TurnInFlight() {
+		t.Fatal("the original claim must still be held — ContinueConversation should not touch a claim it lost")
 	}
 }
