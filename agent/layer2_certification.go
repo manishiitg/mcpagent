@@ -48,6 +48,7 @@ var Layer2P0Certifications = []Layer2Certification{
 	{"tool_failure_recovery.tmux", Layer2TransportTmux, layer2AllProviders(), "TestRealBridgeStreamingToolFailureRecovery", true, "recovers from a mid-stream tool failure"},
 	{"tool_failure_giveup.tmux", Layer2TransportTmux, layer2AllProviders(), "TestRealBridgeStreamingToolFailureGiveUp", true, "gives up without fabricating on permanent failure"},
 	{"message_modes.tmux", Layer2TransportTmux, []string{"Claude", "Codex", "Cursor"}, "TestRealBridgeMessageModes", true, "raw/final/clean-stream reconstruction (Pi excluded: documented model-verbosity non-bug, left strict)"},
+	{"markdown_fidelity.tmux", Layer2TransportTmux, layer2AllProviders(), "TestRealBridgeMarkdownFidelity", true, "GFM table + nested code fence survive extraction byte-exact, on disk and streamed, with Count()==1 duplication guards on structural markers (not presence-only asserts) — added after a user report of duplicate text in pi streaming; live-verified no duplication on any of the 4 providers"},
 
 	// --- tmux: self-validating (canary / deterministic) evidence, no agent review ---
 	{"system_prompt.tmux", Layer2TransportTmux, layer2AllProviders(), "TestTmuxSystemPromptSurvivesNewAgent", false, "custom system prompt survives NewAgent -> real CLI (57b4dd9 class)"},

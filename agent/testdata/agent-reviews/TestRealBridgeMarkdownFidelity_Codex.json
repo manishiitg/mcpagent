@@ -1,0 +1,44 @@
+{
+  "test": "TestRealBridgeMarkdownFidelity_Codex",
+  "summary": "codex via the REAL mcpbridge → executor → real execute_shell_command: write+read back a markdown table AND a nested code fence, byte-exact, no duplication, streamed at the mcpagent layer",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text <-> tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_176e3709b1c7 |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-BUILD_ID_176e3709b1c7\"\n```\n````",
+    "build_id_only_via_tool": "BUILD_ID_176e3709b1c7",
+    "clean_transcript_content": [
+      "I’m reading the project build id first.",
+      "I’m writing the requested report with the retrieved build id substituted in both locations.",
+      "I’m reading back the completed report to verify its exact contents.",
+      "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_176e3709b1c7 |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-BUILD_ID_176e3709b1c7\"\n```\n````"
+    ],
+    "expected_template": "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | <BUILD_ID> |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-<BUILD_ID>\"\n```\n````",
+    "report_md_on_disk": "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_176e3709b1c7 |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-BUILD_ID_176e3709b1c7\"\n```\n````\n",
+    "tool_names": [
+      "exec",
+      "exec",
+      "execute_shell_command",
+      "exec",
+      "execute_shell_command",
+      "exec",
+      "execute_shell_command"
+    ]
+  },
+  "fingerprint": "808768c8065df766",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "808768c8065df766",
+    "reviewer": "claude-sonnet-5 (agentic P0 review)",
+    "issues": [
+      "tool_names shows exec (codex's unremovable native functions.exec, read-only under this test's sandbox) interleaved with execute_shell_command (the real bridge tool). This is the documented codex P0 exception, not a bridge-only violation — assertNoNativeWrites (which this test uses for codex) already confirms no native WRITE tool ran and that execute_shell_command was actually used; the exec calls are read-only reconnaissance."
+    ],
+    "notes": "Narration -> tool -> narration -> tool -> narration -> tool -> cat-output ordering is correct and coherent, three clean narration sentences each preceding their tool call. The final answer preserves the markdown literally — pipes for the table, 4-backtick outer fence wrapping the 3-backtick inner fence — with no box-drawing rewrite (unlike claude's CLI). report_md_on_disk matches expected_template byte-for-byte after substitution. build_id appears exactly twice on disk (table row + nested echo) as designed, and the nested fence opens exactly once — no duplication in extraction, the original motivating question for this test."
+  }
+}

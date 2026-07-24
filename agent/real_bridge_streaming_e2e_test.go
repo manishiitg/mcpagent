@@ -307,7 +307,12 @@ func TestRealBridgeStreamingE2E(t *testing.T) {
 	}
 }
 
-func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin string) {
+// realBridgeTestAgent is a live agent wired to the REAL mcpbridge -> executor ->
+// execute_shell_command path, ready for a task. Shared setup for every
+// TestRealBridge* e2e in this file — factored out once a second test
+// (markdown fidelity) needed the identical ~60 lines of boilerplate.
+func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin string) (agent *Agent, ctx context.Context, apiURL, apiToken, workDir string) {
+	t.Helper()
 	if _, err := exec.LookPath(pc.cliBin); err != nil {
 		t.Skipf("authenticated %q CLI required", pc.cliBin)
 	}
@@ -321,7 +326,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	if err := os.WriteFile(configPath, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	apiURL, apiToken := startRealExecutorServer(t, configPath)
+	apiURL, apiToken = startRealExecutorServer(t, configPath)
 
 	cfg := llm.Config{Provider: pc.provider, ModelID: pc.modelID}
 	if len(pc.apiKeyEnvs) > 0 {
@@ -347,9 +352,10 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		t.Fatalf("InitializeLLM: %v", err)
 	}
 
-	workDir := t.TempDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+	workDir = t.TempDir()
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
 
 	agentOpts := []AgentOption{
 		WithProvider(pc.provider),
@@ -365,11 +371,11 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		// untested once the default changed.
 		agentOpts = append(agentOpts, WithCodexSandbox("read-only"))
 	}
-	agent, err := NewAgent(ctx, llmModel, configPath, agentOpts...)
+	agent, err = NewAgent(ctx, llmModel, configPath, agentOpts...)
 	if err != nil {
 		t.Fatalf("NewAgent: %v", err)
 	}
-	defer agent.Close()
+	t.Cleanup(agent.Close)
 
 	// Register the REAL shell tool the bridge will expose and route to.
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
@@ -384,6 +390,11 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	); err != nil {
 		t.Fatalf("RegisterCustomTool: %v", err)
 	}
+	return agent, ctx, apiURL, apiToken, workDir
+}
+
+func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin string) {
+	agent, ctx, _, _, workDir := newRealBridgeTestAgent(t, pc, bridgeBin)
 
 	listener := &recordingAgentEventListener{}
 	agent.AddEventListener(listener)
@@ -509,6 +520,191 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 			"went_through_real_bridge": true,
 		},
 		map[string]any{"streamed_clean_content": cleanContentChunks > 0, "streamed_tool": toolChunks > 0, "streamed_table": strings.Contains(cleanJoined, "|")},
+	)
+	agentreview.RequireReviewed(t, rec)
+}
+
+// TestRealBridgeMarkdownFidelityE2E is the P0 companion to
+// TestRealBridgeStreamingE2E, purpose-built to answer "can we properly extract
+// complex markdown, including nested code fences, with no duplication" — the
+// existing table test only exercised a GFM table with presence-only
+// (strings.Contains) assertions, which cannot fail even if the extracted text
+// were duplicated or the table came back mangled.
+//
+// This test tightens that in two ways: (1) the file the model writes is
+// asserted BYTE-EXACT against a known template (not just "contains a pipe"),
+// and (2) both the on-disk file and the streamed clean transcript assert
+// Count(...)==1 on structural markdown markers (the nested fence's opening
+// ```bash, the table's build_id row) — the generalized fix for the
+// presence-only-assertion class of bug this project already hit once today
+// (the cursor wrapped-prompt leak, whose test asserted a token was PRESENT but
+// never that a 706-char leak was ABSENT).
+//
+// Gated by the same RUN_MCPAGENT_REAL_BRIDGE_E2E=1 / MCPAGENT_REAL_BRIDGE_ONLY
+// convention as TestRealBridgeStreamingE2E; runs across all 4 CLI providers.
+func TestRealBridgeMarkdownFidelityE2E(t *testing.T) {
+	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
+		t.Skip("set RUN_MCPAGENT_REAL_BRIDGE_E2E=1 to run the real-bridge markdown fidelity e2e")
+	}
+	only := os.Getenv("MCPAGENT_REAL_BRIDGE_ONLY")
+	bridgeBin := ensureRealBridgeBinary(t)
+	for _, pc := range realBridgeProviderCases() {
+		if only != "" && only != pc.name {
+			continue
+		}
+		t.Run(pc.name, func(t *testing.T) { runRealBridgeMarkdownFidelity(t, pc, bridgeBin) })
+	}
+}
+
+// realBridgeMarkdownTemplate is the exact content the model must write, with
+// <BUILD_ID> as a placeholder it substitutes in both places (anti-cheat: the
+// real id only exists in a file it must read first). Deliberately contains a
+// nested code fence (a 4-backtick fence wrapping a 3-backtick one) — the
+// real-world "documenting a code block that itself contains a code block"
+// case that a naive markdown-fence stripper/extractor mishandles.
+func realBridgeMarkdownTemplate() string {
+	fence4 := strings.Repeat("`", 4)
+	fence3 := strings.Repeat("`", 3)
+	return strings.Join([]string{
+		"# Report",
+		"",
+		"| Field | Value |",
+		"|-------|-------|",
+		"| build_id | <BUILD_ID> |",
+		"| status | ok |",
+		"",
+		"Nested fence example:",
+		"",
+		fence4 + "text",
+		"Outer fence wraps an inner one:",
+		fence3 + "bash",
+		`echo "nested-<BUILD_ID>"`,
+		fence3,
+		fence4,
+	}, "\n")
+}
+
+func runRealBridgeMarkdownFidelity(t *testing.T, pc realBridgeProviderCase, bridgeBin string) {
+	agent, ctx, _, _, workDir := newRealBridgeTestAgent(t, pc, bridgeBin)
+
+	listener := &recordingAgentEventListener{}
+	agent.AddEventListener(listener)
+
+	codeWord := "BUILD_ID_" + realBridgeRandHex(6)
+	buildIDPath := filepath.Join(workDir, "build_id.txt")
+	reportPath := filepath.Join(workDir, "report.md")
+	if err := os.WriteFile(buildIDPath, []byte(codeWord), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	template := realBridgeMarkdownTemplate()
+	task := fmt.Sprintf(
+		"You are a build assistant with one tool: execute_shell_command, which runs a shell command and returns its output. "+
+			"Do these steps in order, writing one short sentence of narration BEFORE each command:\n"+
+			"1. Run: cat %[1]s   — this prints the project build id.\n"+
+			"2. Write EXACTLY the following markdown content to the file %[2]s, substituting <BUILD_ID> in BOTH places with "+
+			"the id from step 1. Use a quoted shell heredoc (cat > %[2]s <<'MDEOF' ... MDEOF) so the backticks and quotes "+
+			"below are written literally, with no reformatting, extra blank lines, or extra text added:\n\n%[3]s\n\n"+
+			"3. Run: cat %[2]s\n"+
+			"Finally, reply with exactly the contents of %[2]s, and nothing else — no preamble, no explanation.",
+		buildIDPath, reportPath, template)
+
+	answer, err := agent.Ask(ctx, task)
+	if err != nil {
+		t.Fatalf("agent.Ask: %v", err)
+	}
+
+	var cleanTexts, toolNames []string
+	var toolChunks int
+	for _, ev := range listener.events {
+		switch d := ev.Data.(type) {
+		case *events.StreamingChunkEvent:
+			if d.IsToolCall || strings.TrimSpace(d.Content) == "" {
+				continue
+			}
+			if d.Source != events.StreamingChunkSourceTerminal {
+				cleanTexts = append(cleanTexts, d.Content)
+			}
+		case *events.ToolCallStartEvent:
+			toolChunks++
+			toolNames = append(toolNames, d.ToolName)
+		}
+	}
+	cleanJoined := strings.Join(cleanTexts, "\n")
+	t.Logf("markdown fidelity: %d tool-call event(s) %v; answer=%q", toolChunks, toolNames, strings.TrimSpace(answer))
+
+	// Real WRITE through the bridge.
+	//nolint:gosec // G304: reportPath is a test-controlled temp path (t.TempDir()).
+	report, readErr := os.ReadFile(reportPath)
+	if readErr != nil {
+		t.Fatalf("report.md was not written by the real shell tool through the bridge: %v", readErr)
+	}
+	reportStr := string(report)
+
+	// EXACT match, not presence: the heredoc mechanism guarantees byte-fidelity
+	// once the model substitutes <BUILD_ID> correctly, so any deviation here is
+	// a real extraction/formatting problem, not test flakiness.
+	expected := strings.ReplaceAll(template, "<BUILD_ID>", codeWord)
+	if strings.TrimSpace(reportStr) != strings.TrimSpace(expected) {
+		t.Fatalf("report.md is not byte-exact.\n--- want ---\n%s\n--- got ---\n%s", expected, reportStr)
+	}
+
+	// Duplication guard on disk: the build id is designed to appear EXACTLY
+	// twice (table row + nested echo) and the nested fence opens EXACTLY once.
+	// A duplication bug (the original motivation for this test) shows up here
+	// as a count > expected, not just "the token is present somewhere".
+	if n := strings.Count(reportStr, codeWord); n != 2 {
+		t.Fatalf("report.md build id appears %d times, want exactly 2 (table row + nested echo) — possible duplication: %q", n, reportStr)
+	}
+	if n := strings.Count(reportStr, "```bash"); n != 1 {
+		t.Fatalf("report.md nested fence opens %d times, want exactly 1: %q", n, reportStr)
+	}
+
+	if toolChunks == 0 {
+		t.Fatalf("no ToolCallStartEvent — the real bridge tool call did not stream to the mcpagent layer")
+	}
+	if len(cleanTexts) == 0 {
+		t.Fatalf("no clean transcript content streamed")
+	}
+	if pc.strictBridgeOnly {
+		assertBridgeOrWebsearchOnly(t, toolNames)
+	} else {
+		assertNoNativeWrites(t, toolNames)
+	}
+
+	// Same duplication guard, applied to the STREAMED transcript rather than the
+	// file on disk — this is the artifact a no-terminal UI actually renders, and
+	// the one the user's original report ("lots of duplicate text in streaming
+	// extraction") was about. Structural markers (not the build id, which
+	// narration sentences may legitimately repeat) give a stable signal.
+	if n := strings.Count(cleanJoined, "```bash"); n != 1 {
+		t.Fatalf("STREAMED transcript: nested fence opening appears %d times, want exactly 1 (duplication in streaming extraction): %q", n, cleanJoined)
+	}
+	if n := strings.Count(cleanJoined, "| build_id |"); n != 1 {
+		t.Fatalf("STREAMED transcript: table row appears %d times, want exactly 1 (duplication in streaming extraction): %q", n, cleanJoined)
+	}
+	// Also require the ANSWER — what the app actually shows as the final
+	// reply — is free of duplication, independent of the mid-turn stream.
+	if n := strings.Count(answer, "```bash"); n > 1 {
+		t.Fatalf("final answer: nested fence opening appears %d times, want at most 1 (duplication in final extraction): %q", n, answer)
+	}
+
+	rec := agentreview.Write(t, "TestRealBridgeMarkdownFidelity_"+strings.ToUpper(pc.name[:1])+pc.name[1:],
+		pc.name+" via the REAL mcpbridge → executor → real execute_shell_command: write+read back a markdown table AND a nested code fence, byte-exact, no duplication, streamed at the mcpagent layer",
+		map[string]any{
+			"clean_transcript_content": cleanTexts,
+			"tool_names":               toolNames,
+			"answer":                   strings.TrimSpace(answer),
+			"report_md_on_disk":        reportStr,
+			"expected_template":        template,
+			"build_id_only_via_tool":   codeWord,
+		},
+		map[string]any{
+			"byte_exact_on_disk":       strings.TrimSpace(reportStr) == strings.TrimSpace(expected),
+			"no_duplication_on_disk":   strings.Count(reportStr, codeWord) == 2,
+			"no_duplication_in_stream": strings.Count(cleanJoined, "```bash") == 1,
+			"nested_fence_preserved":   strings.Contains(reportStr, "```bash") && strings.Contains(reportStr, strings.Repeat("`", 4)),
+		},
 	)
 	agentreview.RequireReviewed(t, rec)
 }

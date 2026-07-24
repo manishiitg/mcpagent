@@ -1,0 +1,51 @@
+{
+  "test": "TestRealBridgeMarkdownFidelity_Pi",
+  "summary": "pi via the REAL mcpbridge → executor → real execute_shell_command: write+read back a markdown table AND a nested code fence, byte-exact, no duplication, streamed at the mcpagent layer",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_1d1432898ec9 |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-BUILD_ID_1d1432898ec9\"\n```\n````",
+    "build_id_only_via_tool": "BUILD_ID_1d1432898ec9",
+    "clean_transcript_content": [
+      "I will read the contents of the build_id.txt file to retrieve the project build ID.",
+      "I will search for the available tools",
+      " to find the command execution utility.",
+      "I will run the command to read the build ID from the specified file.",
+      "I will write the markdown report with the substituted build ID to the",
+      " designated file path using a quoted heredoc.",
+      "I will display the contents of the newly created report.md file to verify its structure and content.",
+      "# Report\n\n| Field | Value |\n|-------|-------|\n",
+      "| build_id | BUILD_ID_1d1432898ec9 |\n| status",
+      " | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\n",
+      "echo \"nested-BUILD_ID_1d1432898ec9\"\n```\n",
+      "````"
+    ],
+    "expected_template": "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | \u003cBUILD_ID\u003e |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-\u003cBUILD_ID\u003e\"\n```\n````",
+    "report_md_on_disk": "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_1d1432898ec9 |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-BUILD_ID_1d1432898ec9\"\n```\n````\n",
+    "tool_names": [
+      "mcp",
+      "mcp",
+      "mcp",
+      "mcp",
+      "mcp"
+    ]
+  },
+  "fingerprint": "808768c8065df766",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "808768c8065df766",
+    "reviewer": "claude-sonnet-5 (agentic P0 review)",
+    "issues": [
+      "tool_names are all the generic 'mcp' label (pi's marker extension does not yet surface the specific MCP tool name) — a pre-existing, already-tracked cosmetic (see the earlier TestPiCLIStructuredStreamingRealWorldLive review), not new.",
+      "The final answer is only the last assistant message (the report block); earlier narration streamed but is not in the returned answer. Root cause is separate (finalAssistantText overwritten per message_end in the SAME function) — tracked as a distinct known issue, not this test's concern."
+    ],
+    "notes": "THIS IS THE FIX VERIFICATION for a real bug this test discovered: pi was unconditionally inserting a newline boundary at EVERY message_end that had streamed deltas, even when no tool call separated it from the next message — corrupting content mid-word/mid-table (reproduced 2/2 live as \"|\n build_id |\" and \"| build\n_id |\"). Fixed in multi-llm-provider-go by gating the boundary on toolCallSincePrevAssistantMsg (only insert \"\n\" between messages a real tool call actually separated). Verified live post-fix: chunks 5-8 above concatenate to the exact byte-perfect report with no corruption, matching report_md_on_disk exactly. All Count()==1 structural-duplication guards pass. This is very likely the root cause (or a major contributor) behind the original user report of \"duplicate/garbled text\" in pi streaming extraction."
+  }
+}
