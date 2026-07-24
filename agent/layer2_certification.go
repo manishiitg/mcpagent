@@ -52,7 +52,7 @@ var Layer2P0Certifications = []Layer2Certification{
 	// --- tmux: self-validating (canary / deterministic) evidence, no agent review ---
 	{"system_prompt.tmux", Layer2TransportTmux, layer2AllProviders(), "TestTmuxSystemPromptSurvivesNewAgent", false, "custom system prompt survives NewAgent -> real CLI (57b4dd9 class)"},
 	{"skills.tmux", Layer2TransportTmux, layer2AllProviders(), "TestTmuxSkillsSurviveNewAgent", false, "attached skill projected + readable by the model"},
-	{"convrecord.tmux", Layer2TransportTmux, layer2AllProviders(), "TestConversationRecordingWritesRealTurnData", false, "record->reload round-trip + real token/cost"},
+	{"convrecord.tmux", Layer2TransportTmux, layer2AllProviders(), "TestConversationRecordingWritesRealTurnData", false, "record->reload round-trip + real token usage (no USD — pricing is a caller decision)"},
 
 	// --- json/structured: agent-reviewed real-CLI evidence (Claude gained a lane this line of work) ---
 	{"multi_turn.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportMultiTurn", true, "native --resume: codex exec resume / cursor --resume / pi --session-id / claude --resume"},
