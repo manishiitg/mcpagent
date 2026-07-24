@@ -90,6 +90,8 @@ func (a *Agent) ApplyAgentSessionHandle(handle *AgentSessionHandle) {
 	if a == nil || handle == nil {
 		return
 	}
+	configuredProvider := a.provider
+	configuredModel := strings.TrimSpace(a.ModelID)
 	if sessionID := strings.TrimSpace(handle.SessionID); sessionID != "" {
 		a.SessionID = sessionID
 	} else if ownerID := strings.TrimSpace(handle.OwnerID); ownerID != "" && strings.TrimSpace(a.SessionID) == "" {
@@ -103,6 +105,16 @@ func (a *Agent) ApplyAgentSessionHandle(handle *AgentSessionHandle) {
 	}
 	a.CodingProviderSessionHandle = handle.Provider
 	a.applyCodingProviderSessionHandle(handle.Provider)
+	// A persisted handle identifies the provider-native conversation, but its
+	// model describes the previous turn. Preserve an explicitly configured
+	// model for this agent so role changes (for example Builder -> Pulse) can
+	// resume the same conversation with the model selected for the new turn.
+	if configuredProvider != "" && configuredModel != "" {
+		a.provider = configuredProvider
+		a.ModelID = configuredModel
+		a.CodingProviderSessionHandle.Provider = string(configuredProvider)
+		a.CodingProviderSessionHandle.Model = configuredModel
+	}
 }
 
 // ContinueAgentSession applies the handle and sends the latest message through
@@ -167,9 +179,10 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	if strings.TrimSpace(handle.WorkingDir) == "" {
 		handle.WorkingDir = strings.TrimSpace(a.CodingAgentWorkingDir)
 	}
-	if strings.TrimSpace(handle.Model) == "" {
-		handle.Model = modelID
-	}
+	// The continuation identity is the native session ID. The caller's model is
+	// authoritative for the new turn; the handle's model belongs to the turn
+	// that originally created or last persisted the conversation.
+	handle.Model = modelID
 	if a.Logger != nil {
 		a.Logger.Debug(fmt.Sprintf("Resolved coding-agent continuation handle: session=%q provider=%q nativeSessionID=%q useLegacy=%v isolated=%v workingDir=%q", a.SessionID, provider, handle.NativeSessionID, useLegacy, a.IsolatedSessionWorkspace, handle.WorkingDir))
 	}

@@ -333,6 +333,57 @@ func TestAgentSessionHandleApplyRestoresProviderState(t *testing.T) {
 	}
 }
 
+func TestAgentSessionHandleApplyPreservesConfiguredModel(t *testing.T) {
+	agent := &Agent{
+		provider: llm.ProviderClaudeCode,
+		ModelID:  "claude-sonnet-5",
+	}
+	handle := &AgentSessionHandle{
+		SessionID: "pulse-session",
+		Provider: llmtypes.CodingProviderSessionHandle{
+			Provider:        string(llm.ProviderClaudeCode),
+			Transport:       llmtypes.CodingProviderTransportTmux,
+			NativeSessionID: "builder-conversation",
+			Model:           "claude-opus-4-8",
+			Status:          llmtypes.CodingProviderSessionStatusIdle,
+		},
+	}
+
+	agent.ApplyAgentSessionHandle(handle)
+
+	if agent.ModelID != "claude-sonnet-5" {
+		t.Fatalf("ModelID = %q, want configured Pulse model", agent.ModelID)
+	}
+	if agent.CodingProviderSessionHandle.Model != "claude-sonnet-5" {
+		t.Fatalf("stored handle model = %q, want configured Pulse model", agent.CodingProviderSessionHandle.Model)
+	}
+	if agent.ClaudeCodeSessionID != "builder-conversation" {
+		t.Fatalf("ClaudeCodeSessionID = %q, want restored conversation", agent.ClaudeCodeSessionID)
+	}
+}
+
+func TestCodingProviderContinuationHandleUsesRequestedModel(t *testing.T) {
+	agent := &Agent{
+		provider:              llm.ProviderClaudeCode,
+		ModelID:               "claude-sonnet-5",
+		CodingAgentWorkingDir: "/tmp/work",
+		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+			Provider:        string(llm.ProviderClaudeCode),
+			Transport:       llmtypes.CodingProviderTransportTmux,
+			NativeSessionID: "builder-conversation",
+			Model:           "claude-opus-4-8",
+		},
+	}
+
+	handle, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderClaudeCode, "claude-sonnet-5")
+	if !ok {
+		t.Fatal("expected continuation handle")
+	}
+	if handle.Model != "claude-sonnet-5" {
+		t.Fatalf("continuation model = %q, want requested Pulse model", handle.Model)
+	}
+}
+
 func TestCodingProviderContinuationHandleForModelRequiresMatchingNativeHandle(t *testing.T) {
 	agent := &Agent{
 		provider:              llm.ProviderClaudeCode,
