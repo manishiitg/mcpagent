@@ -35,10 +35,14 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	claudeHTTPHooksEnabled := claudeHTTPRoutingHooksEnabled()
 
 	// Use restricted permissions instead of skipping them entirely. Allow our
-	// bridge tools and WebSearch to run without prompts.
+	// bridge tools and WebSearch to run without prompts. In enforced mode the
+	// wildcard is replaced with an explicit allowlist DERIVED from the actual
+	// registered bridge tool set (core + WithAdditionalBridgeTools) — not a
+	// hardcoded 4-tool literal, which silently rejected any additional tool a
+	// caller had registered.
 	allowedTools := "mcp__api-bridge__*,WebSearch"
 	if claudeHTTPHooksEnabled {
-		allowedTools = "mcp__api-bridge__execute_shell_command,mcp__api-bridge__diff_patch_workspace_file,mcp__api-bridge__agent_browser,mcp__api-bridge__get_api_spec,WebSearch"
+		allowedTools = strings.Join(claudeBridgeAllowedToolIdentifiers(a.additionalBridgeTools), ",") + ",WebSearch"
 	}
 	opts = append(opts, llm.WithAllowedTools(allowedTools))
 
@@ -46,7 +50,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	opts = append(opts, llm.WithClaudeCodeTools("WebSearch"))
 
 	if claudeHTTPHooksEnabled {
-		hookPath, hookErr := writeClaudeHTTPRoutingHook()
+		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools)
 		if hookErr != nil {
 			a.Logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
 		} else {

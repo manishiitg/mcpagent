@@ -34,6 +34,38 @@ var bridgeTools = []struct {
 	{"get_api_spec", "virtual"},
 }
 
+// claudeBridgeAllowedToolIdentifiers returns the full "mcp__api-bridge__<name>"
+// identifier for every tool actually exposed through the bridge MCP server —
+// the fixed core set (bridgeTools) plus whatever a caller registered via
+// WithAdditionalBridgeTools — deduped the same way BuildBridgeMCPConfig itself
+// dedupes them. This is the single source of truth for Claude's tool-name
+// allowlist, used both for --allowedTools and the enforced-mode PreToolUse
+// hook, so an additional bridge tool is never silently unusable in one path
+// while working in the other.
+func claudeBridgeAllowedToolIdentifiers(additional []string) []string {
+	seen := make(map[string]bool, len(bridgeTools)+len(additional))
+	names := make([]string, 0, len(bridgeTools)+len(additional))
+	for _, want := range bridgeTools {
+		if seen[want.name] {
+			continue
+		}
+		seen[want.name] = true
+		names = append(names, want.name)
+	}
+	for _, name := range additional {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	identifiers := make([]string, 0, len(names))
+	for _, name := range names {
+		identifiers = append(identifiers, "mcp__api-bridge__"+name)
+	}
+	return identifiers
+}
+
 // BuildBridgeMCPConfig creates an MCP config that launches the mcpbridge binary
 // as a stdio server, forwarding tool calls to the HTTP API endpoints.
 // This is used by CLI-native coding agents to access selected tools natively

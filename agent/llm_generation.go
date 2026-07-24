@@ -43,10 +43,23 @@ func claudeHTTPRoutingHooksEnabled() bool {
 		strings.EqualFold(v, "on")
 }
 
-func writeClaudeHTTPRoutingHook() (string, error) {
+// writeClaudeHTTPRoutingHook writes the enforced-mode PreToolUse hook. The
+// hook's ALLOWED set is generated from the SAME source of truth as
+// --allowedTools (claudeBridgeAllowedToolIdentifiers) — the fixed core bridge
+// tools plus additional, whatever a caller registered via
+// WithAdditionalBridgeTools. Previously this was a hardcoded 4-tool literal,
+// which silently denied any additional bridge tool once enforcement was on,
+// even though the caller had explicitly registered it.
+func writeClaudeHTTPRoutingHook(additional []string) (string, error) {
 	hooksDir := filepath.Join(os.TempDir(), "claude-code-hooks")
 	if err := os.MkdirAll(hooksDir, 0750); err != nil {
 		return "", fmt.Errorf("create claude hooks dir: %w", err)
+	}
+
+	allowedIdentifiers := append(claudeBridgeAllowedToolIdentifiers(additional), "WebSearch")
+	allowedJSON, err := json.Marshal(allowedIdentifiers)
+	if err != nil {
+		return "", fmt.Errorf("marshal claude hook allowlist: %w", err)
 	}
 
 	hookPath := filepath.Join(hooksDir, "enforce-http-tool-routing.py")
@@ -55,13 +68,7 @@ import json
 from pathlib import Path
 import sys
 
-ALLOWED = {
-    "mcp__api-bridge__execute_shell_command",
-    "mcp__api-bridge__diff_patch_workspace_file",
-    "mcp__api-bridge__agent_browser",
-    "mcp__api-bridge__get_api_spec",
-    "WebSearch",
-}
+ALLOWED = set(json.loads('` + string(allowedJSON) + `'))
 
 raw = sys.stdin.read()
 payload = {}
@@ -88,8 +95,8 @@ sys.stdout.write(json.dumps({
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": (
-            "Only mcp__api-bridge__ tools (execute_shell_command, diff_patch_workspace_file, agent_browser, get_api_spec) "
-            "and WebSearch are allowed in this Claude Code bridge session. "
+            "Only registered bridge tools (" + ", ".join(sorted(ALLOWED)) + ") "
+            "are allowed in this Claude Code bridge session. "
             "Use get_api_spec plus execute_shell_command for HTTP-based tool access."
         )
     }

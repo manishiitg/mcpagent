@@ -1,0 +1,104 @@
+package mcpagent
+
+import (
+	"bytes"
+	"encoding/json"
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+// TestClaudeBridgeAllowedToolIdentifiersIncludesAdditional pins the fix for a
+// real bug: enforced-mode Claude routing (MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING)
+// hardcoded a 4-tool allowlist in two places (--allowedTools and the PreToolUse
+// hook), silently rejecting any tool registered via WithAdditionalBridgeTools.
+// Both now derive from this single function.
+func TestClaudeBridgeAllowedToolIdentifiersIncludesAdditional(t *testing.T) {
+	got := claudeBridgeAllowedToolIdentifiers([]string{"my_custom_tool"})
+
+	want := []string{
+		"mcp__api-bridge__execute_shell_command",
+		"mcp__api-bridge__diff_patch_workspace_file",
+		"mcp__api-bridge__agent_browser",
+		"mcp__api-bridge__get_api_spec",
+		"mcp__api-bridge__my_custom_tool",
+	}
+	for _, w := range want {
+		found := false
+		for _, g := range got {
+			if g == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %q in allowlist, got %v", w, got)
+		}
+	}
+
+	// A caller's additional-tools list may legitimately re-name a core default
+	// (see BuildBridgeMCPConfig's identical dedup rationale) — must not appear
+	// twice.
+	dup := claudeBridgeAllowedToolIdentifiers([]string{"agent_browser"})
+	count := 0
+	for _, g := range dup {
+		if g == "mcp__api-bridge__agent_browser" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected agent_browser deduped to 1 occurrence, got %d in %v", count, dup)
+	}
+}
+
+// TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool is the real proof: it
+// generates the actual enforced-mode PreToolUse hook script (the same one
+// installed into a live Claude Code session) and EXECUTES it with python3,
+// feeding it a PreToolUse payload for a tool registered only via
+// WithAdditionalBridgeTools. Before the fix this was denied unconditionally
+// (hardcoded 4-tool ALLOWED set); it must now be allowed (exit 0, no denial
+// on stdout), while a tool that was never registered anywhere must still be
+// denied.
+func TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 required to execute the generated hook script")
+	}
+
+	hookPath, err := writeClaudeHTTPRoutingHook([]string{"my_custom_tool"})
+	if err != nil {
+		t.Fatalf("writeClaudeHTTPRoutingHook: %v", err)
+	}
+
+	// The hook's own contract: SystemExit(0) with EMPTY stdout means "allowed"
+	// (Claude's default behavior applies); the deny path falls through, writes
+	// a permissionDecision:"deny" JSON blob to stdout, and ALSO exits 0
+	// naturally — so the decision lives in stdout content, never the exit code.
+	runHook := func(toolName string) (denied bool, stdout string) {
+		t.Helper()
+		payload, _ := json.Marshal(map[string]any{"tool_name": toolName})
+		cmd := exec.Command("python3", hookPath)
+		cmd.Stdin = bytes.NewReader(payload)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("running hook for %q: %v", toolName, err)
+		}
+		return strings.Contains(out.String(), `"permissionDecision": "deny"`), out.String()
+	}
+
+	// The additional tool this agent explicitly registered must now be allowed.
+	if denied, out := runHook("mcp__api-bridge__my_custom_tool"); denied {
+		t.Errorf("additional bridge tool was denied: %s", out)
+	}
+
+	// A core tool must still be allowed (no regression).
+	if denied, out := runHook("mcp__api-bridge__execute_shell_command"); denied {
+		t.Errorf("core bridge tool was denied: %s", out)
+	}
+
+	// A tool that was never registered anywhere must still be denied — proves
+	// this isn't just an accidental wildcard.
+	if denied, out := runHook("mcp__api-bridge__totally_unregistered_tool"); !denied {
+		t.Errorf("unregistered tool was NOT denied: %s", out)
+	}
+}
