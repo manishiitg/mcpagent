@@ -1,0 +1,33 @@
+{
+  "test": "TestRealBridgeStreamingMultiTurn_Pi",
+  "summary": "Pi persistent multi-turn through the REAL bridge: turn 1 reads a build id, turn 2 reuses the session and writes it into report.md",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "build_id_only_in_file": "BUILD_ID_0e3a2acc208e",
+    "provider": "Pi",
+    "report_md_on_disk": "| Key | Value |\n| --- | --- |\n| build_id | BUILD_ID_0e3a2acc208e |\n| status | ok |\n",
+    "reused_tmux_session": true,
+    "turn1_answer": "The build id is BUILD_ID_0e3a2acc208e.",
+    "turn1_content_chunks": 4,
+    "turn1_tool_events": 6,
+    "turn2_answer": "The contents of the report file are:\n\n```markdown\n| Key | Value |\n| --- | --- |\n| build_id | BUILD_ID_0e3a2acc208e |\n| status | ok |\n```",
+    "turn2_content_chunks": 4,
+    "turn2_tool_events": 1
+  },
+  "fingerprint": "2209fcae5cace408",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "2209fcae5cace408",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Turn 1 reads the build id via execute_shell_command and answers correctly. Turn 2 reuses the SAME persistent tmux session (reused_tmux_session=true) and writes a real markdown table to report.md matching the exact format requested, then reads it back verbatim in the final answer — report_md_on_disk confirms the file genuinely contains the correct build id, not a hallucinated claim. No duplicated/garbled text, coherent narration in both turns, tool usage matches what was asked. This is the regression-guard run for the session_start marker hang fix (waitForPiMarkerType was blocking forever on turn 2 of a reused session) and the MCP_READY_FILE fingerprint fix (was preventing session reuse entirely) — both confirmed working end-to-end here."
+  }
+}

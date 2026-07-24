@@ -131,7 +131,13 @@ func (a *Agent) DeliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 		result.Transport = contract.Transport
 	}
 
-	if isCodingAgent && contract.SupportsLiveInput {
+	// Transport-aware, not just contract-aware: the same provider is steerable on
+	// tmux but query-only on the structured/JSON transport, which has no live pane
+	// to send-keys into. usesStructuredTransport() gates the tmux live-input path
+	// off for a structured run so it correctly falls through to the steer queue —
+	// mirrors SupportsSteering() (coding_session.go). Without this a structured
+	// coding-agent turn would try to tmux-inject into a one-shot process.
+	if isCodingAgent && contract.SupportsLiveInput && !a.usesStructuredTransport() {
 		if err := llm.SendCodingAgentLiveInput(ctx, provider, a.ModelID, req.SessionID, message); err != nil {
 			return result, fmt.Errorf("failed to submit live input to %s: %w", provider, err)
 		}

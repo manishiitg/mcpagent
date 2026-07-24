@@ -38,7 +38,6 @@ type ProviderAPIKeys struct {
 	Kimi              *string         `json:"kimi,omitempty"`
 	Vertex            *string         `json:"vertex,omitempty"`
 	CodexCLI          *string         `json:"codex_cli,omitempty"`
-	AgyCLI            *string         `json:"agy_cli,omitempty"`
 	MiniMax           *string         `json:"minimax,omitempty"`
 	MiniMaxCodingPlan *string         `json:"minimax-coding-plan,omitempty"`
 	Bedrock           *BedrockConfig  `json:"bedrock,omitempty"`
@@ -72,7 +71,6 @@ func (k *ProviderAPIKeys) ToLLMKeys() *llm.ProviderAPIKeys {
 		Kimi:              k.Kimi,
 		Vertex:            k.Vertex,
 		CodexCLI:          k.CodexCLI,
-		AgyCLI:            k.AgyCLI,
 		MiniMax:           k.MiniMax,
 		MiniMaxCodingPlan: k.MiniMaxCodingPlan,
 	}

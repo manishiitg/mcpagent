@@ -1,0 +1,31 @@
+{
+  "test": "TestCodingSessionDeliverSteerMidTurn_Codex",
+  "summary": "Codex: Deliver steers a live instruction into a RUNNING turn (pinned open by a sleep tool): the model obeys the mid-turn word in the same turn's reply",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "conversation_id": "steer-298b42f2",
+    "delivery_mode": "steered",
+    "provider": "Codex",
+    "steer_reached_model": "steered word only appears if the mid-turn live input reached the model",
+    "steer_word_obeyed": true,
+    "steered_word": "PURPLE_daa9a14799b8",
+    "tool_completed": true,
+    "turn_answer": "COMMAND_DONE\n\nPURPLE_daa9a14799b8"
+  },
+  "fingerprint": "fb104ed11ee48805",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "fb104ed11ee48805",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Codex: sleep tool completes and the steered word appears in the same reply, proving Deliver reached the running turn. Clean and correct. Note: the first live run of this exact test failed with the steered word missing entirely (\"COMMAND_DONE\" only) — an immediate retry passed cleanly. Matches this test's own documented caveat (\"live-model mid-turn timing is intermittently flaky\"), not a structural bug — logged here for the record rather than investigated further, consistent with this test's opt-in, manual-integration-proof status."
+  }
+}

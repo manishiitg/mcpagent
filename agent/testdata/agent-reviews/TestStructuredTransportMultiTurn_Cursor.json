@@ -1,0 +1,29 @@
+{
+  "test": "TestStructuredTransportMultiTurn_Cursor",
+  "summary": "Cursor (structured/json) multi-turn via native --resume: turn 1 reads a build id, turn 2 recalls it purely from restored session context (no re-read, no write)",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "build_id": "BUILD_ID_6f73a9677585",
+    "conversation_id": "jsonmt-299566ca",
+    "provider": "Cursor",
+    "transport": "structured/json",
+    "turn1_answer": "Running `cat build_id.txt`.\nBUILD_ID_6f73a9677585",
+    "turn2_answer": "BUILD_ID_6f73a9677585"
+  },
+  "fingerprint": "a4bad6b3d3b9a1eb",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "a4bad6b3d3b9a1eb",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Native --resume proven on Cursor structured (cursor-agent --print ... --resume \u003cid\u003e). Turn 2 is a pure RECALL (forbids file read/tool use), so BUILD_ID appearing can ONLY come from restored session context — not re-reading. Resume wiring was present (NativeResumeOption-\u003eWithCursorResumeSessionID-\u003eMetadataKeyResumeSessionID, consumed by the structured adapter) but never proven until the recall-based test isolated continuity from cursor's --mode ask write refusal."
+  }
+}

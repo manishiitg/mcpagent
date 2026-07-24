@@ -8,7 +8,6 @@ import (
 
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
@@ -42,7 +41,6 @@ func TestIsCodingCLIProviderExcludesKimiAPIProvider(t *testing.T) {
 		{name: "claude code", provider: llm.ProviderClaudeCode, want: true},
 		{name: "codex cli", provider: llm.ProviderCodexCLI, want: true},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, want: true},
-		{name: "agy cli", provider: llm.ProviderAgyCLI, want: true},
 		{name: "pi cli", provider: llm.ProviderPiCLI, want: true},
 		{name: "kimi api model", provider: llm.ProviderKimi, modelID: "kimi-k2.6", want: false},
 		{name: "anthropic", provider: llm.ProviderAnthropic, want: false},
@@ -282,33 +280,6 @@ func TestBuildBridgeMCPConfigAPIBaseURLPriority(t *testing.T) {
 	}
 }
 
-func TestAppendAgyCLIIntegrationOptionsEnablesBridgeOnlyHooks(t *testing.T) {
-	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
-	t.Setenv("MCP_API_URL", "http://localhost:8080")
-	t.Setenv("MCP_API_TOKEN", "test-token")
-
-	agent := bridgeTestAgent()
-	agent.SessionID = "app-session"
-	agent.AgySessionID = "agy-conversation-id"
-
-	opts, err := agent.appendAgyCLIIntegrationOptions(nil)
-	if err != nil {
-		t.Fatalf("appendAgyCLIIntegrationOptions() error = %v", err)
-	}
-	got := metadataFromCallOptions(opts)
-
-	mcpConfig, ok := got[agycli.MetadataKeyMCPConfig].(string)
-	if !ok || !strings.Contains(mcpConfig, `"api-bridge"`) {
-		t.Fatalf("Agy MCP config metadata = %#v, want api-bridge config", got[agycli.MetadataKeyMCPConfig])
-	}
-	if got[agycli.MetadataKeyBridgeOnlyTools] != true {
-		t.Fatalf("Agy bridge-only metadata = %#v, want true", got[agycli.MetadataKeyBridgeOnlyTools])
-	}
-	if got[agycli.MetadataKeyResumeSessionID] != "agy-conversation-id" {
-		t.Fatalf("Agy resume metadata = %#v, want agy-conversation-id", got[agycli.MetadataKeyResumeSessionID])
-	}
-}
-
 func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
@@ -406,18 +377,6 @@ func TestAppendCursorCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
 	agent := bridgeTestAgent()
 	if _, err := agent.appendCursorCLIIntegrationOptions(nil); err == nil {
 		t.Fatal("appendCursorCLIIntegrationOptions() error = nil, want missing bridge config error")
-	}
-}
-
-func TestAppendAgyCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
-	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
-	t.Setenv("MCP_API_URL", "")
-	t.Setenv("MCP_BRIDGE_API_URL", "")
-	t.Setenv("MCP_API_TOKEN", "")
-
-	agent := bridgeTestAgent()
-	if _, err := agent.appendAgyCLIIntegrationOptions(nil); err == nil {
-		t.Fatal("appendAgyCLIIntegrationOptions() error = nil, want missing bridge config error")
 	}
 }
 

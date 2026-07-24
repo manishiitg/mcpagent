@@ -14,7 +14,7 @@ package mcpagent
 // tools ARE registered, and these names are exact.
 //
 // Applied via AppendSystemPrompt for every coding-agent CLI we
-// front (cursor / agy / claude-code / codex / gemini)
+// front (cursor / claude-code / codex / gemini)
 // so the routing instruction is delivered the same way across
 // providers.
 func bridgeRoutingExplicitInstructions() string {

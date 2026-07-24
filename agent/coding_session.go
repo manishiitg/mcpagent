@@ -266,8 +266,6 @@ func (a *Agent) enablePersistentInteractiveForProvider() {
 		a.CodexPersistentInteractiveSession = true
 	case llm.ProviderCursorCLI:
 		a.CursorPersistentInteractiveSession = true
-	case llm.ProviderAgyCLI:
-		a.AgyPersistentInteractiveSession = true
 	case llm.ProviderPiCLI:
 		a.PiPersistentInteractiveSession = true
 	}
@@ -289,10 +287,57 @@ func (a *Agent) TurnInFlight() bool {
 
 // --- delivery: steer vs query -----------------------------------------------
 
+// usesStructuredTransport reports whether THIS agent instance will run its
+// coding-agent turns over the structured/JSON transport (`codex exec --json`,
+// `cursor-agent --print`, `pi --print --mode json`) rather than tmux. It is the
+// union of the three ways a call can end up structured, and must stay in lockstep
+// with the actual execution condition in StartCodingAgentTransportSession /
+// executeLLMInner (a.ForceStructuredCodingAgent || contract.Transport != tmux),
+// plus the per-provider opt-in flags that flip a normally-tmux provider:
+//
+//   - ForceStructuredCodingAgent — the workflow step's transport="structured"
+//   - CodexStructuredTransport / CursorStructuredTransport / PiStructuredTransport
+//   - a provider whose native contract transport simply isn't tmux
+//
+// Returns false for non-coding-agent providers (contract lookup fails) — steering
+// is already false for those via SupportsSteering's own contract check.
+func (a *Agent) usesStructuredTransport() bool {
+	if a == nil {
+		return false
+	}
+	if a.ForceStructuredCodingAgent {
+		return true
+	}
+	switch a.provider {
+	case llm.ProviderCodexCLI:
+		if a.CodexStructuredTransport {
+			return true
+		}
+	case llm.ProviderCursorCLI:
+		if a.CursorStructuredTransport {
+			return true
+		}
+	case llm.ProviderPiCLI:
+		if a.PiStructuredTransport {
+			return true
+		}
+	}
+	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.ModelID); ok {
+		return contract.Transport != llm.CodingAgentTransportTmux
+	}
+	return false
+}
+
 // SupportsSteering reports whether the agent's transport accepts live input into
-// a running turn (true mid-turn steering). All tmux CLI providers support it
-// today; future query-only transports (API/JSON streaming) will not.
+// a running turn (true mid-turn steering). Only a tmux coding-agent session has a
+// live pane to inject into; a structured/JSON run is a one-shot query-only
+// process, so it must NOT be steered — Deliver queues for the next turn boundary
+// instead. This is why the check is transport-aware, not just contract-aware: the
+// same provider (e.g. Codex) is steerable on tmux but query-only on `--json`.
 func (a *Agent) SupportsSteering() bool {
+	if a.usesStructuredTransport() {
+		return false
+	}
 	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.ModelID)
 	return ok && contract.SupportsLiveInput
 }

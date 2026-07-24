@@ -1,0 +1,36 @@
+{
+  "test": "TestRealBridgeStreamingToolFailureGiveUp_Cursor",
+  "summary": "Cursor gives up gracefully on a PERMANENTLY failing bridge tool: bounded retry, stream stays clean, turn ends without fabricating the build id",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "The build id could NOT be read.",
+    "clean_stream": "Reading the build ID from the file now.\n\nThe build id could NOT be read.",
+    "content_chunks": 2,
+    "injected_failure": "PERMANENT_TOOL_FAILURE on every call",
+    "provider": "Cursor",
+    "streamed_tool_events": 3,
+    "tool_handler_calls": 1,
+    "tool_names": [
+      "GetMcpTools",
+      "CallMcpTool",
+      "CallMcpTool"
+    ],
+    "unreachable_build_id": "BUILD_ID_e127638ebbe7"
+  },
+  "fingerprint": "bdaad55f285bac50",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "bdaad55f285bac50",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Real bug fixed and verified: newRealBridgeAgentWithShell was missing WithSessionID(...), which previously caused Cursor's answer to include the full verbatim input prompt (prompt-echo) and tool_handler_calls to read 0. Adding the session ID fixed the prompt-echo completely. The remaining calls=0 was not a bug: Cursor routes tool calls through its own GetMcpTools/CallMcpTool meta-tool wrapper rather than hitting this test's registered Go handler directly, so the streamed tool-call event (tool_names) is the correct provider-agnostic signal here, not the handler counter. One real CallMcpTool attempt is recorded, matching a bounded-retry give-up on a PERMANENT failure. Clean single-sentence answer, correctly reports the tool backend was unavailable, does not fabricate the build id."
+  }
+}

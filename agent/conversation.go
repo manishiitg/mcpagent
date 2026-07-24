@@ -879,6 +879,27 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				CompletionTokens: usage.OutputTokens,
 				TotalTokens:      usage.TotalTokens,
 			}, resp)
+
+			// No-op unless a caller opted in via WithConversationSink. Builds
+			// its own history-plus-this-reply copy rather than reading
+			// `messages` directly: at this point in the control flow the
+			// assistant's reply has NOT yet been appended to `messages` on
+			// every branch below (tool-call loops append it much later, in
+			// several different places) — recording the pre-append slice
+			// silently dropped the very last (and often only new) exchange,
+			// so a resumed conversation had the question but never the
+			// answer. Real bug, caught by the resume half of
+			// TestConversationRecordingWritesRealTurnData actually failing.
+			if a.conversationSink != nil {
+				recordMessages := messages
+				if resp.Choices[0].Content != "" {
+					recordMessages = append(append([]llmtypes.MessageContent{}, messages...), llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeAI,
+						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: resp.Choices[0].Content}},
+					})
+				}
+				a.recordConversationTurn(turn+1, time.Since(llmStartTime), recordMessages, usage.InputTokens, usage.OutputTokens, usage.TotalTokens, cacheTokens, reasoningTokens)
+			}
 		}
 
 		// Check for context cancellation after LLM generation

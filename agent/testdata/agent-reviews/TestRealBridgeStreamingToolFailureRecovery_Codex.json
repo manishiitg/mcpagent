@@ -1,0 +1,38 @@
+{
+  "test": "TestRealBridgeStreamingToolFailureRecovery_Codex",
+  "summary": "Codex recovers from a MID-STREAM bridge tool failure: first call fails, model retries the same command, stream continues, turn completes with the build id",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "BUILD_ID_a9383897392e",
+    "clean_stream": "I’ll read the build ID now.\nBUILD_ID_a9383897392e",
+    "content_chunks": 2,
+    "injected_first_failure": "TRANSIENT_TOOL_FAILURE on call #1",
+    "provider": "Codex",
+    "recovered_build_id": "BUILD_ID_a9383897392e",
+    "streamed_tool_events": 5,
+    "tool_handler_calls": 2,
+    "tool_names": [
+      "exec",
+      "exec",
+      "execute_shell_command",
+      "exec",
+      "execute_shell_command"
+    ]
+  },
+  "fingerprint": "f2db2e396ea7a3a5",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "f2db2e396ea7a3a5",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Codex: tool fails once, model retries, recovers correctly. Clean, terse, build id correct. tool_names includes native \"exec\" calls alongside \"execute_shell_command\" — expected, not a defect: Codex's native functions.exec is structurally unremovable, and this test doesn't run in read-only sandbox mode, so native reads are allowed here by design (see strictBridgeOnly=false for Codex)."
+  }
+}

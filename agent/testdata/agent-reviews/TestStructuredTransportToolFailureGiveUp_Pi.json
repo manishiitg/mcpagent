@@ -1,0 +1,37 @@
+{
+  "test": "TestStructuredTransportToolFailureGiveUp_Pi",
+  "summary": "Pi (structured/json) gives up gracefully on a PERMANENTLY failing bridge tool: bounded retry, turn ends without fabricating the build id",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "The build id could NOT be read due to the tool failing.",
+    "content_chunks": 2,
+    "injected_failure": "PERMANENT_TOOL_FAILURE on every call",
+    "provider": "Pi",
+    "streamed_tool_events": 4,
+    "tool_handler_calls": 1,
+    "tool_names": [
+      "",
+      "",
+      "",
+      ""
+    ],
+    "transport": "structured/json",
+    "unreachable_build_id": "BUILD_ID_4359d1254fe6"
+  },
+  "fingerprint": "02596416ce1c9d90",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "02596416ce1c9d90",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Pi structured/json gives up gracefully on a permanently failing bridge tool: does not fabricate the build id, turn completes cleanly with a give-up message. (Codex is skipped here — its unremovable native exec bypasses the failing bridge tool, making give-up unfalsifiable; recovery is still tested for Codex.)"
+  }
+}

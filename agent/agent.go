@@ -17,12 +17,14 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
+	"github.com/manishiitg/mcpagent/agent/convrecord"
 	"github.com/manishiitg/mcpagent/agent/prompt"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpcache"
 	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/toolcalllog"
 	"github.com/manishiitg/mcpagent/observability"
 )
 
@@ -206,6 +208,31 @@ func WithCodexNetworkAccess(enabled bool) AgentOption {
 	}
 }
 
+// WithCodexStructuredTransport selects `codex exec --json` instead of tmux.
+// See Agent.CodexStructuredTransport doc comment for when to use this.
+func WithCodexStructuredTransport(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.CodexStructuredTransport = enabled
+	}
+}
+
+// WithCursorStructuredTransport selects `cursor-agent --print --output-format
+// stream-json` instead of tmux. See Agent.CursorStructuredTransport doc
+// comment for when to use this.
+func WithCursorStructuredTransport(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.CursorStructuredTransport = enabled
+	}
+}
+
+// WithPiStructuredTransport selects `pi --print --mode json` instead of
+// tmux. See Agent.PiStructuredTransport doc comment for when to use this.
+func WithPiStructuredTransport(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.PiStructuredTransport = enabled
+	}
+}
+
 // WithForceStructuredCodingAgent forces the coding-agent CLI providers
 // (claude-code, codex-cli, cursor-cli) to use the structured
 // JSON transport (--print/--exec/stream-json) even when a session ID is
@@ -224,14 +251,6 @@ func WithForceStructuredCodingAgent(enabled bool) AgentOption {
 func WithCursorPersistentInteractiveSession(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.CursorPersistentInteractiveSession = enabled
-	}
-}
-
-// WithAgyPersistentInteractiveSession keeps Antigravity CLI tmux sessions alive
-// across completed chat turns.
-func WithAgyPersistentInteractiveSession(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.AgyPersistentInteractiveSession = enabled
 	}
 }
 
@@ -488,7 +507,7 @@ func WithSystemPrompt(systemPrompt string) AgentOption {
 
 // WithBridgeRoutingInstructions overrides the default bridge-tool-routing
 // system-prompt text mcpagent appends for EVERY CLI coding-agent provider —
-// Claude Code, Codex CLI, Cursor CLI, Agy CLI, and Pi CLI each get their own
+// Claude Code, Codex CLI, Cursor CLI, and Pi CLI each get their own
 // provider-specific preamble plus the shared bridgeRoutingExplicitInstructions
 // block (see coding_agent_bridge_routing_prompt.go and the per-provider
 // auto-configure sections in NewAgent). The default is tuned for AgentWorks'
@@ -511,6 +530,36 @@ func WithSystemPrompt(systemPrompt string) AgentOption {
 func WithBridgeRoutingInstructions(text string) AgentOption {
 	return func(a *Agent) {
 		a.bridgeRoutingInstructionsOverride = &text
+	}
+}
+
+// WithConversationSink attaches a convrecord.Sink so every completed LLM
+// call is persisted as a convrecord.TurnRecord — messages, tool calls (with
+// timing), token usage, and cost. OFF by default: no file/store I/O happens
+// unless a caller opts in.
+//
+// This exists to close a real, observed duplication — see the convrecord
+// package doc for the full story (AgentWorks and sparkquill each
+// independently reimplemented "extract a completed turn and persist it,"
+// in two different, incompatible shapes, one of them tracking no cost at
+// all). Use convrecord.NewFileJSONSink(path) for the common case, or
+// implement Sink yourself for a different store (SQLite, etc.).
+func WithConversationSink(sink convrecord.Sink) AgentOption {
+	return func(a *Agent) {
+		a.conversationSink = sink
+	}
+}
+
+// WithBillingBasis lets a caller label cost figures with the correct
+// billing-basis for their own providers — e.g. a subscription-billed CLI
+// (Cursor, Codex Pro) has no real per-call invoice, so its computed cost is
+// a "subscription_shadow" estimate, not a real bill. This is a product
+// judgment mcpagent cannot make on the caller's behalf (see convrecord.Cost
+// doc for the vocabulary); the default (no func set) labels every provider
+// "token_estimate".
+func WithBillingBasis(fn convrecord.BillingBasisFunc) AgentOption {
+	return func(a *Agent) {
+		a.billingBasisFunc = fn
 	}
 }
 
@@ -905,6 +954,19 @@ type Agent struct {
 	// "danger-full-access" (network is unconditionally on there).
 	CodexNetworkAccess bool
 
+	// CodexStructuredTransport, CursorStructuredTransport, and
+	// PiStructuredTransport select `codex exec --json` / `cursor-agent --print
+	// --output-format stream-json` / `pi --print --mode json` (per-turn,
+	// one-shot, no tmux dependency) instead of the tmux interactive transport
+	// for the respective provider. OFF by default — tmux is the normal
+	// product path (persistent chat, live steering, terminal streaming);
+	// structured is for callers with neither need (e.g. unattended workflow
+	// steps). See WithCodexStructuredTransport / WithCursorStructuredTransport
+	// / WithPiStructuredTransport.
+	CodexStructuredTransport  bool
+	CursorStructuredTransport bool
+	PiStructuredTransport     bool
+
 	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
 	CodexProjectDirID string
 
@@ -916,9 +978,6 @@ type Agent struct {
 
 	// Cursor CLI persistent tmux mode for interactive chat
 	CursorPersistentInteractiveSession bool
-
-	// Antigravity CLI persistent tmux mode for interactive chat
-	AgyPersistentInteractiveSession bool
 
 	// Pi CLI persistent tmux mode for interactive chat
 	PiPersistentInteractiveSession bool
@@ -934,9 +993,6 @@ type Agent struct {
 	// Guarded by turnInFlightMu. See coding_session.go.
 	turnInFlight   bool
 	turnInFlightMu sync.Mutex
-
-	// Antigravity CLI conversation ID for --conversation on subsequent turns.
-	AgySessionID string
 
 	// Cursor CLI session ID for native --resume on subsequent turns.
 	// Populated by the structured adapter from cursor's stream-json init
@@ -1036,10 +1092,25 @@ type Agent struct {
 	// bridgeRoutingInstructionsOverride replaces the default per-provider
 	// bridge-tool-routing preamble + bridgeRoutingExplicitInstructions text
 	// (appended for every CLI coding-agent provider: Claude Code, Codex,
-	// Cursor, Agy, Pi) when set via WithBridgeRoutingInstructions. nil means
+	// Cursor, Pi) when set via WithBridgeRoutingInstructions. nil means
 	// use the default for whichever provider this agent runs; a pointer to
 	// "" suppresses the block entirely for this agent.
 	bridgeRoutingInstructionsOverride *string
+
+	// conversationSink, when set via WithConversationSink, receives one
+	// convrecord.TurnRecord per completed LLM call. nil (the default) means
+	// no persistence happens at all.
+	conversationSink convrecord.Sink
+	// billingBasisFunc, when set via WithBillingBasis, labels each provider's
+	// cost with the correct billing-basis semantics. nil defaults every
+	// provider to "token_estimate".
+	billingBasisFunc convrecord.BillingBasisFunc
+	// lastToolCallRecordedAt tracks the most recent tool-call CompletedAt this
+	// agent has already included in a TurnRecord, so repeated non-destructive
+	// toolcalllog.Snapshot reads (required — GetAndClear would break
+	// agent_go's own cancellation-recovery reader of the same shared
+	// in-process registry) don't re-emit the same calls turn after turn.
+	lastToolCallRecordedAt time.Time
 
 	// Custom tools that are handled as virtual tools
 	customTools map[string]CustomTool
@@ -1198,6 +1269,7 @@ type Agent struct {
 	cumulativeReasoningCost float64 // Cumulative cost for reasoning tokens (in USD)
 	cumulativeCacheCost     float64 // Cumulative cost for cached input tokens (in USD)
 	cumulativeTotalCost     float64 // Total cumulative cost (in USD)
+	lastTurnCost            float64 // Cost of the most recent single turn only (in USD) — see recordConversationTurn
 
 	// Context window usage tracking
 	// currentContextWindowUsage represents the actual tokens currently in the context window.
@@ -1328,8 +1400,6 @@ func (a *Agent) GetLLMModelConfig() LLMModel {
 			config.APIKey = a.APIKeys.CodexCLI
 		case llm.ProviderCursorCLI:
 			config.APIKey = a.APIKeys.CursorCLI
-		case llm.ProviderAgyCLI:
-			config.APIKey = a.APIKeys.AgyCLI
 		case llm.ProviderPiCLI:
 			config.APIKey = a.APIKeys.PiCLI
 		case llm.ProviderMiniMax:
@@ -2209,38 +2279,6 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		}
 	}
 
-	// Auto-configure Antigravity CLI provider (same constraints as the other CLI coding agents).
-	// Previously missing — agy was getting the generic system prompt
-	// without any "use the bridge instead of built-ins" guidance, so
-	// the model would occasionally call run_command / write_to_file
-	// and report "no MCP server configuration" when the bridge-only
-	// hook denied them.
-	if ag.provider == llmproviders.ProviderAgyCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools (view_file, write_to_file, replace_file_content, list_dir, find_by_name, grep_search, run_command, search_web, etc.) — they are denied by the orchestrator's bridge-only hook. Use the declared MCP bridge tools listed below instead. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
-		logger.Debug("🔧 [AGY_CLI] Provider detected - silently disabling incompatible features")
-
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
-			logger.Debug("🔧 [AGY_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
-			logger.Debug("🔧 [AGY_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
-			logger.Debug("🔧 [AGY_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
-			logger.Debug("🔧 [AGY_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
-			logger.Debug("🔧 [AGY_CLI] Auto-enabled streaming (required for tool call observability)")
-		}
-	}
-
 	// Auto-configure Pi CLI provider. Pi runs through tmux marker transport with
 	// pi-mcp-adapter mounted and built-in tools disabled by the adapter when the
 	// bridge config is available.
@@ -2475,6 +2513,9 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 		turnCost = providerReportedCost
 	}
 	a.cumulativeTotalCost += turnCost
+	// Exposed for convrecord.TurnRecord.Cost (recordConversationTurn) — the
+	// per-call cost, not the running total.
+	a.lastTurnCost = turnCost
 
 	// Update context window usage (current input tokens in conversation)
 	// Set currentContextWindowUsage to the actual prompt tokens from this LLM call.
@@ -2731,6 +2772,87 @@ func (a *Agent) GetTokenUsageWithPricing() (
 	}
 
 	return
+}
+
+// recordConversationTurn builds a convrecord.TurnRecord for one completed LLM
+// call and hands it to a.conversationSink, if one is configured via
+// WithConversationSink. A no-op (and no cost of computing anything) when no
+// sink is set — call sites do not need to check first.
+//
+// messages is the caller's own history slice, already including this turn's
+// exchange by the time this is called (see the call site in
+// AskWithHistory) — passed straight through rather than reconstructed, since
+// that's the same "full history, not a delta" shape both existing consumers
+// (agent_go's chat_history_persistence.go and family-server's
+// conversation_store.go) already persist.
+func (a *Agent) recordConversationTurn(turn int, duration time.Duration, messages []llmtypes.MessageContent, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int) {
+	if a == nil || a.conversationSink == nil {
+		return
+	}
+
+	var toolCalls []convrecord.ToolCallRecord
+	if sessionID := strings.TrimSpace(a.SessionID); sessionID != "" {
+		for _, call := range toolcalllog.Snapshot(sessionID) {
+			if call.Status != "done" || !call.CompletedAt.After(a.lastToolCallRecordedAt) {
+				continue
+			}
+			toolCalls = append(toolCalls, convrecord.ToolCallRecord{
+				ID:          call.ID,
+				Name:        call.Name,
+				ArgsJSON:    call.ArgsJSON,
+				Result:      call.Result,
+				StartedAt:   call.StartedAt,
+				CompletedAt: call.CompletedAt,
+				DurationMS:  call.CompletedAt.Sub(call.StartedAt).Milliseconds(),
+			})
+			if call.CompletedAt.After(a.lastToolCallRecordedAt) {
+				a.lastToolCallRecordedAt = call.CompletedAt
+			}
+		}
+	}
+
+	basis := "token_estimate"
+	if a.billingBasisFunc != nil {
+		if b := strings.TrimSpace(a.billingBasisFunc(string(a.provider))); b != "" {
+			basis = b
+		}
+	}
+
+	a.tokenTrackingMutex.RLock()
+	cumulative := convrecord.Cost{
+		InputUSD:     a.cumulativeInputCost,
+		OutputUSD:    a.cumulativeOutputCost,
+		ReasoningUSD: a.cumulativeReasoningCost,
+		CacheUSD:     a.cumulativeCacheCost,
+		TotalUSD:     a.cumulativeTotalCost,
+		BillingBasis: basis,
+	}
+	turnCost := convrecord.Cost{TotalUSD: a.lastTurnCost, BillingBasis: basis}
+	a.tokenTrackingMutex.RUnlock()
+
+	rec := convrecord.TurnRecord{
+		SessionID:  a.SessionID,
+		Turn:       turn,
+		Timestamp:  time.Now(),
+		Provider:   string(a.provider),
+		ModelID:    a.ModelID,
+		DurationMS: duration.Milliseconds(),
+		Messages:   messages,
+		ToolCalls:  toolCalls,
+		TokenUsage: convrecord.TokenUsage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
+			CacheTokens:      cacheTokens,
+			ReasoningTokens:  reasoningTokens,
+		},
+		Cost:           turnCost,
+		CumulativeCost: cumulative,
+	}
+
+	if err := a.conversationSink.WriteTurn(rec); err != nil && a.Logger != nil {
+		a.Logger.Warn("convrecord: WriteTurn failed", loggerv2.Error(err))
+	}
 }
 
 // EndAgentSession finalizes the current agent session.
@@ -3302,6 +3424,14 @@ func (a *Agent) Close() {
 		if a.Logger != nil {
 			a.Logger.Info("IsolatedSessionWorkspace: removed tmp dir " + a.isolatedWorkspacePath)
 		}
+	} else if wd := strings.TrimSpace(a.CodingAgentWorkingDir); wd != "" && llm.IsCodingAgentProvider(a.provider, a.ModelID) {
+		// Real (non-isolated) workdir: the whole-tree rm -rf above never runs, so
+		// skills + the managed system prompt this session projected would otherwise
+		// linger in the operator's repo after close (Claude/Codex/Pi don't wipe
+		// them; only Cursor's adapter does). Remove exactly what we projected —
+		// named skill folders + marker-verified prompt files — leaving operator
+		// content intact.
+		cleanupProjectedArtifactsOnClose(wd, a.provider, a.attachedSkills)
 	}
 }
 

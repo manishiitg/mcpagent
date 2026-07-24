@@ -5,7 +5,6 @@ import (
 
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -19,7 +18,6 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 		additional map[string]interface{}
 		wantClaude string
 		wantCodex  string
-		wantAgy    string
 		wantPi     string
 	}{
 		{
@@ -39,15 +37,6 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 				"provider":        "codex-cli",
 			},
 			wantCodex: "019e-codex-thread-id",
-		},
-		{
-			name:     "agy conversation ID extracted",
-			provider: llm.ProviderAgyCLI,
-			additional: map[string]interface{}{
-				"agy_session_id": "agy-conversation-id",
-				"provider":       "agy-cli",
-			},
-			wantAgy: "agy-conversation-id",
 		},
 		{
 			name:     "pi session ID extracted",
@@ -99,9 +88,6 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 			if agent.CodexSessionID != tt.wantCodex {
 				t.Errorf("CodexSessionID = %q, want %q", agent.CodexSessionID, tt.wantCodex)
 			}
-			if agent.AgySessionID != tt.wantAgy {
-				t.Errorf("AgySessionID = %q, want %q", agent.AgySessionID, tt.wantAgy)
-			}
 			if agent.PiSessionID != tt.wantPi {
 				t.Errorf("PiSessionID = %q, want %q", agent.PiSessionID, tt.wantPi)
 			}
@@ -118,7 +104,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 		codexSessionID                    string
 		cursorSessionID                   string
 		cursorBridgeToolsMode             bool
-		agySessionID                      string
 		piSessionID                       string
 		sessionID                         string
 		codexPersistentInteractiveSession bool
@@ -167,13 +152,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 			wantResumeValue:       "cursor-native-id",
 		},
 		{
-			name:            "agy passes resume conversation ID",
-			provider:        llm.ProviderAgyCLI,
-			agySessionID:    "agy-conversation-id",
-			wantResumeKey:   agycli.MetadataKeyResumeSessionID,
-			wantResumeValue: "agy-conversation-id",
-		},
-		{
 			name:            "pi passes native session ID",
 			provider:        llm.ProviderPiCLI,
 			piSessionID:     "mlp-pi-resume-id",
@@ -200,7 +178,6 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 				CodexSessionID:                    tt.codexSessionID,
 				CursorSessionID:                   tt.cursorSessionID,
 				CursorBridgeToolsMode:             tt.cursorBridgeToolsMode,
-				AgySessionID:                      tt.agySessionID,
 				PiSessionID:                       tt.piSessionID,
 				CodexPersistentInteractiveSession: tt.codexPersistentInteractiveSession,
 			}
@@ -252,12 +229,6 @@ func TestSessionIDRoundTrip(t *testing.T) {
 			provider:   llm.ProviderCursorCLI,
 			sessionKey: "cursor_session_id",
 			resumeKey:  cursorcli.MetadataKeyResumeSessionID,
-		},
-		{
-			name:       "agy cli",
-			provider:   llm.ProviderAgyCLI,
-			sessionKey: "agy_session_id",
-			resumeKey:  agycli.MetadataKeyResumeSessionID,
 		},
 		{
 			name:       "pi cli",

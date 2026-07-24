@@ -1,0 +1,29 @@
+{
+  "test": "TestStructuredTransportMultiTurn_Codex",
+  "summary": "Codex (structured/json) multi-turn via native --resume: turn 1 reads a build id, turn 2 recalls it purely from restored session context (no re-read, no write)",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "build_id": "BUILD_ID_a36c4266080a",
+    "conversation_id": "jsonmt-2e3af052",
+    "provider": "Codex",
+    "transport": "structured/json",
+    "turn1_answer": "BUILD_ID_a36c4266080a",
+    "turn2_answer": "BUILD_ID_a36c4266080a"
+  },
+  "fingerprint": "a4bad6b3d3b9a1eb",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "a4bad6b3d3b9a1eb",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Native --resume IMPLEMENTED + proven on Codex structured. Turn 2 runs `codex exec resume \u003cid\u003e --json` (was deliberately deferred/unwired before). The resume subcommand lacks --profile/--sandbox/-C, so the MCP bridge profile is layered via the GLOBAL --profile flag (secrets stay in the file, not argv), sandbox via a global -c, cwd via cmd.Dir. Recall test forbids re-reading, so the recalled BUILD_ID proves real context restoration."
+  }
+}

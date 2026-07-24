@@ -122,7 +122,7 @@ func TestFileCodingSessionStore(t *testing.T) {
 // provider is not).
 func TestSupportsSteeringMatchesContract(t *testing.T) {
 	for _, provider := range []llm.Provider{
-		llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderAgyCLI, llm.ProviderPiCLI,
+		llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderPiCLI,
 	} {
 		a := &Agent{provider: provider}
 		contract, ok := llm.GetCodingAgentProviderContract(provider, "")
@@ -139,6 +139,70 @@ func TestSupportsSteeringMatchesContract(t *testing.T) {
 	}
 }
 
+// TestSupportsSteeringFalseOnStructuredTransport proves the transport-aware half
+// of the steering decision: the SAME coding-agent provider that is steerable on
+// tmux must report SupportsSteering()==false the moment it runs over the
+// structured/JSON transport (a one-shot query-only process with no live pane).
+// This is the regression guard for the transport-blind bug where SupportsSteering
+// keyed only off the provider contract and would have tried to tmux-inject into a
+// `--json` run. Covers all three structured-capable providers, via each of the
+// three ways a call ends up structured, with a tmux control for contrast.
+func TestSupportsSteeringFalseOnStructuredTransport(t *testing.T) {
+	cases := []struct {
+		name     string
+		agent    *Agent
+		want     bool
+	}{
+		// Control: no structured flag → steerable (tmux), same as the contract test.
+		{"codex tmux (control)", &Agent{provider: llm.ProviderCodexCLI}, true},
+		{"cursor tmux (control)", &Agent{provider: llm.ProviderCursorCLI}, true},
+		{"pi tmux (control)", &Agent{provider: llm.ProviderPiCLI}, true},
+
+		// Per-provider structured flag → not steerable.
+		{"codex --json", &Agent{provider: llm.ProviderCodexCLI, CodexStructuredTransport: true}, false},
+		{"cursor --print", &Agent{provider: llm.ProviderCursorCLI, CursorStructuredTransport: true}, false},
+		{"pi --mode json", &Agent{provider: llm.ProviderPiCLI, PiStructuredTransport: true}, false},
+
+		// ForceStructuredCodingAgent (the workflow step's transport="structured")
+		// flips ANY coding-agent provider to structured, so none are steerable.
+		{"codex forced structured", &Agent{provider: llm.ProviderCodexCLI, ForceStructuredCodingAgent: true}, false},
+		{"cursor forced structured", &Agent{provider: llm.ProviderCursorCLI, ForceStructuredCodingAgent: true}, false},
+		{"pi forced structured", &Agent{provider: llm.ProviderPiCLI, ForceStructuredCodingAgent: true}, false},
+		{"claude forced structured", &Agent{provider: llm.ProviderClaudeCode, ForceStructuredCodingAgent: true}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.agent.SupportsSteering(); got != tc.want {
+				t.Fatalf("SupportsSteering()=%v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDeliverQueuesOnStructuredCodingAgent exercises the full Deliver path for a
+// coding-agent provider running structured: even though the provider's contract
+// says it supports live input (true on tmux), a busy structured turn must QUEUE
+// the message, not attempt a live tmux injection into a one-shot process. This is
+// the end-to-end (still no live session) counterpart to
+// TestDeliverQueuesWhenBusyAndNotSteerable, which only covered a non-coding
+// provider.
+func TestDeliverQueuesOnStructuredCodingAgent(t *testing.T) {
+	a := &Agent{provider: llm.ProviderCodexCLI, CodexStructuredTransport: true}
+	a.setTurnInFlight(true)
+
+	got, err := a.Deliver(context.Background(), "conv-json", "please also add tests", nil)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if got.Mode != DeliveryModeQueued {
+		t.Fatalf("Deliver mode = %q; want %q (a busy structured coding-agent turn must queue, not steer)", got.Mode, DeliveryModeQueued)
+	}
+	drained := a.DrainSteerMessages()
+	if len(drained) != 1 || drained[0] != "please also add tests" {
+		t.Fatalf("queued messages = %v; want the delivered message", drained)
+	}
+}
+
 // TestEnablePersistentInteractiveForProvider proves each coding-CLI provider's
 // keep-alive flag is the one flipped on (and a non-CLI provider flips none).
 func TestEnablePersistentInteractiveForProvider(t *testing.T) {
@@ -149,7 +213,6 @@ func TestEnablePersistentInteractiveForProvider(t *testing.T) {
 		{llm.ProviderClaudeCode, func(a *Agent) bool { return a.ClaudeCodePersistentInteractiveSession }},
 		{llm.ProviderCodexCLI, func(a *Agent) bool { return a.CodexPersistentInteractiveSession }},
 		{llm.ProviderCursorCLI, func(a *Agent) bool { return a.CursorPersistentInteractiveSession }},
-		{llm.ProviderAgyCLI, func(a *Agent) bool { return a.AgyPersistentInteractiveSession }},
 		{llm.ProviderPiCLI, func(a *Agent) bool { return a.PiPersistentInteractiveSession }},
 	}
 	for _, tc := range cases {

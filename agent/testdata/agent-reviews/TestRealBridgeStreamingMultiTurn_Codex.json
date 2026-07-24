@@ -1,0 +1,33 @@
+{
+  "test": "TestRealBridgeStreamingMultiTurn_Codex",
+  "summary": "Codex persistent multi-turn through the REAL bridge: turn 1 reads a build id, turn 2 reuses the session and writes it into report.md",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "build_id_only_in_file": "BUILD_ID_44052e6ed810",
+    "provider": "Codex",
+    "report_md_on_disk": "| field | value |\n|---|---|\n| build_id | BUILD_ID_44052e6ed810 |\n| status | ok |\n",
+    "reused_tmux_session": true,
+    "turn1_answer": "BUILD_ID_44052e6ed810",
+    "turn1_content_chunks": 2,
+    "turn1_tool_events": 3,
+    "turn2_answer": "| field | value |\n|---|---|\n| build_id | BUILD_ID_44052e6ed810 |\n| status | ok |",
+    "turn2_content_chunks": 2,
+    "turn2_tool_events": 4
+  },
+  "fingerprint": "2209fcae5cace408",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "2209fcae5cace408",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Turn 1 answers with the build id (terse but correct); turn 2 reuses the session and writes/reads back the exact table content, confirmed on disk via report_md_on_disk. Minor stylistic quirk: Codex chose 'build_id | value' as its own header labels (the test only specified the data rows, not header text) — harmless model choice, not a defect. Real work, no garbling, tool usage matches the ask."
+  }
+}

@@ -9,7 +9,6 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -71,21 +70,6 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			wantPersistence: true,
 			wantWorkingKey:  cursorcli.MetadataKeyWorkingDir,
 			wantWorkingDir:  "/tmp/cursor-chat",
-		},
-		{
-			name: "agy persistent chat",
-			agent: &Agent{
-				provider:                        llm.ProviderAgyCLI,
-				SessionID:                       "chat-session-5",
-				AgyPersistentInteractiveSession: true,
-				CodingAgentWorkingDir:           "/tmp/agy-chat",
-			},
-			wantSessionKey:  agycli.MetadataKeyInteractiveSessionID,
-			wantPersistKey:  agycli.MetadataKeyPersistentInteractive,
-			wantSessionID:   "chat-session-5",
-			wantPersistence: true,
-			wantWorkingKey:  agycli.MetadataKeyWorkingDir,
-			wantWorkingDir:  "/tmp/agy-chat",
 		},
 		{
 			name: "codex workflow uses bounded interactive lifecycle",
@@ -265,7 +249,6 @@ func TestCodingCLIWorkingDirOptionCoverage(t *testing.T) {
 		{name: "claude code", provider: llm.ProviderClaudeCode, metadataKey: claudecode.MetadataKeyWorkingDir},
 		{name: "codex cli", provider: llm.ProviderCodexCLI, metadataKey: codexcli.MetadataKeyProjectDirID},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI, metadataKey: cursorcli.MetadataKeyWorkingDir},
-		{name: "agy cli", provider: llm.ProviderAgyCLI, metadataKey: agycli.MetadataKeyWorkingDir},
 		{name: "pi cli", provider: llm.ProviderPiCLI, metadataKey: picli.MetadataKeyWorkingDir},
 	}
 

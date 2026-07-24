@@ -26,9 +26,6 @@ var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentInteg
 	llmproviders.ProviderCursorCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 		return a.appendCursorCLIIntegrationOptions(opts)
 	},
-	llmproviders.ProviderAgyCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
-		return a.appendAgyCLIIntegrationOptions(opts)
-	},
 	llmproviders.ProviderPiCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 		return a.appendPiCLIIntegrationOptionsForModel(opts, model)
 	},
@@ -170,6 +167,9 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		}
 	}
 	a.Logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
+	if a.CodexStructuredTransport {
+		opts = append(opts, llm.WithCodexStructuredTransport(true))
+	}
 	return opts, nil
 }
 

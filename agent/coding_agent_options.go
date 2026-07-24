@@ -13,7 +13,6 @@ var codingAgentPersistentInteractiveEnabledByProvider = map[llm.Provider]func(*A
 	llm.ProviderClaudeCode: func(a *Agent) bool { return a.ClaudeCodePersistentInteractiveSession },
 	llm.ProviderCodexCLI:   func(a *Agent) bool { return a.CodexPersistentInteractiveSession },
 	llm.ProviderCursorCLI:  func(a *Agent) bool { return a.CursorPersistentInteractiveSession },
-	llm.ProviderAgyCLI:     func(a *Agent) bool { return a.AgyPersistentInteractiveSession },
 	llm.ProviderPiCLI:      func(a *Agent) bool { return a.PiPersistentInteractiveSession },
 }
 
@@ -103,8 +102,8 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	// twice — once via the CLI flag/env/in-band channel and once via the
 	// projected file — doubling the (often large) builder prompt. Carry it
 	// through the projected file only; each adapter falls back to its normal
-	// channel if the projection is disabled or its write fails. Cursor/Agy carry
-	// the prompt through their rules file alone, and Pi uses explicit append-
+	// channel if the projection is disabled or its write fails. Cursor carries
+	// the prompt through its rules file alone, and Pi uses explicit append-
 	// system-prompt, so they need no opt-in here.
 	if option := llm.CodingAgentProjectInstructionOnlyOption(provider, true); option != nil {
 		opts = append(opts, option)
@@ -157,9 +156,6 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	if sid, ok := additional["cursor_session_id"].(string); ok && sid != "" {
 		a.CursorSessionID = sid
 	}
-	if sid, ok := additional["agy_session_id"].(string); ok && sid != "" {
-		a.AgySessionID = sid
-	}
 	if sid, ok := additional["pi_session_id"].(string); ok && sid != "" {
 		a.PiSessionID = sid
 	}
@@ -206,6 +202,9 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 		a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
 		a.Logger.Info("⏱️ [CURSOR_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
 		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
+	}
+	if a.CursorStructuredTransport {
+		opts = append(opts, llm.WithCursorStructuredTransport(true))
 	}
 	return opts, nil
 }

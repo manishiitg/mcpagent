@@ -1,0 +1,32 @@
+{
+  "test": "TestCodingSessionContinuityAfterLoss_Cursor",
+  "summary": "Cursor: ContinueConversation continuity survives live-session loss: a code word stated in turn 1 is recalled in turn 2 after the tmux session is killed, via native --resume off the persisted handle",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "code_word": "RESUME_WORD_7a34520a9e59",
+    "code_word_only_spoken": "never written to disk — recall proves provider-native resume",
+    "conversation_id": "continuity-cf26209d",
+    "killed_tmux_session": "mlp-cursor-cli-int-1784873134879776000-f751bbc5",
+    "native_session_id": "1e7346c1-77a7-461e-8076-08e1cab4ed4a",
+    "provider": "Cursor",
+    "recalled_after_loss": true,
+    "turn1_answer": "OK.",
+    "turn2_recall": "RESUME_WORD_7a34520a9e59"
+  },
+  "fingerprint": "599ee5d1eb34e2f0",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "599ee5d1eb34e2f0",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Cursor: turn 1 states the code word (OK ack, never written to disk); tmux session killed to force session loss; turn 2 recalls it correctly via native --resume off the persisted handle, proving real provider-native conversation memory survives session loss, not a file-based cheat. Clean, coherent, no garbling."
+  }
+}

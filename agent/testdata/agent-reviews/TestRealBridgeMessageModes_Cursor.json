@@ -1,0 +1,32 @@
+{
+  "test": "TestRealBridgeMessageModes_Cursor",
+  "summary": "Cursor: the 3 user message modes built from a REAL bridge turn via Source+IsDelta: raw tmux / non-streaming final / streaming (tools removed)",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting \u2014 clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable \u2014 reads like an assistant working, coherent and natural",
+    "correct text <-> tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "build_id": "BUILD_ID_bc66dc1447d0",
+    "mode1_raw_tmux_head": "  \u001b[33m\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ufffd\ufffd",
+    "mode2_non_streaming_final": "Build ID: BUILD_ID_bc66dc1447d0",
+    "mode3_streaming": "Reading the build ID from the file now.\nBuild ID: **BUILD_ID_bc66dc1447d0**",
+    "provider": "Cursor",
+    "streamed_matches_final": true,
+    "tool_names_kept_out_of_msg": [
+      "CallMcpTool"
+    ]
+  },
+  "fingerprint": "7645c4f8002aae9c",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "7645c4f8002aae9c",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Cursor: mode1 (raw tmux) contains genuine terminal ANSI, separable from mode3. mode3 (streaming) is clean narration with no tool-call leakage, no ANSI, correctly carries the build id. mode2 (final answer) matches mode3 content. Clean three-way separation via Source+IsDelta."
+  }
+}

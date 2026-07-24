@@ -723,7 +723,6 @@ func TestFinishStreamingTerminalEndIncludesRetentionMetadata(t *testing.T) {
 		{provider: "codex-cli", retentionKey: "codex_interactive_retention_seconds", sessionKey: "codex_interactive_session"},
 		{provider: "cursor-cli", retentionKey: "cursor_interactive_retention_seconds", sessionKey: "cursor_interactive_session"},
 		{provider: "pi-cli", retentionKey: "pi_interactive_retention_seconds", sessionKey: "pi_interactive_session"},
-		{provider: "agy-cli", retentionKey: "agy_interactive_retention_seconds", sessionKey: "agy_interactive_session"},
 	}
 
 	for _, tc := range tests {

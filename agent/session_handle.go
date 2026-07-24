@@ -30,7 +30,6 @@ var codingAgentNativeSessionIDSetters = map[llm.Provider]func(*Agent, string){
 		a.CodexSessionID = id
 	},
 	llm.ProviderCursorCLI: func(a *Agent, id string) { a.CursorSessionID = id },
-	llm.ProviderAgyCLI:    func(a *Agent, id string) { a.AgySessionID = id },
 	llm.ProviderPiCLI:     func(a *Agent, id string) { a.PiSessionID = id },
 }
 
@@ -42,7 +41,6 @@ var codingAgentNativeSessionIDGetters = map[llm.Provider]func(*Agent) string{
 	llm.ProviderClaudeCode: func(a *Agent) string { return a.ClaudeCodeSessionID },
 	llm.ProviderCodexCLI:   func(a *Agent) string { return a.CodexSessionID },
 	llm.ProviderCursorCLI:  func(a *Agent) string { return a.CursorSessionID },
-	llm.ProviderAgyCLI:     func(a *Agent) string { return a.AgySessionID },
 	llm.ProviderPiCLI:      func(a *Agent) string { return a.PiSessionID },
 }
 
@@ -224,7 +222,16 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 		Model:    a.ModelID,
 		Status:   llmtypes.CodingProviderSessionStatusIdle,
 	}
-	if llm.IsTmuxCodingAgentProvider(a.provider, a.ModelID) && !a.ForceStructuredCodingAgent {
+	// Transport-aware, not just Force-aware: a per-provider structured flag
+	// (CodexStructuredTransport/CursorStructuredTransport/PiStructuredTransport)
+	// runs the turn on the JSON transport just as ForceStructuredCodingAgent
+	// does. usesStructuredTransport() is the union of both, so the continuation
+	// handle records the transport the turn ACTUALLY ran on. Without this, a
+	// structured turn recorded Transport=tmux and the NEXT turn resumed the
+	// native session through the tmux path (`Continuing … with native session`)
+	// instead of `--json --resume`, silently losing all turn-1 context on
+	// Codex/Cursor (found live: multi-turn wrote a hallucinated build id).
+	if llm.IsTmuxCodingAgentProvider(a.provider, a.ModelID) && !a.usesStructuredTransport() {
 		handle.Transport = llmtypes.CodingProviderTransportTmux
 	} else if llm.IsCodingAgentProvider(a.provider, a.ModelID) {
 		handle.Transport = llmtypes.CodingProviderTransportStructured

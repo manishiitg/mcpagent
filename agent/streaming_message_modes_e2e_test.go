@@ -64,95 +64,118 @@ func buildMessageModes(evs []*events.AgentEvent) (rawTerminal, streamingMessage 
 	return term.String(), strings.Join(blocks, "\n")
 }
 
-// TestRealBridgeMessageModesClaude proves the three consumer message modes can be
+// TestRealBridgeMessageModes proves the three consumer message modes can be
 // built from a REAL turn's mcpagent events (through the real bridge), using
-// Source + IsDelta — the fields those modes were designed around. It replaces the
-// earlier workbench-stand-in draft that faked mode2 == mode3.
+// Source + IsDelta — the fields those modes were designed around, on every
+// provider. Table-driven across all 4 providers — was Claude-only (see
+// docs/layer_test_coverage.html §matrix). It replaces the earlier
+// workbench-stand-in draft that faked mode2 == mode3.
 //
 //	mode1 raw tmux        : the terminal pane is available and separable.
 //	mode2 non-streaming   : the full assistant message = the turn's final answer.
 //	mode3 streaming       : the reassembled clean stream — TOOLS REMOVED, clean of
 //	                        ANSI, and consistent with the final answer.
-func TestRealBridgeMessageModesClaude(t *testing.T) {
+func TestRealBridgeMessageModes(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
 		t.Skip("set RUN_MCPAGENT_REAL_BRIDGE_E2E=1 to run the real-bridge message-modes e2e")
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
-		t.Skip("authenticated `claude` CLI required")
-	}
 	t.Setenv("MCP_BRIDGE_BINARY", ensureRealBridgeBinary(t))
-	t.Setenv("CLAUDE_CODE_STREAM_TRANSCRIPT", "1")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	defer cancel()
+	for _, tc := range multiTurnProviderCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := exec.LookPath(tc.binary); err != nil {
+				t.Skipf("%s CLI required", tc.binary)
+			}
+			if tc.streamEnv != "" {
+				t.Setenv(tc.streamEnv, "1")
+			}
 
-	workDir := t.TempDir()
-	codeWord := "BUILD_ID_" + realBridgeRandHex(6)
-	buildIDPath := filepath.Join(workDir, "build_id.txt")
-	if err := os.WriteFile(buildIDPath, []byte(codeWord), 0o600); err != nil {
-		t.Fatal(err)
-	}
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+			defer cancel()
 
-	agent, cleanup, err := buildRealBridgeClaudeAgent(ctx, t.TempDir(), workDir, "modes-"+realBridgeRandHex(4), false)
-	if err != nil {
-		t.Fatalf("build agent: %v", err)
-	}
-	defer cleanup()
-	listener := &recordingAgentEventListener{}
-	agent.AddEventListener(listener)
+			workDir := t.TempDir()
+			codeWord := "BUILD_ID_" + realBridgeRandHex(6)
+			buildIDPath := filepath.Join(workDir, "build_id.txt")
+			if err := os.WriteFile(buildIDPath, []byte(codeWord), 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	answer, err := agent.Ask(ctx, fmt.Sprintf(
-		"You are a build assistant with one tool: execute_shell_command. Write one short sentence of narration, then run exactly: cat %s\nThen reply with the build id it printed.", buildIDPath))
-	if err != nil {
-		t.Fatalf("agent.Ask: %v", err)
-	}
-	finalAnswer := strings.TrimSpace(answer)
+			agent, cleanup, err := buildRealBridgeAgent(ctx, tc, t.TempDir(), workDir, "modes-"+realBridgeRandHex(4), false)
+			if err != nil {
+				t.Fatalf("build agent: %v", err)
+			}
+			defer cleanup()
+			listener := &recordingAgentEventListener{}
+			agent.AddEventListener(listener)
 
-	mode1RawTmux, mode3Streaming := buildMessageModes(listener.events)
-	toolNames := toolNamesFromEvents(listener.events)
-	t.Logf("message modes: mode1(terminal len=%d) mode3(streaming)=%q; final=%q; tools=%v",
-		len(mode1RawTmux), mode3Streaming, finalAnswer, toolNames)
+			answer, err := agent.Ask(ctx, fmt.Sprintf(
+				"You are a build assistant with one tool: execute_shell_command. Write one short sentence of narration, then run exactly: cat %s\nThen reply with the build id it printed.", buildIDPath))
+			if err != nil {
+				t.Fatalf("agent.Ask: %v", err)
+			}
+			finalAnswer := strings.TrimSpace(answer)
 
-	// mode3 (streaming): non-empty, TOOLS REMOVED, clean of terminal ANSI, and
-	// consistent with the final answer (both carry the build id the model read).
-	if strings.TrimSpace(mode3Streaming) == "" {
-		t.Fatalf("mode3 (streaming) message is empty")
-	}
-	if strings.Contains(mode3Streaming, "\x1b") {
-		t.Fatalf("mode3 streaming message leaked raw terminal ANSI: %q", mode3Streaming)
-	}
-	for _, banned := range []string{"execute_shell_command", "mcp__api-bridge", "ToolCall", "tool_use"} {
-		if strings.Contains(mode3Streaming, banned) {
-			t.Fatalf("mode3 streaming leaked tool activity (%q): %q", banned, mode3Streaming)
-		}
-	}
-	if !strings.Contains(mode3Streaming, codeWord) {
-		t.Fatalf("mode3 streaming message does not contain the build id from the turn: %q", mode3Streaming)
-	}
-	// mode2 (non-streaming full message) == the turn's final answer; it must carry
-	// the build id and agree with the streaming view.
-	if !strings.Contains(finalAnswer, codeWord) {
-		t.Fatalf("mode2 (final answer) missing the build id: %q", finalAnswer)
-	}
-	// mode1 (raw tmux): the terminal pane is available AND separable from mode3 —
-	// it contains the raw frames (ANSI), which mode3 does not.
-	if strings.TrimSpace(mode1RawTmux) == "" {
-		t.Fatalf("mode1 (raw tmux) is empty — the terminal view is not available")
-	}
+			mode1RawTmux, mode3Streaming := buildMessageModes(listener.events)
+			toolNames := toolNamesFromEvents(listener.events)
+			t.Logf("[%s] message modes: mode1(terminal len=%d) mode3(streaming)=%q; final=%q; tools=%v",
+				tc.name, len(mode1RawTmux), mode3Streaming, finalAnswer, toolNames)
 
-	rec := agentreview.Write(t, "TestRealBridgeMessageModesClaude",
-		"the 3 user message modes built from a REAL bridge turn via Source+IsDelta: raw tmux / non-streaming final / streaming (tools removed)",
-		map[string]any{
-			"mode1_raw_tmux_head":        mcpFirstN(mode1RawTmux, 240),
-			"mode2_non_streaming_final":  finalAnswer,
-			"mode3_streaming":            mode3Streaming,
-			"streamed_matches_final":     strings.Contains(mode3Streaming, codeWord) && strings.Contains(finalAnswer, codeWord),
-			"tool_names_kept_out_of_msg": toolNames,
-			"build_id":                   codeWord,
-		},
-		map[string]any{"has_terminal": mode1RawTmux != "", "streaming_nonempty": mode3Streaming != "", "tools_removed": true},
-	)
-	agentreview.RequireReviewed(t, rec)
+			// mode3 (streaming): non-empty, TOOLS REMOVED, clean of terminal ANSI, and
+			// consistent with the final answer (both carry the build id the model read).
+			if strings.TrimSpace(mode3Streaming) == "" {
+				t.Fatalf("mode3 (streaming) message is empty")
+			}
+			if strings.Contains(mode3Streaming, "\x1b") {
+				t.Fatalf("mode3 streaming message leaked raw terminal ANSI: %q", mode3Streaming)
+			}
+			// NOTE (found live extending this to all 4 providers): Pi's default
+			// narration style is more technical/verbose than Claude/Codex/Cursor's
+			// and can legitimately SAY a raw tool/API name as part of its own
+			// prose (observed: "...retrieve the parameters for
+			// `api_bridge_execute_shell_command`"). That's a real difference in
+			// Pi's assistant-text quality worth knowing about, but it is NOT the
+			// same failure as a ToolCallEvent leaking into the content channel —
+			// mode1/mode3 event-type separation (Source field) worked correctly
+			// in that run. Left as a hard failure rather than loosened: silently
+			// weakening this check would also hide a genuine leak on any
+			// provider, and the two failure modes need to stay distinguishable
+			// even though they currently share one assertion.
+			for _, banned := range []string{"execute_shell_command", "mcp__api-bridge", "ToolCall", "tool_use"} {
+				if strings.Contains(mode3Streaming, banned) {
+					t.Fatalf("mode3 streaming leaked tool activity (%q): %q", banned, mode3Streaming)
+				}
+			}
+			if !strings.Contains(mode3Streaming, codeWord) {
+				t.Fatalf("mode3 streaming message does not contain the build id from the turn: %q", mode3Streaming)
+			}
+			// mode2 (non-streaming full message) == the turn's final answer; it must carry
+			// the build id and agree with the streaming view.
+			if !strings.Contains(finalAnswer, codeWord) {
+				t.Fatalf("mode2 (final answer) missing the build id: %q", finalAnswer)
+			}
+			// mode1 (raw tmux): the terminal pane is available AND separable from mode3 —
+			// it contains the raw frames (ANSI), which mode3 does not.
+			if strings.TrimSpace(mode1RawTmux) == "" {
+				t.Fatalf("mode1 (raw tmux) is empty — the terminal view is not available")
+			}
+
+			rec := agentreview.Write(t, "TestRealBridgeMessageModes_"+tc.name,
+				tc.name+": the 3 user message modes built from a REAL bridge turn via Source+IsDelta: raw tmux / non-streaming final / streaming (tools removed)",
+				map[string]any{
+					"provider":                   tc.name,
+					"mode1_raw_tmux_head":        mcpFirstN(mode1RawTmux, 240),
+					"mode2_non_streaming_final":  finalAnswer,
+					"mode3_streaming":            mode3Streaming,
+					"streamed_matches_final":     strings.Contains(mode3Streaming, codeWord) && strings.Contains(finalAnswer, codeWord),
+					"tool_names_kept_out_of_msg": toolNames,
+					"build_id":                   codeWord,
+				},
+				map[string]any{"has_terminal": mode1RawTmux != "", "streaming_nonempty": mode3Streaming != "", "tools_removed": true},
+			)
+			agentreview.RequireReviewed(t, rec)
+		})
+	}
 }
 
 func mcpFirstN(s string, n int) string {

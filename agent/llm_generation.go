@@ -806,7 +806,6 @@ func terminalRetentionSecondsFromGenerationInfo(additional map[string]interface{
 		"gemini_interactive_retention_seconds",
 		"cursor_interactive_retention_seconds",
 		"pi_interactive_retention_seconds",
-		"agy_interactive_retention_seconds",
 	} {
 		if seconds := generationInfoIntValue(additional[key]); seconds > 0 {
 			return seconds
@@ -832,7 +831,6 @@ func terminalTmuxSessionFromGenerationInfo(genInfo *llmtypes.GenerationInfo) str
 		"gemini_interactive_session",
 		"cursor_interactive_session",
 		"pi_interactive_session",
-		"agy_interactive_session",
 	} {
 		if value := strings.TrimSpace(fmt.Sprint(additional[key])); value != "" && value != "<nil>" {
 			return value
@@ -973,24 +971,6 @@ func (a *Agent) executeLLMForCodingAgentTransportLaunch(ctx context.Context, mod
 	return a.executeLLMInner(ctx, model, nil, opts, true)
 }
 
-func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
-	bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
-	if bridgeErr != nil {
-		return nil, fmt.Errorf("Antigravity CLI requires the MCP bridge: %w", bridgeErr)
-	}
-	opts = append(opts,
-		llm.WithAgyMCPConfig(bridgeConfig),
-		llm.WithAgyBridgeOnlyTools(true),
-	)
-	a.Logger.Info("🌉 [AGY_CLI] Configured MCP bridge through .agents/mcp_config.json with bridge-only hooks")
-	if a.AgySessionID != "" {
-		opts = append(opts, llm.WithAgyResumeSessionID(a.AgySessionID))
-	}
-	opts = append(opts, llm.WithAgyDangerouslySkipPermissions(true))
-	a.Logger.Info("🌉 Using Antigravity CLI in tmux mode with MCP bridge and live input support")
-	return opts, nil
-}
-
 func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
 	if bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig(); bridgeErr == nil {
 		opts = append(opts,
@@ -1011,6 +991,9 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 	}
 	a.Logger.Info("⏱️ [PI_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
 	a.Logger.Info("🌉 Using Pi CLI in tmux marker mode with MCP bridge and live input support")
+	if a.PiStructuredTransport {
+		opts = append(opts, llm.WithPiStructuredTransport(true))
+	}
 	return opts, nil
 }
 

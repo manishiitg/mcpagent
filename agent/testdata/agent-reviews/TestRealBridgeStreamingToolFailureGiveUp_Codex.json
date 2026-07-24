@@ -1,0 +1,36 @@
+{
+  "test": "TestRealBridgeStreamingToolFailureGiveUp_Codex",
+  "summary": "Codex gives up gracefully on a PERMANENTLY failing bridge tool: bounded retry, stream stays clean, turn ends without fabricating the build id",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "The build id could NOT be read.",
+    "clean_stream": "I’ll read the build ID now.\nThe build id could NOT be read.",
+    "content_chunks": 2,
+    "injected_failure": "PERMANENT_TOOL_FAILURE on every call",
+    "provider": "Codex",
+    "streamed_tool_events": 3,
+    "tool_handler_calls": 1,
+    "tool_names": [
+      "exec",
+      "exec",
+      "execute_shell_command"
+    ],
+    "unreachable_build_id": "BUILD_ID_0ddfea0e917a"
+  },
+  "fingerprint": "bdaad55f285bac50",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "bdaad55f285bac50",
+    "reviewer": "claude-sonnet-5",
+    "issues": null,
+    "notes": "Codex: tool attempted once, fails permanently, model gives up gracefully without fabricating the build id. Native exec calls alongside execute_shell_command expected (strictBridgeOnly=false, no read-only sandbox here). Clean, correct."
+  }
+}
