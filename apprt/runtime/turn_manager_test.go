@@ -165,3 +165,52 @@ func TestRunSerializesTurns(t *testing.T) {
 		t.Fatal("B never ran after A released the gate")
 	}
 }
+
+// TestRunSerializesAcrossSeparateTurnManagerInstances is the real regression
+// guard for the fix that made the gate an actual package-level global: two
+// SEPARATE *TurnManager instances must still serialize their turns, because
+// the reason turns must not overlap (a shared process-global MCP bridge env)
+// has nothing to do with which *TurnManager object happens to be calling
+// Run. Before the fix, gate was a struct-instance sync.Mutex field — this
+// exact test would have failed (B would run concurrently with A, since each
+// TurnManager had its own independent mutex), even though nothing in the
+// public API stops a caller from constructing more than one TurnManager.
+func TestRunSerializesAcrossSeparateTurnManagerInstances(t *testing.T) {
+	tmA := NewTurnManager()
+	tmB := NewTurnManager()
+	agent := steerableAgent(t)
+	build := func() (*Session, error) { return &Session{agent: agent, sessionID: "c"}, nil }
+
+	aInBody := make(chan struct{})
+	aRelease := make(chan struct{})
+	bStarted := make(chan struct{})
+
+	go func() {
+		_, _ = tmA.Run("conv-a", build, func(*Session) (string, error) {
+			close(aInBody)
+			<-aRelease
+			return "a", nil
+		})
+	}()
+	<-aInBody // A is inside its body, holding the gate, on tmA
+
+	go func() {
+		_, _ = tmB.Run("conv-b", build, func(*Session) (string, error) {
+			close(bStarted)
+			return "b", nil
+		})
+	}()
+
+	select {
+	case <-bStarted:
+		t.Fatal("B (on a DIFFERENT TurnManager instance) entered its body while A still held the gate — the gate is not actually global")
+	case <-time.After(100 * time.Millisecond): // expected: B blocked on the shared global gate
+	}
+
+	close(aRelease) // A finishes, releasing the gate
+	select {
+	case <-bStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("B never ran after A released the gate")
+	}
+}

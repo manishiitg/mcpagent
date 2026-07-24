@@ -28,11 +28,20 @@ import (
 //	    func() (*runtime.Session, error) { return runtime.New(ctx, cfg) },
 //	    func(s *runtime.Session) (string, error) { return s.Ask(ctx, history) })
 type TurnManager struct {
-	gate sync.Mutex // global turn serialization (process-global bridge env)
-
 	mu     sync.Mutex
-	active *activeTurn // the single in-flight turn (gate ⇒ at most one)
+	active *activeTurn // the single in-flight turn (turnManagerGate ⇒ at most one)
 }
+
+// turnManagerGate is the actual "global gate" Run's doc comment promises:
+// process-global bridge env means turns must not overlap NO MATTER HOW MANY
+// *TurnManager instances exist in this process. A struct-instance field here
+// would only serialize turns WITHIN one instance — nothing stops a caller
+// from constructing a second *TurnManager (there's no enforced-singleton
+// mechanism), and two instances' turns would then run concurrently against
+// the same shared bridge env, exactly the failure this type exists to
+// prevent. A package-level mutex makes "global" true regardless of instance
+// count, matching what the doc comment on Run has always claimed.
+var turnManagerGate sync.Mutex
 
 type activeTurn struct {
 	conversationID string
@@ -106,8 +115,8 @@ func (tm *TurnManager) Run(
 	build func() (*Session, error),
 	body func(*Session) (string, error),
 ) (string, error) {
-	tm.gate.Lock()
-	defer tm.gate.Unlock()
+	turnManagerGate.Lock()
+	defer turnManagerGate.Unlock()
 
 	sess, err := build()
 	if err != nil {
