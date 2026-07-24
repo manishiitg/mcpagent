@@ -81,6 +81,9 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	if a.ClaudeCodeSessionID != "" {
 		opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
 	}
+	if a.ClaudeCodeStructuredTransport {
+		opts = append(opts, llm.WithClaudeStructuredTransport(true))
+	}
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
 			opts = append(opts, llm.WithClaudeCodeEffort(effort))

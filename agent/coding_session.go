@@ -309,6 +309,10 @@ func (a *Agent) usesStructuredTransport() bool {
 		return true
 	}
 	switch a.provider {
+	case llm.ProviderClaudeCode:
+		if a.ClaudeCodeStructuredTransport {
+			return true
+		}
 	case llm.ProviderCodexCLI:
 		if a.CodexStructuredTransport {
 			return true

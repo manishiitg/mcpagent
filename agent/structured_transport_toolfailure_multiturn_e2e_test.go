@@ -254,7 +254,8 @@ func TestStructuredTransportMultiTurn(t *testing.T) {
 
 			workDir := t.TempDir()
 			buildID := "BUILD_ID_" + realBridgeRandHex(6)
-			if err := os.WriteFile(filepath.Join(workDir, "build_id.txt"), []byte(buildID), 0o600); err != nil {
+			buildIDPath := filepath.Join(workDir, "build_id.txt")
+			if err := os.WriteFile(buildIDPath, []byte(buildID), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			convID := "jsonmt-" + realBridgeRandHex(4)
@@ -266,8 +267,12 @@ func TestStructuredTransportMultiTurn(t *testing.T) {
 			defer cleanup()
 			store := NewMemoryCodingSessionStore()
 
+			// Absolute path: the bridge execute_shell_command runs in the executor's
+			// cwd, not the CLI's workdir, so a relative path only resolves for
+			// providers that use a native shell (in the CLI cwd). Claude correctly
+			// routes through the bridge tool — an absolute path is transport-fair.
 			ans1, err := agent.ContinueConversation(ctx, convID,
-				"Run exactly: cat build_id.txt — then reply with ONLY the build id it printed.", store)
+				"Run exactly: cat "+buildIDPath+" — then reply with ONLY the build id it printed.", store)
 			if err != nil {
 				t.Fatalf("turn 1: %v", err)
 			}

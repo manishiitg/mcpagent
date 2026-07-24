@@ -24,8 +24,8 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpcache"
 	"github.com/manishiitg/mcpagent/mcpclient"
-	"github.com/manishiitg/mcpagent/toolcalllog"
 	"github.com/manishiitg/mcpagent/observability"
+	"github.com/manishiitg/mcpagent/toolcalllog"
 )
 
 // CustomTool represents a custom tool with its definition and execution function
@@ -213,6 +213,14 @@ func WithCodexNetworkAccess(enabled bool) AgentOption {
 func WithCodexStructuredTransport(enabled bool) AgentOption {
 	return func(a *Agent) {
 		a.CodexStructuredTransport = enabled
+	}
+}
+
+// WithClaudeCodeStructuredTransport selects `claude -p --output-format
+// stream-json` instead of tmux. See Agent.ClaudeCodeStructuredTransport.
+func WithClaudeCodeStructuredTransport(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.ClaudeCodeStructuredTransport = enabled
 	}
 }
 
@@ -963,9 +971,10 @@ type Agent struct {
 	// structured is for callers with neither need (e.g. unattended workflow
 	// steps). See WithCodexStructuredTransport / WithCursorStructuredTransport
 	// / WithPiStructuredTransport.
-	CodexStructuredTransport  bool
-	CursorStructuredTransport bool
-	PiStructuredTransport     bool
+	CodexStructuredTransport      bool
+	CursorStructuredTransport     bool
+	PiStructuredTransport         bool
+	ClaudeCodeStructuredTransport bool
 
 	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
 	CodexProjectDirID string

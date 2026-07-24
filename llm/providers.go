@@ -637,6 +637,13 @@ func WithCodexStructuredTransport(enabled bool) CallOption {
 	return llmproviders.WithCodexStructuredTransport(enabled)
 }
 
+// WithClaudeStructuredTransport selects `claude -p --output-format stream-json`
+// instead of the tmux interactive transport. OFF by default — see
+// WithCodexStructuredTransport doc comment for the rationale.
+func WithClaudeStructuredTransport(enabled bool) CallOption {
+	return llmproviders.WithClaudeStructuredTransport(enabled)
+}
+
 // WithCursorStructuredTransport selects `cursor-agent --print --output-format
 // stream-json` instead of the tmux interactive transport. OFF by default —
 // see WithCodexStructuredTransport doc comment for the rationale.
