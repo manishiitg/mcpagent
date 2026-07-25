@@ -11,23 +11,23 @@
     "real work actually happened (e.g. the file was written to disk)"
   ],
   "output": {
-    "answer": "Field    │ Value\nbuild_id │ BUILD_ID_818fee834e94\nstatus   │ ok",
-    "build_id_only_via_tool": "BUILD_ID_818fee834e94",
-    "clean_content_count": 4,
+    "answer": "1. Reading build_id.txt to get the project build id.\n\n2. Writing the GitHub-flavored markdown report table to report.md with that build id.\n\n3. Displaying report.md to confirm its contents.\n\nExact contents of report.md:\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_cc233b2a7e57 |\n| status | ok |",
+    "build_id_only_via_tool": "BUILD_ID_cc233b2a7e57",
+    "clean_content_count": 3,
     "clean_transcript_content": [
-      "I'll read the build id first, then create the report from it.\n",
-      "Next I'll write the markdown report table with that build id.\n",
-      "I'll display the report file to confirm it was written correctly.\n",
-      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_818fee834e94 |\n| status | ok |"
+      "Fetching the execute_shell_command API spec, then running the steps in order.\n",
+      "Writing the markdown report table with the build id from step 1.\n",
+      "1. Reading `build_id.txt` to get the project build id.\n\n2. Writing the GitHub-flavored markdown report table to `report.md` with that build id.\n\n3. Displaying `report.md` to confirm its contents.\n\nExact contents of `report.md`:\n\n```\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_cc233b2a7e57 |\n| status | ok |\n```"
     ],
-    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_818fee834e94 |\n| status | ok |\n",
+    "delta_content_count": 0,
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_cc233b2a7e57 |\n| status | ok |\n",
     "tool_call_events": 3,
     "tool_names": [
-      "CallMcpTool",
-      "CallMcpTool",
-      "CallMcpTool"
+      "CallDynamicTool",
+      "CallDynamicTool",
+      "CallDynamicTool"
     ],
-    "total_content_chunks": 17,
+    "total_content_chunks": 16,
     "went_through_real_bridge": true
   },
   "fingerprint": "564124321e6d3085",

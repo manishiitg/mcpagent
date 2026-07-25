@@ -68,4 +68,58 @@ first-class native MCP server in a coding session currently cannot have one.
   Cursor/Pi take `.cursor/mcp.json`-shaped JSON, Claude takes `--mcp-config`),
   so the merge has to happen before that per-provider shaping, not after.
 
-**Status:** not started. Raised 2026-07-25.
+**Status:** RESOLVED (as "don't build this") 2026-07-25. The question this
+entry was chasing — "how do we let a coding agent reach a second MCP server"
+— already has an answer, and it isn't a native second connection: the
+existing `configPath` → `get_api_spec` → `execute_shell_command`+curl route
+(same mechanism the routing prompt already documents for "google_sheets,
+github, sub_agent_tools") already does this, with no new mcpagent code. Live-
+verified end to end adding Exa's free hosted search MCP
+(`https://mcp.exa.ai/mcp`) to SparkQuill this way: `get_api_spec` fetched its
+real tool schema, and a full discover-then-curl call round-tripped correctly.
+A `WithAdditionalMCPServers` native-connection option was built and then
+discarded — it bypasses the bridge entirely, which is the opposite of what
+bridge-only containment requires (see the paragraph above this one). This
+entry stays for the reasoning trail; treat "add a second server" as a config
+change (add it to `configPath`), not a mcpagent code change.
+
+---
+
+## Cursor's native Shell tool occasionally slips through `WithDenyBuiltinTools`
+
+**What's true today:** `WithDenyBuiltinTools` installs a per-session
+`.cursor/hooks.json` (`preToolUse` + `beforeShellExecution`, both
+`failClosed: true`) that's supposed to deny cursor's native `Shell` tool
+unconditionally, forcing every tool call through the bridge. Live-reproduced
+across 2026-07-25: cursor's `Shell` tool ran anyway, intermittently — roughly
+1 failure in every 4-5 runs of `TestRealBridgeStreamingE2E`/cursor, not
+deterministic, and not specific to any one test (the pre-existing, unmodified
+sibling test hits it too).
+
+**Root-caused, not just observed.** Temporarily instrumented the hook's own
+cleanup to preserve its denial log (`mlp-deny-builtin-denials.jsonl`) across a
+failing run instead of deleting it (reverted immediately after, nothing
+committed). The log was never created at all. The deny script writes to that
+log *before* emitting its deny verdict — so its total absence proves the hook
+never fired, not that it fired and was ignored. `hooks.json` is confirmed
+written to disk synchronously before `cursor-agent` even launches (no
+file-write race on our side), so the likely mechanism is a startup window
+internal to cursor-agent's own hook subsystem — analogous to (but distinct
+from, and with no readiness signal exposed the way the MCP bridge has
+`MCP_READY_FILE`) the already-documented "cursor's first bridge call fails
+and falls back to Shell" cold-turn race.
+
+**Decision: not fixing.** Explicitly de-scoped — a native-tool leak here is
+accepted, not a target for engineering effort. Reasoning: it's cursor's own
+internal timing, outside our control to fix at the root; a mitigation (detect
+the leak post-hoc, retry the turn on a warm session) was scoped but not built
+once the containment risk was judged low enough not to justify it — cursor's
+own default toolset has no bigger blast radius than a normal shell, and for
+search-only additional servers (see the entry above) there's nothing extra
+for a leak to reach.
+
+**Status:** WON'T FIX, documented 2026-07-25. Revisit only if cursor is ever
+used somewhere the containment guarantee is actually load-bearing (e.g. a
+genuinely untrusted session where bridge-only routing is the sole thing
+preventing host access) — at that point the mitigation above (post-hoc detect
++ retry) is the scoped starting point.
