@@ -160,17 +160,16 @@ func TestSupportsSteeringFalseOnStructuredTransport(t *testing.T) {
 		{"cursor tmux (control)", &Agent{provider: llm.ProviderCursorCLI}, true},
 		{"pi tmux (control)", &Agent{provider: llm.ProviderPiCLI}, true},
 
-		// Per-provider structured flag → not steerable.
-		{"codex --json", &Agent{provider: llm.ProviderCodexCLI, CodexStructuredTransport: true}, false},
-		{"cursor --print", &Agent{provider: llm.ProviderCursorCLI, CursorStructuredTransport: true}, false},
-		{"pi --mode json", &Agent{provider: llm.ProviderPiCLI, PiStructuredTransport: true}, false},
+		// An explicit structured transport choice flips ANY coding-agent
+		// provider to a one-shot process, so none of them are steerable.
+		{"codex --json", &Agent{provider: llm.ProviderCodexCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}, false},
+		{"cursor --print", &Agent{provider: llm.ProviderCursorCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}, false},
+		{"pi --mode json", &Agent{provider: llm.ProviderPiCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}, false},
+		{"claude -p stream-json", &Agent{provider: llm.ProviderClaudeCode, CodingAgentTransport: llm.CodingAgentTransportStructured}, false},
 
-		// ForceStructuredCodingAgent (the workflow step's transport="structured")
-		// flips ANY coding-agent provider to structured, so none are steerable.
-		{"codex forced structured", &Agent{provider: llm.ProviderCodexCLI, ForceStructuredCodingAgent: true}, false},
-		{"cursor forced structured", &Agent{provider: llm.ProviderCursorCLI, ForceStructuredCodingAgent: true}, false},
-		{"pi forced structured", &Agent{provider: llm.ProviderPiCLI, ForceStructuredCodingAgent: true}, false},
-		{"claude forced structured", &Agent{provider: llm.ProviderClaudeCode, ForceStructuredCodingAgent: true}, false},
+		// An explicit tmux choice keeps them steerable (same as the control).
+		{"codex explicit tmux", &Agent{provider: llm.ProviderCodexCLI, CodingAgentTransport: llm.CodingAgentTransportTmux}, true},
+		{"claude explicit tmux", &Agent{provider: llm.ProviderClaudeCode, CodingAgentTransport: llm.CodingAgentTransportTmux}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -189,7 +188,7 @@ func TestSupportsSteeringFalseOnStructuredTransport(t *testing.T) {
 // TestDeliverQueuesWhenBusyAndNotSteerable, which only covered a non-coding
 // provider.
 func TestDeliverQueuesOnStructuredCodingAgent(t *testing.T) {
-	a := &Agent{provider: llm.ProviderCodexCLI, CodexStructuredTransport: true}
+	a := &Agent{provider: llm.ProviderCodexCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}
 	a.setTurnInFlight(true)
 
 	got, err := a.Deliver(context.Background(), "conv-json", "please also add tests", nil)

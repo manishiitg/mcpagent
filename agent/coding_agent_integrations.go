@@ -85,7 +85,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	if a.ClaudeCodeSessionID != "" {
 		opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
 	}
-	if a.ClaudeCodeStructuredTransport {
+	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithClaudeStructuredTransport(true))
 	}
 	if model.Options != nil {
@@ -190,7 +190,7 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		}
 	}
 	a.Logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
-	if a.CodexStructuredTransport {
+	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithCodexStructuredTransport(true))
 	}
 	return opts, nil

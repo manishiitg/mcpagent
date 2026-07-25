@@ -28,11 +28,13 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 	if sessionID == "" || !codingAgentInteractiveEnabledForProvider(provider, modelID, sessionID) {
 		return opts
 	}
-	// Per-step override: when ForceStructuredCodingAgent is set (from
-	// the workflow step config's transport="structured" field), skip
-	// the interactive-session-id option entirely. The CLI adapter's
-	// dispatcher then falls through to the structured JSON path.
-	if a.ForceStructuredCodingAgent {
+	// Structured transport is a one-shot process, not a live pane: there is no
+	// interactive session to attach to, so skip the interactive-session-id
+	// option. (Skipping it does NOT by itself select structured — the adapters
+	// dispatch on their own per-provider structured metadata key, which each
+	// provider integration sets from wantsStructuredTransport. Both must agree,
+	// which is why they read the same resolver.)
+	if a.wantsStructuredTransport() {
 		return opts
 	}
 
@@ -204,7 +206,7 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 		a.Logger.Info("⏱️ [CURSOR_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
 		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
 	}
-	if a.CursorStructuredTransport {
+	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithCursorStructuredTransport(true))
 	}
 	return opts, nil

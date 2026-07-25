@@ -340,31 +340,35 @@ func (a *Agent) usesStructuredTransport() bool {
 	if a == nil {
 		return false
 	}
-	if a.ForceStructuredCodingAgent {
+	if a.wantsStructuredTransport() {
 		return true
-	}
-	switch a.provider {
-	case llm.ProviderClaudeCode:
-		if a.ClaudeCodeStructuredTransport {
-			return true
-		}
-	case llm.ProviderCodexCLI:
-		if a.CodexStructuredTransport {
-			return true
-		}
-	case llm.ProviderCursorCLI:
-		if a.CursorStructuredTransport {
-			return true
-		}
-	case llm.ProviderPiCLI:
-		if a.PiStructuredTransport {
-			return true
-		}
 	}
 	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.ModelID); ok {
 		return contract.Transport != llm.CodingAgentTransportTmux
 	}
 	return false
+}
+
+// wantsStructuredTransport reports whether the CALLER explicitly asked for the
+// structured transport (WithCodingAgentTransport). It is the single decision
+// point every transport-dependent site consults — the four provider
+// integrations before appending their own structured call option, the
+// interactive-session-id skip, the terminal-launch guard, and
+// usesStructuredTransport (steering).
+//
+// Routing all of them through one resolver is the point: this decision used to
+// be expressible four different ways (a generic force flag plus four
+// per-provider flags), the generic one silently did not work, and the steering
+// predicate disagreed with what actually ran. One resolver makes that class of
+// drift impossible.
+//
+// Empty CodingAgentTransport means "no explicit choice" — the provider
+// contract's declared transport applies (see usesStructuredTransport).
+func (a *Agent) wantsStructuredTransport() bool {
+	if a == nil {
+		return false
+	}
+	return a.CodingAgentTransport == llm.CodingAgentTransportStructured
 }
 
 // SupportsSteering reports whether the agent's transport accepts live input into

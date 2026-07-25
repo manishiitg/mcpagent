@@ -1011,7 +1011,7 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 	}
 	a.Logger.Info("⏱️ [PI_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
 	a.Logger.Info("🌉 Using Pi CLI in tmux marker mode with MCP bridge and live input support")
-	if a.PiStructuredTransport {
+	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithPiStructuredTransport(true))
 	}
 	return opts, nil
@@ -1150,7 +1150,10 @@ func (a *Agent) StartCodingAgentTransportSession(ctx context.Context) (*llmtypes
 	if !ok {
 		return nil, fmt.Errorf("agent provider %s/%s is not a coding-agent provider", a.provider, a.ModelID)
 	}
-	if a.ForceStructuredCodingAgent || contract.Transport != llm.CodingAgentTransportTmux {
+	// A launchable terminal requires an actual tmux pane: refuse when the caller
+	// chose structured (no pane exists) or the provider contract isn't tmux.
+	// Same resolver as every other transport decision so this can't drift.
+	if a.wantsStructuredTransport() || contract.Transport != llm.CodingAgentTransportTmux {
 		return nil, fmt.Errorf("agent provider %s/%s does not expose a launchable terminal transport (%s)", a.provider, a.ModelID, contract.Transport)
 	}
 	primary := a.getEffectiveLLMConfig().Primary

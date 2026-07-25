@@ -208,48 +208,26 @@ func WithCodexNetworkAccess(enabled bool) AgentOption {
 	}
 }
 
-// WithCodexStructuredTransport selects `codex exec --json` instead of tmux.
-// See Agent.CodexStructuredTransport doc comment for when to use this.
-func WithCodexStructuredTransport(enabled bool) AgentOption {
+// WithCodingAgentTransport is THE way to choose a coding-agent CLI provider's
+// process transport for this agent:
+//
+//   - llm.CodingAgentTransportTmux — a live tmux pane. Choose when a human may
+//     steer the turn mid-flight, or the pane is rendered in a UI.
+//   - llm.CodingAgentTransportStructured — one-shot JSON (`claude -p
+//     --output-format stream-json`, `codex exec --json`, `cursor-agent --print`,
+//     `pi --print --mode json`). Choose for unattended work: explicit
+//     completion and token-usage events instead of scraping a terminal, and no
+//     live-steering (Deliver queues instead).
+//   - "" (unset) — use the provider contract's declared transport.
+//
+// Every current coding CLI supports BOTH; transport is a property of the use
+// case, not the provider. This is the ONLY way to choose transport: the older
+// overlapping mechanisms (WithForceStructuredCodingAgent and four per-provider
+// With*StructuredTransport options) were removed — they let the same decision
+// be expressed four different ways, and the generic one silently didn't work.
+func WithCodingAgentTransport(transport llm.CodingAgentTransport) AgentOption {
 	return func(a *Agent) {
-		a.CodexStructuredTransport = enabled
-	}
-}
-
-// WithClaudeCodeStructuredTransport selects `claude -p --output-format
-// stream-json` instead of tmux. See Agent.ClaudeCodeStructuredTransport.
-func WithClaudeCodeStructuredTransport(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.ClaudeCodeStructuredTransport = enabled
-	}
-}
-
-// WithCursorStructuredTransport selects `cursor-agent --print --output-format
-// stream-json` instead of tmux. See Agent.CursorStructuredTransport doc
-// comment for when to use this.
-func WithCursorStructuredTransport(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.CursorStructuredTransport = enabled
-	}
-}
-
-// WithPiStructuredTransport selects `pi --print --mode json` instead of
-// tmux. See Agent.PiStructuredTransport doc comment for when to use this.
-func WithPiStructuredTransport(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.PiStructuredTransport = enabled
-	}
-}
-
-// WithForceStructuredCodingAgent forces the coding-agent CLI providers
-// (claude-code, codex-cli, cursor-cli) to use the structured
-// JSON transport (--print/--exec/stream-json) even when a session ID is
-// present. Without this, the adapter dispatcher defaults to tmux interactive
-// for these providers whenever a session ID is set. Used per workflow step
-// when the step config specifies transport="structured".
-func WithForceStructuredCodingAgent(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.ForceStructuredCodingAgent = enabled
+		a.CodingAgentTransport = transport
 	}
 }
 
@@ -954,20 +932,6 @@ type Agent struct {
 	// "danger-full-access" (network is unconditionally on there).
 	CodexNetworkAccess bool
 
-	// CodexStructuredTransport, CursorStructuredTransport, and
-	// PiStructuredTransport select `codex exec --json` / `cursor-agent --print
-	// --output-format stream-json` / `pi --print --mode json` (per-turn,
-	// one-shot, no tmux dependency) instead of the tmux interactive transport
-	// for the respective provider. OFF by default — tmux is the normal
-	// product path (persistent chat, live steering, terminal streaming);
-	// structured is for callers with neither need (e.g. unattended workflow
-	// steps). See WithCodexStructuredTransport / WithCursorStructuredTransport
-	// / WithPiStructuredTransport.
-	CodexStructuredTransport      bool
-	CursorStructuredTransport     bool
-	PiStructuredTransport         bool
-	ClaudeCodeStructuredTransport bool
-
 	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
 	CodexProjectDirID string
 
@@ -1008,16 +972,22 @@ type Agent struct {
 	// chat). Cursor runs in default agent mode regardless of this flag.
 	CursorBridgeToolsMode bool
 
-	// ForceStructuredCodingAgent forces the structured (JSON / --print /
-	// --exec) transport for coding-agent CLI providers even when a session
-	// ID is present and the provider is tmux-capable. When true,
-	// appendCodingAgentInteractiveOptionsForProvider skips appending the
-	// interactive-session-id option, which makes the adapter dispatcher
-	// fall through to its structured path.
+	// CodingAgentTransport is THE explicit transport choice for coding-agent
+	// CLI providers: llm.CodingAgentTransportTmux or
+	// llm.CodingAgentTransportStructured. Empty means "use the provider
+	// contract's declared transport" (tmux for every current CLI provider).
 	//
-	// Set per-step from the workflow config field
-	// AgentConfigs.Transport == "structured".
-	ForceStructuredCodingAgent bool
+	// Transport is a property of the USE CASE, not of the provider — every
+	// coding CLI supports both. Pick tmux when a human may steer the turn
+	// live or the pane is shown; pick structured for unattended one-shot work
+	// (workflow steps, background agents) where explicit completion/usage
+	// events beat scraping a terminal.
+	//
+	// Set via WithCodingAgentTransport — the single source of truth, resolved
+	// by wantsStructuredTransport. Replaced the older overlapping mechanisms
+	// (ForceStructuredCodingAgent + four per-provider *StructuredTransport
+	// flags), which are gone.
+	CodingAgentTransport llm.CodingAgentTransport
 
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler

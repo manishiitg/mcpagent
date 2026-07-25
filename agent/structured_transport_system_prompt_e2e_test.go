@@ -26,10 +26,10 @@ type structuredTransportProviderCase struct {
 }
 
 var structuredTransportProviderCases = []structuredTransportProviderCase{
-	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "cursor-cli", WithCursorStructuredTransport(true)},
-	{"Codex", "codex", llm.ProviderCodexCLI, "codex-cli", WithCodexStructuredTransport(true)},
-	{"Pi", "pi", llm.ProviderPiCLI, "pi-cli", WithPiStructuredTransport(true)},
-	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", WithClaudeCodeStructuredTransport(true)},
+	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "cursor-cli", WithCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Codex", "codex", llm.ProviderCodexCLI, "codex-cli", WithCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Pi", "pi", llm.ProviderPiCLI, "pi-cli", WithCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", WithCodingAgentTransport(llm.CodingAgentTransportStructured)},
 }
 
 // TestStructuredTransportSystemPromptSurvivesNewAgent is the mcpagent-layer
