@@ -1,0 +1,41 @@
+{
+  "test": "TestRealBridgeMarkdownFidelity_Cursor",
+  "summary": "cursor via the REAL mcpbridge → executor → real execute_shell_command: write+read back a markdown table AND a nested code fence, byte-exact, no duplication, streamed at the mcpagent layer",
+  "review_criteria": [
+    "no duplicated lines or chunks",
+    "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
+    "human-readable — reads like an assistant working, coherent and natural",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
+    "the final answer is coherent and matches the work performed",
+    "real work actually happened (e.g. the file was written to disk)"
+  ],
+  "output": {
+    "answer": "Report\n\nField    │ Value\nbuild_id │ BUILD_ID_61f3503b8164\nstatus   │ ok\n\nNested fence example:\n\nOuter fence wraps an inner one:\n```bash\necho \"nested-BUILD_ID_61f3503b8164\"\n```",
+    "build_id_only_via_tool": "BUILD_ID_61f3503b8164",
+    "clean_transcript_content": [
+      "Fetching the project build id from `build_id.txt`.\n",
+      "Writing `report.md` with the build id substituted in both places.\n",
+      "Displaying the generated `report.md`.\n",
+      "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_61f3503b8164 |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-BUILD_ID_61f3503b8164\"\n```\n````\n"
+    ],
+    "expected_template": "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | \u003cBUILD_ID\u003e |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-\u003cBUILD_ID\u003e\"\n```\n````",
+    "report_md_on_disk": "# Report\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_61f3503b8164 |\n| status | ok |\n\nNested fence example:\n\n````text\nOuter fence wraps an inner one:\n```bash\necho \"nested-BUILD_ID_61f3503b8164\"\n```\n````\n\n",
+    "tool_names": [
+      "CallDynamicTool",
+      "CallDynamicTool",
+      "CallDynamicTool"
+    ]
+  },
+  "fingerprint": "808768c8065df766",
+  "agent_review": {
+    "verdict": "good",
+    "reviewed_fingerprint": "808768c8065df766",
+    "reviewer": "claude-sonnet-5 (agentic P0 review)",
+    "issues": [
+      "ACCEPTED, NOT A DEFECT OF THIS RUN: cursor's WithDenyBuiltinTools hooks occasionally never engage before the model's first native tool call (root-caused separately: the denial log the hook writes before denying is absent on a failing run, proving the hook never fired, not fired-and-ignored — see docs/backlog.md 'Cursor's native Shell tool occasionally slips through WithDenyBuiltinTools'). This CAPTURE shows a clean run (tool_names all CallDynamicTool, no native Shell), but the leak is intermittent (~1 in 4-5 runs) and reproduces on the pre-existing sibling test too, so it is not fixed by this review — it is an explicitly accepted risk, decided 2026-07-25, not worth engineering around given no code-execution-capable server is exposed in the sessions this project runs today.",
+      "The final answer renders the table with cursor's own compact box characters (Field │ Value / build_id │ ...) rather than literal markdown pipes — Cursor CLI's own terminal pretty-printing, same class of cosmetic as claude's box-drawing rendering. report.md on disk is byte-exact markdown; this is a chat-reply rendering cosmetic only."
+    ],
+    "notes": "tool_names are all CallDynamicTool (cursor's MCP dispatch mechanism for reaching the bridge — correct routing, not native tools) in THIS capture. Three narration sentences precede their tool calls, then the final cat-output content block arrives clean with no raw terminal escapes. report_md_on_disk matches expected_template byte-for-byte after substitution. build_id appears exactly twice on disk (table row + nested echo) as designed and the nested fence opens exactly once — no duplication in extraction. Approved with the known, accepted, documented exception above; re-open only if the accepted-risk decision changes."
+  }
+}
