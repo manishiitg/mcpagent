@@ -189,6 +189,43 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	return handle, true
 }
 
+func isMissingCodingProviderNativeSessionError(provider llm.Provider, err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	switch provider {
+	case llm.ProviderClaudeCode:
+		return strings.Contains(message, "no conversation found with session id")
+	default:
+		return false
+	}
+}
+
+// clearCodingProviderNativeSession removes only the stale provider-native
+// continuation identity. AgentWorks-owned history and the working directory
+// remain intact so the caller can retry the current turn as a fresh native
+// conversation without losing the message-sequence transcript.
+func (a *Agent) clearCodingProviderNativeSession(provider llm.Provider, expectedNativeSessionID string) {
+	if a == nil {
+		return
+	}
+	expectedNativeSessionID = strings.TrimSpace(expectedNativeSessionID)
+	handleProvider := llm.Provider(strings.ToLower(strings.TrimSpace(a.CodingProviderSessionHandle.Provider)))
+	if handleProvider == provider &&
+		strings.TrimSpace(a.CodingProviderSessionHandle.NativeSessionID) == expectedNativeSessionID {
+		a.CodingProviderSessionHandle.NativeSessionID = ""
+		a.CodingProviderSessionHandle.TmuxSession = ""
+		a.CodingProviderSessionHandle.Status = ""
+	}
+	if getter, ok := codingAgentNativeSessionIDGetters[provider]; ok &&
+		strings.TrimSpace(getter(a)) == expectedNativeSessionID {
+		if setter, ok := codingAgentNativeSessionIDSetters[provider]; ok {
+			setter(a, "")
+		}
+	}
+}
+
 func (a *Agent) updateCodingProviderSessionHandleFromResponse(resp *llmtypes.ContentResponse) {
 	if a == nil {
 		return

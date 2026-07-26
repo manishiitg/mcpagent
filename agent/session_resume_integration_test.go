@@ -1,6 +1,8 @@
 package mcpagent
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -437,6 +439,86 @@ func TestCodingProviderContinuationHandleAcceptsPiNativeResume(t *testing.T) {
 	}
 	if handle.NativeSessionID != "owner-session" || handle.WorkingDir != "/tmp/pi-work" {
 		t.Fatalf("Pi continuation handle = %#v", handle)
+	}
+}
+
+func TestMissingCodingProviderNativeSessionError(t *testing.T) {
+	missingConversation := errors.New("claude run reported an error result: No conversation found with session ID: dead-session")
+	wrapped := fmt.Errorf("all LLMs failed: %w", missingConversation)
+
+	if !isMissingCodingProviderNativeSessionError(llm.ProviderClaudeCode, wrapped) {
+		t.Fatal("expected wrapped Claude missing-conversation error to be recoverable")
+	}
+	if isMissingCodingProviderNativeSessionError(llm.ProviderClaudeCode, errors.New("Claude Code authentication required")) {
+		t.Fatal("authentication errors must not trigger a fresh-session retry")
+	}
+	if isMissingCodingProviderNativeSessionError(llm.ProviderClaudeCode, errors.New("timed out waiting for Claude Code prompt")) {
+		t.Fatal("timeout errors must not trigger a fresh-session retry")
+	}
+	if isMissingCodingProviderNativeSessionError(llm.ProviderCodexCLI, missingConversation) {
+		t.Fatal("Claude-specific error must not reset a Codex continuation")
+	}
+}
+
+func TestClearCodingProviderNativeSessionPreservesAgentWorksState(t *testing.T) {
+	agent := &Agent{
+		provider:              llm.ProviderClaudeCode,
+		ModelID:               "claude-sonnet-5",
+		ClaudeCodeSessionID:   "stale-native-id",
+		CodingAgentWorkingDir: "/workspace/upwork",
+		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+			Provider:        string(llm.ProviderClaudeCode),
+			Transport:       llmtypes.CodingProviderTransportStructured,
+			NativeSessionID: "stale-native-id",
+			TmuxSession:     "old-tmux",
+			WorkingDir:      "/workspace/upwork",
+			Model:           "claude-sonnet-4-6",
+			Status:          llmtypes.CodingProviderSessionStatusIdle,
+		},
+	}
+
+	agent.clearCodingProviderNativeSession(llm.ProviderClaudeCode, "stale-native-id")
+
+	if agent.ClaudeCodeSessionID != "" {
+		t.Fatalf("ClaudeCodeSessionID = %q, want cleared", agent.ClaudeCodeSessionID)
+	}
+	if agent.CodingProviderSessionHandle.NativeSessionID != "" {
+		t.Fatalf("typed NativeSessionID = %q, want cleared", agent.CodingProviderSessionHandle.NativeSessionID)
+	}
+	if agent.CodingProviderSessionHandle.TmuxSession != "" {
+		t.Fatalf("TmuxSession = %q, want cleared", agent.CodingProviderSessionHandle.TmuxSession)
+	}
+	if agent.CodingProviderSessionHandle.WorkingDir != "/workspace/upwork" {
+		t.Fatalf("WorkingDir = %q, want preserved", agent.CodingProviderSessionHandle.WorkingDir)
+	}
+	if agent.CodingAgentWorkingDir != "/workspace/upwork" {
+		t.Fatalf("CodingAgentWorkingDir = %q, want preserved", agent.CodingAgentWorkingDir)
+	}
+	if agent.ModelID != "claude-sonnet-5" {
+		t.Fatalf("ModelID = %q, want preserved", agent.ModelID)
+	}
+	if _, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderClaudeCode, "claude-sonnet-5"); ok {
+		t.Fatal("cleared native session must not be resumed again")
+	}
+}
+
+func TestClearCodingProviderNativeSessionRejectsMismatchedID(t *testing.T) {
+	agent := &Agent{
+		provider:            llm.ProviderClaudeCode,
+		ClaudeCodeSessionID: "current-native-id",
+		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+			Provider:        string(llm.ProviderClaudeCode),
+			NativeSessionID: "current-native-id",
+		},
+	}
+
+	agent.clearCodingProviderNativeSession(llm.ProviderClaudeCode, "older-native-id")
+
+	if agent.ClaudeCodeSessionID != "current-native-id" {
+		t.Fatalf("ClaudeCodeSessionID = %q, want current id preserved", agent.ClaudeCodeSessionID)
+	}
+	if agent.CodingProviderSessionHandle.NativeSessionID != "current-native-id" {
+		t.Fatalf("typed NativeSessionID = %q, want current id preserved", agent.CodingProviderSessionHandle.NativeSessionID)
 	}
 }
 

@@ -1018,6 +1018,15 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 }
 
 func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly bool) (*llmtypes.ContentResponse, error) {
+	return a.executeLLMInnerAttempt(ctx, model, messages, opts, launchOnly, true)
+}
+
+func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly, allowMissingSessionRecovery bool) (*llmtypes.ContentResponse, error) {
+	// Keep the caller-owned options before provider integration appends native
+	// resume metadata. A stale-session retry must rebuild those options after
+	// clearing the bad ID; reusing the mutated slice can send --resume again.
+	baseOpts := append([]llmtypes.CallOption(nil), opts...)
+
 	// Thread attached skills through opts so CLI transport adapters can
 	// project SKILL.md folders to disk via ProjectSkills at session
 	// launch. API transports already see the listing in the system
@@ -1131,7 +1140,21 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 			continuationOpts = append(continuationOpts, llmtypes.WithCodingProviderLaunchSystemPrompt(sp))
 		}
 		a.Logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Continuing %s with native session %s", model.Provider, continuationHandle.NativeSessionID))
-		return llm.ContinueCodingAgentSession(ctx, llmInstance, continuationHandle, latestMessage, continuationOpts...)
+		resp, continuationErr := llm.ContinueCodingAgentSession(ctx, llmInstance, continuationHandle, latestMessage, continuationOpts...)
+		if continuationErr == nil || !allowMissingSessionRecovery ||
+			!isMissingCodingProviderNativeSessionError(modelProvider, continuationErr) {
+			return resp, continuationErr
+		}
+
+		a.clearCodingProviderNativeSession(modelProvider, continuationHandle.NativeSessionID)
+		if a.Logger != nil {
+			a.Logger.Warn(fmt.Sprintf(
+				"Native %s conversation %q no longer exists; retrying the current turn once as a fresh conversation while preserving AgentWorks history",
+				model.Provider,
+				continuationHandle.NativeSessionID,
+			))
+		}
+		return a.executeLLMInnerAttempt(ctx, model, messages, baseOpts, false, false)
 	}
 
 	return llmInstance.GenerateContent(ctx, messages, opts...)
