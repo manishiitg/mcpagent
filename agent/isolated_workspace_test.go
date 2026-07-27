@@ -24,10 +24,18 @@ func isolatedWorkspaceTestAgent() *Agent {
 //     in `ls /tmp`.
 //  2. The dir exists between creation and Close.
 //  3. Repeated calls return the SAME dir (sync.Once guarantee).
-//  4. Agent.Close rm -rf's the dir.
+//  4. Agent.Close does NOT remove a session-derived dir; CloseSession does.
+//
+// Invariant 4 previously read "Agent.Close rm -rf's the dir". That was the
+// bug: a new Agent is constructed for EVERY turn, so Agent.Close runs between
+// turns of a live session. Removing the workspace there destroyed the coding
+// CLI's resumable conversation, and the next turn failed with "No conversation
+// found with session ID" and silently restarted as a fresh conversation.
+// Session-scoped dirs now live until CloseSession — the real end of session.
 func TestEnsureIsolatedWorkspaceDirCreatesTmpDirOnceAndCleansUpOnClose(t *testing.T) {
 	a := isolatedWorkspaceTestAgent()
 	a.IsolatedSessionWorkspace = true
+	t.Cleanup(func() { CloseSession(a.SessionID) })
 
 	dir1 := a.ensureIsolatedWorkspaceDir()
 	if dir1 == "" {
@@ -50,9 +58,33 @@ func TestEnsureIsolatedWorkspaceDirCreatesTmpDirOnceAndCleansUpOnClose(t *testin
 		t.Errorf("repeated ensureIsolatedWorkspaceDir must return the same dir; got %q then %q", dir1, dir2)
 	}
 
+	// Closing one turn's Agent must leave the session's workspace intact, or
+	// the next turn cannot resume the conversation that lives inside it.
 	a.Close()
+	if _, err := os.Stat(dir1); err != nil {
+		t.Errorf("Agent.Close must NOT remove a session-derived workspace (the next turn resumes into it); stat err=%v (dir=%q)", err, dir1)
+	}
+
+	// CloseSession is the real end of the session and reclaims the dir.
+	CloseSession(a.SessionID)
 	if _, err := os.Stat(dir1); !os.IsNotExist(err) {
-		t.Errorf("Agent.Close must rm -rf the isolated workspace dir; stat err=%v (dir=%q)", err, dir1)
+		t.Errorf("CloseSession must rm -rf the isolated workspace dir; stat err=%v (dir=%q)", err, dir1)
+	}
+}
+
+// The random fallback dir (no session ID, so never resumable) keeps the
+// original lifecycle: Agent.Close still reclaims it immediately.
+func TestAgentCloseRemovesRandomFallbackWorkspace(t *testing.T) {
+	a := &Agent{Logger: loggerv2.NewDefault()} // no SessionID
+	a.IsolatedSessionWorkspace = true
+
+	dir := a.ensureIsolatedWorkspaceDir()
+	if dir == "" {
+		t.Fatal("expected a random fallback workspace dir")
+	}
+	a.Close()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("Agent.Close must rm -rf a non-resumable random workspace; stat err=%v (dir=%q)", err, dir)
 	}
 }
 

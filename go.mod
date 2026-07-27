@@ -5,7 +5,7 @@ go 1.25.12
 require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260724190810-17ed9de939ec
+	github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260727121715-19b58a972fc5
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.1
@@ -92,5 +92,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.49.1 // indirect
 )
-
-replace github.com/manishiitg/multi-llm-provider-go => ../multi-llm-provider-go-claude-streaming

@@ -17,6 +17,8 @@
 package mcpagent
 
 import (
+	"os"
+
 	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
@@ -30,6 +32,30 @@ import (
 func CloseSession(sessionID string) {
 	registry := mcpclient.GetSessionRegistry()
 	registry.CloseSession(sessionID)
+	// Reclaim this session's isolated coding-CLI workspace, if it had one.
+	// Agent.Close deliberately leaves session-derived dirs alone (a new Agent
+	// is built per turn, so closing an Agent does NOT end the session and the
+	// dir still holds the CLI's resumable conversation). This is the real end
+	// of the session, so it is the correct place to remove it. Best-effort:
+	// a leaked dir is recoverable, a prematurely deleted one is not.
+	RemoveIsolatedSessionWorkspace(sessionID)
+}
+
+// RemoveIsolatedSessionWorkspace deletes the isolated coding-CLI workspace for
+// a session, if it had one. CloseSession already does this; call it directly
+// when a session's runtime ends WITHOUT going through CloseSession — notably a
+// message_sequence runtime, which tears down its agent and clears its shell
+// config but keeps its MCP connections managed elsewhere. Without such a call
+// the workspace dir (and the CLI's conversation inside it) leaks: Agent.Close
+// deliberately leaves session-derived dirs alone so the next turn can resume
+// into them.
+//
+// Safe to call for a session that never had an isolated workspace, and safe to
+// call more than once.
+func RemoveIsolatedSessionWorkspace(sessionID string) {
+	if dir := isolatedWorkspaceDirForSession(sessionID); dir != "" {
+		_ = os.RemoveAll(dir)
+	}
 }
 
 // CloseSessionServer closes a specific server's connection within a session.

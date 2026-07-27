@@ -905,6 +905,15 @@ type Agent struct {
 	isolatedWorkspacePath string
 	isolatedWorkspaceOnce sync.Once
 
+	// isolatedWorkspaceStable reports that isolatedWorkspacePath was derived
+	// from the session ID and is therefore SHARED by every turn of this
+	// session. Agent.Close must not remove such a dir: a new Agent is built
+	// per turn, so deleting on close would destroy the coding CLI's resumable
+	// conversation between turns. Session-scoped dirs are reclaimed by
+	// CloseSession (true end of session); only the random fallback dir is
+	// removed on Agent.Close.
+	isolatedWorkspaceStable bool
+
 	// Codex CLI sandbox mode ("read-only", "workspace-write", or
 	// "danger-full-access"). Defaults to "workspace-write" (see
 	// appendCodexCLIIntegrationOptions) — codex gets native writes, matching how
@@ -3360,12 +3369,18 @@ func (a *Agent) Close() {
 		loggerv2.String("session_id", a.SessionID),
 		loggerv2.Int("client_count", len(a.Clients)))
 
-	// IsolatedSessionWorkspace cleanup: rm -rf the per-Agent tmp dir
-	// we created in ensureIsolatedWorkspaceDir. Errors are silently
-	// ignored — the OS will eventually clean /tmp on reboot, and the
-	// dir name (mlp-cli-session-*) is distinctive enough that a leaked
-	// dir is recognizable in `df`/`ls /tmp` output.
-	if a.isolatedWorkspacePath != "" {
+	// IsolatedSessionWorkspace cleanup: rm -rf the tmp dir we created in
+	// ensureIsolatedWorkspaceDir. Errors are silently ignored — the OS will
+	// eventually clean /tmp on reboot, and the dir name (mlp-cli-session-*)
+	// is distinctive enough that a leaked dir is recognizable in `df`/`ls
+	// /tmp` output.
+	//
+	// Session-derived dirs (isolatedWorkspaceStable) are deliberately NOT
+	// removed here. A new Agent is constructed for every turn, so this Close
+	// runs between turns of a live session; removing the dir would delete the
+	// coding CLI's resumable conversation and force the next turn to start
+	// fresh. Those are reclaimed by CloseSession at true session end.
+	if a.isolatedWorkspacePath != "" && !a.isolatedWorkspaceStable {
 		_ = os.RemoveAll(a.isolatedWorkspacePath)
 		if a.Logger != nil {
 			a.Logger.Info("IsolatedSessionWorkspace: removed tmp dir " + a.isolatedWorkspacePath)

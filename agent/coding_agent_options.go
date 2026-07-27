@@ -1,8 +1,11 @@
 package mcpagent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -115,14 +118,64 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	return opts
 }
 
-// ensureIsolatedWorkspaceDir returns the per-Agent isolated tmp dir,
-// creating it on first call via sync.Once. Returns "" only on
-// os.MkdirTemp failure (in which case the caller falls back to
-// CodingAgentWorkingDir to preserve session usability — isolation is
-// belt-and-suspenders, not a hard contract). Agent.Close rm -rf's the
-// dir if it was created.
+// isolatedWorkspaceDirForSession derives the isolated workspace path from the
+// session ID. Deterministic on purpose: coding CLIs key their resumable
+// conversation by working directory (claude stores it under
+// ~/.claude/projects/<slugified-cwd>/, and codex/cursor do the equivalent), so
+// the SAME session must land in the SAME dir on every turn or native --resume
+// can never find the previous turn's conversation.
+//
+// Hashed rather than using the raw ID: session IDs contain '/' and other path
+// metacharacters (e.g. "msgseq-iteration-0-job-search/step-4"), and the full
+// path also ends up embedded in provider metadata dir names.
+//
+// Returns "" when there is no session ID to key on — the caller then falls back
+// to a random dir, which is correct because a session with no stable identity
+// could never be resumed anyway.
+func isolatedWorkspaceDirForSession(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(sessionID))
+	return filepath.Join(os.TempDir(), "mlp-cli-session-"+hex.EncodeToString(sum[:8]))
+}
+
+// ensureIsolatedWorkspaceDir returns this session's isolated workspace dir,
+// resolving it once per Agent via sync.Once.
+//
+// The dir is derived from the session ID (see isolatedWorkspaceDirForSession)
+// rather than freshly minted per Agent. A new Agent is constructed for EVERY
+// turn, so a per-Agent random dir gave each turn a different cwd — which meant
+// the coding CLI filed each turn's conversation under a different project key
+// and native --resume failed with "No conversation found with session ID",
+// leaking one orphaned conversation directory per turn. Isolation is unchanged:
+// distinct sessions still get distinct dirs, so concurrent steps cannot collide
+// and the user's real workspace is still never the CLI's cwd.
+//
+// Returns "" only if the directory cannot be created, in which case the caller
+// falls back to CodingAgentWorkingDir to preserve session usability —
+// isolation is belt-and-suspenders, not a hard contract.
 func (a *Agent) ensureIsolatedWorkspaceDir() string {
 	a.isolatedWorkspaceOnce.Do(func() {
+		if dir := isolatedWorkspaceDirForSession(a.SessionID); dir != "" {
+			// MkdirAll, not MkdirTemp: on the second and later turns of a
+			// session this dir already exists and MUST be reused, not replaced.
+			if err := os.MkdirAll(dir, 0o700); err == nil {
+				a.isolatedWorkspacePath = dir
+				a.isolatedWorkspaceStable = true
+				if a.Logger != nil {
+					a.Logger.Info("IsolatedSessionWorkspace: using session dir " + dir)
+				}
+				return
+			} else if a.Logger != nil {
+				a.Logger.Warn("IsolatedSessionWorkspace: MkdirAll failed for session dir; falling back to a random dir: " + err.Error())
+			}
+		}
+
+		// No session ID (or the session dir could not be created): fall back to
+		// the historical random dir. Not resumable, so Agent.Close still
+		// rm -rf's this one — see the isolatedWorkspaceStable check there.
 		dir, err := os.MkdirTemp("", "mlp-cli-session-*")
 		if err != nil {
 			if a.Logger != nil {

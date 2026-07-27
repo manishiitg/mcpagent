@@ -176,9 +176,7 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	if strings.TrimSpace(handle.NativeSessionID) == "" {
 		return llmtypes.CodingProviderSessionHandle{}, false
 	}
-	if strings.TrimSpace(handle.WorkingDir) == "" {
-		handle.WorkingDir = strings.TrimSpace(a.CodingAgentWorkingDir)
-	}
+	handle.WorkingDir = a.resolveContinuationWorkingDir(handle.WorkingDir)
 	// The continuation identity is the native session ID. The caller's model is
 	// authoritative for the new turn; the handle's model belongs to the turn
 	// that originally created or last persisted the conversation.
@@ -187,6 +185,29 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 		a.Logger.Debug(fmt.Sprintf("Resolved coding-agent continuation handle: session=%q provider=%q nativeSessionID=%q useLegacy=%v isolated=%v workingDir=%q", a.SessionID, provider, handle.NativeSessionID, useLegacy, a.IsolatedSessionWorkspace, handle.WorkingDir))
 	}
 	return handle, true
+}
+
+// resolveContinuationWorkingDir decides which directory a resumed coding-CLI
+// turn runs in. A recorded handle dir always wins; otherwise an isolated
+// session returns to ITS OWN workspace, and only a non-isolated session falls
+// back to the user's real workspace.
+//
+// The isolated case is the one that bites: the conversation was created with
+// the CLI's cwd set to the isolated dir, and coding CLIs key their resumable
+// conversation by cwd. Falling back to CodingAgentWorkingDir therefore sent the
+// CLI hunting for the conversation under the wrong project key, which surfaced
+// as "No conversation found with session ID" and silently restarted the turn as
+// a fresh conversation.
+func (a *Agent) resolveContinuationWorkingDir(handleWorkingDir string) string {
+	if dir := strings.TrimSpace(handleWorkingDir); dir != "" {
+		return dir
+	}
+	if a.IsolatedSessionWorkspace {
+		if dir := strings.TrimSpace(a.ensureIsolatedWorkspaceDir()); dir != "" {
+			return dir
+		}
+	}
+	return strings.TrimSpace(a.CodingAgentWorkingDir)
 }
 
 func (a *Agent) updateCodingProviderSessionHandleFromResponse(resp *llmtypes.ContentResponse) {
@@ -255,7 +276,15 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	if getter, ok := codingAgentProjectDirIDGetters[a.provider]; ok {
 		handle.ProjectDirID = strings.TrimSpace(getter(a))
 	}
-	handle.WorkingDir = strings.TrimSpace(a.CodingAgentWorkingDir)
+	// Must be the dir the conversation was actually created in, which for an
+	// isolated session is the session workspace — NOT CodingAgentWorkingDir.
+	// This is the legacy handle used whenever the adapter did not attach one of
+	// its own (every structured adapter today), so hardcoding
+	// CodingAgentWorkingDir here silently pinned the handle to the user's real
+	// workspace and made native resume look for the conversation under the
+	// wrong project key: "No conversation found with session ID", turn restarts
+	// fresh, conversation lost. Reuses the same precedence as resume.
+	handle.WorkingDir = a.resolveContinuationWorkingDir("")
 	if handle.NativeSessionID == "" && handle.ProjectDirID == "" && handle.WorkingDir == "" {
 		return llmtypes.CodingProviderSessionHandle{}
 	}
