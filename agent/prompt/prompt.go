@@ -3,9 +3,7 @@ package prompt
 import "strings"
 
 // SystemPromptTemplate is the complete system prompt template with placeholders
-const SystemPromptTemplate = `# AI Staff Engineer
-
-<session_info>
+const SystemPromptTemplate = `<session_info>
 **Date**: {{CURRENT_DATE}} | **Time**: {{CURRENT_TIME}}
 </session_info>
 
@@ -69,26 +67,16 @@ const (
 	LargeOutputHandlingPlaceholder = "{{LARGE_OUTPUT_HANDLING}}"
 )
 
-// RemoveAIStaffEngineerText removes the "AI Staff Engineer" header and description from a system prompt
-// This is used when appending/prepending custom prompts to avoid duplicate role descriptions
-func RemoveAIStaffEngineerText(prompt string) string {
-	// Remove header variants (with or without subtitle)
-	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist\n\n", "")
-	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist\n", "")
-	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist", "")
-	// The actual template uses just "# AI Staff Engineer" without a subtitle
-	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer\n\n", "")
-	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer\n", "")
-	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer", "")
-
-	// Remove the description line: "You are an **AI Staff Engineer** specializing in..."
-	aiStaffEngineerDesc := "You are an **AI Staff Engineer** specializing in MCP tools and system analysis with capabilities for multi-server integration, data analysis, strategic tool usage, and robust error handling."
-	prompt = strings.ReplaceAll(prompt, aiStaffEngineerDesc+"\n\n", "")
-	prompt = strings.ReplaceAll(prompt, aiStaffEngineerDesc+"\n", "")
-	prompt = strings.ReplaceAll(prompt, aiStaffEngineerDesc, "")
-
-	// Clean up any double newlines that might result
+// NormalizeForAppend tidies a system prompt before another block is appended
+// to it: collapses the blank-line runs that concatenation tends to leave
+// behind and trims surrounding whitespace.
+//
+// This replaced RemoveAIStaffEngineerText, which stripped a "# AI Staff
+// Engineer" persona header that SystemPromptTemplate no longer emits. The
+// system prompt now describes the product context and leaves the role to
+// whatever the caller sets, so there is no persona to strip — but callers
+// still relied on the trimming this did as a side effect.
+func NormalizeForAppend(prompt string) string {
 	prompt = strings.ReplaceAll(prompt, "\n\n\n", "\n\n")
-
 	return strings.TrimSpace(prompt)
 }

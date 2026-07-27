@@ -3845,8 +3845,8 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 	a.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
 }
 
-// AppendSystemPrompt appends additional content to the existing system prompt
-// Removes "AI Staff Engineer" text from existing prompt when appending
+// AppendSystemPrompt appends additional content to the existing system prompt,
+// normalizing the existing text's trailing whitespace first.
 func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 	if additionalPrompt == "" {
 		return
@@ -3890,13 +3890,12 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 		a.originalSystemPrompt = a.systemPrompt
 	}
 
-	// If we already have a system prompt, remove AI Staff Engineer text and append with separator
+	// If we already have a system prompt, append with a separator.
 	if a.systemPrompt != "" {
-		// Remove "AI Staff Engineer" text from existing prompt before appending
-		existingPrompt := prompt.RemoveAIStaffEngineerText(a.systemPrompt)
+		existingPrompt := prompt.NormalizeForAppend(a.systemPrompt)
 		a.systemPrompt = existingPrompt + "\n\n" + additionalPrompt
 		if a.Logger != nil {
-			a.Logger.Debug("✅ System prompt appended - AI Staff Engineer text removed",
+			a.Logger.Debug("✅ System prompt appended",
 				loggerv2.Int("length_chars", len(additionalPrompt)),
 				loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
 				loggerv2.Int("system_prompt_chars", len(a.systemPrompt)),
@@ -4459,7 +4458,7 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 
 	// When a custom system prompt has been set (via SetSystemPrompt) or custom prompts
 	// have been appended, preserve them. Only inject the updated tool structure section
-	// into the existing prompt rather than replacing the whole prompt with AI Staff Engineer.
+	// into the existing prompt rather than replacing the whole prompt.
 	const toolSectionMarker = "**AVAILABLE SERVERS AND TOOLS:**"
 	if a.hasCustomSystemPrompt {
 		// Extract just the tool structure section from the newly built prompt
@@ -4484,10 +4483,10 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 			}
 		}
 	} else if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
-		// Start from a clean base: strip the AI Staff Engineer persona so our custom
-		// prompts lead. The tool-structure section (available_tools JSON) from
-		// newSystemPrompt is kept so the agent still knows its tools.
-		cleanBase := prompt.RemoveAIStaffEngineerText(newSystemPrompt)
+		// Start from the freshly built base so our custom prompts lead. The
+		// tool-structure section (available_tools JSON) from newSystemPrompt is
+		// kept so the agent still knows its tools.
+		cleanBase := prompt.NormalizeForAppend(newSystemPrompt)
 		if cleanBase != "" {
 			a.systemPrompt = cleanBase
 			for _, p := range a.appendedSystemPrompts {
