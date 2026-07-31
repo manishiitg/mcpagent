@@ -673,6 +673,25 @@ func WithPiStructuredTransport(enabled bool) CallOption {
 	return llmproviders.WithPiStructuredTransport(enabled)
 }
 
+// WithCodexStreamTranscript opts into streaming structured content (assistant
+// text + tool-call starts) mid-turn by tailing Codex's own rollout JSONL. OFF
+// by default — a caller with no StreamingCallback registered has nothing to
+// do with the extra chunks, so mcpagent only turns this on automatically when
+// one is set (see coding_agent_integrations.go).
+func WithCodexStreamTranscript(enabled bool) CallOption {
+	return llmproviders.WithCodexStreamTranscript(enabled)
+}
+
+// WithClaudeStreamTranscript is WithCodexStreamTranscript for Claude Code.
+func WithClaudeStreamTranscript(enabled bool) CallOption {
+	return llmproviders.WithClaudeStreamTranscript(enabled)
+}
+
+// WithCursorStreamTranscript is WithCodexStreamTranscript for Cursor CLI.
+func WithCursorStreamTranscript(enabled bool) CallOption {
+	return llmproviders.WithCursorStreamTranscript(enabled)
+}
+
 // WithCodexReasoningEffort sets the model_reasoning_effort for the Codex CLI.
 func WithCodexReasoningEffort(effort string) CallOption {
 	return llmproviders.WithCodexReasoningEffort(effort)

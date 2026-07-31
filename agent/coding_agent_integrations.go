@@ -94,6 +94,14 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 			a.Logger.Info(fmt.Sprintf("🧠 [CLAUDE_CODE] Effort level set to: %s", effort))
 		}
 	}
+	// Mid-turn assistant TEXT only streams when the adapter is explicitly told
+	// to tail its transcript for content (separate from EnableStreaming, which
+	// is auto-enabled above purely for tool-call observability and does NOT
+	// imply this). Only worth the tailing cost when a caller actually
+	// registered a StreamingCallback to consume the content.
+	if a.StreamingCallback != nil {
+		opts = append(opts, llm.WithClaudeStreamTranscript(true))
+	}
 	return opts, nil
 }
 
@@ -192,6 +200,11 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	a.Logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithCodexStructuredTransport(true))
+	}
+	// See appendClaudeCodeIntegrationOptions' matching comment: content
+	// streaming needs this separate, explicit opt-in beyond EnableStreaming.
+	if a.StreamingCallback != nil {
+		opts = append(opts, llm.WithCodexStreamTranscript(true))
 	}
 	return opts, nil
 }
