@@ -119,12 +119,6 @@ func TestClaudeCodeBridge(log loggerv2.Logger, tracer observability.Tracer, trac
 		return err
 	}
 
-	// Update the code execution registry so the executor can find our custom tools
-	if err := agent.UpdateCodeExecutionRegistry(); err != nil {
-		return fmt.Errorf("failed to update code execution registry: %w", err)
-	}
-	log.Info("Code execution registry updated with workspace tools")
-
 	// Step 5: Verify bridge config
 	log.Info("--- Step 5: Verify bridge MCP config ---")
 	if err := verifyBridgeConfig(agent, log); err != nil {

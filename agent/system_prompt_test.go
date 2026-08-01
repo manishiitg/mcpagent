@@ -5,37 +5,37 @@ import (
 	"testing"
 )
 
-// TestSetSystemPromptReAppendsSupplementaryPrompts verifies that calling
-// SetSystemPrompt (overwrite) does NOT lose prompts added via AppendSystemPrompt.
+// TestSetInstructionsReAppendsSupplementaryPrompts verifies that calling
+// SetInstructions (overwrite) does NOT lose prompts added via AddInstructions.
 // This is the core contract that execution-only agents rely on: supplementary
 // prompts (CDP, browser, skills, secrets) are appended once during setup, then
-// SetSystemPrompt is called with a new base prompt during Execute().
-func TestSetSystemPromptReAppendsSupplementaryPrompts(t *testing.T) {
+// SetInstructions is called with a new base prompt during Execute().
+func TestSetInstructionsReAppendsSupplementaryPrompts(t *testing.T) {
 	a := &Agent{}
 
 	// Step 1: Initial system prompt set during agent initialization
-	a.SetSystemPrompt("Initial MCP base prompt")
+	a.SetInstructions("Initial MCP base prompt")
 
 	// Step 2: Supplementary prompts appended after setup (simulates appendSupplementaryPrompts)
-	a.AppendSystemPrompt("## Skills\nYou have access to agent-browser skill")
-	a.AppendSystemPrompt("## Browser Mode: CDP\nuse host.docker.internal:9222")
-	a.AppendSystemPrompt("## Secrets\nAPI_KEY=***")
+	a.AddInstructions("## Skills\nYou have access to agent-browser skill")
+	a.AddInstructions("## Browser Mode: CDP\nuse host.docker.internal:9222")
+	a.AddInstructions("## Secrets\nAPI_KEY=***")
 
 	// Verify all appended prompts are present
-	prompt := a.GetSystemPrompt()
+	prompt := a.Instructions()
 	for _, expected := range []string{"Skills", "CDP", "Secrets"} {
 		if !strings.Contains(prompt, expected) {
-			t.Fatalf("after AppendSystemPrompt, expected prompt to contain %q, got:\n%s", expected, prompt)
+			t.Fatalf("after AddInstructions, expected prompt to contain %q, got:\n%s", expected, prompt)
 		}
 	}
 
-	// Step 3: Execute() calls SetSystemPrompt with a completely new base prompt (overwrite=true)
-	a.SetSystemPrompt("# Execution-Only Agent\n## Code Execution Mode\nCODE EXECUTION MODE")
+	// Step 3: Execute() calls SetInstructions with a completely new base prompt (overwrite=true)
+	a.SetInstructions("# Execution-Only Agent\n## Code Execution Mode\nCODE EXECUTION MODE")
 
 	// The new base prompt must be present
-	final := a.GetSystemPrompt()
+	final := a.Instructions()
 	if !strings.Contains(final, "Execution-Only Agent") {
-		t.Fatal("new base prompt not found after SetSystemPrompt overwrite")
+		t.Fatal("new base prompt not found after SetInstructions overwrite")
 	}
 
 	// The old base prompt must be gone
@@ -50,23 +50,20 @@ func TestSetSystemPromptReAppendsSupplementaryPrompts(t *testing.T) {
 		"## Secrets\nAPI_KEY=***",
 	} {
 		if !strings.Contains(final, expected) {
-			t.Fatalf("supplementary prompt lost after SetSystemPrompt overwrite.\nExpected to contain: %q\nGot:\n%s", expected, final)
+			t.Fatalf("supplementary prompt lost after SetInstructions overwrite.\nExpected to contain: %q\nGot:\n%s", expected, final)
 		}
 	}
 }
 
-// TestGetAppendedSystemPromptsReturnsAllAppended verifies that GetAppendedSystemPrompts
-// returns exactly the prompts added via AppendSystemPrompt, unaffected by SetSystemPrompt.
-// This is used by the prompts.json debug file fix to reconstruct the full prompt.
-func TestGetAppendedSystemPromptsReturnsAllAppended(t *testing.T) {
+func TestAddInstructionsRecordsSupplements(t *testing.T) {
 	a := &Agent{}
-	a.SetSystemPrompt("base")
+	a.SetInstructions("base")
 
-	a.AppendSystemPrompt("prompt-A")
-	a.AppendSystemPrompt("prompt-B")
-	a.AppendSystemPrompt("prompt-C")
+	a.AddInstructions("prompt-A")
+	a.AddInstructions("prompt-B")
+	a.AddInstructions("prompt-C")
 
-	appended := a.GetAppendedSystemPrompts()
+	appended := a.appendedSystemPrompts
 	if len(appended) != 3 {
 		t.Fatalf("expected 3 appended prompts, got %d", len(appended))
 	}
@@ -74,25 +71,24 @@ func TestGetAppendedSystemPromptsReturnsAllAppended(t *testing.T) {
 		t.Fatalf("appended prompts mismatch: %v", appended)
 	}
 
-	// SetSystemPrompt should NOT clear the appended list
-	a.SetSystemPrompt("new base")
-	appended = a.GetAppendedSystemPrompts()
+	// SetInstructions should NOT clear the appended list
+	a.SetInstructions("new base")
+	appended = a.appendedSystemPrompts
 	if len(appended) != 3 {
-		t.Fatalf("SetSystemPrompt cleared appended prompts, expected 3, got %d", len(appended))
+		t.Fatalf("SetInstructions cleared appended prompts, expected 3, got %d", len(appended))
 	}
 }
 
-// TestClearAppendedSystemPrompts verifies that after clearing, SetSystemPrompt
+// TestResetInstructions verifies that after clearing, SetInstructions
 // no longer re-appends anything.
-func TestClearAppendedSystemPrompts(t *testing.T) {
+func TestResetInstructions(t *testing.T) {
 	a := &Agent{}
-	a.SetSystemPrompt("base")
-	a.AppendSystemPrompt("## CDP\nhost.docker.internal:9222")
+	a.SetInstructions("base")
+	a.AddInstructions("## CDP\nhost.docker.internal:9222")
 
-	a.ClearAppendedSystemPrompts()
-	a.SetSystemPrompt("clean base")
+	a.ResetInstructions("clean base")
 
-	final := a.GetSystemPrompt()
+	final := a.Instructions()
 	if strings.Contains(final, "CDP") {
 		t.Fatal("cleared prompt should not be re-appended")
 	}
@@ -101,38 +97,52 @@ func TestClearAppendedSystemPrompts(t *testing.T) {
 	}
 }
 
-// TestAppendSystemPromptEmpty verifies that appending an empty string is a no-op.
-func TestAppendSystemPromptEmpty(t *testing.T) {
+// Clearing is itself sufficient: supplements are no longer materialized into
+// the base prompt, so callers do not have to remember a SetInstructions re-base.
+func TestResetInstructionsTakesEffectWithoutRebase(t *testing.T) {
 	a := &Agent{}
-	a.SetSystemPrompt("base")
-	a.AppendSystemPrompt("")
+	a.SetInstructions("base")
+	a.AddInstructions("## CDP\nhost.docker.internal:9222")
 
-	if len(a.GetAppendedSystemPrompts()) != 0 {
-		t.Fatal("empty append should be a no-op")
-	}
-	if a.GetSystemPrompt() != "base" {
-		t.Fatalf("prompt changed after empty append: %q", a.GetSystemPrompt())
+	a.ResetInstructions("base")
+
+	if got := a.Instructions(); got != "base" {
+		t.Fatalf("clearing supplements left stale materialized text: %q", got)
 	}
 }
 
-// TestMultipleSetSystemPromptKeepsAppended verifies that calling SetSystemPrompt
-// multiple times (e.g., across retry attempts) always preserves the appended prompts.
-func TestMultipleSetSystemPromptKeepsAppended(t *testing.T) {
+// TestAddInstructionsEmpty verifies that appending an empty string is a no-op.
+func TestAddInstructionsEmpty(t *testing.T) {
 	a := &Agent{}
-	a.SetSystemPrompt("init")
-	a.AppendSystemPrompt("## CDP\nport 9222")
+	a.SetInstructions("base")
+	a.AddInstructions("")
 
-	// Simulate multiple execution retries, each calling SetSystemPrompt
+	if len(a.appendedSystemPrompts) != 0 {
+		t.Fatal("empty append should be a no-op")
+	}
+	if a.Instructions() != "base" {
+		t.Fatalf("prompt changed after empty append: %q", a.Instructions())
+	}
+}
+
+// TestMultipleSetInstructionsKeepsAppended verifies that calling SetInstructions
+// multiple times (e.g., across retry attempts) always preserves the appended prompts.
+func TestMultipleSetInstructionsKeepsAppended(t *testing.T) {
+	a := &Agent{}
+	a.SetInstructions("init")
+	a.AddInstructions("## CDP\nport 9222")
+
+	// Simulate multiple execution retries, each calling SetInstructions
 	for i := 0; i < 3; i++ {
-		a.SetSystemPrompt("execution attempt " + string(rune('1'+i)))
-		final := a.GetSystemPrompt()
+		a.SetInstructions("execution attempt " + string(rune('1'+i)))
+		final := a.Instructions()
 		if !strings.Contains(final, "## CDP\nport 9222") {
-			t.Fatalf("retry %d: CDP prompt lost after SetSystemPrompt", i+1)
+			t.Fatalf("retry %d: CDP prompt lost after SetInstructions", i+1)
 		}
 	}
 
 	// Appended list should still have exactly 1 entry, not duplicated
-	if len(a.GetAppendedSystemPrompts()) != 1 {
-		t.Fatalf("expected 1 appended prompt, got %d", len(a.GetAppendedSystemPrompts()))
+	if len(a.appendedSystemPrompts) != 1 {
+		t.Fatalf("expected 1 appended prompt, got %d", len(a.appendedSystemPrompts))
 	}
 }

@@ -17,19 +17,23 @@
     "provider": "Codex",
     "streamed_tool_events": 2,
     "tool_handler_calls": 2,
+    "tool_identity_pairs": [
+      "execute_shell_command-\u003eexecute_shell_command",
+      "execute_shell_command-\u003eexecute_shell_command"
+    ],
     "tool_names": [
-      "",
-      ""
+      "execute_shell_command",
+      "execute_shell_command"
     ],
     "transport": "structured/json",
-    "unreachable_build_id": "BUILD_ID_61e63b1757b9"
+    "unreachable_build_id": "BUILD_ID_3aa39bca631a"
   },
-  "fingerprint": "02596416ce1c9d90",
+  "fingerprint": "c25e88a8cfa2f3e9",
   "agent_review": {
     "verdict": "good",
-    "reviewed_fingerprint": "02596416ce1c9d90",
-    "reviewer": "claude-opus-4-8",
+    "reviewed_fingerprint": "c25e88a8cfa2f3e9",
+    "reviewer": "gpt-5.6",
     "issues": [],
-    "notes": "Genuine structured give-up now that codex is contained via --disable shell_tool. tool_handler_calls=2 shows codex attempted the (permanently failing) bridge tool with bounded retry rather than bypassing via native exec; the final answer 'The build ID could NOT be read.' does NOT contain the unreachable build id (BUILD_ID_61e63b1757b9), so no fabrication. tool_names are empty strings — a codex structured quirk where the mcp_tool_call events carry no name — but the 2 streamed events confirm the tool was really attempted. Falsifiable and correct."
+    "notes": "Bridge-only structured Codex invoked only the intended execute_shell_command MCP tool. Both calls produced matching, non-empty ToolCallStart and ToolCallEnd names, the permanently failing bridge handler was genuinely reached twice, and the final answer stopped without fabricating the unreachable build ID."
   }
 }

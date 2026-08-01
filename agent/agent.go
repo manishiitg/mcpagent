@@ -483,7 +483,7 @@ func WithToolTimeout(timeout time.Duration) AgentOption {
 // This overrides the default system prompt generation logic. The agent will use
 // this exact string as the system instruction.
 //
-// Note: To append to the system prompt instead of replacing it, use AppendSystemPrompt() method.
+// Note: To add supplementary instructions, use AddInstructions.
 func WithSystemPrompt(systemPrompt string) AgentOption {
 	return func(a *Agent) {
 		a.systemPrompt = systemPrompt
@@ -1057,7 +1057,7 @@ type Agent struct {
 
 	// Dynamic tool allow list: when non-nil, only tools whose names appear in this set
 	// are included in filteredTools (and the code-exec tool index). Updated per-turn via
-	// SetToolAllowList / ClearToolAllowList so the workshop builder can restrict tools
+	// SetToolAccess lets the workshop builder restrict tools
 	// based on the current mode (build/optimize/debug/run/eval/output).
 	toolAllowList   map[string]bool // nil = no restriction (all tools allowed)
 	toolAllowListMu sync.RWMutex
@@ -1133,9 +1133,8 @@ type Agent struct {
 	filteredTools []llmtypes.Tool
 
 	// Track appended system prompts so callers can rebuild the final
-	// prompt after a SetSystemPrompt overwrite.
-	appendedSystemPrompts []string // Track each appended prompt
-	originalSystemPrompt  string   // Keep original system prompt
+	// prompt after SetInstructions replaces the base.
+	appendedSystemPrompts []string // Supplementary instructions, composed at request time
 	hasAppendedPrompts    bool     // Flag to indicate if any prompts were appended
 
 	// Skills attached to this agent. Skills are Anthropic-format SKILL.md
@@ -1664,7 +1663,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	ag.Clients = clients
 	ag.toolToServer = toolToServer
 	// Only take the connection-derived default system prompt when the caller
-	// didn't supply one via WithSystemPrompt/AppendSystemPrompt. Unconditionally
+	// didn't supply one via WithSystemPrompt/AddInstructions. Unconditionally
 	// overwriting here clobbered a caller's custom prompt (set by an AgentOption
 	// applied earlier in this same constructor, before this connection setup
 	// runs) with whatever NewAgentConnectionWithSession computed on its own —
@@ -2080,7 +2079,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			loggerv2.String("session_id", ag.SessionID),
 			loggerv2.Int("count", len(customToolExecutors)))
 
-		virtualScopeID := ag.GetVirtualToolScopeID()
+		virtualScopeID := ag.virtualToolScopeID()
 		codeexec.InitRegistryVirtualToolsForSession(virtualScopeID, virtualToolExecutors, logger)
 		logger.Info("✅ Session-scoped virtual tools registered during initialization (NewAgent)",
 			loggerv2.String("session_id", ag.SessionID),
@@ -2297,7 +2296,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 //
 // It emits an AgentStartEvent, which marks the beginning of a logical session in the
 // observability/tracing system. This creates the root or high-level node in the event tree.
-func (a *Agent) StartAgentSession(ctx context.Context) {
+func (a *Agent) startAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
 	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode, a.UseToolSearchMode)
 	a.EmitTypedEvent(ctx, agentStartEvent)
@@ -2307,7 +2306,7 @@ func (a *Agent) StartAgentSession(ctx context.Context) {
 //
 // It emits an LLMGenerationStartEvent to the observability system. This should be called
 // immediately before sending a request to the LLM provider.
-func (a *Agent) StartLLMGeneration(ctx context.Context) {
+func (a *Agent) startLLMGeneration(ctx context.Context) {
 	// Emit LLM generation start event to create hierarchy
 	llmStartEvent := events.NewLLMGenerationStartEvent(0, a.ModelID, a.Temperature, len(a.filteredTools), 0)
 	a.EmitTypedEvent(ctx, llmStartEvent)
@@ -2527,7 +2526,7 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 //   - duration: Time taken for the generation.
 //   - usageMetrics: Token usage statistics.
 //   - resp: The full content response object (optional, for detailed metrics).
-func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, toolCalls int, duration time.Duration, usageMetrics events.UsageMetrics, resp *llmtypes.ContentResponse) {
+func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, toolCalls int, duration time.Duration, usageMetrics events.UsageMetrics, resp *llmtypes.ContentResponse) {
 	// Accumulate token usage (including cache tokens) - uses unified Usage field
 	a.accumulateTokenUsage(ctx, usageMetrics, resp, turn)
 
@@ -2818,7 +2817,7 @@ func (a *Agent) recordConversationTurn(turn int, duration time.Duration, message
 // Parameters:
 //   - ctx: Context for the operation.
 //   - conversationDuration: The total duration of the session/conversation.
-func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.Duration) {
+func (a *Agent) endAgentSession(ctx context.Context, conversationDuration time.Duration) {
 	// Emit total token usage event before agent end event
 	a.emitTotalTokenUsageEvent(ctx, conversationDuration)
 
@@ -3128,7 +3127,7 @@ func (a *Agent) AddEventListener(listener AgentEventListener) {
 
 	// Streaming tracers forward events to subscribers; direct listeners remain
 	// the integration point used by the builder and server event bridges.
-	if _, hasStreaming := a.GetStreamingTracer(); hasStreaming {
+	if _, hasStreaming := a.streamingTracer(); hasStreaming {
 		a.Logger.Info("🔍 Streaming tracer enabled for event listener", loggerv2.String("listener", listener.Name()))
 
 		// The streaming tracer is already active and will forward events to all listeners
@@ -3313,7 +3312,7 @@ func isStartOrEndEvent(eventType events.EventType) bool {
 }
 
 // GetStreamingTracer returns the streaming tracer if available
-func (a *Agent) GetStreamingTracer() (StreamingTracer, bool) {
+func (a *Agent) streamingTracer() (StreamingTracer, bool) {
 	if len(a.Tracers) > 0 {
 		if streamingTracer, ok := a.Tracers[0].(StreamingTracer); ok {
 			return streamingTracer, true
@@ -3324,13 +3323,13 @@ func (a *Agent) GetStreamingTracer() (StreamingTracer, bool) {
 
 // HasStreamingCapability returns true if the agent supports event streaming
 func (a *Agent) HasStreamingCapability() bool {
-	_, hasStreaming := a.GetStreamingTracer()
+	_, hasStreaming := a.streamingTracer()
 	return hasStreaming
 }
 
 // GetEventStream returns the event stream channel if streaming is available
 func (a *Agent) GetEventStream() (<-chan *events.AgentEvent, bool) {
-	if streamingTracer, hasStreaming := a.GetStreamingTracer(); hasStreaming {
+	if streamingTracer, hasStreaming := a.streamingTracer(); hasStreaming {
 		return streamingTracer.GetEventStream(), true
 	}
 	return nil, false
@@ -3338,7 +3337,7 @@ func (a *Agent) GetEventStream() (<-chan *events.AgentEvent, bool) {
 
 // SubscribeToEvents allows external systems to subscribe to agent events
 func (a *Agent) SubscribeToEvents(ctx context.Context) (<-chan *events.AgentEvent, func(), bool) {
-	if streamingTracer, hasStreaming := a.GetStreamingTracer(); hasStreaming {
+	if streamingTracer, hasStreaming := a.streamingTracer(); hasStreaming {
 		eventChan, unsubscribe := streamingTracer.SubscribeToEvents(ctx)
 		return eventChan, unsubscribe, true
 	}
@@ -3793,51 +3792,12 @@ func (a *Agent) IsCancelled() bool {
 	return a.ctx.Err() != nil
 }
 
-// SetSystemPrompt sets a custom system prompt and marks it as custom to prevent overwriting
-// Always overwrites the existing system prompt (removed prepending behavior for code execution mode)
-// In code execution mode, if the prompt contains {{TOOL_STRUCTURE}} placeholder, it will be replaced with actual tool structure JSON
-func (a *Agent) SetSystemPrompt(systemPrompt string) {
-	// Replace {{TOOL_STRUCTURE}} placeholder if present:
-	// - In code execution mode: inject actual tool structure JSON so the agent knows available tools.
-	// - Otherwise: strip the placeholder so it doesn't appear as a literal string in the prompt.
-	if strings.Contains(systemPrompt, prompt.ToolStructurePlaceholder) {
-		if a.UseCodeExecutionMode {
-			toolStructure, err := a.buildToolIndex()
-			if err != nil {
-				if a.Logger != nil {
-					a.Logger.Warn("Failed to build tool index for placeholder replacement", loggerv2.Error(err))
-				}
-				systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
-			} else {
-				// Build pre-discovered tool specs (inline specs for tools that don't need get_api_spec)
-				preDiscoveredSpecs := a.buildPreDiscoveredToolSpecs()
-				toolStructureSection := "\n\n**AVAILABLE SERVERS AND TOOLS:**\n\n" +
-					"```json\n" + toolStructure + "\n```\n" +
-					preDiscoveredSpecs
-				systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
-			}
-		} else {
-			// Not in code execution mode — strip the placeholder rather than leaving it unresolved.
-			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
-		}
-	}
-
+// SetInstructions replaces the base instructions while preserving supplements.
+// Dynamic tool instructions are rendered only at the outbound boundary.
+func (a *Agent) SetInstructions(systemPrompt string) {
 	a.systemPrompt = systemPrompt
 
-	// Re-append any prompts that were added via AppendSystemPrompt()
-	// (e.g. CRITICAL INSTRUCTION for Claude Code, delegation guidance)
-	// Without this, SetSystemPrompt overwrites everything including appended prompts.
-	if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
-		for _, p := range a.appendedSystemPrompts {
-			a.systemPrompt += "\n\n" + p
-		}
-		if a.Logger != nil {
-			a.Logger.Debug("✅ System prompt overwritten + re-appended prompts",
-				loggerv2.Int("base_length_chars", len(systemPrompt)),
-				loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
-				loggerv2.Int("total_length_chars", len(a.systemPrompt)))
-		}
-	} else if a.Logger != nil {
+	if a.Logger != nil {
 		a.Logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
 	}
 	a.hasCustomSystemPrompt = true
@@ -3852,84 +3812,80 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 	if a.bridgeRoutingInstructionsOverride != nil {
 		if *a.bridgeRoutingInstructionsOverride != "" {
-			a.AppendSystemPrompt(*a.bridgeRoutingInstructionsOverride)
+			a.AddInstructions(*a.bridgeRoutingInstructionsOverride)
 		}
 		return
 	}
-	a.AppendSystemPrompt(defaultPreamble)
-	a.AppendSystemPrompt(bridgeRoutingExplicitInstructions())
+	a.AddInstructions(defaultPreamble, bridgeRoutingExplicitInstructions())
 }
 
-// AppendSystemPrompt appends additional content to the existing system prompt,
-// normalizing the existing text's trailing whitespace first.
-func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
+// AddInstructions records supplementary instructions. They are composed with
+// the current base prompt at the outbound boundary, so changing or clearing the
+// list cannot leave stale materialized copies in systemPrompt.
+func (a *Agent) AddInstructions(instructions ...string) {
+	for _, additionalPrompt := range instructions {
+		a.addInstructions(additionalPrompt)
+	}
+}
+
+func (a *Agent) addInstructions(additionalPrompt string) {
 	if additionalPrompt == "" {
 		return
 	}
 
-	// Idempotency guard: refuse to append a block already present in the
-	// materialized system prompt.
-	//
-	// The check is against a.systemPrompt (the string actually sent to the
-	// model / projected to CLAUDE.md), NOT just the appendedSystemPrompts
-	// list. Reason: ClearAppendedSystemPrompts resets the list and flags but
-	// does NOT rebuild a.systemPrompt, and only SetSystemPrompt re-bases it.
-	// So a reused/persistent agent on a path that clears the list each turn
-	// but never re-bases keeps concatenating the same supplementary block
-	// (capability snapshot, browser pointer, …) onto an ever-growing
-	// a.systemPrompt while the list stays tiny — observed as the same block
-	// stacked 14x in a projected CLAUDE.md (~59k), also re-sent to the model
-	// every turn. A list-only check is blind to that (the list was cleared);
-	// checking the materialized prompt catches it regardless of the caller's
-	// clear / re-base behavior. The healthy path (SetSystemPrompt re-bases to
-	// a clean phase prompt, THEN appends) is unaffected — the block isn't in
-	// the freshly re-based prompt yet, so it appends normally.
+	// Avoid duplicating a block already provided by the base prompt or already
+	// recorded as a supplement.
 	if a.systemPrompt != "" && strings.Contains(a.systemPrompt, additionalPrompt) {
 		if a.Logger != nil {
-			a.Logger.Warn("⏭️ AppendSystemPrompt: skipped duplicate block already in system prompt (idempotency guard)",
+			a.Logger.Warn("⏭️ AddInstructions: skipped duplicate block already in base instructions",
 				loggerv2.Int("length_chars", len(additionalPrompt)),
 				loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
-				loggerv2.Int("system_prompt_chars", len(a.systemPrompt)),
+				loggerv2.Int("base_prompt_chars", len(a.systemPrompt)),
 				loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)),
 				loggerv2.String("caller", callerChain()))
 		}
 		return
+	}
+	for _, existing := range a.appendedSystemPrompts {
+		if existing == additionalPrompt {
+			if a.Logger != nil {
+				a.Logger.Debug("⏭️ AddInstructions: skipped duplicate supplementary block",
+					loggerv2.Int("length_chars", len(additionalPrompt)),
+					loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)))
+			}
+			return
+		}
 	}
 
 	// Track appended prompt metadata for inspection and prompt restoration.
 	a.appendedSystemPrompts = append(a.appendedSystemPrompts, additionalPrompt)
 	a.hasAppendedPrompts = true
 
-	// Store original system prompt if this is the first append
-	if a.originalSystemPrompt == "" {
-		a.originalSystemPrompt = a.systemPrompt
-	}
-
-	// If we already have a system prompt, append with a separator.
-	if a.systemPrompt != "" {
-		existingPrompt := prompt.NormalizeForAppend(a.systemPrompt)
-		a.systemPrompt = existingPrompt + "\n\n" + additionalPrompt
-		if a.Logger != nil {
-			a.Logger.Debug("✅ System prompt appended",
-				loggerv2.Int("length_chars", len(additionalPrompt)),
-				loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
-				loggerv2.Int("system_prompt_chars", len(a.systemPrompt)),
-				loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)))
-		}
-	} else {
-		// If no existing system prompt, just set it
-		a.systemPrompt = additionalPrompt
+	if a.Logger != nil {
+		a.Logger.Debug("✅ Supplementary system prompt recorded",
+			loggerv2.Int("length_chars", len(additionalPrompt)),
+			loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
+			loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)))
 	}
 
 	// Mark as custom to prevent overwriting
 	a.hasCustomSystemPrompt = true
 }
 
+// ResetInstructions atomically replaces the base and every supplement.
+func (a *Agent) ResetInstructions(base string, supplements ...string) {
+	a.systemPrompt = base
+	a.appendedSystemPrompts = nil
+	a.hasAppendedPrompts = false
+	for _, supplement := range supplements {
+		a.addInstructions(supplement)
+	}
+	a.hasCustomSystemPrompt = true
+}
+
 // callerChain returns a compact "fn:line <- fn:line <- …" trace of the
 // callers above this package's frame. Used to pin which external code path
-// triggered a suspicious system-prompt mutation (duplicate append, or a
-// ClearAppendedSystemPrompts that leaves a.systemPrompt un-rebased) so the
-// root caller can be fixed, not just the symptom.
+// triggered a suspicious duplicate system-prompt append.
 func callerChain() string {
 	pcs := make([]uintptr, 10)
 	// skip: runtime.Callers, callerChain, and the logging method that called us.
@@ -4027,6 +3983,24 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 			Description: description,
 			Parameters:  llmtypes.NewParameters(parameters),
 		},
+	}
+
+	// Tool names are the agent-facing address: get_api_spec resolves by name, and
+	// $MCP_CUSTOM/{tool_name} executes by name with no category segment. That
+	// makes uniqueness load-bearing, but a map assignment silently overwrites, so
+	// today it holds by accident rather than by enforcement.
+	//
+	// Only a *conflicting* re-registration is worth reporting. Re-registering the
+	// same tool under the same category is documented, intentional, and handled
+	// idempotently a few lines below — logging that as an error would fire on
+	// normal behaviour and drown the case that matters. A category change means
+	// two different tools are claiming one address, and the later silently wins.
+	if existing, exists := a.customTools[name]; exists && existing.Category != toolCategory && a.Logger != nil {
+		a.Logger.Error("conflicting custom tool registration — one name, two categories; the later one wins and the earlier becomes unreachable",
+			fmt.Errorf("tool %q re-registered under a different category", name),
+			loggerv2.String("tool", name),
+			loggerv2.String("previous_category", existing.Category),
+			loggerv2.String("new_category", toolCategory))
 	}
 
 	// Store both definition and execution function with category
@@ -4180,11 +4154,12 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		a.filteredTools = append(a.filteredTools, tool)
 	}
 
-	// In code execution mode, invalidate cached OpenAPI spec for this tool's category
-	// so it gets regenerated on next get_api_spec call
+	// Tool schemas are cached independently of authorization, but a registration
+	// may add or replace a definition. Clear the small per-agent schema cache so
+	// the next authorized lookup regenerates from the canonical registration.
 	if a.UseCodeExecutionMode {
 		a.openAPISpecCacheMu.Lock()
-		delete(a.openAPISpecCache, toolCategory)
+		a.openAPISpecCache = make(map[string][]byte)
 		a.openAPISpecCacheMu.Unlock()
 	}
 
@@ -4216,22 +4191,6 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	} else {
 		if a.Logger != nil {
 			a.Logger.Warn("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil for tool", loggerv2.String("tool", name))
-		}
-	}
-
-	// 🔧 CRITICAL: Rebuild system prompt with updated tool structure in code execution mode
-	// This ensures custom tools appear in the system prompt's tool structure JSON
-	// so the LLM knows they exist and can use them via HTTP API
-	if a.UseCodeExecutionMode {
-		if err := a.rebuildSystemPromptWithUpdatedToolStructure(); err != nil {
-			if a.Logger != nil {
-				a.Logger.Warn("⚠️ [CODE_EXECUTION] Failed to rebuild system prompt with updated tool structure", loggerv2.Error(err))
-			}
-			// Don't fail tool registration if system prompt rebuild fails
-		} else {
-			if a.Logger != nil {
-				a.Logger.Info("✅ [CODE_EXECUTION] System prompt rebuilt with updated tool structure (custom tool now included)", loggerv2.String("tool", name))
-			}
 		}
 	}
 
@@ -4341,193 +4300,16 @@ func (a *Agent) GetCustomTools() map[string]CustomTool {
 // each other's virtual tool handlers (e.g., get_api_spec bound to different agent instances).
 // Custom tools continue to use SessionID for sharing, but virtual tools need per-agent scoping
 // because they bind to agent-specific state (customTools, toolFilter).
-func (a *Agent) GetVirtualToolScopeID() string {
+func (a *Agent) virtualToolScopeID() string {
 	if a.SessionID == "" {
 		return ""
 	}
 	return a.SessionID + ":vt:" + string(a.TraceID)
 }
 
-// UpdateCodeExecutionRegistry explicitly updates the code execution registry with all custom tools
-// This is useful when tools are registered after agent initialization (e.g., workspace/human tools)
-// It also rebuilds the system prompt to include the newly registered tools in the tool structure
-func (a *Agent) UpdateCodeExecutionRegistry() error {
-	if a.Clients == nil {
-		if a.Logger != nil {
-			a.Logger.Warn("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil")
-		}
-		return fmt.Errorf("cannot update registry: Clients is nil")
-	}
-
-	// Build custom tool executors map from all registered custom tools
-	customToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
-	for toolName, customTool := range a.customTools {
-		customToolExecutors[toolName] = customTool.Execution
-	}
-
-	if a.Logger != nil {
-		a.Logger.Info("🔧 [CODE_EXECUTION] Explicitly updating registry with custom tools", loggerv2.Int("count", len(customToolExecutors)))
-		// Log all custom tool names for debugging
-		toolNames := make([]string, 0, len(customToolExecutors))
-		for toolName := range customToolExecutors {
-			toolNames = append(toolNames, toolName)
-		}
-		a.Logger.Debug("🔧 [CODE_EXECUTION] Custom tools being registered", loggerv2.Any("tools", toolNames))
-	}
-
-	// Update the global registry (for backward compatibility)
-	codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
-
-	// Also register session-scoped tools to prevent cross-workflow contamination
-	// When multiple workflows run concurrently, each gets its own scoped tools
-	if a.SessionID != "" {
-		codeexec.InitRegistryForSession(a.SessionID, customToolExecutors, a.Logger)
-		if a.Logger != nil {
-			a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped custom tools registered",
-				loggerv2.String("session_id", a.SessionID),
-				loggerv2.Int("count", len(customToolExecutors)))
-		}
-
-		// Build virtual tool executors by re-creating virtual tool definitions
-		// and mapping them to this agent's HandleVirtualTool
-		virtualToolDefs := a.CreateVirtualTools()
-		virtualToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
-		for _, vt := range virtualToolDefs {
-			if vt.Function != nil {
-				toolName := vt.Function.Name
-				virtualToolExecutors[toolName] = func(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
-					return func(ctx context.Context, args map[string]interface{}) (string, error) {
-						return a.HandleVirtualTool(ctx, name, args)
-					}
-				}(toolName)
-			}
-		}
-		if len(virtualToolExecutors) > 0 {
-			// Use per-agent scope for virtual tools to prevent parent/child overwrite.
-			// Multiple agents share the same SessionID for MCP connection sharing,
-			// but each agent's virtual tools (especially get_api_spec) must bind to
-			// its own agent instance since they access agent-specific customTools/toolFilter.
-			virtualScopeID := a.GetVirtualToolScopeID()
-			codeexec.InitRegistryVirtualToolsForSession(virtualScopeID, virtualToolExecutors, a.Logger)
-			if a.Logger != nil {
-				a.Logger.Info("✅ [CODE_EXECUTION] Session-scoped virtual tools registered (UpdateCodeExecutionRegistry)",
-					loggerv2.String("session_id", a.SessionID),
-					loggerv2.String("virtual_scope_id", virtualScopeID),
-					loggerv2.Int("virtual_tool_count", len(virtualToolExecutors)),
-					loggerv2.Int("custom_tool_count", len(a.customTools)),
-					loggerv2.String("agent_ptr", fmt.Sprintf("%p", a)))
-			}
-		}
-	}
-
-	if a.Logger != nil {
-		a.Logger.Info("✅ [CODE_EXECUTION] Registry updated successfully with custom tools", loggerv2.Int("count", len(customToolExecutors)))
-	}
-
-	// 🔧 CRITICAL: Rebuild system prompt with updated tool structure in code execution mode
-	// This ensures workspace and human tools appear in the system prompt
-	if a.UseCodeExecutionMode {
-		if err := a.rebuildSystemPromptWithUpdatedToolStructure(); err != nil {
-			if a.Logger != nil {
-				a.Logger.Warn("⚠️ [CODE_EXECUTION] Failed to rebuild system prompt with updated tool structure", loggerv2.Error(err))
-			}
-			// Don't fail registry update if system prompt rebuild fails
-		} else {
-			if a.Logger != nil {
-				a.Logger.Info("✅ [CODE_EXECUTION] System prompt rebuilt with updated tool structure (workspace and human tools now included)")
-			}
-		}
-	}
-
-	return nil
-}
-
-// rebuildSystemPromptWithUpdatedToolStructure rebuilds the system prompt with the latest tool structure
-// This is called after custom tools are registered to ensure they appear in the system prompt
-func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
-	if !a.UseCodeExecutionMode {
-		return nil // Only needed in code execution mode
-	}
-
-	toolStructure, err := a.buildToolIndex()
-	if err != nil {
-		return fmt.Errorf("failed to build tool index: %w", err)
-	}
-
-	// Rebuild system prompt with updated tool structure
-	// Note: This function is only called in code execution mode, so UseToolSearchMode is false
-	newSystemPrompt := prompt.BuildSystemPromptWithoutTools(
-		a.prompts,
-		a.resources,
-		string(a.AgentMode),
-		a.DiscoverResource,
-		a.DiscoverPrompt,
-		a.UseCodeExecutionMode,
-		toolStructure,
-		a.buildPreDiscoveredToolSpecs(), // preDiscoveredToolSpecs
-		false,                           // UseToolSearchMode - not applicable in code execution mode
-		nil,                             // toolCategories - not applicable in code execution mode
-		a.Logger,
-		a.EnableParallelToolExecution,
-	)
-
-	// When a custom system prompt has been set (via SetSystemPrompt) or custom prompts
-	// have been appended, preserve them. Only inject the updated tool structure section
-	// into the existing prompt rather than replacing the whole prompt.
-	const toolSectionMarker = "**AVAILABLE SERVERS AND TOOLS:**"
-	if a.hasCustomSystemPrompt {
-		// Extract just the tool structure section from the newly built prompt
-		// and inject it into the existing custom system prompt.
-		// The section starts with the marker and ends at the next double newline block boundary.
-		newStart := strings.Index(newSystemPrompt, toolSectionMarker)
-		if newStart != -1 {
-			// Find the end of the tool section: next occurrence of a markdown heading or end of string
-			newEnd := len(newSystemPrompt)
-			if idx := strings.Index(newSystemPrompt[newStart+len(toolSectionMarker):], "\n## "); idx != -1 {
-				newEnd = newStart + len(toolSectionMarker) + idx
-			}
-			newToolSection := newSystemPrompt[newStart:newEnd]
-
-			existingStart := strings.Index(a.systemPrompt, toolSectionMarker)
-			if existingStart != -1 {
-				existingEnd := len(a.systemPrompt)
-				if idx := strings.Index(a.systemPrompt[existingStart+len(toolSectionMarker):], "\n## "); idx != -1 {
-					existingEnd = existingStart + len(toolSectionMarker) + idx
-				}
-				a.systemPrompt = a.systemPrompt[:existingStart] + newToolSection + a.systemPrompt[existingEnd:]
-			}
-		}
-	} else if a.hasAppendedPrompts && len(a.appendedSystemPrompts) > 0 {
-		// Start from the freshly built base so our custom prompts lead. The
-		// tool-structure section (available_tools JSON) from newSystemPrompt is
-		// kept so the agent still knows its tools.
-		cleanBase := prompt.NormalizeForAppend(newSystemPrompt)
-		if cleanBase != "" {
-			a.systemPrompt = cleanBase
-			for _, p := range a.appendedSystemPrompts {
-				a.systemPrompt += "\n\n" + p
-			}
-		} else {
-			a.systemPrompt = strings.Join(a.appendedSystemPrompts, "\n\n")
-		}
-	} else {
-		a.systemPrompt = newSystemPrompt
-	}
-
-	if a.Logger != nil {
-		a.Logger.Debug("🔧 [CODE_EXECUTION] System prompt rebuilt",
-			loggerv2.Int("prompt_bytes", len(newSystemPrompt)),
-			loggerv2.Int("tool_structure_bytes", len(toolStructure)))
-	}
-
-	return nil
-}
-
-// SetToolAllowList restricts the tools available to the LLM to only those whose names
-// appear in the provided list. Virtual/system tools are always included regardless.
-// This is applied per-turn in conversation.go (filteredTools) and in buildToolIndex()
-// (code execution mode). Call ClearToolAllowList to remove the restriction.
-func (a *Agent) SetToolAllowList(toolNames []string) {
+// SetToolAccess is the single public tool-policy operation. Non-empty names
+// restrict discovery and execution; nil or empty restores every registered tool.
+func (a *Agent) SetToolAccess(toolNames []string) {
 	a.toolAllowListMu.Lock()
 	defer a.toolAllowListMu.Unlock()
 	if len(toolNames) == 0 {
@@ -4550,20 +4332,6 @@ func (a *Agent) SetToolAllowList(toolNames []string) {
 		a.Logger.Info("🔒 [TOOL_ALLOW_LIST] Set",
 			loggerv2.Int("allowed_count", len(toolNames)),
 			loggerv2.Any("allowed_tools", toolNames))
-	}
-}
-
-// ClearToolAllowList removes any tool restriction, making all registered tools available.
-func (a *Agent) ClearToolAllowList() {
-	a.toolAllowListMu.Lock()
-	defer a.toolAllowListMu.Unlock()
-	a.toolAllowList = nil
-	// Also clear from code exec registry
-	if a.SessionID != "" {
-		codeexec.SetSessionToolAllowList(a.SessionID, nil)
-	}
-	if a.Logger != nil {
-		a.Logger.Info("🔓 Tool allow list cleared — all tools available")
 	}
 }
 
@@ -4612,107 +4380,9 @@ func (a *Agent) applyToolAllowList(tools []llmtypes.Tool) []llmtypes.Tool {
 	return filtered
 }
 
-// GetSystemPrompt returns the current system prompt
-func (a *Agent) GetSystemPrompt() string {
-	return a.systemPrompt
-}
-
-// ClearAppendedSystemPrompts removes all appended system prompts
-func (a *Agent) ClearAppendedSystemPrompts() {
-	// Diagnostic: this resets the bookkeeping list/flags but deliberately does
-	// NOT rewrite a.systemPrompt — that is left to a following SetSystemPrompt
-	// re-base. If a caller clears here and then re-appends WITHOUT a re-base,
-	// the materialized a.systemPrompt keeps its old appended blocks and grows
-	// turn over turn (the CLAUDE.md 14x-bloat bug). Logging cleared_count vs
-	// the retained system_prompt_chars + caller makes that pattern visible:
-	// a large system_prompt_chars here that is never followed by SetSystemPrompt
-	// is the smoking gun.
-	if a.Logger != nil {
-		a.Logger.Warn("🧹 ClearAppendedSystemPrompts: cleared append-list (a.systemPrompt left intact until next SetSystemPrompt)",
-			loggerv2.Int("cleared_count", len(a.appendedSystemPrompts)),
-			loggerv2.Int("system_prompt_chars", len(a.systemPrompt)),
-			loggerv2.String("caller", callerChain()))
-	}
-	a.appendedSystemPrompts = nil
-	a.hasAppendedPrompts = false
-	a.originalSystemPrompt = ""
-}
-
-// GetAppendedSystemPrompts returns the list of appended system prompts
-func (a *Agent) GetAppendedSystemPrompts() []string {
-	return a.appendedSystemPrompts
-}
-
-// GetBaseSystemPrompt returns the system prompt WITHOUT any appended sections —
-// the base captured before the first AppendSystemPrompt. originalSystemPrompt is
-// only set once something has been appended, so before any append the base is the
-// current systemPrompt itself. Callers use this to persist/restore the base
-// separately from the appendix and avoid re-appending it on each save/restore.
-func (a *Agent) GetBaseSystemPrompt() string {
-	if a.originalSystemPrompt != "" {
-		return a.originalSystemPrompt
-	}
-	return a.systemPrompt
-}
-
-// HasAppendedSystemPrompts returns true if any system prompts were appended
-func (a *Agent) HasAppendedSystemPrompts() bool {
-	return a.hasAppendedPrompts
-}
-
-// GetAppendedPromptCount returns the number of appended system prompts
-func (a *Agent) GetAppendedPromptCount() int {
-	return len(a.appendedSystemPrompts)
-}
-
-// ResolveToolStructure resolves the {{TOOL_STRUCTURE}} placeholder in the given
-// prompt string by replacing it with the actual tool index JSON (in code execution
-// mode) or stripping it (otherwise). This is a read-only operation with no side effects.
-func (a *Agent) ResolveToolStructure(input string) string {
-	if !strings.Contains(input, prompt.ToolStructurePlaceholder) {
-		return input
-	}
-	if a.UseCodeExecutionMode {
-		toolStructure, err := a.buildToolIndex()
-		if err != nil {
-			return strings.ReplaceAll(input, prompt.ToolStructurePlaceholder, "")
-		}
-		preDiscoveredSpecs := a.buildPreDiscoveredToolSpecs()
-		var getApiSpecNote string
-		if preDiscoveredSpecs != "" {
-			getApiSpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
-		} else {
-			getApiSpecNote = "Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the spec for a specific tool.\n"
-		}
-		toolStructureSection := "\n\n<available_tools>\n" +
-			"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
-			"```json\n" + toolStructure + "\n```\n\n" +
-			getApiSpecNote +
-			"</available_tools>\n" +
-			preDiscoveredSpecs
-		return strings.ReplaceAll(input, prompt.ToolStructurePlaceholder, toolStructureSection)
-	}
-	return strings.ReplaceAll(input, prompt.ToolStructurePlaceholder, "")
-}
-
-// GetAppendedPromptSummary returns a summary of appended prompts
-func (a *Agent) GetAppendedPromptSummary() string {
-	if !a.hasAppendedPrompts || len(a.appendedSystemPrompts) == 0 {
-		return ""
-	}
-
-	var summary strings.Builder
-	for i, prompt := range a.appendedSystemPrompts {
-		if i > 0 {
-			summary.WriteString("; ")
-		}
-		content := prompt
-		if len(content) > 100 {
-			content = content[:100] + "..."
-		}
-		summary.WriteString(content)
-	}
-	return summary.String()
+// Instructions returns the exact instruction text the model receives.
+func (a *Agent) Instructions() string {
+	return a.outgoingSystemPrompt()
 }
 
 // getGeneratedDir returns the path to the generated/ directory

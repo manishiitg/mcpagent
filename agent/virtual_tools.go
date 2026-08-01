@@ -125,19 +125,27 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_api_spec",
-			Description: "Get the OpenAPI specification for specific tool(s) on a server. The system prompt lists all available servers and tool names — use this to get the full API spec (endpoint, request schema, auth) for the tools you want to call.",
+			Description: "Get the OpenAPI specification for specific tool(s). Pass the tool names you want to call — that is the address. The system prompt lists every available tool name.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
+					// Optional, and deliberately so. Requiring it forced a model to
+					// supply a value it frequently cannot know: built-in tools are
+					// addressed as $MCP_CUSTOM/{tool_name} with no category segment,
+					// so an agent asked for a "server" had nothing correct to say and
+					// guessed — 46 failed get_api_spec calls in a single day, walking
+					// the category list one rejection at a time. Tool names are the
+					// address everywhere else in the contract; asking for a second one
+					// only creates a way to be wrong.
 					"server_name": map[string]interface{}{
 						"type":        "string",
-						"description": "Server name from the available tools index (e.g., 'google_sheets', 'github').",
+						"description": "Optional. Only useful to disambiguate a real MCP server (e.g. 'google_sheets'). Omit it for built-in tools — the tool name alone resolves.",
 					},
 					"tool_name": map[string]interface{}{
 						"description": "Tool name(s) to get the API spec for. Pass a single string (e.g., 'search_issues') or an array of strings (e.g., ['create_spreadsheet', 'update_values']).",
 					},
 				},
-				"required": []string{"server_name", "tool_name"},
+				"required": []string{"tool_name"},
 			}),
 		},
 	}

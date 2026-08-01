@@ -14,6 +14,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -327,7 +329,7 @@ func prepareToolExecution(
 	// Check for client requirement for non-custom, non-virtual tools
 	if !plan.isCustomTool && !plan.isVirtual && plan.client == nil {
 		if !hasMappedServer || mappedServerName == "" {
-			feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- search_large_output (read/search/query operations for offloaded files)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
+			feedbackMessage := a.unknownToolFeedback(tc.FunctionCall.Name)
 
 			toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
 			toolNotFoundEvent.ToolCallID = tc.ID
@@ -609,4 +611,53 @@ func executeToolCall(
 		Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: resultText, IsError: mcpResult != nil && mcpResult.IsError}},
 	}}
 	return result
+}
+
+// unknownToolFeedback builds the correction returned when the model calls a tool
+// that does not exist.
+//
+// This text used to be a literal that always advertised "get_prompt,
+// get_resource (virtual tools)". Both are registered only when a connected MCP
+// server actually advertises prompts or resources, so for every NoServers agent
+// — which is every Pulse reviewer, fixer, and background agent — the correction
+// named tools that were not there.
+//
+// Recovery text is not documentation. The model acts on it, so a wrong hint
+// turns one failed call into several: this is the same shape as get_api_spec
+// answering an unknown server by listing categories the prompt had told the
+// agent were not addresses. Naming what this agent actually has makes the
+// correction recoverable in one step.
+func (a *Agent) unknownToolFeedback(requested string) string {
+	available := make([]string, 0, len(a.filteredTools))
+	for _, tool := range a.filteredTools {
+		if tool.Function == nil || tool.Function.Name == "" {
+			continue
+		}
+		if a.isToolAllowed(tool.Function.Name) {
+			available = append(available, tool.Function.Name)
+		}
+	}
+	sort.Strings(available)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "❌ Tool %q is not available in this system.\n\n", requested)
+	if len(available) == 0 {
+		// Worth stating plainly rather than printing an empty list: an agent with
+		// no tools should report that it cannot proceed, not keep guessing names.
+		b.WriteString("🔧 This agent has no callable tools. Do not retry with a different name — report that the required capability is unavailable.\n")
+		return b.String()
+	}
+	// Bounded because a full surface can run to hundreds of names, and an
+	// unreadable wall of text is its own kind of unhelpful hint.
+	const maxListed = 60
+	listed := available
+	if len(listed) > maxListed {
+		listed = listed[:maxListed]
+	}
+	fmt.Fprintf(&b, "🔧 Tools available to this agent (%d):\n- %s\n", len(available), strings.Join(listed, "\n- "))
+	if len(available) > maxListed {
+		fmt.Fprintf(&b, "…and %d more; see the tool index in the system prompt.\n", len(available)-maxListed)
+	}
+	b.WriteString("\n💡 Use one of the names above exactly, or report that the capability is unavailable.")
+	return b.String()
 }

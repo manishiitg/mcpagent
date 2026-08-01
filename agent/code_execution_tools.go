@@ -20,10 +20,11 @@ import (
 // tool_name is required — accepts a single string or an array of strings.
 // The system prompt already lists all servers and tool names, so no "list only" mode is needed.
 func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{}) (string, error) {
-	serverName, ok := args["server_name"].(string)
-	if !ok || serverName == "" {
-		return "", fmt.Errorf("server_name parameter is required")
-	}
+	_ = ctx
+	// Optional: an omitted server_name means "resolve by tool name", which is the
+	// contract everywhere else. It remains accepted as compatibility input, but
+	// routing and authorization never depend on an agent-supplied category/server.
+	serverName, _ := args["server_name"].(string)
 
 	// Parse tool_name: accepts string or []string (JSON array)
 	var toolNames []string
@@ -45,167 +46,91 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 		return "", fmt.Errorf("tool_name parameter is required (string or array of strings)")
 	}
 
-	// Normalize: hyphens to underscores
-	serverName = strings.ReplaceAll(serverName, "-", "_")
-
-	// Build cache key from sorted tool names
+	// Tool names are the canonical address. Normalize and sort once so validation,
+	// generation, and cache identity all consume the same request.
 	sortedNames := make([]string, len(toolNames))
 	copy(sortedNames, toolNames)
 	sort.Strings(sortedNames)
-	cacheKey := serverName + ":" + strings.Join(sortedNames, ",")
-
-	// Check cache
-	a.openAPISpecCacheMu.RLock()
-	if a.openAPISpecCache != nil {
-		if cached, exists := a.openAPISpecCache[cacheKey]; exists {
-			a.openAPISpecCacheMu.RUnlock()
-			return string(cached), nil
-		}
-	}
-	a.openAPISpecCacheMu.RUnlock()
-
-	baseURL := a.getCodeExecutionAPIBaseURL()
-
-	// Build a set for fast lookup
-	wantTools := make(map[string]bool, len(toolNames))
-	for _, n := range toolNames {
-		wantTools[n] = true
+	cacheKey := "tools:" + strings.Join(sortedNames, ",")
+	if serverName != "" && a.Logger != nil {
+		a.Logger.Debug("get_api_spec: server_name is compatibility-only; resolving by tool name",
+			loggerv2.String("server_name", serverName),
+			loggerv2.Any("tool_names", sortedNames))
 	}
 
-	// Check if this is a custom tool category
-	isCustomCategory := a.toolFilter.IsCategoryDirectory(serverName) ||
-		a.toolFilter.IsCategoryDirectory(serverName+"_tools")
-
-	// If not a category, check if server_name is actually a custom tool name — resolve to its category.
-	// This lets the LLM call get_api_spec(server_name="agent_browser") instead of needing to know
-	// the category name "workspace_browser".
-	if !isCustomCategory {
-		if ct, ok := a.customTools[serverName]; ok && ct.Category != "" {
-			toolName := serverName
-			serverName = ct.Category
-			isCustomCategory = true
-			// Ensure the tool itself is in the want set
-			wantTools[toolName] = true
-		}
-	}
-
-	if isCustomCategory {
-		// Debug: log all custom tools and their categories for diagnosis
-		if a.Logger != nil {
-			allCategories := make(map[string][]string)
-			for tn, ct := range a.customTools {
-				allCategories[ct.Category] = append(allCategories[ct.Category], tn)
-			}
-			a.Logger.Info("get_api_spec: looking up custom category",
-				loggerv2.String("server_name", serverName),
-				loggerv2.String("session_id", a.SessionID),
-				loggerv2.Int("total_custom_tools", len(a.customTools)),
-				loggerv2.Any("categories", allCategories),
-				loggerv2.Any("want_tools", toolNames),
-				loggerv2.String("agent_ptr", fmt.Sprintf("%p", a)))
-		}
-
-		customToolsForSpec := make(map[string]openapi.CustomToolForOpenAPI)
-		for toolName, ct := range a.customTools {
-			if ct.Category == serverName || openapi.GetPackageName(ct.Category) == serverName+"_tools" {
-				if wantTools[toolName] {
-					customToolsForSpec[toolName] = openapi.CustomToolForOpenAPI{
-						Definition: ct.Definition,
-						Category:   ct.Category,
-					}
-				}
-			}
-		}
-		if len(customToolsForSpec) == 0 {
-			// Collect available tools in this category for helpful error message
-			var availableInCategory []string
-			for toolName, ct := range a.customTools {
-				if ct.Category == serverName || openapi.GetPackageName(ct.Category) == serverName+"_tools" {
-					availableInCategory = append(availableInCategory, toolName)
-				}
-			}
-			sort.Strings(availableInCategory)
-			return "", fmt.Errorf("tool(s) %v not found in category %q. Available tools in %q: %v", toolNames, serverName, serverName, availableInCategory)
-		}
-
-		spec := openapi.GenerateCustomToolsCompactSpec(serverName, customToolsForSpec, baseURL)
-		a.cacheSpec(cacheKey, []byte(spec))
-		return spec, nil
-	}
-
-	// MCP server
-	if !a.serverIsAvailable(serverName) {
-		// Build list of available servers and custom tool categories for helpful error
-		availableSet := make(map[string]bool)
-		for _, srvName := range a.toolToServer {
-			if srvName == "custom" {
-				continue
-			}
-			normalized := strings.ReplaceAll(srvName, "-", "_")
-			shouldInclude := a.toolFilter.ShouldIncludeServer(srvName)
-			if !shouldInclude {
-				shouldInclude = a.toolFilter.ShouldIncludeServer(normalized)
-			}
-			if shouldInclude {
-				availableSet[normalized] = true
-			}
-		}
-		// Add custom tool categories
-		for _, ct := range a.customTools {
-			if ct.Category != "" {
-				availableSet[ct.Category] = true
-			}
-		}
-		availableServers := make([]string, 0, len(availableSet))
-		for s := range availableSet {
-			availableServers = append(availableServers, s)
-		}
-		sort.Strings(availableServers)
-		return "", fmt.Errorf("server %q is not available. Available servers/categories: %v. Use get_api_spec(server_name=\"<server>\", tool_name=\"<tool>\") with one of these server names", serverName, availableServers)
-	}
-
+	// Resolve and authorize every name before consulting the schema cache. A
+	// cache hit is metadata reuse, never an authorization decision.
+	customToolsForSpec := make(map[string]openapi.CustomToolForOpenAPI)
+	mcpToolsByServer := make(map[string][]llmtypes.Tool)
+	var unknown, notAllowed []string
 	toolSource := a.Tools
 	if a.UseCodeExecutionMode && len(a.allMCPToolDefs) > 0 {
 		toolSource = a.allMCPToolDefs
 	}
+	for _, name := range sortedNames {
+		if !a.isToolAllowed(name) {
+			notAllowed = append(notAllowed, name)
+			continue
+		}
+		if ct, ok := a.customTools[name]; ok {
+			customToolsForSpec[name] = openapi.CustomToolForOpenAPI{Definition: ct.Definition, Category: ct.Category}
+			continue
+		}
 
-	var serverTools []llmtypes.Tool
-	for toolName, srvName := range a.toolToServer {
-		normalizedSrv := strings.ReplaceAll(srvName, "-", "_")
-		if normalizedSrv == serverName && srvName != "custom" && wantTools[toolName] {
-			for _, t := range toolSource {
-				if t.Function != nil && t.Function.Name == toolName {
-					serverTools = append(serverTools, t)
-					break
-				}
+		srvName, ok := a.toolToServer[name]
+		if !ok || srvName == "custom" {
+			unknown = append(unknown, name)
+			continue
+		}
+		if !a.serverIsAvailable(srvName) {
+			notAllowed = append(notAllowed, name)
+			continue
+		}
+
+		var definition llmtypes.Tool
+		found := false
+		for _, candidate := range toolSource {
+			if candidate.Function != nil && candidate.Function.Name == name {
+				definition = candidate
+				found = true
+				break
 			}
 		}
-	}
-
-	if len(serverTools) == 0 {
-		// Collect available tools on this server
-		var availableOnServer []string
-		for toolName, srvName := range a.toolToServer {
-			normalized := strings.ReplaceAll(srvName, "-", "_")
-			if normalized == serverName && srvName != "custom" {
-				availableOnServer = append(availableOnServer, toolName)
-			}
+		if !found {
+			unknown = append(unknown, name)
+			continue
 		}
-		sort.Strings(availableOnServer)
-		return "", fmt.Errorf("tool(s) %v not found on server %q. Available tools on %q: %v", toolNames, serverName, serverName, availableOnServer)
+		normalizedServer := strings.ReplaceAll(srvName, "-", "_")
+		mcpToolsByServer[normalizedServer] = append(mcpToolsByServer[normalizedServer], definition)
 	}
 
-	spec := openapi.GenerateCompactSpec(serverName, serverTools, baseURL)
+	if len(unknown) > 0 || len(notAllowed) > 0 {
+		return "", fmt.Errorf("tools_unavailable: unknown=%v not_allowed=%v", unknown, notAllowed)
+	}
+
+	a.openAPISpecCacheMu.RLock()
+	if cached, exists := a.openAPISpecCache[cacheKey]; exists {
+		a.openAPISpecCacheMu.RUnlock()
+		return string(cached), nil
+	}
+	a.openAPISpecCacheMu.RUnlock()
+
+	baseURL := a.getCodeExecutionAPIBaseURL()
+	var sections []string
+	if len(customToolsForSpec) > 0 {
+		sections = append(sections, openapi.GenerateCustomToolsCompactSpec("custom", customToolsForSpec, baseURL))
+	}
+	serverNames := make([]string, 0, len(mcpToolsByServer))
+	for name := range mcpToolsByServer {
+		serverNames = append(serverNames, name)
+	}
+	sort.Strings(serverNames)
+	for _, name := range serverNames {
+		sections = append(sections, openapi.GenerateCompactSpec(name, mcpToolsByServer[name], baseURL))
+	}
+
+	spec := strings.Join(sections, "\n")
 	a.cacheSpec(cacheKey, []byte(spec))
-
-	if a.Logger != nil {
-		a.Logger.Info("Generated compact spec",
-			loggerv2.String("server", serverName),
-			loggerv2.Int("tools_requested", len(toolNames)),
-			loggerv2.Int("tools_found", len(serverTools)),
-			loggerv2.Int("spec_bytes", len(spec)))
-	}
-
 	return spec, nil
 }
 
@@ -259,6 +184,9 @@ func (a *Agent) buildPreDiscoveredToolSpecs() string {
 		if !preDiscoveredSet[tool.Function.Name] {
 			continue
 		}
+		if !a.isToolAllowed(tool.Function.Name) {
+			continue
+		}
 		// Find the server for this tool
 		serverName, ok := a.toolToServer[tool.Function.Name]
 		if !ok || serverName == "custom" {
@@ -272,6 +200,9 @@ func (a *Agent) buildPreDiscoveredToolSpecs() string {
 	customToolsByCategory := make(map[string]map[string]openapi.CustomToolForOpenAPI)
 	for toolName, ct := range a.customTools {
 		if !preDiscoveredSet[toolName] {
+			continue
+		}
+		if !a.isToolAllowed(toolName) {
 			continue
 		}
 		category := ct.Category
@@ -378,6 +309,9 @@ func (a *Agent) buildToolIndex() (string, error) {
 	for toolName, serverName := range a.toolToServer {
 		if serverName == "custom" {
 			continue // Custom tools are handled separately
+		}
+		if !a.isToolAllowed(toolName) {
+			continue
 		}
 
 		// Apply server-level filtering

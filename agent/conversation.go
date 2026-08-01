@@ -280,21 +280,7 @@ func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes
 	// Always use the agent's current system prompt — it reflects the latest mode
 	// (code execution, tool search, etc.) which may differ from a stale system
 	// message carried over in conversation history from a previous turn.
-	systemPrompt := a.systemPrompt
-
-	// If skills are attached, append the progressive-disclosure listing
-	// (name + description per skill). This is the transport-layer
-	// equivalent of what builders used to do manually with
-	// AppendSystemPrompt(buildSkillPrompt(...)). For CLI transports the
-	// adapter also projects SKILL.md files to disk via SkillProjector;
-	// the listing is harmless redundancy there.
-	if listing := renderSkillListing(a.attachedSkills); listing != "" {
-		if systemPrompt != "" {
-			systemPrompt = systemPrompt + "\n\n" + listing
-		} else {
-			systemPrompt = listing
-		}
-	}
+	systemPrompt := a.outgoingSystemPrompt()
 
 	systemMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeSystem,
@@ -475,7 +461,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	}
 
 	// Start the agent session event.
-	a.StartAgentSession(ctx)
+	a.startAgentSession(ctx)
 
 	// Emit user message event - this will appear in basic events (user_message is not in ADVANCED_MODE_EVENTS)
 	userMessageEvent := events.NewUserMessageEvent(0, userMessageForEvent, "user")
@@ -495,10 +481,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Store trace ID for correlation
 	agentStartEventID := traceID
+	effectivePrompt := a.outgoingSystemPrompt()
 
 	// Metadata for conversation tracking (used in events)
 	conversationMetadata := map[string]interface{}{
-		"system_prompt":   a.systemPrompt,
+		"system_prompt":   effectivePrompt,
 		"tools_count":     len(a.Tools),
 		"agent_mode":      string(a.AgentMode),
 		"model_id":        a.ModelID,
@@ -515,7 +502,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	_ = conversationMetadata
 
 	// Emit conversation start event with correlation (child of agent start)
-	conversationStartEvent := events.NewConversationStartEventWithCorrelation(lastUserMessage, a.systemPrompt, len(a.Tools), serverList, traceID, agentStartEventID)
+	conversationStartEvent := events.NewConversationStartEventWithCorrelation(lastUserMessage, effectivePrompt, len(a.Tools), serverList, traceID, agentStartEventID)
 	a.EmitTypedEvent(ctx, conversationStartEvent)
 
 	// Store conversation start event ID for correlation
@@ -549,9 +536,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Calculate token count for the system prompt if tool output handler is available
 	var tokenCount int
 	if a.ModelID != "" && a.shouldUseWrapperTokenCounting() {
-		tokenCount = a.toolOutputHandler.CountTokensForModel(a.systemPrompt, a.ModelID)
+		tokenCount = a.toolOutputHandler.CountTokensForModel(effectivePrompt, a.ModelID)
 	}
-	systemPromptEvent := events.NewSystemPromptEventWithTokens(a.systemPrompt, 0, tokenCount)
+	systemPromptEvent := events.NewSystemPromptEventWithTokens(effectivePrompt, 0, tokenCount)
 	a.EmitTypedEvent(ctx, systemPromptEvent)
 
 	// Loop detection: track recent tool calls and responses to detect infinite loops
@@ -842,7 +829,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		a.EmitTypedEvent(ctx, conversationTurnEvent)
 
 		// NEW: Start LLM generation for hierarchy tracking
-		a.StartLLMGeneration(ctx)
+		a.startLLMGeneration(ctx)
 
 		// Use GenerateContentWithRetry for robust fallback handling
 		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Sending to LLM API | provider=%s model=%s",
@@ -874,7 +861,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				loggerv2.Int("tool_calls", len(resp.Choices[0].ToolCalls)),
 				loggerv2.String("duration", time.Since(llmStartTime).String()))
 
-			a.EndLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
+			a.endLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
 				PromptTokens:     usage.InputTokens,
 				CompletionTokens: usage.OutputTokens,
 				TotalTokens:      usage.TotalTokens,
@@ -1819,7 +1806,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
-			a.EndAgentSession(ctx, time.Since(conversationStartTime))
+			a.endAgentSession(ctx, time.Since(conversationStartTime))
 
 			return choice.Content, messages, nil
 		}
@@ -1958,7 +1945,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
-			a.EndAgentSession(ctx, time.Since(conversationStartTime))
+			a.endAgentSession(ctx, time.Since(conversationStartTime))
 
 			// Append the final response to messages array for consistency
 			if lastResponse != "" {
@@ -2015,7 +2002,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 	// NEW: End agent session for hierarchy tracking
-	a.EndAgentSession(ctx, time.Since(conversationStartTime))
+	a.endAgentSession(ctx, time.Since(conversationStartTime))
 
 	// Append the final response to messages array for consistency
 	if finalChoice.Content != "" {
@@ -2137,7 +2124,7 @@ func pruneAgentPromptLogSessions(activeSessionDir string) {
 
 // logFinalPrompts writes the final system prompt and user message to logs/agent_prompts/
 // as both JSON and Markdown files. This captures the true source-of-truth prompts right
-// before the LLM call, after all prompt processing (SetSystemPrompt, AppendSystemPrompt,
+// before the LLM call, after all instruction processing (SetInstructions, AddInstructions,
 // tool structure resolution) is complete.
 //
 // Files are organized by session:

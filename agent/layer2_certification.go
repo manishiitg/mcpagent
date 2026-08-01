@@ -59,7 +59,7 @@ var Layer2P0Certifications = []Layer2Certification{
 	{"multi_turn.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportMultiTurn", true, "native --resume: codex exec resume / cursor --resume / pi --session-id / claude --resume"},
 	{"steering_queue.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportDeliverQueuesMidTurn", true, "query-only transport: Deliver QUEUES, never live-steers"},
 	{"tool_failure_recovery.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportToolFailureRecovery", true, "recovers from a mid-stream tool failure"},
-	{"tool_failure_giveup.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportToolFailureGiveUp", true, "gives up without fabricating. Codex included again: --disable shell_tool (+ the other native code-exec features) now contains codex to the bridge alone, so give-up is falsifiable — the old 'unremovable functions.exec' belief was stale for codex v0.145.0"},
+	{"tool_failure_giveup.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportToolFailureGiveUp", true, "gives up without fabricating. Codex runs bridge-only with native code-exec features disabled and must emit named execute_shell_command ToolCallStart events, so both execution and UI tool identity are falsifiable"},
 
 	// --- json/structured: self-validating evidence ---
 	{"system_prompt.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportSystemPromptSurvivesNewAgent", false, "57b4dd9 regression guard on structured transport"},

@@ -72,7 +72,7 @@ func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
 	prompt := bridgeRoutingExplicitInstructions()
 	for _, want := range []string{
 		"mcp({ search:",
-		"sub_agent_tools",
+		"Omit server_name normally",
 		"$MCP_CUSTOM/list_published_llms",
 		"$MCP_CUSTOM/list_provider_models",
 		"$MCP_CUSTOM/save_published_llm",
@@ -91,6 +91,7 @@ func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
 	for _, unwanted := range []string{
 		"api_bridge_call_sub_agent",
 		"api_bridge_get_route_description",
+		"custom categories",
 	} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("bridge routing prompt should not advertise sub-agent tools as native bridge tools: found %q\n%s", unwanted, prompt)
@@ -105,6 +106,7 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 
 	agent := bridgeTestAgent()
 	agent.SessionID = "sess-abc-123"
+	agent.CodingAgentWorkingDir = "/workspace/social-media"
 
 	configJSON, err := agent.BuildBridgeMCPConfig()
 	if err != nil {
@@ -129,6 +131,9 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	}
 	if env["MCP_API_TOKEN"].(string) != "test-token-123" {
 		t.Fatalf("MCP_API_TOKEN mismatch")
+	}
+	if got := env["MCP_TOOL_OUTPUT_DIR"].(string); got != "/workspace/social-media/tool_output_folder" {
+		t.Fatalf("MCP_TOOL_OUTPUT_DIR = %q", got)
 	}
 	if bridge["command"].(string) != "/usr/local/bin/mcpbridge" {
 		t.Fatalf("command mismatch")

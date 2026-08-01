@@ -11,12 +11,22 @@ func TestAppendBridgeRoutingInstructionsDefaultUnchanged(t *testing.T) {
 	a := &Agent{}
 	a.appendBridgeRoutingInstructions(testDefaultPreamble)
 
-	got := a.GetSystemPrompt()
+	got := a.Instructions()
 	if !strings.Contains(got, testDefaultPreamble) {
 		t.Fatalf("expected default preamble in system prompt, got: %s", got)
 	}
 	if !strings.Contains(got, "IMPORTANT — bridge tool routing") {
 		t.Fatalf("expected default bridgeRoutingExplicitInstructions text in system prompt, got: %s", got)
+	}
+	for _, want := range []string{
+		`curl --fail-with-body -sS --json '<payload>' -H "$MCP_AUTH" "$MCP_CUSTOM/<tool>"`,
+		"MCP_AUTH is already the complete `Authorization: Bearer ...` header",
+		"--json already selects POST and Content-Type",
+		"Do not pipe through jq unless you explicitly preserve curl's nonzero status",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected compact MCP bridge rule %q in system prompt, got: %s", want, got)
+		}
 	}
 }
 
@@ -25,7 +35,7 @@ func TestAppendBridgeRoutingInstructionsCustomOverride(t *testing.T) {
 	a := &Agent{bridgeRoutingInstructionsOverride: &custom}
 	a.appendBridgeRoutingInstructions(testDefaultPreamble)
 
-	got := a.GetSystemPrompt()
+	got := a.Instructions()
 	if !strings.Contains(got, custom) {
 		t.Fatalf("expected custom override text in system prompt, got: %s", got)
 	}
@@ -42,7 +52,7 @@ func TestAppendBridgeRoutingInstructionsEmptyOverrideSuppresses(t *testing.T) {
 	a := &Agent{bridgeRoutingInstructionsOverride: &empty}
 	a.appendBridgeRoutingInstructions(testDefaultPreamble)
 
-	got := a.GetSystemPrompt()
+	got := a.Instructions()
 	if got != "" {
 		t.Fatalf("expected empty system prompt when override is \"\" (suppressed), got: %s", got)
 	}

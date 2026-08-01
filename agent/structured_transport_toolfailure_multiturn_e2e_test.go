@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
+	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/internal/agentreview"
 	"github.com/manishiitg/mcpagent/llm"
 )
@@ -56,6 +58,51 @@ func buildStructuredBridgeAgentWithShell(t *testing.T, ctx context.Context, tc s
 		t.Fatalf("RegisterCustomTool: %v", regErr)
 	}
 	return agent, func() { agent.Close(); stopExecutor() }
+}
+
+// requireCodexStructuredToolIdentity guards the complete bridge-only adapter ->
+// mcpagent event path used by workflow/background agents. The Codex structured
+// adapter previously emitted the label in StreamChunk.Content while leaving
+// ToolName empty, so this P0 still passed even though the app displayed "tool".
+func requireCodexStructuredToolIdentity(t *testing.T, provider string, evs []*events.AgentEvent) []string {
+	t.Helper()
+	if provider != "Codex" {
+		return nil
+	}
+
+	starts := map[string]string{}
+	ends := map[string]string{}
+	for _, ev := range evs {
+		switch data := ev.Data.(type) {
+		case *events.ToolCallStartEvent:
+			starts[data.ToolCallID] = data.ToolName
+		case *events.ToolCallEndEvent:
+			ends[data.ToolCallID] = data.ToolName
+		}
+	}
+	if len(starts) == 0 {
+		t.Fatal("Codex structured P0 emitted no ToolCallStart events")
+	}
+
+	pairs := make([]string, 0, len(starts))
+	for id, startName := range starts {
+		if strings.TrimSpace(startName) == "" {
+			t.Fatalf("Codex structured ToolCallStart %q has an empty name; the app would render generic \"tool\"", id)
+		}
+		if startName != "execute_shell_command" {
+			t.Fatalf("Codex structured ToolCallStart %q name = %q, want execute_shell_command", id, startName)
+		}
+		endName, ok := ends[id]
+		if !ok {
+			t.Fatalf("Codex structured ToolCallStart %q has no matching ToolCallEnd", id)
+		}
+		if endName != startName {
+			t.Fatalf("Codex structured tool %q changed name: start=%q end=%q", id, startName, endName)
+		}
+		pairs = append(pairs, startName+"->"+endName)
+	}
+	sort.Strings(pairs)
+	return pairs
 }
 
 // TestStructuredTransportToolFailureRecovery is the json/structured counterpart
@@ -110,6 +157,7 @@ func TestStructuredTransportToolFailureRecovery(t *testing.T) {
 			cleanText, _, contentChunks := captureRealBridge(listener.events)
 			toolNames := toolNamesFromEvents(listener.events)
 			t.Logf("[%s] structured tool-failure recovery: calls=%d tool-events=%d content=%d; answer=%q", tc.name, nCalls, len(toolNames), contentChunks, strings.TrimSpace(answer))
+			requireCodexStructuredToolIdentity(t, tc.name, listener.events)
 
 			if nCalls < 2 {
 				t.Fatalf("model did not retry after the tool failure; the tool was called %d time(s)", nCalls)
@@ -196,6 +244,7 @@ func TestStructuredTransportToolFailureGiveUp(t *testing.T) {
 			_, _, contentChunks := captureRealBridge(listener.events)
 			toolNames := toolNamesFromEvents(listener.events)
 			t.Logf("[%s] structured tool-failure give-up: calls=%d tool-events=%d content=%d; tools=%v; answer=%q", tc.name, nCalls, len(toolNames), contentChunks, toolNames, strings.TrimSpace(answer))
+			toolIdentityPairs := requireCodexStructuredToolIdentity(t, tc.name, listener.events)
 
 			// (1) The tool was actually attempted (handler counter or a streamed
 			// tool-call event — Cursor routes through its GetMcpTools/CallMcpTool
@@ -217,12 +266,20 @@ func TestStructuredTransportToolFailureGiveUp(t *testing.T) {
 					"tool_handler_calls":   nCalls,
 					"streamed_tool_events": len(toolNames),
 					"tool_names":           toolNames,
+					"tool_identity_pairs":  toolIdentityPairs,
 					"content_chunks":       contentChunks,
 					"answer":               strings.TrimSpace(answer),
 					"unreachable_build_id": unreachable,
 					"injected_failure":     "PERMANENT_TOOL_FAILURE on every call",
 				},
-				map[string]any{"attempted": nCalls > 0 || len(toolNames) > 0, "did_not_fabricate": !strings.Contains(answer, unreachable)},
+				map[string]any{
+					"attempted":         nCalls > 0 || len(toolNames) > 0,
+					"did_not_fabricate": !strings.Contains(answer, unreachable),
+					// Tool identity is part of the reviewed behavior shape. A
+					// regression back to ["", ""] must invalidate P0 evidence.
+					"tool_names":          toolNames,
+					"tool_identity_pairs": toolIdentityPairs,
+				},
 			)
 			agentreview.RequireReviewed(t, rec)
 		})

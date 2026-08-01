@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/manishiitg/multi-llm-provider-go/pkg/codingtimeout"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -80,6 +81,209 @@ func truncateBridgeErrorText(s string) string {
 	return s[:maxBytes] + fmt.Sprintf("\n... truncated %d bytes ...", len(s)-maxBytes)
 }
 
+// maxBridgeToolResultBytes bounds the text returned over stdio MCP. Coding
+// agents call mcpbridge directly, outside mcpagent's ToolOutputHandler, so the
+// normal large-output offloading path cannot protect this boundary. A single
+// large result is embedded in several JSON envelopes (HTTP response, MCP
+// content, and the CLI's JSONL event stream); keeping the inner text at 128 KiB
+// leaves ample room below adapters' per-event limits after escaping.
+const maxBridgeToolResultBytes = 128 * 1024
+
+func truncateBridgeToolResultText(toolName, value, fullOutputPath string) (string, bool) {
+	if len(value) <= maxBridgeToolResultBytes {
+		return value, false
+	}
+
+	// execute_shell_command returns a JSON object. Truncate its text fields
+	// individually so the model still receives valid JSON and retains exit_code,
+	// execution_time_ms, and other small diagnostic fields.
+	if toolName == "execute_shell_command" {
+		var shellResult map[string]any
+		if json.Unmarshal([]byte(value), &shellResult) == nil {
+			shellResult["output_truncated"] = true
+			shellResult["original_result_bytes"] = len(value)
+			if fullOutputPath != "" {
+				shellResult["full_output_path"] = fullOutputPath
+			}
+			shellResult["truncation_note"] = bridgeTruncationNote(len(value), fullOutputPath)
+
+			originalFields := make(map[string]string, 3)
+			limits := make(map[string]int, 3)
+			for _, field := range []string{"stdout", "stderr", "error"} {
+				if text, ok := shellResult[field].(string); ok {
+					originalFields[field] = text
+					limits[field] = len(text)
+				}
+			}
+			for attempts := 0; attempts < 64; attempts++ {
+				encoded, err := json.Marshal(shellResult)
+				if err == nil && len(encoded) <= maxBridgeToolResultBytes {
+					return string(encoded), true
+				}
+
+				largestField := ""
+				largestLimit := 0
+				for field, limit := range limits {
+					if limit > largestLimit {
+						largestField, largestLimit = field, limit
+					}
+				}
+				if largestField == "" || largestLimit == 0 {
+					break
+				}
+				newLimit := largestLimit / 2
+				limits[largestField] = newLimit
+				shellResult[largestField] = truncateBridgeTextBytes(originalFields[largestField], newLimit)
+			}
+		}
+	}
+
+	return truncateBridgeTextBytesWithPath(value, maxBridgeToolResultBytes, fullOutputPath), true
+}
+
+// truncateBridgeTextBytes keeps both the beginning and end of a result. The
+// beginning usually contains headers/context, while the end commonly contains
+// command errors and summaries. UTF-8 boundaries are preserved.
+func truncateBridgeTextBytes(value string, maxBytes int) string {
+	return truncateBridgeTextBytesWithPath(value, maxBytes, "")
+}
+
+func truncateBridgeTextBytesWithPath(value string, maxBytes int, fullOutputPath string) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(value) <= maxBytes {
+		return value
+	}
+
+	marker := "\n... [" + bridgeTruncationNote(len(value), fullOutputPath) + "] ...\n"
+	if len(marker) >= maxBytes {
+		return validUTF8Prefix(marker, maxBytes)
+	}
+	payloadBytes := maxBytes - len(marker)
+	headBytes := payloadBytes * 3 / 4
+	tailBytes := payloadBytes - headBytes
+	head := validUTF8Prefix(value, headBytes)
+	tail := validUTF8Suffix(value, tailBytes)
+	return head + marker + tail
+}
+
+func validUTF8Prefix(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	for maxBytes > 0 && !utf8.ValidString(value[:maxBytes]) {
+		maxBytes--
+	}
+	return value[:maxBytes]
+}
+
+func validUTF8Suffix(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	start := len(value) - maxBytes
+	for start < len(value) && !utf8.ValidString(value[start:]) {
+		start++
+	}
+	return value[start:]
+}
+
+func bridgeTruncationNote(originalBytes int, fullOutputPath string) string {
+	note := fmt.Sprintf("bridge tool output truncated; original=%d bytes", originalBytes)
+	if fullOutputPath != "" {
+		note += "; full output saved to: " + fullOutputPath
+	}
+	return note
+}
+
+func bridgeToolOutputDir() string {
+	if configured := strings.TrimSpace(os.Getenv("MCP_TOOL_OUTPUT_DIR")); configured != "" {
+		return configured
+	}
+	// Older parent processes do not set MCP_TOOL_OUTPUT_DIR. Prefer persistent
+	// workflow paths already present in the coding-agent environment before
+	// falling back to the bridge process's cwd.
+	for _, key := range []string{"STEP_OUTPUT_DIR", "STEP_EXECUTION_DIR", "VAR_WORKSPACE_PATH"} {
+		if dir := strings.TrimSpace(os.Getenv(key)); dir != "" {
+			return filepath.Join(dir, "tool_output_folder")
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil && strings.TrimSpace(cwd) != "" {
+		return filepath.Join(cwd, "tool_output_folder")
+	}
+	return ""
+}
+
+func persistBridgeToolResult(outputDir, toolName, value string) (string, error) {
+	if strings.TrimSpace(outputDir) == "" {
+		return "", fmt.Errorf("tool output directory is unavailable")
+	}
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
+		return "", fmt.Errorf("create tool output directory: %w", err)
+	}
+	extension := ".txt"
+	if json.Valid([]byte(value)) {
+		extension = ".json"
+	}
+	prefix := "tool_" + safeBridgeFilenamePart(toolName) + "_"
+	file, err := os.CreateTemp(outputDir, prefix+"*"+extension)
+	if err != nil {
+		return "", fmt.Errorf("create tool output file: %w", err)
+	}
+	path := file.Name()
+	removeOnError := true
+	defer func() {
+		_ = file.Close()
+		if removeOnError {
+			_ = os.Remove(path)
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		return "", fmt.Errorf("secure tool output file: %w", err)
+	}
+	if _, err := file.WriteString(value); err != nil {
+		return "", fmt.Errorf("write tool output file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("close tool output file: %w", err)
+	}
+	removeOnError = false
+	return path, nil
+}
+
+func safeBridgeFilenamePart(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "tool"
+	}
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	if b.Len() == 0 {
+		return "tool"
+	}
+	return b.String()
+}
+
+func prepareBridgeToolResult(toolName, value, outputDir string) (bounded, savedPath string, truncated bool, saveErr error) {
+	if len(value) <= maxBridgeToolResultBytes {
+		return value, "", false, nil
+	}
+	savedPath, saveErr = persistBridgeToolResult(outputDir, toolName, value)
+	bounded, truncated = truncateBridgeToolResultText(toolName, value, savedPath)
+	return bounded, savedPath, truncated, saveErr
+}
+
 func bridgeRequestError(toolType, toolName, sessionID string, timeout time.Duration, err error) string {
 	layer := "mcpbridge_http"
 	switch {
@@ -108,6 +312,7 @@ func main() {
 	toolsJSON := os.Getenv("MCP_TOOLS")
 	virtualScopeID := os.Getenv("MCP_VIRTUAL_SCOPE_ID") // Per-agent scope for virtual tools (prevents parent/child overwrite)
 	sessionID := os.Getenv("MCP_SESSION_ID")
+	toolOutputDir := bridgeToolOutputDir()
 
 	if apiURL == "" || apiToken == "" || toolsJSON == "" {
 		log.Fatal("MCP_API_URL, MCP_API_TOKEN, and MCP_TOOLS env vars are required")
@@ -223,7 +428,11 @@ func main() {
 			}
 			if err := json.Unmarshal(body, &result); err != nil {
 				// If response isn't our expected format, return raw body
-				return mcp.NewToolResultText(string(body)), nil
+				bounded, savedPath, truncated, saveErr := prepareBridgeToolResult(def.Name, string(body), toolOutputDir)
+				if truncated {
+					log.Printf("mcpbridge: truncated raw tool result type=%s tool=%s original_bytes=%d returned_bytes=%d saved_path=%q save_error=%v", def.Type, def.Name, len(body), len(bounded), savedPath, saveErr)
+				}
+				return mcp.NewToolResultText(bounded), nil
 			}
 
 			if !result.Success {
@@ -237,7 +446,11 @@ func main() {
 				}
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: %s", truncateBridgeErrorText(errorMsg))), nil
 			}
-			return mcp.NewToolResultText(result.Result), nil
+			bounded, savedPath, truncated, saveErr := prepareBridgeToolResult(def.Name, result.Result, toolOutputDir)
+			if truncated {
+				log.Printf("mcpbridge: truncated tool result type=%s tool=%s original_bytes=%d returned_bytes=%d saved_path=%q save_error=%v", def.Type, def.Name, len(result.Result), len(bounded), savedPath, saveErr)
+			}
+			return mcp.NewToolResultText(bounded), nil
 		})
 	}
 

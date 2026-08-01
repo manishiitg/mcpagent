@@ -38,7 +38,7 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 - In code execution mode, prefer execute_shell_command for file reads/writes/commands, and use other declared workspace tools only when they are explicitly available
 
 **Workflow:**
-1. See available servers and tools in the JSON block above. Call get_api_spec(server_name="...", tool_name="...") to get the full API spec for any tool
+1. See available servers and tools in the JSON block above. Call get_api_spec(tool_name="...") to get the full API spec for any tool. Use server_name only to disambiguate a real MCP-server collision
 2. Use execute_shell_command to write and run code
 3. MCP_API_URL, MCP_API_TOKEN, MCP_AUTH, MCP_MCP, MCP_CUSTOM, and MCP_VIRTUAL env vars are pre-set — use them as-is
 
@@ -57,10 +57,40 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 MCP tools are reachable at ` + "`" + `$MCP_MCP/{server}/{tool}` + "`" + ` via authenticated HTTP POST. Any shell tool works — curl, jq, node, python, whatever fits the task. Code execution is shell-first; Python is optional.
 ` + "```" + `bash
 payload='{"arg1":"value1"}'
-curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_MCP/{server_name}/{tool_name}" | jq
+curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_MCP/{server_name}/{tool_name}"
 # Response envelope: {"success": true|false, "result": ..., "error": "..."}
 ` + "```" + `
+` + "`$MCP_AUTH`" + ` is already the complete ` + "`Authorization: Bearer ...`" + ` header. Never prepend another header or Bearer prefix. ` + "`--json`" + ` already selects POST and Content-Type, so do not add ` + "`-X POST`" + `, another Content-Type header, or ` + "`--data`" + `. Keep the call unpiped so curl's nonzero HTTP-failure status reaches ` + "`execute_shell_command`" + `.
 If you need retries, backoff, or structured logging, write a small helper in the language of your choice. For reusable helpers saved to main.py, see the main.py authoring rules below (when in learn-code mode).`
+}
+
+// BuildAvailableToolsSection renders the one replaceable, agent-facing tool
+// manifest used by both the default prompt builder and request-time composition.
+// Keep the inventory and pre-discovered specs inside explicit tags so callers
+// never have to infer section boundaries from markdown headings.
+func BuildAvailableToolsSection(toolStructureJSON, preDiscoveredToolSpecs string) string {
+	var getAPISpecNote string
+	if preDiscoveredToolSpecs != "" {
+		getAPISpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
+	} else {
+		getAPISpecNote = "Call get_api_spec(tool_name=\"...\") to get the full API spec for specific tools.\n"
+	}
+
+	var inventory string
+	if toolStructureJSON == "" {
+		inventory = "Tool inventory is unavailable. Do not guess tool names; report that discovery is unavailable.\n"
+	} else {
+		inventory = "The following MCP servers and their tools are accessible via HTTP API.\n" +
+			getAPISpecNote + "\n" +
+			"```json\n" + toolStructureJSON + "\n```\n\n" +
+			"Domain tools (MCP and custom) are called via HTTP API. System tools (execute_shell_command, agent_browser) are called directly — see your provider's tool list for exact names.\n"
+	}
+
+	return "<available_tools>\n" +
+		"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
+		inventory +
+		preDiscoveredToolSpecs +
+		"</available_tools>"
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
@@ -139,32 +169,8 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 	if useCodeExecutionMode {
 		codeExecutionInstructions := GetCodeExecutionInstructions("")
 
-		// Replace {{TOOL_STRUCTURE}} placeholder with the tool index
-		if toolStructureJSON != "" {
-			var getApiSpecNote string
-			if preDiscoveredToolSpecs != "" {
-				getApiSpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
-			} else {
-				getApiSpecNote = "Call get_api_spec(server_name=\"...\", tool_name=\"...\") to get the full API spec for specific tools.\n"
-			}
-			toolStructureSection := "\n\n<available_tools>\n" +
-				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
-				"The following MCP servers and their tools are accessible via HTTP API.\n" +
-				getApiSpecNote + "\n" +
-				"```json\n" +
-				toolStructureJSON + "\n" +
-				"```\n\n" +
-				"Domain tools (MCP and custom) are called via HTTP API. System tools (execute_shell_command, agent_browser) are called directly — see your provider's tool list for exact names.\n" +
-				"</available_tools>\n" +
-				preDiscoveredToolSpecs
-			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
-		} else {
-			toolStructureSection := "\n\n<available_tools>\n" +
-				"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
-				"Tool index is being built. Use get_api_spec(server_name=\"...\", tool_name=\"...\") to discover endpoints.\n" +
-				"</available_tools>\n"
-			codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
-		}
+		toolStructureSection := BuildAvailableToolsSection(toolStructureJSON, preDiscoveredToolSpecs)
+		codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
 
 		toolUsageSection = `<code_usage>
 ` + codeExecutionInstructions + `
@@ -361,8 +367,9 @@ func buildVirtualToolsSection(useCodeExecutionMode bool, useToolSearchMode bool,
 		return `AVAILABLE FUNCTIONS:
 
 - **get_api_spec** - Get the full OpenAPI spec for specific tool(s). Skip this for tools whose specs are already pre-loaded in the system prompt.
-  Usage: get_api_spec(server_name="<server>", tool_name="<tool>")
-  Multiple tools: get_api_spec(server_name="<server>", tool_name=["<tool1>", "<tool2>"])`
+  Usage: get_api_spec(tool_name="<tool>")
+  Multiple tools: get_api_spec(tool_name=["<tool1>", "<tool2>"])
+  Optional disambiguation for a real MCP-server collision: server_name="<server>"`
 	}
 
 	if useToolSearchMode {

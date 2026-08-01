@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
@@ -188,6 +189,14 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 	if a.SessionID != "" {
 		bridgeEnv["MCP_SESSION_ID"] = a.SessionID
 	}
+	// Coding CLI providers call mcpbridge outside the normal Agent conversation
+	// loop, so their large tool results cannot use ToolOutputHandler directly.
+	// Give the bridge an explicit persistent folder under the agent's real
+	// working directory; this remains stable even when the CLI itself runs in an
+	// isolated temporary cwd.
+	if workingDir := strings.TrimSpace(a.CodingAgentWorkingDir); workingDir != "" {
+		bridgeEnv["MCP_TOOL_OUTPUT_DIR"] = filepath.Join(workingDir, DefaultToolOutputFolder)
+	}
 	// Route mcpbridge stderr to a log file for debugging startup/crash issues.
 	// Claude Code swallows the subprocess stderr, so without this there is no
 	// record of why the bridge failed (e.g. empty MCP_TOOLS, parse errors, crashes).
@@ -210,7 +219,7 @@ func (a *Agent) BuildBridgeMCPConfig() (string, error) {
 	}
 	// Pass per-agent virtual tool scope so the bridge can route get_api_spec
 	// to the correct agent's handler (prevents parent/child overwrite)
-	if virtualScopeID := a.GetVirtualToolScopeID(); virtualScopeID != "" {
+	if virtualScopeID := a.virtualToolScopeID(); virtualScopeID != "" {
 		bridgeEnv["MCP_VIRTUAL_SCOPE_ID"] = virtualScopeID
 	}
 
