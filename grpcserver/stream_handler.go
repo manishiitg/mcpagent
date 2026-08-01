@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/grpcserver/pb"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -203,9 +204,7 @@ func (h *StreamHandler) handleQuestion(ctx context.Context, agentID string, ques
 	}
 
 	// Prepare messages for conversation
-	var response string
-	var updatedMessages []llmtypes.MessageContent
-	var err error
+	var turn mcpagent.Turn
 
 	if len(question.History) > 0 {
 		// Multi-turn conversation
@@ -217,11 +216,11 @@ func (h *StreamHandler) handleQuestion(ctx context.Context, agentID string, ques
 			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: question.Text}},
 		})
 
-		response, updatedMessages, err = agent.Agent.AskWithHistory(convCtx, messages)
+		turn.History = messages
 	} else {
-		// Single turn
-		response, err = agent.Agent.Ask(convCtx, question.Text)
+		turn.Input = question.Text
 	}
+	result, err := agent.Run(convCtx, turn)
 
 	if err != nil {
 		h.logger.Error("Conversation failed", err, loggerv2.String("agent_id", agentID))
@@ -230,24 +229,14 @@ func (h *StreamHandler) handleQuestion(ctx context.Context, agentID string, ques
 
 	duration := time.Since(startTime)
 
-	// Get token usage
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, _ := agent.Agent.GetTokenUsage()
-
 	// Send final response
 	finalResp := &pb.ConversationResponse{
 		Payload: &pb.ConversationResponse_FinalResponse{
 			FinalResponse: &pb.FinalResponse{
-				Response:        response,
-				UpdatedMessages: h.convertMessagesToProto(updatedMessages),
-				TokenUsage: &pb.TokenUsage{
-					PromptTokens:     safeIntToInt32(promptTokens),
-					CompletionTokens: safeIntToInt32(completionTokens),
-					TotalTokens:      safeIntToInt32(totalTokens),
-					CacheTokens:      safeIntToInt32(cacheTokens),
-					ReasoningTokens:  safeIntToInt32(reasoningTokens),
-					LlmCallCount:     safeIntToInt32(llmCallCount),
-				},
-				DurationMs: duration.Milliseconds(),
+				Response:        result.Text,
+				UpdatedMessages: h.convertMessagesToProto(result.History),
+				TokenUsage:      tokenUsageProto(result.Usage),
+				DurationMs:      duration.Milliseconds(),
 			},
 		},
 	}

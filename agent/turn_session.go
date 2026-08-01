@@ -69,9 +69,11 @@ type ToolDefinitionView struct {
 
 // AgentDefinitionView exposes identity without mutable schemas or executors.
 type AgentDefinitionView struct {
-	Instructions string
-	Skills       []string
-	Tools        []ToolDefinitionView
+	Instructions     string
+	Skills           []string
+	SkillDefinitions []*llmtypes.Skill
+	Tools            []ToolDefinitionView
+	Observers        []AgentEventListener
 }
 
 // Session owns history, continuation, steering, and event access. Run calls on
@@ -107,10 +109,24 @@ func (a *Agent) Definition() AgentDefinitionView {
 	if a.definition != nil {
 		instructions = a.definition.Instructions
 	}
+	for _, supplement := range a.appendedSystemPrompts {
+		if strings.TrimSpace(supplement) == "" || strings.Contains(instructions, supplement) {
+			continue
+		}
+		if strings.TrimSpace(instructions) == "" {
+			instructions = supplement
+		} else {
+			instructions += "\n\n" + supplement
+		}
+	}
 	view := AgentDefinitionView{Instructions: instructions}
+	a.mu.RLock()
+	view.Observers = append(view.Observers, a.listeners...)
+	a.mu.RUnlock()
 	for _, skill := range a.attachedSkills {
 		if skill != nil && skill.Name != "" {
 			view.Skills = append(view.Skills, skill.Name)
+			view.SkillDefinitions = append(view.SkillDefinitions, cloneSkill(skill))
 		}
 	}
 	registry, err := a.canonicalRegistry()

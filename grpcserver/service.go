@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/grpcserver/pb"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
@@ -82,8 +83,7 @@ func (s *AgentService) GetAgent(ctx context.Context, req *pb.GetAgentRequest) (*
 		return nil, status.Errorf(codes.NotFound, "agent not found: %s", req.AgentId)
 	}
 
-	// Get token usage
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, _ := agent.Agent.GetTokenUsage()
+	usage := agent.LastResult().Usage
 
 	caps, _ := s.manager.GetCapabilities(agent.ID)
 
@@ -96,14 +96,7 @@ func (s *AgentService) GetAgent(ctx context.Context, req *pb.GetAgentRequest) (*
 			Tools:   caps.Tools,
 			Servers: caps.Servers,
 		},
-		TokenUsage: &pb.TokenUsage{
-			PromptTokens:     safeIntToInt32(promptTokens),
-			CompletionTokens: safeIntToInt32(completionTokens),
-			TotalTokens:      safeIntToInt32(totalTokens),
-			CacheTokens:      safeIntToInt32(cacheTokens),
-			ReasoningTokens:  safeIntToInt32(reasoningTokens),
-			LlmCallCount:     safeIntToInt32(llmCallCount),
-		},
+		TokenUsage: tokenUsageProto(usage),
 	}, nil
 }
 
@@ -153,24 +146,16 @@ func (s *AgentService) GetTokenUsage(ctx context.Context, req *pb.GetTokenUsageR
 		return nil, status.Errorf(codes.NotFound, "agent not found: %s", req.AgentId)
 	}
 
-	// Get token usage with pricing
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, _, inputCost, outputCost, reasoningCost, cacheCost, totalCost, _ := agent.Agent.GetTokenUsageWithPricing()
+	usage := agent.LastResult().Usage
 
 	return &pb.TokenUsageResponse{
-		TokenUsage: &pb.TokenUsage{
-			PromptTokens:     safeIntToInt32(promptTokens),
-			CompletionTokens: safeIntToInt32(completionTokens),
-			TotalTokens:      safeIntToInt32(totalTokens),
-			CacheTokens:      safeIntToInt32(cacheTokens),
-			ReasoningTokens:  safeIntToInt32(reasoningTokens),
-			LlmCallCount:     safeIntToInt32(llmCallCount),
-		},
+		TokenUsage: tokenUsageProto(usage),
 		Costs: &pb.Costs{
-			InputCost:     inputCost,
-			OutputCost:    outputCost,
-			ReasoningCost: reasoningCost,
-			CacheCost:     cacheCost,
-			TotalCost:     totalCost,
+			InputCost:     usage.InputCostUSD,
+			OutputCost:    usage.OutputCostUSD,
+			ReasoningCost: usage.ReasoningCostUSD,
+			CacheCost:     usage.CacheCostUSD,
+			TotalCost:     usage.TotalCostUSD,
 		},
 	}, nil
 }
@@ -192,7 +177,7 @@ func (s *AgentService) Ask(ctx context.Context, req *pb.AskRequest) (*pb.AskResp
 	startTime := time.Now()
 
 	// Call the agent
-	response, err := agent.Agent.Ask(ctx, req.Question)
+	result, err := agent.Run(ctx, mcpagent.Turn{Input: req.Question})
 	if err != nil {
 		s.logger.Error("Ask failed", err, loggerv2.String("agent_id", req.AgentId))
 		return nil, status.Errorf(codes.Internal, "ask failed: %v", err)
@@ -200,19 +185,9 @@ func (s *AgentService) Ask(ctx context.Context, req *pb.AskRequest) (*pb.AskResp
 
 	duration := time.Since(startTime)
 
-	// Get token usage
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, _ := agent.Agent.GetTokenUsage()
-
 	return &pb.AskResponse{
-		Response: response,
-		TokenUsage: &pb.TokenUsage{
-			PromptTokens:     safeIntToInt32(promptTokens),
-			CompletionTokens: safeIntToInt32(completionTokens),
-			TotalTokens:      safeIntToInt32(totalTokens),
-			CacheTokens:      safeIntToInt32(cacheTokens),
-			ReasoningTokens:  safeIntToInt32(reasoningTokens),
-			LlmCallCount:     safeIntToInt32(llmCallCount),
-		},
+		Response:   result.Text,
+		TokenUsage: tokenUsageProto(result.Usage),
 		DurationMs: duration.Milliseconds(),
 	}, nil
 }
@@ -255,7 +230,7 @@ func (s *AgentService) AskWithHistory(ctx context.Context, req *pb.AskWithHistor
 	}
 
 	// Call the agent
-	response, updatedMessages, err := agent.Agent.AskWithHistory(ctx, messages)
+	result, err := agent.Run(ctx, mcpagent.Turn{History: messages})
 	if err != nil {
 		s.logger.Error("AskWithHistory failed", err, loggerv2.String("agent_id", req.AgentId))
 		return nil, status.Errorf(codes.Internal, "ask with history failed: %v", err)
@@ -264,8 +239,8 @@ func (s *AgentService) AskWithHistory(ctx context.Context, req *pb.AskWithHistor
 	duration := time.Since(startTime)
 
 	// Convert updated messages back to protobuf
-	pbMessages := make([]*pb.Message, len(updatedMessages))
-	for i, msg := range updatedMessages {
+	pbMessages := make([]*pb.Message, len(result.History))
+	for i, msg := range result.History {
 		role := "user"
 		switch msg.Role {
 		case llmtypes.ChatMessageTypeHuman:
@@ -289,22 +264,23 @@ func (s *AgentService) AskWithHistory(ctx context.Context, req *pb.AskWithHistor
 		}
 	}
 
-	// Get token usage
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, _ := agent.Agent.GetTokenUsage()
-
 	return &pb.AskWithHistoryResponse{
-		Response:        response,
+		Response:        result.Text,
 		UpdatedMessages: pbMessages,
-		TokenUsage: &pb.TokenUsage{
-			PromptTokens:     safeIntToInt32(promptTokens),
-			CompletionTokens: safeIntToInt32(completionTokens),
-			TotalTokens:      safeIntToInt32(totalTokens),
-			CacheTokens:      safeIntToInt32(cacheTokens),
-			ReasoningTokens:  safeIntToInt32(reasoningTokens),
-			LlmCallCount:     safeIntToInt32(llmCallCount),
-		},
-		DurationMs: duration.Milliseconds(),
+		TokenUsage:      tokenUsageProto(result.Usage),
+		DurationMs:      duration.Milliseconds(),
 	}, nil
+}
+
+func tokenUsageProto(usage mcpagent.Usage) *pb.TokenUsage {
+	return &pb.TokenUsage{
+		PromptTokens:     safeIntToInt32(usage.PromptTokens),
+		CompletionTokens: safeIntToInt32(usage.CompletionTokens),
+		TotalTokens:      safeIntToInt32(usage.TotalTokens),
+		CacheTokens:      safeIntToInt32(usage.CacheTokens),
+		ReasoningTokens:  safeIntToInt32(usage.ReasoningTokens),
+		LlmCallCount:     safeIntToInt32(usage.LLMCalls),
+	}
 }
 
 // Converse implements bidirectional streaming conversation

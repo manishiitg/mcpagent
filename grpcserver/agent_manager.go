@@ -20,6 +20,7 @@ type ManagedAgent struct {
 	ID           string
 	SessionID    string
 	Agent        *mcpagent.Agent
+	Session      *mcpagent.Session
 	Config       AgentConfig
 	CreatedAt    time.Time
 	ctx          context.Context
@@ -27,6 +28,8 @@ type ManagedAgent struct {
 	capabilities Capabilities
 	// CustomTools stores definitions for tools that execute via gRPC stream
 	CustomTools []CustomToolDefinition
+	resultMu    sync.RWMutex
+	lastResult  mcpagent.Result
 }
 
 // AgentManager manages the lifecycle of agent instances
@@ -83,14 +86,22 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 		cancel()
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
+	session, err := agent.Start(ctx)
+	if err != nil {
+		agent.Close()
+		cancel()
+		return nil, fmt.Errorf("failed to start agent session: %w", err)
+	}
 
 	// Get capabilities
-	toolToServer := agent.GetToolToServer()
-	tools := make([]string, 0, len(toolToServer))
+	definition := agent.Definition()
+	tools := make([]string, 0, len(definition.Tools))
 	serverSet := make(map[string]bool)
-	for tool, server := range toolToServer {
-		tools = append(tools, fmt.Sprintf("%s:%s", server, tool))
-		serverSet[server] = true
+	for _, tool := range definition.Tools {
+		tools = append(tools, fmt.Sprintf("%s:%s", tool.Source, tool.Name))
+		if tool.Source != "" && tool.Source != "direct" {
+			serverSet[tool.Source] = true
+		}
 	}
 	servers := make([]string, 0, len(serverSet))
 	for server := range serverSet {
@@ -101,6 +112,7 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 		ID:          agentID,
 		SessionID:   sessionID,
 		Agent:       agent,
+		Session:     session,
 		Config:      req.Config,
 		CreatedAt:   time.Now(),
 		ctx:         ctx,
@@ -116,6 +128,20 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 	m.logger.Info("Agent created", loggerv2.String("agent_id", agentID), loggerv2.String("session_id", sessionID))
 
 	return managed, nil
+}
+
+func (a *ManagedAgent) Run(ctx context.Context, turn mcpagent.Turn) (mcpagent.Result, error) {
+	result, err := a.Session.Run(ctx, turn)
+	a.resultMu.Lock()
+	a.lastResult = result
+	a.resultMu.Unlock()
+	return result, err
+}
+
+func (a *ManagedAgent) LastResult() mcpagent.Result {
+	a.resultMu.RLock()
+	defer a.resultMu.RUnlock()
+	return a.lastResult
 }
 
 func newManagedAgentID() string {
@@ -146,6 +172,9 @@ func (m *AgentManager) DestroyAgent(agentID string) error {
 
 	// Cancel context and close agent
 	agent.cancel()
+	if agent.Session != nil {
+		_ = agent.Session.Close()
+	}
 	agent.Agent.Close()
 	delete(m.agents, agentID)
 

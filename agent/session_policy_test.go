@@ -5,8 +5,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+type definitionObserver struct{}
+
+func (definitionObserver) HandleEvent(context.Context, *events.AgentEvent) error { return nil }
+func (definitionObserver) Name() string                                          { return "definition-observer" }
 
 func TestTurnToolPolicyControlsRequestTimeManifestWithoutMutatingDefinition(t *testing.T) {
 	agent := &Agent{
@@ -64,5 +70,30 @@ func TestNormalizeToolPolicyRejectsWhitespace(t *testing.T) {
 	_, err := normalizeToolPolicy(ToolPolicy{AllowedTools: []string{"query "}})
 	if err == nil || !strings.Contains(err.Error(), "surrounding whitespace") {
 		t.Fatalf("normalizeToolPolicy() error = %v", err)
+	}
+}
+
+func TestDefinitionSnapshotsStaticSupplementsSkillsAndObservers(t *testing.T) {
+	agent := &Agent{
+		systemPrompt: "base",
+		customTools:  make(map[string]CustomTool),
+	}
+	agent.appendedSystemPrompts = []string{"supplement", "supplement"}
+	agent.attachedSkills = []*llmtypes.Skill{{Name: "workflow", Description: "original"}}
+	agent.listeners = []AgentEventListener{definitionObserver{}}
+
+	view := agent.Definition()
+	if view.Instructions != "base\n\nsupplement" {
+		t.Fatalf("definition instructions = %q", view.Instructions)
+	}
+	if len(view.SkillDefinitions) != 1 || view.SkillDefinitions[0].Name != "workflow" {
+		t.Fatalf("definition skills = %#v", view.SkillDefinitions)
+	}
+	if len(view.Observers) != 1 || view.Observers[0].Name() != "definition-observer" {
+		t.Fatalf("definition observers = %#v", view.Observers)
+	}
+	view.SkillDefinitions[0].Description = "mutated"
+	if agent.attachedSkills[0].Description != "original" {
+		t.Fatal("definition exposed mutable skill state")
 	}
 }
