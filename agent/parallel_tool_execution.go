@@ -99,7 +99,7 @@ func executeToolCallsParallel(
 			}, plan.serverName, traceID, traceID)
 			toolStartEvent.IsParallel = true
 			toolStartEvent.ToolCallID = tc.ID
-			a.EmitTypedEvent(ctx, toolStartEvent)
+			a.emitTypedEvent(ctx, toolStartEvent)
 		}
 	}
 
@@ -113,7 +113,7 @@ func executeToolCallsParallel(
 			"cancelled before parallel tool execution",
 			time.Since(conversationStartTime),
 		)
-		a.EmitTypedEvent(ctx, cancellationEvent)
+		a.emitTypedEvent(ctx, cancellationEvent)
 		return messages, fmt.Errorf("conversation cancelled before parallel tool execution: %w", agentCtx.Err())
 	}
 
@@ -169,10 +169,10 @@ func executeToolCallsParallel(
 			// Tool execution error — emit error event
 			toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, res.toolErr.Error(), plan.serverName, res.duration)
 			toolErrorEvent.ToolCallID = tc.ID
-			a.EmitTypedEvent(ctx, toolErrorEvent)
+			a.emitTypedEvent(ctx, toolErrorEvent)
 		} else if res.result == nil || !res.result.IsError {
 			// Success — emit tool call end event
-			_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.GetTokenUsageWithPricing()
+			_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.getTokenUsageWithPricing()
 			a.tokenTrackingMutex.RLock()
 			modelContextWindow := a.modelContextWindow
 			contextWindowUsage := a.currentContextWindowUsage
@@ -180,12 +180,12 @@ func executeToolCallsParallel(
 
 			toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, res.resultText, plan.serverName, res.duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
 			toolEndEvent.ToolCallID = tc.ID
-			a.EmitTypedEvent(ctx, toolEndEvent)
+			a.emitTypedEvent(ctx, toolEndEvent)
 		} else if res.result != nil && res.result.IsError {
 			// Tool returned error in result
 			toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, res.resultText, plan.serverName, res.duration)
 			toolErrorEvent.ToolCallID = tc.ID
-			a.EmitTypedEvent(ctx, toolErrorEvent)
+			a.emitTypedEvent(ctx, toolErrorEvent)
 		}
 
 		// Loop detection (sequential)
@@ -206,7 +206,7 @@ func executeToolCallsParallel(
 	if needToolRefresh {
 		a.filteredTools = a.getToolsForToolSearchMode()
 		v2Logger.Debug("🔍 [TOOL_SEARCH] Tools refreshed after parallel add_tool",
-			loggerv2.Int("discovered_count", a.GetDiscoveredToolCount()),
+			loggerv2.Int("discovered_count", a.getDiscoveredToolCount()),
 			loggerv2.Int("total_available", len(a.filteredTools)))
 	}
 
@@ -276,7 +276,7 @@ func prepareToolExecution(
 		feedbackMessage := generateEmptyToolNameFeedback(tc.FunctionCall.Arguments)
 		toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", "empty tool name", "", time.Since(conversationStartTime))
 		toolNameErrorEvent.ToolCallID = tc.ID
-		a.EmitTypedEvent(ctx, toolNameErrorEvent)
+		a.emitTypedEvent(ctx, toolNameErrorEvent)
 
 		msg := llmtypes.MessageContent{
 			Role:  llmtypes.ChatMessageTypeTool,
@@ -294,7 +294,7 @@ func prepareToolExecution(
 		feedbackMessage := generateToolArgsParsingFeedback(tc.FunctionCall.Name, tc.FunctionCall.Arguments, err)
 		toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
 		toolArgsParsingErrorEvent.ToolCallID = tc.ID
-		a.EmitTypedEvent(ctx, toolArgsParsingErrorEvent)
+		a.emitTypedEvent(ctx, toolArgsParsingErrorEvent)
 
 		msg := llmtypes.MessageContent{
 			Role:  llmtypes.ChatMessageTypeTool,
@@ -333,7 +333,7 @@ func prepareToolExecution(
 
 			toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
 			toolNotFoundEvent.ToolCallID = tc.ID
-			a.EmitTypedEvent(ctx, toolNotFoundEvent)
+			a.emitTypedEvent(ctx, toolNotFoundEvent)
 
 			msg := llmtypes.MessageContent{
 				Role:  llmtypes.ChatMessageTypeTool,
@@ -353,7 +353,7 @@ func prepareToolExecution(
 				err,
 				loggerv2.String("server", mappedServerName))
 			conversationErrorEvent := events.NewConversationErrorEvent(getLastUserMessageForEvent(), fmt.Sprintf("failed to create on-demand connection for server %s: %v", mappedServerName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
-			a.EmitTypedEvent(ctx, conversationErrorEvent)
+			a.emitTypedEvent(ctx, conversationErrorEvent)
 			plan.skipExecution = true
 			msg := llmtypes.MessageContent{
 				Role:  llmtypes.ChatMessageTypeTool,
@@ -453,14 +453,14 @@ func executeToolCall(
 	// Cache hit event
 	if len(a.Tracers) > 0 && plan.serverName != "" && plan.serverName != "virtual-tools" {
 		connectionCacheHitEvent := events.NewCacheHitEvent(plan.serverName, fmt.Sprintf("unified_%s", plan.serverName), "unified_cache", 1, time.Duration(0))
-		a.EmitTypedEvent(ctx, connectionCacheHitEvent)
+		a.emitTypedEvent(ctx, connectionCacheHitEvent)
 	}
 
 	// Inject tool execution metadata into context
 	toolCtx = context.WithValue(toolCtx, ToolExecutionAgentKey, a)
 	toolCtx = context.WithValue(toolCtx, ToolExecutionTurnKey, turn+1)
 	toolCtx = context.WithValue(toolCtx, ToolExecutionServerKey, plan.serverName)
-	toolCtx = context.WithValue(toolCtx, ToolExecutionLLMConfigKey, a.GetLLMModelConfig())
+	toolCtx = context.WithValue(toolCtx, ToolExecutionLLMConfigKey, a.getLLMModelConfig())
 
 	// ─── Execute the tool ──────────────────────────────────────────────
 
@@ -471,7 +471,7 @@ func executeToolCall(
 	if isVirtualTool(tc.FunctionCall.Name) {
 		v2Logger.Debug("🔧 [TOOL_CALL] Executing virtual tool (parallel)",
 			loggerv2.String("tool_name", tc.FunctionCall.Name))
-		resultText, vtErr := a.HandleVirtualTool(toolCtx, tc.FunctionCall.Name, plan.args)
+		resultText, vtErr := a.handleVirtualTool(toolCtx, tc.FunctionCall.Name, plan.args)
 		if vtErr != nil {
 			mcpResult = &mcp.CallToolResult{
 				IsError: true,
@@ -571,18 +571,18 @@ func executeToolCall(
 			if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
 				detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
 				detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
-				a.EmitTypedEvent(ctx, detectedEvent)
+				a.emitTypedEvent(ctx, detectedEvent)
 
 				filePath, writeErr := a.toolOutputHandler.WriteToolOutputToFile(resultText, tc.FunctionCall.Name)
 				if writeErr == nil {
 					preview := a.toolOutputHandler.ExtractFirstNCharacters(resultText, 100)
 					fileWrittenEvent := events.NewLargeToolOutputFileWrittenEvent(tc.FunctionCall.Name, filePath, len(resultText), preview)
-					a.EmitTypedEvent(ctx, fileWrittenEvent)
+					a.emitTypedEvent(ctx, fileWrittenEvent)
 					fileMessage := a.toolOutputHandler.CreateToolOutputMessageWithPreview(tc.ID, filePath, resultText, 50, false)
 					resultText = fileMessage
 				} else {
 					fileErrorEvent := events.NewLargeToolOutputFileWriteErrorEvent(tc.FunctionCall.Name, writeErr.Error(), len(resultText))
-					a.EmitTypedEvent(ctx, fileErrorEvent)
+					a.emitTypedEvent(ctx, fileErrorEvent)
 				}
 			}
 		}

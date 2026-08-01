@@ -131,12 +131,12 @@ func TestSupportsSteeringMatchesContract(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s: expected a coding-agent contract", provider)
 		}
-		if got := a.SupportsSteering(); got != contract.SupportsLiveInput {
+		if got := a.supportsSteering(); got != contract.SupportsLiveInput {
 			t.Fatalf("%s: SupportsSteering()=%v; contract.SupportsLiveInput=%v", provider, got, contract.SupportsLiveInput)
 		}
 	}
 	// A non-coding provider has no contract, so steering is unsupported.
-	if (&Agent{provider: llm.ProviderOpenAI}).SupportsSteering() {
+	if (&Agent{provider: llm.ProviderOpenAI}).supportsSteering() {
 		t.Fatalf("non-coding provider must not report steering support")
 	}
 }
@@ -173,7 +173,7 @@ func TestSupportsSteeringFalseOnStructuredTransport(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.agent.SupportsSteering(); got != tc.want {
+			if got := tc.agent.supportsSteering(); got != tc.want {
 				t.Fatalf("SupportsSteering()=%v; want %v", got, tc.want)
 			}
 		})
@@ -191,14 +191,14 @@ func TestDeliverQueuesOnStructuredCodingAgent(t *testing.T) {
 	a := &Agent{provider: llm.ProviderCodexCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}
 	a.setTurnInFlight(true)
 
-	got, err := a.Deliver(context.Background(), "conv-json", "please also add tests", nil)
+	got, err := a.deliver(context.Background(), "conv-json", "please also add tests", nil)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if got.Mode != DeliveryModeQueued {
 		t.Fatalf("Deliver mode = %q; want %q (a busy structured coding-agent turn must queue, not steer)", got.Mode, DeliveryModeQueued)
 	}
-	drained := a.DrainSteerMessages()
+	drained := a.drainSteerMessages()
 	if len(drained) != 1 || drained[0] != "please also add tests" {
 		t.Fatalf("queued messages = %v; want the delivered message", drained)
 	}
@@ -241,14 +241,14 @@ func TestDeliverQueuesWhenBusyAndNotSteerable(t *testing.T) {
 	a := &Agent{provider: llm.ProviderOpenAI} // no coding contract => not steerable
 	a.setTurnInFlight(true)
 
-	got, err := a.Deliver(context.Background(), "conv-x", "please also add tests", nil)
+	got, err := a.deliver(context.Background(), "conv-x", "please also add tests", nil)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if got.Mode != DeliveryModeQueued {
 		t.Fatalf("Deliver mode = %q; want %q", got.Mode, DeliveryModeQueued)
 	}
-	drained := a.DrainSteerMessages()
+	drained := a.drainSteerMessages()
 	if len(drained) != 1 || drained[0] != "please also add tests" {
 		t.Fatalf("queued messages = %v; want the delivered message", drained)
 	}
@@ -257,7 +257,7 @@ func TestDeliverQueuesWhenBusyAndNotSteerable(t *testing.T) {
 // TestDeliverEmptyMessageRejected guards the empty-message contract.
 func TestDeliverEmptyMessageRejected(t *testing.T) {
 	a := &Agent{provider: llm.ProviderOpenAI}
-	if _, err := a.Deliver(context.Background(), "conv-x", "   ", nil); err == nil {
+	if _, err := a.deliver(context.Background(), "conv-x", "   ", nil); err == nil {
 		t.Fatalf("expected an error for an empty message")
 	}
 }
@@ -265,7 +265,7 @@ func TestDeliverEmptyMessageRejected(t *testing.T) {
 // TestTryClaimTurnInFlightIsAtomic pins the core guarantee the Deliver/
 // ContinueConversation race fix rests on: of any number of concurrent
 // callers, EXACTLY ONE ever wins the claim. Before this fix, Deliver's
-// "should I start a turn?" check (a.TurnInFlight()) and the actual claim
+// "should I start a turn?" check (a.isTurnInFlight()) and the actual claim
 // (setTurnInFlight(true), deep inside ContinueConversation, after real I/O
 // like store.Load) were two separate, non-atomic steps — two concurrent
 // Deliver calls could both observe "not in flight" and both proceed to start
@@ -312,12 +312,12 @@ func TestContinueConversationReturnsErrTurnAlreadyInFlightWhenBusy(t *testing.T)
 		t.Fatal("setup: expected the first claim to succeed")
 	}
 
-	_, err := a.ContinueConversation(context.Background(), "conv-x", "hello", nil)
+	_, err := a.continueConversation(context.Background(), "conv-x", "hello", nil)
 	if !errors.Is(err, ErrTurnAlreadyInFlight) {
 		t.Fatalf("ContinueConversation error = %v; want ErrTurnAlreadyInFlight", err)
 	}
 	// Must not have released a claim it never held.
-	if !a.TurnInFlight() {
+	if !a.isTurnInFlight() {
 		t.Fatal("the original claim must still be held — ContinueConversation should not touch a claim it lost")
 	}
 }

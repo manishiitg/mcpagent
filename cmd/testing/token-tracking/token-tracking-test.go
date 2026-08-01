@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
@@ -117,7 +118,7 @@ func testTokenTracking(log loggerv2.Logger, numCalls int) error {
 
 	// Test 1: Initial token usage (should be zero)
 	log.Info("--- Test 1: Initial Token Usage (Should Be Zero) ---")
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := ag.GetTokenUsage()
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := mcpagent.AgentTokenUsage(ag)
 	logTokenUsage(log, "Initial", promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount)
 
 	if totalTokens != 0 || llmCallCount != 0 {
@@ -134,7 +135,7 @@ func testTokenTracking(log loggerv2.Logger, numCalls int) error {
 	log.Info("Making first agent call...", loggerv2.String("question", question1))
 
 	startTime := time.Now()
-	response1, err := ag.Ask(ctx, question1)
+	response1, err := mcpagent.RunText(ctx, ag, question1)
 	if err != nil {
 		return fmt.Errorf("failed to make first agent call: %w", err)
 	}
@@ -145,7 +146,7 @@ func testTokenTracking(log loggerv2.Logger, numCalls int) error {
 		loggerv2.Any("duration", duration1))
 
 	// Check token usage after first call
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount = ag.GetTokenUsage()
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount = mcpagent.AgentTokenUsage(ag)
 	logTokenUsage(log, "After First Call", promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount)
 
 	if totalTokens == 0 {
@@ -185,7 +186,7 @@ func testTokenTracking(log loggerv2.Logger, numCalls int) error {
 			loggerv2.String("question", questions[i]))
 
 		startTime = time.Now()
-		response, err := ag.Ask(ctx, questions[i])
+		response, err := mcpagent.RunText(ctx, ag, questions[i])
 		if err != nil {
 			return fmt.Errorf("failed to make agent call %d: %w", i+2, err)
 		}
@@ -197,7 +198,7 @@ func testTokenTracking(log loggerv2.Logger, numCalls int) error {
 			loggerv2.Any("duration", duration))
 
 		// Check token usage after each call
-		promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount = ag.GetTokenUsage()
+		promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount = mcpagent.AgentTokenUsage(ag)
 		logTokenUsage(log, fmt.Sprintf("After Call %d", i+2), promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount)
 
 		// Verify cumulative accumulation
@@ -243,7 +244,7 @@ func testTokenTracking(log loggerv2.Logger, numCalls int) error {
 			loggerv2.String("question", question))
 
 		startTime = time.Now()
-		response, err := ag.Ask(ctx, question)
+		response, err := mcpagent.RunText(ctx, ag, question)
 		if err != nil {
 			return fmt.Errorf("failed to make conversation call %d: %w", i+1, err)
 		}
@@ -256,7 +257,7 @@ func testTokenTracking(log loggerv2.Logger, numCalls int) error {
 	}
 
 	// Check final token usage after multi-turn conversation
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount = ag.GetTokenUsage()
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount = mcpagent.AgentTokenUsage(ag)
 	logTokenUsage(log, "After Multi-Turn Conversation", promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount)
 
 	conversationTokens := totalTokens - conversationTotalBefore
@@ -269,7 +270,7 @@ func testTokenTracking(log loggerv2.Logger, numCalls int) error {
 
 	// Test 5: Final summary
 	log.Info("--- Test 5: Final Token Usage Summary ---")
-	finalPromptTokens, finalCompletionTokens, finalTotalTokens, finalCacheTokens, finalReasoningTokens, finalLLMCallCount, finalCacheEnabledCallCount := ag.GetTokenUsage()
+	finalPromptTokens, finalCompletionTokens, finalTotalTokens, finalCacheTokens, finalReasoningTokens, finalLLMCallCount, finalCacheEnabledCallCount := mcpagent.AgentTokenUsage(ag)
 	logTokenUsage(log, "Final Summary", finalPromptTokens, finalCompletionTokens, finalTotalTokens, finalCacheTokens, finalReasoningTokens, finalLLMCallCount, finalCacheEnabledCallCount)
 
 	// Calculate averages

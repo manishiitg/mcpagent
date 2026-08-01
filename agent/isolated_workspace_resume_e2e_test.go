@@ -83,7 +83,7 @@ func TestIsolatedWorkspaceNativeResumeAcrossTurns(t *testing.T) {
 					agent1.CodingAgentTransport = llm.CodingAgentTransportStructured
 				}
 
-				if _, err := agent1.Ask(ctx, "Remember this code word exactly: "+codeWord+". Reply with just: OK"); err != nil {
+				if _, err := agent1.ask(ctx, "Remember this code word exactly: "+codeWord+". Reply with just: OK"); err != nil {
 					cleanup1()
 					t.Fatalf("turn 1 failed: %v", err)
 				}
@@ -134,7 +134,7 @@ func TestIsolatedWorkspaceNativeResumeAcrossTurns(t *testing.T) {
 					t.Fatalf("resume working dir = %q, want %q (must never fall back to the real workspace %q)", got, wantDir, workDir)
 				}
 
-				answer, err := agent2.Ask(ctx, "What exact code word did I ask you to remember? Reply with only that word.")
+				answer, err := agent2.ask(ctx, "What exact code word did I ask you to remember? Reply with only that word.")
 				if err != nil {
 					t.Fatalf("turn 2 failed: %v", err)
 				}

@@ -107,9 +107,9 @@ func TestRealBridgeMessageModes(t *testing.T) {
 			}
 			defer cleanup()
 			listener := &recordingAgentEventListener{}
-			agent.AddEventListener(listener)
+			agent.addEventListener(listener)
 
-			answer, err := agent.Ask(ctx, fmt.Sprintf(
+			answer, err := agent.ask(ctx, fmt.Sprintf(
 				"You are a build assistant with one tool: execute_shell_command. Write one short sentence of narration, then run exactly: cat %s\nThen reply with the build id it printed.", buildIDPath))
 			if err != nil {
 				t.Fatalf("agent.Ask: %v", err)

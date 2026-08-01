@@ -359,7 +359,7 @@ func createClaudeCodeAgent(ctx context.Context, log loggerv2.Logger, tracer obse
 // registerWorkspaceTools registers workspace-like custom tools on the agent
 func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 	// workspace_read_file — reads files from a test directory
-	err := agent.RegisterCustomTool(
+	err := mcpagent.AddDefinitionTool(agent,
 		"workspace_read_file",
 		"Read a file from the workspace. Returns the file contents as a string.",
 		map[string]interface{}{
@@ -385,7 +385,7 @@ func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 	log.Info("Registered workspace_read_file")
 
 	// workspace_write_file — writes files
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"workspace_write_file",
 		"Write content to a file in the workspace.",
 		map[string]interface{}{
@@ -418,7 +418,7 @@ func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 	log.Info("Registered workspace_write_file")
 
 	// execute_shell_command — runs shell commands
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"execute_shell_command",
 		"Execute a shell command in the workspace directory.",
 		map[string]interface{}{
@@ -444,7 +444,7 @@ func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 	log.Info("Registered execute_shell_command")
 
 	// agent_browser — browser automation
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"agent_browser",
 		"Browse a URL and return page content.",
 		map[string]interface{}{
@@ -475,7 +475,7 @@ func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 
 // verifyBridgeConfig checks that BuildBridgeMCPConfig produces valid config with all tools
 func verifyBridgeConfig(agent *mcpagent.Agent, log loggerv2.Logger) error {
-	configJSON, err := agent.BuildBridgeMCPConfig()
+	configJSON, err := mcpagent.BuildAgentBridgeConfig(agent)
 	if err != nil {
 		return fmt.Errorf("BuildBridgeMCPConfig failed: %w", err)
 	}
@@ -583,7 +583,7 @@ func testClaudeCodeQuery(ctx context.Context, agent *mcpagent.Agent, log loggerv
 		loggerv2.String("trace_id", string(traceID)))
 
 	startTime := time.Now()
-	response, err := agent.Ask(queryCtx, query)
+	response, err := mcpagent.RunText(queryCtx, agent, query)
 	duration := time.Since(startTime)
 
 	if err != nil {

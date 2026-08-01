@@ -381,7 +381,7 @@ func (a *Agent) getToolsForToolSearchMode() []llmtypes.Tool {
 }
 
 // GetDiscoveredToolCount returns the number of tools discovered in this session
-func (a *Agent) GetDiscoveredToolCount() int {
+func (a *Agent) getDiscoveredToolCount() int {
 	if a.discoveredTools == nil {
 		return 0
 	}
@@ -389,7 +389,7 @@ func (a *Agent) GetDiscoveredToolCount() int {
 }
 
 // GetDeferredToolCount returns the total number of deferred tools
-func (a *Agent) GetDeferredToolCount() int {
+func (a *Agent) getDeferredToolCount() int {
 	return len(a.allDeferredTools)
 }
 

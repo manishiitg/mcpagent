@@ -50,13 +50,13 @@ func TestEffectiveSystemPromptTracksAllowListChanges(t *testing.T) {
 	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
 	a.setInstructions("operator policy")
 
-	a.SetToolAccess([]string{"query_records"})
+	a.setToolAccess([]string{"query_records"})
 	first := a.instructions()
 	if !strings.Contains(first, "query_records") || strings.Contains(first, "mutate_records") {
 		t.Fatalf("first allow-list was not reflected:\n%s", first)
 	}
 
-	a.SetToolAccess([]string{"mutate_records"})
+	a.setToolAccess([]string{"mutate_records"})
 	second := a.instructions()
 	if strings.Contains(second, "query_records") || !strings.Contains(second, "mutate_records") {
 		t.Fatalf("changed allow-list was not reflected on the next read:\n%s", second)
@@ -89,7 +89,7 @@ func TestEnsureSystemPromptUsesCurrentAuthorizedManifest(t *testing.T) {
 	a.setInstructions("operator policy")
 	a.customTools["query_records"] = promptManifestTool("query_records", "database")
 	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
-	a.SetToolAccess([]string{"query_records"})
+	a.setToolAccess([]string{"query_records"})
 
 	messages := ensureSystemPrompt(a, nil)
 	if len(messages) != 1 || len(messages[0].Parts) != 1 {
@@ -109,7 +109,7 @@ func TestPreDiscoveredSpecsRespectAllowList(t *testing.T) {
 	a.customTools["query_records"] = promptManifestTool("query_records", "database")
 	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
 	a.preDiscoveredTools = []string{"query_records", "mutate_records"}
-	a.SetToolAccess([]string{"query_records"})
+	a.setToolAccess([]string{"query_records"})
 	a.setInstructions("operator policy")
 
 	got := a.instructions()

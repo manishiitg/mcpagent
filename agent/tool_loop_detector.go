@@ -184,7 +184,7 @@ func HandleLoopDetection(
 		turn,
 		"loop_detection",
 		time.Since(conversationStartTime))
-	a.EmitTypedEvent(ctx, loopEvent)
+	a.emitTypedEvent(ctx, loopEvent)
 
 	// Inject user message asking LLM to correct itself
 	*messages = append(*messages, llmtypes.MessageContent{
@@ -195,7 +195,7 @@ func HandleLoopDetection(
 	// Emit user message event so frontend can display it in conversation history
 	// Use "user" role to match how it appears in the conversation (as ChatMessageTypeHuman)
 	userMessageEvent := events.NewUserMessageEvent(turn, result.CorrectionMessage, "user")
-	a.EmitTypedEvent(ctx, userMessageEvent)
+	a.emitTypedEvent(ctx, userMessageEvent)
 
 	logger.Info("🔄 Emitted user_message event for loop correction",
 		loggerv2.String("content", result.CorrectionMessage),

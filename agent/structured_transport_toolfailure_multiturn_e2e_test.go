@@ -47,7 +47,7 @@ func buildStructuredBridgeAgentWithShell(t *testing.T, ctx context.Context, tc s
 		t.Fatalf("NewAgent: %v", err)
 	}
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
-	if regErr := agent.RegisterCustomTool(
+	if regErr := agent.registerCustomTool(
 		"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return handler(ctx, args, shellEnv)
@@ -144,9 +144,9 @@ func TestStructuredTransportToolFailureRecovery(t *testing.T) {
 			defer cleanup()
 
 			listener := &recordingAgentEventListener{}
-			agent.AddEventListener(listener)
+			agent.addEventListener(listener)
 
-			answer, err := agent.Ask(ctx, fmt.Sprintf(
+			answer, err := agent.ask(ctx, fmt.Sprintf(
 				"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly: cat %s\n"+
 					"If a tool call fails with a transient error, RETRY the same command once. Then reply with the build id it printed.", buildIDPath))
 			if err != nil {
@@ -231,9 +231,9 @@ func TestStructuredTransportToolFailureGiveUp(t *testing.T) {
 			defer cleanup()
 
 			listener := &recordingAgentEventListener{}
-			agent.AddEventListener(listener)
+			agent.addEventListener(listener)
 
-			answer, err := agent.Ask(ctx, fmt.Sprintf(
+			answer, err := agent.ask(ctx, fmt.Sprintf(
 				"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly:\ncat %s\n"+
 					"If the tool call keeps failing, do NOT retry more than once — reply that the build id could NOT be read and stop.", buildIDPath))
 			if err != nil {
@@ -328,7 +328,7 @@ func TestStructuredTransportMultiTurn(t *testing.T) {
 			// cwd, not the CLI's workdir, so a relative path only resolves for
 			// providers that use a native shell (in the CLI cwd). Claude correctly
 			// routes through the bridge tool — an absolute path is transport-fair.
-			ans1, err := agent.ContinueConversation(ctx, convID,
+			ans1, err := agent.continueConversation(ctx, convID,
 				"Run exactly: cat "+buildIDPath+" — then reply with ONLY the build id it printed.", store)
 			if err != nil {
 				t.Fatalf("turn 1: %v", err)
@@ -344,7 +344,7 @@ func TestStructuredTransportMultiTurn(t *testing.T) {
 			// deny-builtin setup runs in --mode ask, which refuses natural-language
 			// WRITE requests, so a write-based turn 2 would conflate "didn't resume"
 			// with "won't write". Recall is the transport-appropriate continuity proof.
-			ans2, err := agent.ContinueConversation(ctx, convID,
+			ans2, err := agent.continueConversation(ctx, convID,
 				"Do NOT read any file or run any tool. From our conversation so far, what build id did you just report? Reply with ONLY that build id.", store)
 			if err != nil {
 				t.Fatalf("turn 2: %v", err)

@@ -379,7 +379,7 @@ func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 
 	// Register the REAL shell tool the bridge will expose and route to.
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
-	if err := agent.RegisterCustomTool(
+	if err := agent.registerCustomTool(
 		"execute_shell_command",
 		codeexec.ShellCommandDescription,
 		codeexec.ShellCommandParams,
@@ -397,7 +397,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	agent, ctx, _, _, workDir := newRealBridgeTestAgent(t, pc, bridgeBin)
 
 	listener := &recordingAgentEventListener{}
-	agent.AddEventListener(listener)
+	agent.addEventListener(listener)
 
 	// A rich, real multi-step task: READ a real file (a project build-id that is
 	// only in the file, not the prompt — anti-cheat, benign framing so safety-tuned
@@ -420,7 +420,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 			"Finally, reply with the exact contents of %[2]s (the markdown table).",
 		buildIDPath, reportPath)
 
-	answer, err := agent.Ask(ctx, task)
+	answer, err := agent.ask(ctx, task)
 	if err != nil {
 		t.Fatalf("agent.Ask: %v", err)
 	}
@@ -588,7 +588,7 @@ func runRealBridgeMarkdownFidelity(t *testing.T, pc realBridgeProviderCase, brid
 	agent, ctx, _, _, workDir := newRealBridgeTestAgent(t, pc, bridgeBin)
 
 	listener := &recordingAgentEventListener{}
-	agent.AddEventListener(listener)
+	agent.addEventListener(listener)
 
 	codeWord := "BUILD_ID_" + realBridgeRandHex(6)
 	buildIDPath := filepath.Join(workDir, "build_id.txt")
@@ -609,7 +609,7 @@ func runRealBridgeMarkdownFidelity(t *testing.T, pc realBridgeProviderCase, brid
 			"Finally, reply with exactly the contents of %[2]s, and nothing else — no preamble, no explanation.",
 		buildIDPath, reportPath, template)
 
-	answer, err := agent.Ask(ctx, task)
+	answer, err := agent.ask(ctx, task)
 	if err != nil {
 		t.Fatalf("agent.Ask: %v", err)
 	}

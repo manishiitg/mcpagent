@@ -147,7 +147,7 @@ func askWithHistoryStructuredCLI[T any](a *Agent, ctx context.Context, messages 
 		loggerv2.Int("schema_length", len(schemaString)))
 
 	// Call the normal AskWithHistory with injected messages
-	textResponse, updatedMessages, err := a.AskWithHistory(ctx, injectedMessages)
+	textResponse, updatedMessages, err := a.askWithHistory(ctx, injectedMessages)
 	if err != nil {
 		var zero T
 		return zero, updatedMessages, fmt.Errorf("failed to get text response: %w", err)
@@ -198,7 +198,7 @@ func askWithHistoryStructuredViaToolCLI[T any](
 		loggerv2.Int("schema_length", len(schema)))
 
 	// Call the normal AskWithHistory with injected messages
-	textResponse, _, err := a.AskWithHistory(ctx, injectedMessages)
+	textResponse, _, err := a.askWithHistory(ctx, injectedMessages)
 	if err != nil {
 		var zero StructuredOutputResult[T]
 		return zero, fmt.Errorf("failed to get text response: %w", err)

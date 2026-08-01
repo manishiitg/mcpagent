@@ -147,7 +147,7 @@ func main() {
 	// Log question to agent log file
 	agentLogger.Info("Context offloading example started", loggerv2.Field{Key: "question", Value: question})
 
-	answer, err := agent.Ask(ctx, question)
+	answer, err := mcpagent.RunText(ctx, agent, question)
 	if err != nil {
 		agentLogger.Error("Failed to get answer from agent", err)
 		fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)
@@ -163,7 +163,7 @@ func main() {
 	agentLogger.Info("Context offloading example completed", loggerv2.Field{Key: "answer_length", Value: len(answer)})
 
 	// Step 10: Show where context offloading saved the files
-	toolOutputHandler := agent.GetToolOutputHandler()
+	toolOutputHandler := mcpagent.AgentToolOutput(agent)
 	if toolOutputHandler != nil {
 		outputFolder := toolOutputHandler.GetToolOutputFolder()
 		sessionID := toolOutputHandler.GetSessionID()

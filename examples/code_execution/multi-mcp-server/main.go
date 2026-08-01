@@ -226,7 +226,7 @@ func main() {
 		fmt.Sprintf("MCP_API_URL=%s", apiBaseURL),
 		fmt.Sprintf("MCP_API_TOKEN=%s", apiToken),
 	)
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"execute_shell_command",
 		codeexec.ShellCommandDescription,
 		codeexec.ShellCommandParams,
@@ -269,7 +269,7 @@ func main() {
 		conversationHistory = append(conversationHistory, userMessage)
 
 		// Get answer with conversation history
-		answer, updatedHistory, err := agent.AskWithHistory(ctx, conversationHistory)
+		answer, updatedHistory, err := mcpagent.RunHistory(ctx, agent, conversationHistory)
 		if err != nil {
 			agentLogger.Error("Failed to get answer from agent", err)
 			fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)

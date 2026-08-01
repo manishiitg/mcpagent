@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/viper"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
-	"github.com/manishiitg/mcpagent/events"
 	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
+	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
@@ -229,7 +229,7 @@ func testParallelToolExecution(log loggerv2.Logger, modelFlag string) error {
 	}
 
 	parallelListener := newToolTimingListener()
-	parallelAgent.AddEventListener(parallelListener)
+	mcpagent.ObserveAgent(parallelAgent, parallelListener)
 
 	// Ask a question that should trigger the LLM to call memory tools multiple times
 	// The prompt explicitly asks for multiple operations to encourage parallel tool calls
@@ -244,7 +244,7 @@ Confirm when all 3 are saved.`
 		loggerv2.String("question_preview", question[:80]+"..."))
 
 	parallelStart := time.Now()
-	parallelResponse, err := parallelAgent.Ask(ctx, question)
+	parallelResponse, err := mcpagent.RunText(ctx, parallelAgent, question)
 	parallelDuration := time.Since(parallelStart)
 
 	if err != nil {
@@ -280,12 +280,12 @@ Confirm when all 3 are saved.`
 	}
 
 	sequentialListener := newToolTimingListener()
-	sequentialAgent.AddEventListener(sequentialListener)
+	mcpagent.ObserveAgent(sequentialAgent, sequentialListener)
 
 	log.Info("Running sequential agent...")
 
 	sequentialStart := time.Now()
-	sequentialResponse, err := sequentialAgent.Ask(ctx, question)
+	sequentialResponse, err := mcpagent.RunText(ctx, sequentialAgent, question)
 	sequentialDuration := time.Since(sequentialStart)
 
 	if err != nil {

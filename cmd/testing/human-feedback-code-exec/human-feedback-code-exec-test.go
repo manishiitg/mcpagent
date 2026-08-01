@@ -160,7 +160,7 @@ func testHumanFeedbackInCodeExecMode(log loggerv2.Logger) error {
 		return "regular tool executed", nil
 	}
 
-	err = ag.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(ag,
 		regularToolName,
 		"A regular custom tool that should be excluded in code exec mode",
 		regularToolParams,
@@ -217,7 +217,7 @@ func testHumanFeedbackInCodeExecMode(log loggerv2.Logger) error {
 		return "User approved: " + messageForUser, nil
 	}
 
-	err = ag.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(ag,
 		"human_feedback",
 		"Use this tool when you need to get human input, confirmation, or feedback. This tool will pause execution until the user provides input via the UI.",
 		humanFeedbackParams,

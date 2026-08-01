@@ -57,6 +57,7 @@ type Result struct {
 // queued for the next provider boundary.
 type DeliveryResult struct {
 	Queued bool
+	Status UserMessageDeliveryStatus
 }
 
 // ToolDefinitionView is the read-only diagnostic form of one registered tool.
@@ -80,7 +81,8 @@ type AgentDefinitionView struct {
 // one session are serialized; callers use separate sessions for concurrency.
 type Session struct {
 	agent   *Agent
-	mu      sync.Mutex
+	runMu   sync.Mutex
+	stateMu sync.Mutex
 	history []llmtypes.MessageContent
 	closed  bool
 }
@@ -150,18 +152,21 @@ func (a *Agent) Definition() AgentDefinitionView {
 
 // Run executes one turn using the supplied runtime policy.
 func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	s.stateMu.Lock()
 	if s.closed {
+		s.stateMu.Unlock()
 		return Result{}, fmt.Errorf("session is closed")
 	}
+	history := append([]llmtypes.MessageContent(nil), s.history...)
+	s.stateMu.Unlock()
 	policy, err := normalizeToolPolicy(turn.ToolPolicy)
 	if err != nil {
 		return Result{}, err
 	}
 	ctx = context.WithValue(ctx, turnPolicyContextKey{}, policy)
 
-	history := s.history
 	if len(history) == 0 && len(turn.History) > 0 {
 		history = append([]llmtypes.MessageContent(nil), turn.History...)
 	}
@@ -185,13 +190,15 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 	if handle := s.agent.currentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
 		text, updated, _, err = s.agent.continueAgentSessionWithHistory(ctx, handle, history)
 	} else {
-		text, updated, err = s.agent.AskWithHistory(ctx, history)
+		text, updated, err = s.agent.askWithHistory(ctx, history)
 	}
 	if len(updated) > 0 {
+		s.stateMu.Lock()
 		s.history = append([]llmtypes.MessageContent(nil), updated...)
+		s.stateMu.Unlock()
 	}
 	prompt, completion, total, cache, reasoning, calls, cacheCalls,
-		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextUsage := s.agent.GetTokenUsageWithPricing()
+		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextUsage := s.agent.getTokenUsageWithPricing()
 	result := Result{
 		Text:    text,
 		History: append([]llmtypes.MessageContent(nil), updated...),
@@ -216,17 +223,25 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 }
 
 // Send queues steering input for the active provider turn.
-func (s *Session) Send(_ context.Context, input string) (DeliveryResult, error) {
+func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error) {
 	if strings.TrimSpace(input) == "" {
 		return DeliveryResult{}, fmt.Errorf("delivery input is empty")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.stateMu.Lock()
 	if s.closed {
+		s.stateMu.Unlock()
 		return DeliveryResult{}, fmt.Errorf("session is closed")
 	}
-	s.agent.AddSteerMessage(input)
-	return DeliveryResult{Queued: true}, nil
+	s.stateMu.Unlock()
+	delivery, err := s.agent.deliverUserMessage(ctx, UserMessageDeliveryRequest{
+		SessionID: s.agent.SessionID,
+		Message:   input,
+		Intent:    UserMessageDeliveryIntentAuto,
+	})
+	return DeliveryResult{
+		Queued: delivery.DeliveryStatus == UserMessageDeliveryStatusQueuedForInjection,
+		Status: delivery.DeliveryStatus,
+	}, err
 }
 
 func (s *Session) Snapshot() *AgentSessionHandle {
@@ -239,8 +254,10 @@ func (s *Session) Events() <-chan *events.AgentEvent {
 }
 
 func (s *Session) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
 	s.closed = true
 	s.history = nil
 	return nil

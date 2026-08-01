@@ -194,7 +194,7 @@ This is a complex multi-step task that will require many tool calls and turns. W
 		loggerv2.Field{Key: "token_threshold_percent", Value: 0.5},
 		loggerv2.Field{Key: "keep_last_messages", Value: 8})
 
-	answer, err := agent.Ask(ctx, question)
+	answer, err := mcpagent.RunText(ctx, agent, question)
 	if err != nil {
 		agentLogger.Error("Failed to get answer from agent", err)
 		fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)

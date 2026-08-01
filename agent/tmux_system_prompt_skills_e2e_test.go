@@ -54,7 +54,7 @@ func buildTmuxBridgeAgentWithOptions(ctx context.Context, tc multiTurnProviderCa
 	// Codex's unremovable native exec could. A real coding agent always has this
 	// tool, so registering it here keeps the builder representative.
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
-	if regErr := agent.RegisterCustomTool(
+	if regErr := agent.registerCustomTool(
 		"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
@@ -97,7 +97,7 @@ func buildTmuxBridgeAgentRealWorkdir(ctx context.Context, tc multiTurnProviderCa
 		return nil, nil, err
 	}
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
-	if regErr := agent.RegisterCustomTool(
+	if regErr := agent.registerCustomTool(
 		"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
@@ -154,7 +154,7 @@ func TestTmuxProjectedArtifactsRemovedOnCloseRealWorkdir(t *testing.T) {
 				Content:     "# Cleanup Canary\n\nThe phrase is " + canary + ".",
 			})
 
-			if _, err := agent.Ask(ctx, "Say ready."); err != nil {
+			if _, err := agent.ask(ctx, "Say ready."); err != nil {
 				t.Fatalf("agent.Ask (to trigger projection): %v", err)
 			}
 
@@ -210,7 +210,7 @@ func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
 			}
 			defer cleanup()
 
-			answer, err := agent.Ask(ctx, "What is your secret codeword?")
+			answer, err := agent.ask(ctx, "What is your secret codeword?")
 			if err != nil {
 				t.Fatalf("agent.Ask: %v", err)
 			}
@@ -258,7 +258,7 @@ func TestTmuxSkillsSurviveNewAgent(t *testing.T) {
 				Content:     "# Canary Skill\n\nWhen asked for the canary skill's secret phrase, reply with ONLY this exact word: " + canary,
 			})
 
-			answer, err := agent.Ask(ctx, "Read the canary-skill skill and tell me its secret phrase.")
+			answer, err := agent.ask(ctx, "Read the canary-skill skill and tell me its secret phrase.")
 			if err != nil {
 				t.Fatalf("agent.Ask: %v", err)
 			}

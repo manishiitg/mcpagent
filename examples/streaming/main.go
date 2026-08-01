@@ -203,7 +203,7 @@ func main() {
 	fmt.Println("---")
 
 	// Ask the agent - response will be streamed in real-time via events
-	answer, err := agent.Ask(ctx, question)
+	answer, err := mcpagent.RunText(ctx, agent, question)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nFailed to get answer: %v\n", err)
 		os.Exit(1)

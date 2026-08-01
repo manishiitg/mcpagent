@@ -219,7 +219,7 @@ func (h *BrokenPipeHandler) emitBrokenPipeEvent(ctx context.Context, toolCall *l
 		ToolCallID: toolCall.ID,
 		Error:      originalErr.Error(),
 	}
-	h.agent.EmitTypedEvent(ctx, brokenPipeEvent)
+	h.agent.emitTypedEvent(ctx, brokenPipeEvent)
 }
 
 // emitRetrySuccessEvent emits a successful retry event
@@ -234,7 +234,7 @@ func (h *BrokenPipeHandler) emitRetrySuccessEvent(ctx context.Context, toolCall 
 		ToolCallID: toolCall.ID,
 		Duration:   duration.String(),
 	}
-	h.agent.EmitTypedEvent(ctx, retrySuccessEvent)
+	h.agent.emitTypedEvent(ctx, retrySuccessEvent)
 }
 
 // emitRetryFailureEvent emits a failed retry event
@@ -250,7 +250,7 @@ func (h *BrokenPipeHandler) emitRetryFailureEvent(ctx context.Context, toolCall 
 		Duration:   duration.String(),
 		Error:      retryErr.Error(),
 	}
-	h.agent.EmitTypedEvent(ctx, retryFailureEvent)
+	h.agent.emitTypedEvent(ctx, retryFailureEvent)
 }
 
 // ErrorRecoveryHandler provides a unified interface for different error recovery strategies

@@ -108,7 +108,7 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	agent.SessionID = "sess-abc-123"
 	agent.CodingAgentWorkingDir = "/workspace/social-media"
 
-	configJSON, err := agent.BuildBridgeMCPConfig()
+	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
 		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestBuildBridgeMCPConfigNormalizesMarkdownAPIURL(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token-123")
 
 	agent := bridgeTestAgent()
-	configJSON, err := agent.BuildBridgeMCPConfig()
+	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
 		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestBuildBridgeMCPConfigRejectsInvalidAPIURL(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token-123")
 
 	agent := bridgeTestAgent()
-	_, err := agent.BuildBridgeMCPConfig()
+	_, err := agent.buildBridgeMCPConfig()
 	if err == nil || !strings.Contains(err.Error(), "invalid MCP bridge API URL") {
 		t.Fatalf("BuildBridgeMCPConfig() error = %v, want invalid URL error", err)
 	}
@@ -184,7 +184,7 @@ func TestBuildBridgeMCPConfigNoSessionID(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	agent := bridgeTestAgent()
-	configJSON, err := agent.BuildBridgeMCPConfig()
+	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
 		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestBuildBridgeMCPConfigBridgeURLOverride(t *testing.T) {
 
 	agent := bridgeTestAgent()
 	agent.SessionID = "s1"
-	configJSON, err := agent.BuildBridgeMCPConfig()
+	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
 		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestBuildBridgeMCPConfigMissingURL(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	agent := bridgeTestAgent()
-	_, err := agent.BuildBridgeMCPConfig()
+	_, err := agent.buildBridgeMCPConfig()
 	if err == nil {
 		t.Fatal("expected error when API URL not configured")
 	}
@@ -250,7 +250,7 @@ func TestBuildBridgeMCPConfigMissingToken(t *testing.T) {
 	os.Unsetenv("MCP_API_TOKEN")
 
 	agent := bridgeTestAgent()
-	_, err := agent.BuildBridgeMCPConfig()
+	_, err := agent.buildBridgeMCPConfig()
 	if err == nil {
 		t.Fatal("expected error when API token not configured")
 	}
@@ -264,7 +264,7 @@ func TestBuildBridgeMCPConfigAPIBaseURLPriority(t *testing.T) {
 	agent := bridgeTestAgent()
 	agent.APIBaseURL = "http://agent-url:7070"
 	agent.APIToken = "agent-token"
-	configJSON, err := agent.BuildBridgeMCPConfig()
+	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
 		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
 	}

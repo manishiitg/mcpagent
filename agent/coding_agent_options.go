@@ -232,7 +232,7 @@ func (a *Agent) buildStructuredResumeOptions() []llmtypes.CallOption {
 }
 
 func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
-	bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
+	bridgeConfig, bridgeErr := a.buildBridgeMCPConfig()
 	if bridgeErr != nil {
 		return nil, fmt.Errorf("Cursor CLI requires the MCP bridge: %w", bridgeErr)
 	}

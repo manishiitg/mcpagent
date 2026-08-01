@@ -83,7 +83,7 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 				APIKeys:  tt.keys,
 			}
 
-			config := agent.GetLLMModelConfig()
+			config := agent.getLLMModelConfig()
 			if config.APIKey == nil || *config.APIKey != *tt.want {
 				t.Fatalf("expected api key %q, got %#v", *tt.want, config.APIKey)
 			}

@@ -30,6 +30,8 @@ type ManagedAgent struct {
 	CustomTools []CustomToolDefinition
 	resultMu    sync.RWMutex
 	lastResult  mcpagent.Result
+	toolMu      sync.RWMutex
+	toolRuntime map[string]mcpagent.ToolExecutor
 }
 
 // AgentManager manages the lifecycle of agent instances
@@ -80,8 +82,50 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 	// Build agent options
 	options := m.buildAgentOptions(req.Config, sessionID)
 
-	// Create the agent
-	agent, err := mcpagent.NewAgent(ctx, llmModel, configPath, options...)
+	managed := &ManagedAgent{
+		ID:          agentID,
+		SessionID:   sessionID,
+		Config:      req.Config,
+		CreatedAt:   time.Now(),
+		ctx:         ctx,
+		cancel:      cancel,
+		CustomTools: req.Config.CustomTools,
+		toolRuntime: make(map[string]mcpagent.ToolExecutor),
+	}
+	directTools := make([]mcpagent.ToolDefinition, 0, len(req.Config.CustomTools))
+	for _, configured := range req.Config.CustomTools {
+		tool := configured
+		group := strings.TrimSpace(tool.Category)
+		if group == "" {
+			group = "custom"
+		}
+		directTools = append(directTools, mcpagent.ToolDefinition{
+			Name:         tool.Name,
+			Description:  tool.Description,
+			InputSchema:  tool.Parameters,
+			Timeout:      time.Duration(tool.TimeoutMs) * time.Millisecond,
+			DisplayGroup: group,
+			Execute: func(execCtx context.Context, args map[string]interface{}) (string, error) {
+				return managed.executeCustomTool(execCtx, tool.Name, args)
+			},
+		})
+	}
+	mcpSources := make([]mcpagent.MCPToolSource, 0, len(req.Config.SelectedServers))
+	for _, server := range req.Config.SelectedServers {
+		if name := strings.TrimSpace(server); name != "" {
+			mcpSources = append(mcpSources, mcpagent.MCPToolSource{Name: name})
+		}
+	}
+
+	// Create the immutable agent with every configured capability present before
+	// the session starts. Stream handlers only bind runtime callbacks later.
+	agent, err := mcpagent.NewAgentFromDefinition(ctx, mcpagent.AgentDefinition{
+		Instructions: req.Config.SystemPrompt,
+		Tools: mcpagent.ToolSet{
+			Direct: directTools,
+			MCP:    mcpSources,
+		},
+	}, mcpagent.RuntimeConfig{Model: llmModel, MCPConfigPath: configPath, LegacyOptions: options})
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create agent: %w", err)
@@ -108,26 +152,33 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 		servers = append(servers, server)
 	}
 
-	managed := &ManagedAgent{
-		ID:          agentID,
-		SessionID:   sessionID,
-		Agent:       agent,
-		Session:     session,
-		Config:      req.Config,
-		CreatedAt:   time.Now(),
-		ctx:         ctx,
-		cancel:      cancel,
-		CustomTools: req.Config.CustomTools,
-		capabilities: Capabilities{
-			Tools:   tools,
-			Servers: servers,
-		},
+	managed.Agent = agent
+	managed.Session = session
+	managed.capabilities = Capabilities{
+		Tools:   tools,
+		Servers: servers,
 	}
 
 	m.agents[agentID] = managed
 	m.logger.Info("Agent created", loggerv2.String("agent_id", agentID), loggerv2.String("session_id", sessionID))
 
 	return managed, nil
+}
+
+func (a *ManagedAgent) bindCustomTool(name string, execute mcpagent.ToolExecutor) {
+	a.toolMu.Lock()
+	defer a.toolMu.Unlock()
+	a.toolRuntime[name] = execute
+}
+
+func (a *ManagedAgent) executeCustomTool(ctx context.Context, name string, args map[string]interface{}) (string, error) {
+	a.toolMu.RLock()
+	execute := a.toolRuntime[name]
+	a.toolMu.RUnlock()
+	if execute == nil {
+		return "", fmt.Errorf("custom tool %q has no active gRPC stream", name)
+	}
+	return execute(ctx, args)
 }
 
 func (a *ManagedAgent) Run(ctx context.Context, turn mcpagent.Turn) (mcpagent.Result, error) {

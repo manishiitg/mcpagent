@@ -66,7 +66,7 @@ func validateJqQuery(query string) error {
 
 // CreateLargeOutputVirtualTools creates virtual tools for context offloading
 // These tools allow the LLM to access offloaded tool outputs on-demand
-func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
+func (a *Agent) createLargeOutputVirtualTools() []llmtypes.Tool {
 	// Check if context offloading virtual tools are enabled
 	if !a.EnableContextOffloading {
 		return []llmtypes.Tool{}
@@ -143,7 +143,7 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 
 // HandleLargeOutputVirtualTool handles context offloading virtual tool execution
 // These tools allow accessing offloaded tool outputs on-demand
-func (a *Agent) HandleLargeOutputVirtualTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
+func (a *Agent) handleLargeOutputVirtualTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	// Check if context offloading virtual tools are enabled
 	if !a.EnableContextOffloading {
 		return "", fmt.Errorf("context offloading virtual tools are disabled")
@@ -202,7 +202,7 @@ func (a *Agent) handleReadLargeOutput(ctx context.Context, args map[string]inter
 	}
 
 	// Build file path
-	filePath := a.BuildLargeOutputFilePath(filename)
+	filePath := a.buildLargeOutputFilePath(filename)
 	if filePath == "" {
 		return "", fmt.Errorf("invalid filename: %s", filename)
 	}
@@ -259,7 +259,7 @@ func (a *Agent) handleSearchLargeOutput(ctx context.Context, args map[string]int
 	}
 
 	// Build file path
-	filePath := a.BuildLargeOutputFilePath(filename)
+	filePath := a.buildLargeOutputFilePath(filename)
 	if filePath == "" {
 		return "", fmt.Errorf("invalid filename: %s", filename)
 	}
@@ -309,7 +309,7 @@ func (a *Agent) handleQueryLargeOutput(ctx context.Context, args map[string]inte
 	}
 
 	// Build file path
-	filePath := a.BuildLargeOutputFilePath(filename)
+	filePath := a.buildLargeOutputFilePath(filename)
 	if filePath == "" {
 		return "", fmt.Errorf("invalid filename: %s", filename)
 	}
@@ -340,7 +340,7 @@ func (a *Agent) handleQueryLargeOutput(ctx context.Context, args map[string]inte
 // Accepts either:
 // - Full relative path: "tool_output_folder/session-id/filename.txt" (use directly)
 // - Just filename: "tool_20250721_091511_tavily-search.json" (build from current session)
-func (a *Agent) BuildLargeOutputFilePath(filename string) string {
+func (a *Agent) buildLargeOutputFilePath(filename string) string {
 	if filename == "" {
 		return ""
 	}

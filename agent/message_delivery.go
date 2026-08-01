@@ -74,8 +74,8 @@ type ControlKeyDeliveryResult struct {
 // DeliverControlKey injects a tmux control key into the agent's currently
 // running coding-agent session. Returns DeliveryErrorKindNotSupported for
 // non-tmux providers so callers can fall back to context cancellation.
-func (a *Agent) DeliverControlKey(ctx context.Context, req ControlKeyDeliveryRequest) (ControlKeyDeliveryResult, error) {
-	provider := a.GetProvider()
+func (a *Agent) deliverControlKey(ctx context.Context, req ControlKeyDeliveryRequest) (ControlKeyDeliveryResult, error) {
+	provider := a.getProvider()
 	result := ControlKeyDeliveryResult{Provider: provider}
 	key := strings.TrimSpace(req.Key)
 	if key == "" {
@@ -114,8 +114,8 @@ func (a *Agent) DeliverControlKey(ctx context.Context, req ControlKeyDeliveryReq
 // a failed tmux submission is returned to the caller instead of being hidden in
 // the internal steer queue. API/structured/non-coding agents still use that
 // queue between tool calls and the next LLM call.
-func (a *Agent) DeliverUserMessage(ctx context.Context, req UserMessageDeliveryRequest) (UserMessageDeliveryResult, error) {
-	provider := a.GetProvider()
+func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryRequest) (UserMessageDeliveryResult, error) {
+	provider := a.getProvider()
 	result := UserMessageDeliveryResult{Provider: provider}
 	message := strings.TrimSpace(req.Message)
 	if message == "" {
@@ -145,7 +145,7 @@ func (a *Agent) DeliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 		return result, nil
 	}
 
-	a.AddSteerMessage(message)
+	a.addSteerMessage(message)
 	result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
 	return result, nil
 }

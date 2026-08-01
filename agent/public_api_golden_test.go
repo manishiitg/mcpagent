@@ -6,66 +6,11 @@ import (
 	"testing"
 )
 
-// This is the migration ratchet for the legacy Agent surface. The list starts
-// at 70 legacy methods. The three target methods are added during the cutover;
-// after that, the list must only shrink until the replacement Agent/Session API
-// is complete. Any deliberate change updates this list in the same commit.
+// This is the completed migration ratchet for the Agent surface. It started at
+// 70 methods and now pins the final Agent/Session API exactly. Any deliberate
+// change updates this list in the same commit.
 func TestAgentPublicMethodSurface(t *testing.T) {
-	want := []string{
-		"AddEventListener",
-		"AddInstructions",
-		"AddSteerMessage",
-		"ApplyAgentSessionHandle",
-		"Ask",
-		"AskWithHistory",
-		"AttachSkill",
-		"BuildBridgeMCPConfig",
-		"BuildLargeOutputFilePath",
-		"Close",
-		"ContinueConversation",
-		"CreateLargeOutputVirtualTools",
-		"CreateVirtualTools",
-		"CurrentAgentSessionHandle",
-		"Definition",
-		"Deliver",
-		"DeliverControlKey",
-		"DeliverUserMessage",
-		"DrainSteerMessages",
-		"EmitTypedEvent",
-		"GetConfiguredServerName",
-		"GetCustomToolExecutor",
-		"GetCustomTools",
-		"GetDeferredToolCount",
-		"GetDiscoveredToolCount",
-		"GetFolderGuardPaths",
-		"GetLLMModelConfig",
-		"GetProvider",
-		"GetSelectedTools",
-		"GetServerNames",
-		"GetTokenUsage",
-		"GetTokenUsageWithPricing",
-		"GetToolOutputHandler",
-		"GetToolToServer",
-		"HandleEvent",
-		"HandleLargeOutputVirtualTool",
-		"HandleVirtualTool",
-		"Instructions",
-		"RegisterCustomTool",
-		"RegisterCustomToolWithTimeout",
-		"RemoveEventListener",
-		"ResetInstructions",
-		"Run",
-		"SetFolderGuardPaths",
-		"SetInstructions",
-		"SetProvider",
-		"SetToolAccess",
-		"SetToolOutputHandler",
-		"Start",
-		"StartCodingAgentTransportSession",
-		"SubscribeToEvents",
-		"SupportsSteering",
-		"TurnInFlight",
-	}
+	want := []string{"Close", "Definition", "Run", "Start"}
 
 	typeOfAgent := reflect.TypeOf((*Agent)(nil))
 	got := make([]string, 0, typeOfAgent.NumMethod())
@@ -73,8 +18,8 @@ func TestAgentPublicMethodSurface(t *testing.T) {
 		got = append(got, typeOfAgent.Method(i).Name)
 	}
 
-	if len(got) != 53 {
-		t.Fatalf("exported *Agent method count = %d, want cutover surface 53; methods=%v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("exported *Agent method count = %d, want final surface 4; methods=%v", len(got), got)
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("exported *Agent methods changed\n got: %v\nwant: %v", got, want)

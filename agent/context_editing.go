@@ -349,7 +349,7 @@ func compactStaleToolResponses(a *Agent, ctx context.Context, messages []llmtype
 		alreadyCompactedCount,
 		evaluations,
 	)
-	a.EmitTypedEvent(ctx, completedEvent)
+	a.emitTypedEvent(ctx, completedEvent)
 
 	v2Logger.Info("📊 [CONTEXT_EDITING] Context editing completed",
 		loggerv2.Int("tool_response_count", toolResponseCount),

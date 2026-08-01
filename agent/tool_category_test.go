@@ -34,7 +34,7 @@ func TestAppControlToolsAreImmediatelyAvailableInToolSearchMode(t *testing.T) {
 		t.Run(category, func(t *testing.T) {
 			agent := &Agent{UseToolSearchMode: true}
 			name := category + "_test"
-			err := agent.RegisterCustomTool(
+			err := agent.registerCustomTool(
 				name,
 				"test tool",
 				map[string]interface{}{"type": "object"},
@@ -54,7 +54,7 @@ func TestAppControlToolsAreImmediatelyAvailableInToolSearchMode(t *testing.T) {
 func TestLegacyHumanCategoryIsNotTreatedAsHumanTool(t *testing.T) {
 	agent := &Agent{UseToolSearchMode: true}
 	const name = "legacy_human_test"
-	err := agent.RegisterCustomTool(
+	err := agent.registerCustomTool(
 		name,
 		"legacy test tool",
 		map[string]interface{}{"type": "object"},

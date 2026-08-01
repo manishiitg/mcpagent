@@ -23,7 +23,7 @@ func main() {
 
 	// Step 1: Check for API keys or credentials
 	// Vertex AI typically uses Application Default Credentials (ADC) or GOOGLE_APPLICATION_CREDENTIALS
-	
+
 	// Check for LangSmith credentials
 	langsmithAPIKey := os.Getenv("LANGSMITH_API_KEY")
 	if langsmithAPIKey == "" {
@@ -78,7 +78,7 @@ func main() {
 		ctx,
 		llmModel,
 		configPath,
-		mcpagent.WithTracer(tracer),                        // Enable tracing
+		mcpagent.WithTracer(tracer), // Enable tracing
 		mcpagent.WithTraceID(observability.TraceID(traceID)), // Set trace ID for this session
 	)
 	if err != nil {
@@ -94,7 +94,7 @@ func main() {
 
 	fmt.Printf("\n=== Question ===\n%s\n================\n\n", question)
 
-	answer, err := agent.Ask(ctx, question)
+	answer, err := mcpagent.RunText(ctx, agent, question)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)
 		if flusher, ok := tracer.(interface{ Flush() }); ok {

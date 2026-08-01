@@ -147,7 +147,7 @@ func main() {
 		"required": []string{"operation", "a"},
 	}
 
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"calculator",
 		"Performs basic mathematical operations: add, subtract, multiply, divide, power, or sqrt",
 		calculatorParams,
@@ -177,7 +177,7 @@ func main() {
 		"required": []string{"text", "format"},
 	}
 
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"format_text",
 		"Formats text in various ways: uppercase, lowercase, reverse, or title case",
 		textFormatterParams,
@@ -207,7 +207,7 @@ func main() {
 		"required": []string{"location"},
 	}
 
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"get_weather",
 		"Gets simulated weather data for a given location. Returns temperature, condition, and humidity.",
 		weatherParams,
@@ -237,7 +237,7 @@ func main() {
 		"required": []string{"text", "count_type"},
 	}
 
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"count_text",
 		"Counts characters, words, sentences, or paragraphs in a given text",
 		stringCounterParams,
@@ -278,7 +278,7 @@ func main() {
 		fmt.Printf("--- Example %d ---\n", i+1)
 		fmt.Printf("You: %s\n\n", question)
 
-		answer, err := agent.Ask(ctx, question)
+		answer, err := mcpagent.RunText(ctx, agent, question)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)
 			continue

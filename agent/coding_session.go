@@ -213,7 +213,7 @@ func (s *fileCodingSessionStore) Delete(_ context.Context, conversationID string
 // conversationID is the durable identity of the chat; it doubles as the tmux
 // keep-alive session key. store may be nil for a fire-and-forget turn with no
 // persistence.
-func (a *Agent) ContinueConversation(ctx context.Context, conversationID, message string, store CodingSessionStore) (string, error) {
+func (a *Agent) continueConversation(ctx context.Context, conversationID, message string, store CodingSessionStore) (string, error) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return "", fmt.Errorf("ContinueConversation: conversationID is empty")
@@ -253,7 +253,7 @@ func (a *Agent) ContinueConversation(ctx context.Context, conversationID, messag
 	a.SessionID = conversationID
 	a.enablePersistentInteractiveForProvider()
 
-	answer, err := a.Ask(ctx, message)
+	answer, err := a.ask(ctx, message)
 	if err != nil {
 		return answer, err
 	}
@@ -314,7 +314,7 @@ func (a *Agent) setTurnInFlight(v bool) {
 
 // TurnInFlight reports whether a ContinueConversation turn is currently running
 // for this agent.
-func (a *Agent) TurnInFlight() bool {
+func (a *Agent) isTurnInFlight() bool {
 	a.turnInFlightMu.Lock()
 	defer a.turnInFlightMu.Unlock()
 	return a.turnInFlight
@@ -377,7 +377,7 @@ func (a *Agent) wantsStructuredTransport() bool {
 // process, so it must NOT be steered — Deliver queues for the next turn boundary
 // instead. This is why the check is transport-aware, not just contract-aware: the
 // same provider (e.g. Codex) is steerable on tmux but query-only on `--json`.
-func (a *Agent) SupportsSteering() bool {
+func (a *Agent) supportsSteering() bool {
 	if a.usesStructuredTransport() {
 		return false
 	}
@@ -440,7 +440,7 @@ func decideDelivery(turnInFlight, supportsSteering bool) deliveryDecision {
 //
 // Deliver is safe to call from a different goroutine than the one running the
 // in-flight turn — that is the point of steering while busy. It is ALSO safe
-// against two Deliver calls racing each other: the a.TurnInFlight() check
+// against two Deliver calls racing each other: the a.isTurnInFlight() check
 // below is only a fast-path hint (skip the attempt when we're confident it's
 // busy) — correctness comes from ContinueConversation's own atomic claim.
 // If two goroutines both see TurnInFlight()==false and both attempt to start
@@ -448,14 +448,14 @@ func decideDelivery(turnInFlight, supportsSteering bool) deliveryDecision {
 // ErrTurnAlreadyInFlight back and falls through to the normal steer/queue
 // path below using freshly-confirmed (not stale) in-flight state — it never
 // silently starts a second, overlapping turn.
-func (a *Agent) Deliver(ctx context.Context, conversationID, message string, store CodingSessionStore) (Delivered, error) {
+func (a *Agent) deliver(ctx context.Context, conversationID, message string, store CodingSessionStore) (Delivered, error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return Delivered{}, fmt.Errorf("Deliver: message is empty")
 	}
 
-	if !a.TurnInFlight() {
-		answer, err := a.ContinueConversation(ctx, conversationID, message, store)
+	if !a.isTurnInFlight() {
+		answer, err := a.continueConversation(ctx, conversationID, message, store)
 		if !errors.Is(err, ErrTurnAlreadyInFlight) {
 			return Delivered{Mode: DeliveryModeStartedTurn, Answer: answer}, err
 		}
@@ -463,9 +463,9 @@ func (a *Agent) Deliver(ctx context.Context, conversationID, message string, sto
 		// through to steer/queue below, now with certainty a turn is in flight.
 	}
 
-	switch decideDelivery(true, a.SupportsSteering()) {
+	switch decideDelivery(true, a.supportsSteering()) {
 	case decideSteer:
-		if _, err := a.DeliverUserMessage(ctx, UserMessageDeliveryRequest{
+		if _, err := a.deliverUserMessage(ctx, UserMessageDeliveryRequest{
 			SessionID: strings.TrimSpace(conversationID),
 			Message:   message,
 			Intent:    UserMessageDeliveryIntentAuto,
@@ -474,7 +474,7 @@ func (a *Agent) Deliver(ctx context.Context, conversationID, message string, sto
 		}
 		return Delivered{Mode: DeliveryModeSteered}, nil
 	default: // decideQueue
-		a.AddSteerMessage(message)
+		a.addSteerMessage(message)
 		return Delivered{Mode: DeliveryModeQueued}, nil
 	}
 }

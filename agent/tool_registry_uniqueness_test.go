@@ -12,7 +12,7 @@ func TestRegisterCustomToolRejectsMCPNameCollision(t *testing.T) {
 		toolToServer: map[string]string{"query_records": "database"},
 	}
 
-	err := agent.RegisterCustomTool("query_records", "direct", objectSchema(), noopTool, "workflow")
+	err := agent.registerCustomTool("query_records", "direct", objectSchema(), noopTool, "workflow")
 	if err == nil || !strings.Contains(err.Error(), `already registered by MCP server "database"`) {
 		t.Fatalf("RegisterCustomTool() error = %v, want MCP collision", err)
 	}
@@ -32,7 +32,7 @@ func TestRegisterCustomToolRejectsCategoryChangeWithoutReplacingOriginal(t *test
 		toolToServer: map[string]string{"query_records": "custom"},
 	}
 
-	err := agent.RegisterCustomTool("query_records", "replacement", objectSchema(), noopTool, "workflow")
+	err := agent.registerCustomTool("query_records", "replacement", objectSchema(), noopTool, "workflow")
 	if err == nil || !strings.Contains(err.Error(), `already registered in category "database"`) {
 		t.Fatalf("RegisterCustomTool() error = %v, want category collision", err)
 	}

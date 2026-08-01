@@ -75,7 +75,7 @@ func claudeBridgeAllowedToolIdentifiers(additional []string) []string {
 // The bridge exposes a small native tool set: execute_shell_command,
 // diff_patch_workspace_file, agent_browser, and get_api_spec. All other MCP
 // tools are discovered via get_api_spec and called through HTTP API endpoints.
-func (a *Agent) BuildBridgeMCPConfig() (string, error) {
+func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	logger := getLogger(a)
 
 	// 1. Resolve bridge binary path
@@ -332,7 +332,7 @@ func (a *Agent) lookupBridgeTool(name, toolType string, logger loggerv2.Logger) 
 		// even when the current provider path filtered virtual tools out of a.Tools.
 		// Recreate virtual definitions here so get_api_spec remains available while
 		// advanced/custom tools stay behind API discovery.
-		for _, tool := range a.CreateVirtualTools() {
+		for _, tool := range a.createVirtualTools() {
 			if tool.Function != nil && tool.Function.Name == name {
 				return marshalBridgeToolDef(name, tool.Function.Description, tool.Function.Parameters, toolType, logger)
 			}

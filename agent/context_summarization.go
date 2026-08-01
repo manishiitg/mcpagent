@@ -335,7 +335,7 @@ func rebuildMessagesWithSummary(
 
 	// Emit summarization started event only when we will actually summarize
 	startedEvent := events.NewContextSummarizationStartedEvent(len(messages), keepLastMessages, desiredSplitIndex)
-	a.EmitTypedEvent(ctx, startedEvent)
+	a.emitTypedEvent(ctx, startedEvent)
 
 	oldMessages := messages[:splitIndex]
 	recentMessages := messages[splitIndex:]
@@ -387,7 +387,7 @@ func rebuildMessagesWithSummary(
 	if err != nil {
 		// Emit error event
 		errorEvent := events.NewContextSummarizationErrorEvent(err.Error(), len(messages), keepLastMessages)
-		a.EmitTypedEvent(ctx, errorEvent)
+		a.emitTypedEvent(ctx, errorEvent)
 		return nil, fmt.Errorf("failed to summarize conversation history: %w", err)
 	}
 
@@ -454,7 +454,7 @@ func rebuildMessagesWithSummary(
 		cacheTokens,
 		reasoningTokens,
 	)
-	a.EmitTypedEvent(ctx, completedEvent)
+	a.emitTypedEvent(ctx, completedEvent)
 
 	return newMessages, nil
 }

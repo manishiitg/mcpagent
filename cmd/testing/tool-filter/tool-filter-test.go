@@ -741,7 +741,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, log loggerv2.
 	}
 
 	// Test discover_code_structure to verify filtering works in discovery
-	result, err := agentInstance.HandleVirtualTool(ctx, "discover_code_structure", map[string]interface{}{})
+	result, err := mcpagent.InvokeAgentVirtualTool(ctx, agentInstance, "discover_code_structure", map[string]interface{}{})
 	if err != nil {
 		log.Warn("Failed to call discover_code_structure", loggerv2.Error(err))
 		// Don't fail - discovery might fail if no generated code exists
@@ -859,7 +859,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 	log.Info("Normal mode: MCP tools registered", loggerv2.Int("count", normalMCPToolCount))
 
 	// Get discovery from code execution mode
-	discoveryResult, err := codeExecAgent.HandleVirtualTool(ctx, "discover_code_structure", map[string]interface{}{})
+	discoveryResult, err := mcpagent.InvokeAgentVirtualTool(ctx, codeExecAgent, "discover_code_structure", map[string]interface{}{})
 	if err != nil {
 		log.Warn("Failed to get discovery in code execution mode", loggerv2.Error(err))
 		return nil

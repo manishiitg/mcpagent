@@ -252,7 +252,7 @@ func (h *StreamHandler) handleQuestion(ctx context.Context, agentID string, ques
 // subscribeToEvents subscribes to the agent's streaming events
 func (h *StreamHandler) subscribeToEvents(ctx context.Context, agent *ManagedAgent) (<-chan *events.AgentEvent, func(), bool) {
 	// Try to get the streaming tracer if available
-	eventChan, unsubscribe, ok := agent.Agent.SubscribeToEvents(ctx)
+	eventChan, unsubscribe, ok := mcpagent.SubscribeAgentEvents(ctx, agent.Agent)
 	return eventChan, unsubscribe, ok
 }
 
@@ -525,24 +525,8 @@ func (h *StreamHandler) registerCustomTools(ctx context.Context, agent *ManagedA
 			}
 		}
 
-		// Determine category
-		category := toolDef.Category
-		if category == "" {
-			category = "custom"
-		}
-
-		// Register with the agent
-		err := agent.Agent.RegisterCustomTool(
-			toolDef.Name,
-			toolDef.Description,
-			toolDef.Parameters,
-			executionFunc,
-			category,
-		)
-		if err != nil {
-			h.logger.Error("Failed to register custom tool",
-				err,
-				loggerv2.String("tool", toolDef.Name))
-		}
+		// The immutable definition owns the schema and stable proxy executor.
+		// Each conversation only rebinds that proxy to its active gRPC stream.
+		agent.bindCustomTool(toolDef.Name, executionFunc)
 	}
 }

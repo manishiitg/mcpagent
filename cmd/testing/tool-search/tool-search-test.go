@@ -230,7 +230,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 	}
 
 	// Verify deferred tools count
-	deferredCount := agentInstance.GetDeferredToolCount()
+	deferredCount := mcpagent.AgentDeferredToolCount(agentInstance)
 	log.Info("Tool search mode: Deferred tools count", loggerv2.Int("count", deferredCount))
 
 	if deferredCount == 0 {
@@ -239,7 +239,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 
 	// Test search_tools handler
 	log.Info("Testing search_tools handler...")
-	result, err := agentInstance.HandleVirtualTool(ctx, "search_tools", map[string]interface{}{
+	result, err := mcpagent.InvokeAgentVirtualTool(ctx, agentInstance, "search_tools", map[string]interface{}{
 		"query": ".*", // Match all tools
 	})
 	if err != nil {
@@ -264,7 +264,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 			loggerv2.Any("fuzzy_used", searchResult.FuzzyUsed))
 
 		// Verify discovered tools count DID NOT increase (search only)
-		discoveredCount := agentInstance.GetDiscoveredToolCount()
+		discoveredCount := mcpagent.AgentDiscoveredToolCount(agentInstance)
 		log.Info("Tool search mode: Discovered tools count after search (should be 0)", loggerv2.Int("count", discoveredCount))
 
 		// Now test add_tool if we found any tools
@@ -272,7 +272,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 			toolToAdd := searchResult.Tools[0].Name
 			log.Info("Testing add_tool with found tool...", loggerv2.String("tool", toolToAdd))
 
-			_, err := agentInstance.HandleVirtualTool(ctx, "add_tool", map[string]interface{}{
+			_, err := mcpagent.InvokeAgentVirtualTool(ctx, agentInstance, "add_tool", map[string]interface{}{
 				"tool_names": []string{toolToAdd},
 			})
 			if err != nil {
@@ -280,7 +280,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 			}
 
 			// Verify discovered tools count increased
-			discoveredCountAfterAdd := agentInstance.GetDiscoveredToolCount()
+			discoveredCountAfterAdd := mcpagent.AgentDiscoveredToolCount(agentInstance)
 			log.Info("Tool search mode: Discovered tools count after add_tool", loggerv2.Int("count", discoveredCountAfterAdd))
 
 			if discoveredCountAfterAdd <= discoveredCount {
@@ -295,7 +295,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 	log.Info("Testing real agent conversation with tool search...")
 
 	// Ask a question that requires the LLM to search for and use tools
-	response, err := agentInstance.Ask(ctx, "Search for documentation tools, ADD one of them using add_tool(tool_names=[\"...\"]), and then tell me what you did. Use search_tools with query 'docs' to find them.")
+	response, err := mcpagent.RunText(ctx, agentInstance, "Search for documentation tools, ADD one of them using add_tool(tool_names=[\"...\"]), and then tell me what you did. Use search_tools with query 'docs' to find them.")
 	if err != nil {
 		log.Warn("Agent conversation failed", loggerv2.Error(err))
 		// Don't fail - this is an optional end-to-end test
@@ -307,7 +307,7 @@ func testToolSearchModeIntegration(config interface{}, log loggerv2.Logger) erro
 	}
 
 	// Check if tools were discovered during conversation
-	finalDiscoveredCount := agentInstance.GetDiscoveredToolCount()
+	finalDiscoveredCount := mcpagent.AgentDiscoveredToolCount(agentInstance)
 	log.Info("Final discovered tools count after conversation",
 		loggerv2.Int("count", finalDiscoveredCount))
 

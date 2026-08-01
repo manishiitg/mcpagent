@@ -66,7 +66,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		}
 	}
 
-	bridgeConfig, err := a.BuildBridgeMCPConfig()
+	bridgeConfig, err := a.buildBridgeMCPConfig()
 	if err != nil {
 		return nil, fmt.Errorf("Claude Code requires the MCP bridge: %w", err)
 	}
@@ -152,7 +152,7 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
 	}
 
-	bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig()
+	bridgeConfig, bridgeErr := a.buildBridgeMCPConfig()
 	if bridgeErr != nil {
 		return nil, fmt.Errorf("Codex CLI requires the MCP bridge: %w", bridgeErr)
 	}

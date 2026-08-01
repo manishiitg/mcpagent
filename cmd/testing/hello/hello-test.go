@@ -101,7 +101,7 @@ func TestHello(log loggerv2.Logger) error {
 	// Step 4: Send hello message
 	log.Info("--- Step 4: Send Hello Message ---")
 	startTime := time.Now()
-	response, err := agent.Ask(ctx, "Say hello in one short sentence.")
+	response, err := mcpagent.RunText(ctx, agent, "Say hello in one short sentence.")
 	duration := time.Since(startTime)
 	if err != nil {
 		return fmt.Errorf("agent.Ask failed: %w", err)
@@ -189,7 +189,7 @@ func TestMultiMCP(log loggerv2.Logger) error {
 
 	log.Info("Sending question", loggerv2.String("question", question))
 	startTime := time.Now()
-	response, err := agent.Ask(ctx, question)
+	response, err := mcpagent.RunText(ctx, agent, question)
 	duration := time.Since(startTime)
 
 	if err != nil {

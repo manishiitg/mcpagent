@@ -163,7 +163,7 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 		a.ModelID, string(a.provider), "retry", // Use "retry" phase to distinguish from actual fallbacks
 		false, delay, fmt.Sprintf("%s - retrying original model", errorType),
 	)
-	a.EmitTypedEvent(ctx, retryAttemptEvent)
+	a.emitTypedEvent(ctx, retryAttemptEvent)
 
 	var logMsg string
 	if errorType == "zero_candidates_error" {
@@ -534,7 +534,7 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 	*opts = append(*opts, llmtypes.WithStreamingChan(sm.streamChan))
 
 	if !sm.suppressEvents {
-		a.EmitTypedEvent(ctx, &events.StreamingStartEvent{
+		a.emitTypedEvent(ctx, &events.StreamingStartEvent{
 			BaseEventData: events.BaseEventData{Timestamp: time.Now()},
 			Model:         a.ModelID,
 			Provider:      string(a.provider),
@@ -598,7 +598,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				}
 
 				if !sm.suppressEvents {
-					a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+					a.emitTypedEvent(ctx, &events.StreamingChunkEvent{
 						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
 						Content:       chunk.Content,
 						ChunkIndex:    sm.contentChunkIndex,
@@ -637,7 +637,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				// disables per-token chat-content streaming. Without
 				// this, the terminal panel goes empty for every tmux
 				// coding-agent call.
-				a.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+				a.emitTypedEvent(ctx, &events.StreamingChunkEvent{
 					BaseEventData: events.BaseEventData{
 						Timestamp: time.Now(),
 						Metadata:  metadata,
@@ -667,7 +667,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				string(a.TraceID), string(a.TraceID),
 			)
 			toolStartEvent.ToolCallID = chunk.ToolCallID
-			a.EmitTypedEvent(ctx, toolStartEvent)
+			a.emitTypedEvent(ctx, toolStartEvent)
 
 		case llmtypes.StreamChunkTypeToolCallEnd:
 			sourceLabel := string(a.provider)
@@ -685,7 +685,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				a.ModelID,
 			)
 			toolEndEvent.ToolCallID = chunk.ToolCallID
-			a.EmitTypedEvent(ctx, toolEndEvent)
+			a.emitTypedEvent(ctx, toolEndEvent)
 
 			// Accumulate for conversation history reconstruction (all CLI providers).
 			sm.CLIToolCalls = append(sm.CLIToolCalls, chunk)
@@ -702,7 +702,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				// downstream consumers can target the exact pane instead of every
 				// terminal in the session.
 				tmuxSession, _ := chunk.StatusLine.Metadata["tmux_session"].(string)
-				a.EmitTypedEvent(ctx, &events.StreamingStatusLineEvent{
+				a.emitTypedEvent(ctx, &events.StreamingStatusLineEvent{
 					BaseEventData:            events.BaseEventData{Timestamp: time.Now()},
 					Provider:                 chunk.StatusLine.Provider,
 					Model:                    chunk.StatusLine.Model,
@@ -815,7 +815,7 @@ func (a *Agent) finishStreaming(ctx context.Context, sm *streamingManager, resp 
 			endEvent.CacheTokens = *genInfo.CachedContentTokens
 		}
 	}
-	a.EmitTypedEvent(ctx, endEvent)
+	a.emitTypedEvent(ctx, endEvent)
 }
 
 func terminalRetentionSecondsFromGenerationInfo(additional map[string]interface{}) int {
@@ -992,7 +992,7 @@ func (a *Agent) executeLLMForCodingAgentTransportLaunch(ctx context.Context, mod
 }
 
 func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
-	if bridgeConfig, bridgeErr := a.BuildBridgeMCPConfig(); bridgeErr == nil {
+	if bridgeConfig, bridgeErr := a.buildBridgeMCPConfig(); bridgeErr == nil {
 		opts = append(opts,
 			llm.WithPiMCPConfig(bridgeConfig),
 			llm.WithPiBridgeOnlyTools(true),
@@ -1142,7 +1142,7 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 // chunks are emitted through the agent's normal event listeners, but no
 // streaming_end event is emitted because this is an idle terminal warmup rather
 // than a completed generation turn.
-func (a *Agent) StartCodingAgentTransportSession(ctx context.Context) (*llmtypes.CodingProviderSessionHandle, error) {
+func (a *Agent) startCodingAgentTransportSession(ctx context.Context) (*llmtypes.CodingProviderSessionHandle, error) {
 	if a == nil {
 		return nil, fmt.Errorf("agent is nil")
 	}
@@ -1275,7 +1275,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	generationStartTime := time.Now()
 
 	// Emit start event
-	a.EmitTypedEvent(ctx, &events.LLMGenerationWithRetryEvent{
+	a.emitTypedEvent(ctx, &events.LLMGenerationWithRetryEvent{
 		BaseEventData: events.BaseEventData{Timestamp: generationStartTime},
 		Turn:          turn,
 		MaxRetries:    maxRetries,
@@ -1297,7 +1297,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 			// Emit fallback model used event
 			fallbackEvent := events.NewFallbackModelUsedEvent(turn, llmConfig.Primary.ModelID, model.ModelID, model.Provider, "fallback_chain", time.Since(generationStartTime))
-			a.EmitTypedEvent(ctx, fallbackEvent)
+			a.emitTypedEvent(ctx, fallbackEvent)
 
 			// Temporarily update agent's model ID for consistent event logging
 			// This is important because EmitTypedEvent uses a.ModelID in some places
@@ -1363,11 +1363,11 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 						model.ModelID, model.Provider, "fallback_chain",
 						true, time.Since(generationStartTime), "",
 					)
-					a.EmitTypedEvent(ctx, fallbackAttemptEvent)
+					a.emitTypedEvent(ctx, fallbackAttemptEvent)
 
 					// Emit model change event to track the permanent model change
 					modelChangeEvent := events.NewModelChangeEvent(turn, llmConfig.Primary.ModelID, model.ModelID, "fallback_success", model.Provider, time.Since(generationStartTime))
-					a.EmitTypedEvent(ctx, modelChangeEvent)
+					a.emitTypedEvent(ctx, modelChangeEvent)
 
 					// Update agent's config to use this working model as primary for future calls?
 					// The original code did: a.ModelID = fallbackModelID; a.LLM = fallbackLLM
@@ -1489,7 +1489,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					model.ModelID, model.Provider, "fallback_chain",
 					false, time.Since(generationStartTime), err.Error(),
 				)
-				a.EmitTypedEvent(ctx, failureEvent)
+				a.emitTypedEvent(ctx, failureEvent)
 			}
 
 			break // Break retry loop, proceed to next model
@@ -1506,6 +1506,6 @@ func (a *Agent) handleContextCancellation(ctx context.Context, turn int, startTi
 	if err == nil {
 		err = context.Canceled
 	}
-	a.EmitTypedEvent(ctx, events.NewContextCancelledEvent(turn, err.Error(), time.Since(startTime)))
+	a.emitTypedEvent(ctx, events.NewContextCancelledEvent(turn, err.Error(), time.Since(startTime)))
 	return err
 }

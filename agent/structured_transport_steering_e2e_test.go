@@ -49,7 +49,7 @@ func buildStructuredBridgeAgent(ctx context.Context, tc structuredTransportProvi
 		return nil, nil, err
 	}
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
-	if regErr := agent.RegisterCustomTool(
+	if regErr := agent.registerCustomTool(
 		"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
@@ -109,7 +109,7 @@ func TestStructuredTransportDeliverQueuesMidTurn(t *testing.T) {
 			defer cleanup()
 
 			signal := newFirstToolCallSignal()
-			agent.AddEventListener(signal)
+			agent.addEventListener(signal)
 			store := NewMemoryCodingSessionStore()
 
 			type turnResult struct {
@@ -118,7 +118,7 @@ func TestStructuredTransportDeliverQueuesMidTurn(t *testing.T) {
 			}
 			done := make(chan turnResult, 1)
 			go func() {
-				ans, aerr := agent.ContinueConversation(ctx, convID,
+				ans, aerr := agent.continueConversation(ctx, convID,
 					"Run exactly this one shell command and wait for it: sleep 25 && echo COMMAND_DONE. "+
 						"When it finishes, report the word it printed, then stop.", store)
 				done <- turnResult{answer: ans, err: aerr}
@@ -131,13 +131,13 @@ func TestStructuredTransportDeliverQueuesMidTurn(t *testing.T) {
 			case <-time.After(5 * time.Minute):
 				t.Fatalf("timed out waiting for the first tool call to start the structured turn")
 			}
-			if !agent.TurnInFlight() {
+			if !agent.isTurnInFlight() {
 				t.Fatalf("turn is not marked in flight at the tool-call boundary")
 			}
 			time.Sleep(2 * time.Second)
 
 			// THE ASSERTION: on a structured transport this must QUEUE, not steer.
-			delivered, err := agent.Deliver(ctx, convID,
+			delivered, err := agent.deliver(ctx, convID,
 				fmt.Sprintf("Additional instruction: in your final reply, also include the exact word %s on its own line.", queuedWord),
 				store)
 			if err != nil {
@@ -169,7 +169,7 @@ func TestStructuredTransportDeliverQueuesMidTurn(t *testing.T) {
 			// This is the transport-accurate integrity check (a tmux steer, by
 			// contrast, would have landed the word live in the running pane). Found
 			// live: real Codex structured consumed it this turn (case a).
-			drained := agent.DrainSteerMessages()
+			drained := agent.drainSteerMessages()
 			inAnswer := strings.Contains(answer, queuedWord)
 			inBuffer := false
 			for _, m := range drained {

@@ -11,7 +11,7 @@ import (
 func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
 	agent := &Agent{provider: llm.ProviderOpenAI, ModelID: "gpt-5"}
 
-	result, err := agent.DeliverUserMessage(context.Background(), UserMessageDeliveryRequest{
+	result, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
 		SessionID: "session-1",
 		Message:   "remember this",
 		Intent:    UserMessageDeliveryIntentAuto,
@@ -22,7 +22,7 @@ func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
 	if result.DeliveryStatus != UserMessageDeliveryStatusQueuedForInjection {
 		t.Fatalf("status = %q, want %q", result.DeliveryStatus, UserMessageDeliveryStatusQueuedForInjection)
 	}
-	got := agent.DrainSteerMessages()
+	got := agent.drainSteerMessages()
 	if len(got) != 1 || got[0] != "remember this" {
 		t.Fatalf("queued messages = %#v", got)
 	}
@@ -30,7 +30,7 @@ func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
 
 func TestDeliverUserMessageRejectsEmptyMessage(t *testing.T) {
 	agent := &Agent{provider: llm.ProviderOpenAI, ModelID: "gpt-5"}
-	_, err := agent.DeliverUserMessage(context.Background(), UserMessageDeliveryRequest{
+	_, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
 		SessionID: "session-1",
 		Message:   " ",
 		Intent:    UserMessageDeliveryIntentAuto,

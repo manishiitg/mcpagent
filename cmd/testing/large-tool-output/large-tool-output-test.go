@@ -131,7 +131,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 	}
 
 	// Set lower threshold for testing
-	handler := ag.GetToolOutputHandler()
+	handler := mcpagent.AgentToolOutput(ag)
 	if handler != nil {
 		handler.SetThreshold(threshold)
 		log.Info("✅ Set large output threshold",
@@ -153,7 +153,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 		loggerv2.String("question", question1))
 
 	startTime := time.Now()
-	response1, err := ag.Ask(ctx, question1)
+	response1, err := mcpagent.RunText(ctx, ag, question1)
 	duration1 := time.Since(startTime)
 
 	if err != nil {
@@ -172,7 +172,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 		loggerv2.String("question", question2))
 
 	startTime = time.Now()
-	response2, err := ag.Ask(ctx, question2)
+	response2, err := mcpagent.RunText(ctx, ag, question2)
 	duration2 := time.Since(startTime)
 
 	if err != nil {
@@ -191,7 +191,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 		loggerv2.String("question", question3))
 
 	startTime = time.Now()
-	response3, err := ag.Ask(ctx, question3)
+	response3, err := mcpagent.RunText(ctx, ag, question3)
 	duration3 := time.Since(startTime)
 
 	if err != nil {
@@ -211,7 +211,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 			loggerv2.String("question", question4))
 
 		startTime = time.Now()
-		response4, err := ag.Ask(ctx, question4)
+		response4, err := mcpagent.RunText(ctx, ag, question4)
 		duration4 := time.Since(startTime)
 
 		if err != nil {
@@ -230,7 +230,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 			loggerv2.String("question", question5))
 
 		startTime = time.Now()
-		response5, err := ag.Ask(ctx, question5)
+		response5, err := mcpagent.RunText(ctx, ag, question5)
 		duration5 := time.Since(startTime)
 
 		if err != nil {
@@ -298,7 +298,7 @@ func registerLargeOutputTool(agent *mcpagent.Agent, log loggerv2.Logger) error {
 	}
 
 	// Register the tool
-	return agent.RegisterCustomTool(
+	return mcpagent.AddDefinitionTool(agent,
 		"generate_large_output",
 		"Generates large output for testing large tool output handling. Use this tool to test the large output file writing feature.",
 		map[string]interface{}{

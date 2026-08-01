@@ -110,7 +110,7 @@ func buildRealBridgeAgent(ctx context.Context, tc multiTurnProviderCase, tmpBase
 		return nil, nil, err
 	}
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
-	if regErr := agent.RegisterCustomTool(
+	if regErr := agent.registerCustomTool(
 		"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
@@ -208,10 +208,10 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 			}
 			defer cleanup()
 			listener := &recordingAgentEventListener{}
-			agent.AddEventListener(listener)
+			agent.addEventListener(listener)
 
 			// Turn 1 — read the build id through the real shell tool.
-			ans1, err := agent.Ask(ctx, fmt.Sprintf(
+			ans1, err := agent.ask(ctx, fmt.Sprintf(
 				"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly: cat %s\nReply with the build id it printed (you do not otherwise know it).", buildIDPath))
 			if err != nil {
 				t.Fatalf("turn 1: %v", err)
@@ -228,7 +228,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 
 			// Turn 2 — SAME session; carry the turn-1 build id into a real file write.
 			turn2Start := time.Now()
-			ans2, err := agent.Ask(ctx, fmt.Sprintf(
+			ans2, err := agent.ask(ctx, fmt.Sprintf(
 				"Using the build id from the previous step, use execute_shell_command to write a GitHub-flavored markdown table to %s with a header row and the rows '| build_id | <that build id> |' and '| status | ok |'. Then run: cat %s and reply with its contents.", reportPath, reportPath))
 			if err != nil {
 				t.Fatalf("turn 2: %v", err)
@@ -340,8 +340,8 @@ func TestRealBridgeStreamingConcurrent(t *testing.T) {
 					}
 					defer cleanup()
 					listener := &recordingAgentEventListener{}
-					agent.AddEventListener(listener)
-					ans, askErr := agent.Ask(ctx, fmt.Sprintf(
+					agent.addEventListener(listener)
+					ans, askErr := agent.ask(ctx, fmt.Sprintf(
 						"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly: cat %s\nReply with the build id it printed.", w.buildIDPath))
 					if askErr != nil {
 						results[i] = result{err: askErr}

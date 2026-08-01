@@ -206,7 +206,7 @@ func main() {
 		llmModel,
 		configPath,
 		mcpagent.WithLogger(agentLogger),
-		mcpagent.WithCodeExecutionMode(true),        // Enable code execution mode
+		mcpagent.WithCodeExecutionMode(true), // Enable code execution mode
 		mcpagent.WithAPIConfig(apiBaseURL, apiToken), // Pass API URL and auth token
 	)
 	if err != nil {
@@ -237,7 +237,7 @@ func main() {
 		"required": []string{"location"},
 	}
 
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"get_weather",
 		"Gets simulated weather data for a given location. Returns temperature, condition, and humidity.",
 		weatherParams,
@@ -256,7 +256,7 @@ func main() {
 		fmt.Sprintf("MCP_API_URL=%s", apiBaseURL),
 		fmt.Sprintf("MCP_API_TOKEN=%s", apiToken),
 	)
-	err = agent.RegisterCustomTool(
+	err = mcpagent.AddDefinitionTool(agent,
 		"execute_shell_command",
 		codeexec.ShellCommandDescription,
 		codeexec.ShellCommandParams,
@@ -299,7 +299,7 @@ func main() {
 		conversationHistory = append(conversationHistory, userMessage)
 
 		// Get answer with conversation history
-		answer, updatedHistory, err := agent.AskWithHistory(ctx, conversationHistory)
+		answer, updatedHistory, err := mcpagent.RunHistory(ctx, agent, conversationHistory)
 		if err != nil {
 			agentLogger.Error("Failed to get answer from agent", err)
 			fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)
@@ -343,4 +343,3 @@ func weatherTool(ctx context.Context, args map[string]interface{}) (string, erro
 
 	return fmt.Sprintf("Weather for %s: %.1f%s, sunny, humidity 50%%", location, temp, unitSymbol), nil
 }
-

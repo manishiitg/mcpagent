@@ -282,7 +282,7 @@ Then describe the available endpoints and what parameters they accept for "react
 
 	// Execute query
 	startTime := time.Now()
-	response, err := agent.Ask(ctx, query)
+	response, err := mcpagent.RunText(ctx, agent, query)
 	duration := time.Since(startTime)
 
 	if err != nil {

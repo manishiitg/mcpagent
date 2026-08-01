@@ -30,12 +30,6 @@ func (a *Agent) attachSkill(skill *llmtypes.Skill) {
 	a.attachedSkills = append(a.attachedSkills, skill)
 }
 
-// AttachSkill is retained while chat/server skill selection moves into
-// AgentDefinition. Workflow orchestrators no longer use it.
-func (a *Agent) AttachSkill(skill *llmtypes.Skill) {
-	a.attachSkill(skill)
-}
-
 // AttachedSkills returns the current list of skills attached to this
 // agent. Transports read this at session launch (and at resume) to
 // decide what to project to disk or list in the system prompt. The

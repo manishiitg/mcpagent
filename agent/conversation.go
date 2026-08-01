@@ -91,7 +91,7 @@ func injectSteerMessages(ctx context.Context, a *Agent, messages []llmtypes.Mess
 			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sm}},
 		})
 		// Emit a standard user_message event so the UI shows the steer exactly when it is picked up.
-		a.EmitTypedEvent(ctx, events.NewUserMessageEvent(turn+1, sm, "user"))
+		a.emitTypedEvent(ctx, events.NewUserMessageEvent(turn+1, sm, "user"))
 		getLogger(a).Info(logMessage, loggerv2.Int("turn", turn+1))
 	}
 	return messages
@@ -399,7 +399,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Emit cache operation start event through agent event system (frontend visible)
 		cacheStartEvent := events.NewCacheOperationStartEvent("all-servers", "conversation_cache_validation")
-		a.EmitTypedEvent(ctx, cacheStartEvent)
+		a.emitTypedEvent(ctx, cacheStartEvent)
 
 		// Also emit to tracers for observability (Langfuse, etc.)
 		mcpcache.EmitComprehensiveCacheEvent(
@@ -469,7 +469,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Emit user message event - this will appear in basic events (user_message is not in ADVANCED_MODE_EVENTS)
 	userMessageEvent := events.NewUserMessageEvent(0, userMessageForEvent, "user")
-	a.EmitTypedEvent(ctx, userMessageEvent)
+	a.emitTypedEvent(ctx, userMessageEvent)
 	v2Logger.Debug("🔄 Emitted user_message event for first user message",
 		loggerv2.String("content", userMessageForEvent),
 		loggerv2.Int("content_length", len(userMessageForEvent)))
@@ -507,7 +507,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Emit conversation start event with correlation (child of agent start)
 	conversationStartEvent := events.NewConversationStartEventWithCorrelation(lastUserMessage, effectivePrompt, len(a.Tools), serverList, traceID, agentStartEventID)
-	a.EmitTypedEvent(ctx, conversationStartEvent)
+	a.emitTypedEvent(ctx, conversationStartEvent)
 
 	// Store conversation start event ID for correlation
 	// conversationStartEventID := conversationStartEvent.EventID
@@ -543,7 +543,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		tokenCount = a.toolOutputHandler.CountTokensForModel(effectivePrompt, a.ModelID)
 	}
 	systemPromptEvent := events.NewSystemPromptEventWithTokens(effectivePrompt, 0, tokenCount)
-	a.EmitTypedEvent(ctx, systemPromptEvent)
+	a.emitTypedEvent(ctx, systemPromptEvent)
 
 	// Loop detection: track recent tool calls and responses to detect infinite loops
 	loopDetector := NewToolLoopDetector(DefaultLoopDetectionThreshold)
@@ -830,7 +830,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		tools := events.ConvertToolsToToolInfo(a.filteredTools, a.toolToServer)
 		conversationTurnEvent := events.NewConversationTurnEvent(turn+1, lastMessage, len(llmMessages), false, 0, tools, llmMessages)
-		a.EmitTypedEvent(ctx, conversationTurnEvent)
+		a.emitTypedEvent(ctx, conversationTurnEvent)
 
 		// NEW: Start LLM generation for hierarchy tracking
 		a.startLLMGeneration(ctx)
@@ -904,7 +904,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				agentCtx.Err().Error(),
 				time.Since(conversationStartTime),
 			)
-			a.EmitTypedEvent(ctx, cancellationEvent)
+			a.emitTypedEvent(ctx, cancellationEvent)
 			return "", messages, fmt.Errorf("conversation cancelled after LLM generation: %w", agentCtx.Err())
 		}
 
@@ -952,7 +952,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						genErr.Error(),
 						time.Since(conversationStartTime),
 					)
-					a.EmitTypedEvent(ctx, cancellationEvent)
+					a.emitTypedEvent(ctx, cancellationEvent)
 					return "", messages, fmt.Errorf("conversation cancelled: %w", genErr)
 				}
 
@@ -961,10 +961,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// error events and let the orchestrator decide based on final session state.
 				if !isTmuxLossContinuationError(genErr) {
 					llmErrorEvent := events.NewLLMGenerationErrorEvent(turn+1, a.ModelID, genErr.Error(), time.Since(llmStartTime))
-					a.EmitTypedEvent(ctx, llmErrorEvent)
+					a.emitTypedEvent(ctx, llmErrorEvent)
 
 					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, genErr.Error(), turn+1, "conversation_error", time.Since(conversationStartTime))
-					a.EmitTypedEvent(ctx, conversationErrorEvent)
+					a.emitTypedEvent(ctx, conversationErrorEvent)
 				}
 
 				return "", messages, fmt.Errorf("llm error: %w", genErr)
@@ -974,7 +974,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 			// 🎯 FIX: End the trace for error cases - replaced with event emission
 			conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "no response choices returned", turn+1, "no_choices", time.Since(conversationStartTime))
-			a.EmitTypedEvent(ctx, conversationErrorEvent)
+			a.emitTypedEvent(ctx, conversationErrorEvent)
 
 			return "", messages, fmt.Errorf("no response choices returned")
 		}
@@ -1039,7 +1039,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					return "", messages, parallelErr
 				}
 				// Drain and inject any pending steer messages from the user
-				if steerMsgs := a.DrainSteerMessages(); len(steerMsgs) > 0 {
+				if steerMsgs := a.drainSteerMessages(); len(steerMsgs) > 0 {
 					messages = injectSteerMessages(ctx, a, messages, steerMsgs, turn, "Injected steer message after parallel tool execution")
 				}
 				// After parallel execution, continue to next turn
@@ -1054,7 +1054,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					v2Logger.Error("AskWithHistory Early return: invalid tool call: nil function call", nil)
 
 					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "invalid tool call: nil function call", turn+1, "invalid_tool_call", time.Since(conversationStartTime))
-					a.EmitTypedEvent(ctx, conversationErrorEvent)
+					a.emitTypedEvent(ctx, conversationErrorEvent)
 
 					return "", messages, err
 				}
@@ -1086,7 +1086,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}, serverName, traceID, traceID) // Using traceID for both traceID and parentID correlation
 				toolStartEvent.ToolCallID = tc.ID
 
-				a.EmitTypedEvent(ctx, toolStartEvent)
+				a.emitTypedEvent(ctx, toolStartEvent)
 
 				// 🔧 ENHANCED: Check for empty tool name and provide feedback to LLM for self-correction
 				if tc.FunctionCall.Name == "" {
@@ -1100,7 +1100,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Emit tool call error event for observability (after tool start event)
 					toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", "empty tool name", "", time.Since(conversationStartTime))
 					toolNameErrorEvent.ToolCallID = tc.ID
-					a.EmitTypedEvent(ctx, toolNameErrorEvent)
+					a.emitTypedEvent(ctx, toolNameErrorEvent)
 
 					// Add feedback to conversation so LLM can correct itself
 					toolName := ""
@@ -1124,7 +1124,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Emit tool call error event for observability
 					toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
 					toolArgsParsingErrorEvent.ToolCallID = tc.ID
-					a.EmitTypedEvent(ctx, toolArgsParsingErrorEvent)
+					a.emitTypedEvent(ctx, toolArgsParsingErrorEvent)
 
 					// Add feedback to conversation so LLM can correct itself
 					messages = append(messages, llmtypes.MessageContent{
@@ -1207,7 +1207,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						// Emit tool call error event for observability
 						toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
 						toolNotFoundEvent.ToolCallID = tc.ID
-						a.EmitTypedEvent(ctx, toolNotFoundEvent)
+						a.emitTypedEvent(ctx, toolNotFoundEvent)
 
 						// Add feedback to conversation so LLM can correct itself
 						messages = append(messages, llmtypes.MessageContent{
@@ -1224,7 +1224,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							err,
 							loggerv2.String("server", mappedServerName))
 						conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("failed to create on-demand connection for server %s: %v", mappedServerName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
-						a.EmitTypedEvent(ctx, conversationErrorEvent)
+						a.emitTypedEvent(ctx, conversationErrorEvent)
 						return "", messages, fmt.Errorf("failed to create on-demand connection for server %s: %w", mappedServerName, err)
 					}
 
@@ -1256,7 +1256,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						fmt.Sprintf("cancelled before tool execution: %s", tc.FunctionCall.Name),
 						time.Since(conversationStartTime),
 					)
-					a.EmitTypedEvent(ctx, cancellationEvent)
+					a.emitTypedEvent(ctx, cancellationEvent)
 					return "", messages, fmt.Errorf("conversation cancelled before tool execution: %w", agentCtx.Err())
 				}
 
@@ -1327,7 +1327,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Debug: Log the connection cache hit event structure
 					v2Logger.Debug("Connection cache hit")
 
-					a.EmitTypedEvent(ctx, connectionCacheHitEvent)
+					a.emitTypedEvent(ctx, connectionCacheHitEvent)
 
 				}
 
@@ -1337,7 +1337,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				toolCtx = context.WithValue(toolCtx, ToolExecutionAgentKey, a)
 				toolCtx = context.WithValue(toolCtx, ToolExecutionTurnKey, turn+1)
 				toolCtx = context.WithValue(toolCtx, ToolExecutionServerKey, serverName)
-				toolCtx = context.WithValue(toolCtx, ToolExecutionLLMConfigKey, a.GetLLMModelConfig())
+				toolCtx = context.WithValue(toolCtx, ToolExecutionLLMConfigKey, a.getLLMModelConfig())
 
 				// Apply per-tool argument transformer if registered.
 				// This runs BEFORE any execution branch (virtual → custom → MCP) so all paths
@@ -1366,7 +1366,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Handle virtual tool execution
 					v2Logger.Debug("🔧 [TOOL_CALL] Executing virtual tool",
 						loggerv2.String("tool_name", tc.FunctionCall.Name))
-					resultText, toolErr := a.HandleVirtualTool(toolCtx, tc.FunctionCall.Name, args)
+					resultText, toolErr := a.handleVirtualTool(toolCtx, tc.FunctionCall.Name, args)
 					if toolErr != nil {
 						result = &mcp.CallToolResult{
 							IsError: true,
@@ -1390,7 +1390,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						if a.UseToolSearchMode && tc.FunctionCall.Name == "add_tool" {
 							a.filteredTools = a.getToolsForToolSearchMode()
 							v2Logger.Debug("🔍 [TOOL_SEARCH] Tools refreshed after add_tool",
-								loggerv2.Int("discovered_count", a.GetDiscoveredToolCount()),
+								loggerv2.Int("discovered_count", a.getDiscoveredToolCount()),
 								loggerv2.Int("total_available", len(a.filteredTools)))
 						}
 					}
@@ -1512,7 +1512,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						// Emit tool call error event using typed event data
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
 						toolErrorEvent.ToolCallID = tc.ID
-						a.EmitTypedEvent(ctx, toolErrorEvent)
+						a.emitTypedEvent(ctx, toolErrorEvent)
 
 						// Instead of failing the entire conversation, provide feedback to the LLM
 						errorResultText := fmt.Sprintf("Tool execution failed - %v", toolErr)
@@ -1593,7 +1593,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							// Emit context offloading detection event
 							detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
 							detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
-							a.EmitTypedEvent(ctx, detectedEvent)
+							a.emitTypedEvent(ctx, detectedEvent)
 
 							// Offload large output to filesystem (context offloading)
 							filePath, writeErr := a.toolOutputHandler.WriteToolOutputToFile(resultText, tc.FunctionCall.Name)
@@ -1603,7 +1603,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 								// Emit successful file write event with preview
 								fileWrittenEvent := events.NewLargeToolOutputFileWrittenEvent(tc.FunctionCall.Name, filePath, len(resultText), preview)
-								a.EmitTypedEvent(ctx, fileWrittenEvent)
+								a.emitTypedEvent(ctx, fileWrittenEvent)
 
 								// Create message with file path, first 50% of threshold, and instructions
 								fileMessage := a.toolOutputHandler.CreateToolOutputMessageWithPreview(tc.ID, filePath, resultText, 50, false)
@@ -1614,7 +1614,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							} else {
 								// Emit file write error event
 								fileErrorEvent := events.NewLargeToolOutputFileWriteErrorEvent(tc.FunctionCall.Name, writeErr.Error(), len(resultText))
-								a.EmitTypedEvent(ctx, fileErrorEvent)
+								a.emitTypedEvent(ctx, fileErrorEvent)
 							}
 						}
 					}
@@ -1673,7 +1673,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// Only emit ToolCallEndEvent if result is not an error (errors should emit ToolCallErrorEvent)
 				if result == nil || !result.IsError {
 					// Get current token usage information for the tool call end event
-					_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.GetTokenUsageWithPricing()
+					_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.getTokenUsageWithPricing()
 					a.tokenTrackingMutex.RLock()
 					modelContextWindow := a.modelContextWindow
 					contextWindowUsage := a.currentContextWindowUsage
@@ -1682,13 +1682,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Emit tool call end event using typed event data (consolidated - contains all tool information)
 					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
 					toolEndEvent.ToolCallID = tc.ID
-					a.EmitTypedEvent(ctx, toolEndEvent)
+					a.emitTypedEvent(ctx, toolEndEvent)
 				} else if result.IsError {
 					// Result contains an error - emit tool call error event
 					// This handles the case where tool execution succeeded but the tool returned an error result
 					toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration)
 					toolErrorEvent.ToolCallID = tc.ID
-					a.EmitTypedEvent(ctx, toolErrorEvent)
+					a.emitTypedEvent(ctx, toolErrorEvent)
 				}
 
 				// Note: Removed redundant tool_output and tool_response events
@@ -1705,7 +1705,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			}
 
 			// Drain and inject any pending steer messages from the user
-			if steerMsgs := a.DrainSteerMessages(); len(steerMsgs) > 0 {
+			if steerMsgs := a.drainSteerMessages(); len(steerMsgs) > 0 {
 				messages = injectSteerMessages(ctx, a, messages, steerMsgs, turn, "Injected steer message after sequential tool execution")
 			}
 
@@ -1788,7 +1788,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 				messages = append(messages, assistantMessage)
 			}
-			if steerMsgs := a.DrainSteerMessages(); len(steerMsgs) > 0 {
+			if steerMsgs := a.drainSteerMessages(); len(steerMsgs) > 0 {
 				messages = injectSteerMessages(ctx, a, messages, steerMsgs, turn, "Injected steer message after final assistant response")
 				continue
 			}
@@ -1807,7 +1807,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				turn+1,                            // turns
 			)
 			a.annotateUnifiedCompletionEvent(unifiedCompletionEvent)
-			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
+			a.emitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
 			a.endAgentSession(ctx, time.Since(conversationStartTime))
@@ -1822,7 +1822,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Emit max turns reached event
 	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.MaxTurns, a.MaxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far. If your task is not complete, please provide a summary of what you have accomplished so far and what is missing.", string(a.AgentMode), time.Since(conversationStartTime))
-	a.EmitTypedEvent(ctx, maxTurnsEvent)
+	a.emitTypedEvent(ctx, maxTurnsEvent)
 
 	// Note: Context summarization is now only triggered based on token usage percentage,
 	// not when max turns is reached. Token-based summarization is checked before each LLM call.
@@ -1842,7 +1842,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Emit user message event for the final request
 	finalUserMessageEvent := events.NewUserMessageEvent(a.MaxTurns+1, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", "user")
-	a.EmitTypedEvent(ctx, finalUserMessageEvent)
+	a.emitTypedEvent(ctx, finalUserMessageEvent)
 
 	// Make one final LLM call to get the final answer
 	var finalResp *llmtypes.ContentResponse
@@ -1927,7 +1927,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			Context:  "conversation",
 			Duration: time.Since(conversationStartTime),
 		}
-		a.EmitTypedEvent(ctx, conversationErrorEvent)
+		a.emitTypedEvent(ctx, conversationErrorEvent)
 
 		if lastResponse != "" {
 			v2Logger.Debug("Forced FINAL_ANSWER due to max turns")
@@ -1946,7 +1946,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				a.MaxTurns+1,                      // turns (+1 for the final turn)
 			)
 			a.annotateUnifiedCompletionEvent(unifiedCompletionEvent)
-			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
+			a.emitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
 			a.endAgentSession(ctx, time.Since(conversationStartTime))
@@ -1967,7 +1967,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// 🎯 FIX: End the trace for max turns error - replaced with event emission
 		maxTurnsErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("max turns (%d) reached without final answer", a.MaxTurns), a.MaxTurns+1, "max_turns_exceeded", time.Since(conversationStartTime))
-		a.EmitTypedEvent(ctx, maxTurnsErrorEvent)
+		a.emitTypedEvent(ctx, maxTurnsErrorEvent)
 
 		return "", messages, fmt.Errorf("max turns (%d) reached without final answer", a.MaxTurns)
 	}
@@ -1977,7 +1977,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// 🎯 FIX: End the trace for final call error - replaced with event emission
 		finalCallErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "final call returned no response choices", a.MaxTurns+1, "no_final_choices", time.Since(conversationStartTime))
-		a.EmitTypedEvent(ctx, finalCallErrorEvent)
+		a.emitTypedEvent(ctx, finalCallErrorEvent)
 
 		return "", messages, fmt.Errorf("final call returned no response choices")
 	}
@@ -2003,7 +2003,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		a.MaxTurns+1,                      // turns (+1 for the final turn)
 	)
 	a.annotateUnifiedCompletionEvent(unifiedCompletionEvent)
-	a.EmitTypedEvent(ctx, unifiedCompletionEvent)
+	a.emitTypedEvent(ctx, unifiedCompletionEvent)
 
 	// NEW: End agent session for hierarchy tracking
 	a.endAgentSession(ctx, time.Since(conversationStartTime))

@@ -104,7 +104,7 @@ func TestStructuredTransportSystemPromptSurvivesNewAgent(t *testing.T) {
 			}
 			defer agent.Close()
 
-			answer, err := agent.Ask(ctx, "What is your secret codeword?")
+			answer, err := agent.ask(ctx, "What is your secret codeword?")
 			if err != nil {
 				t.Fatalf("agent.Ask: %v", err)
 			}
@@ -174,7 +174,7 @@ func TestStructuredTransportSkillsSurviveNewAgent(t *testing.T) {
 			defer agent.Close()
 
 			shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
-			if regErr := agent.RegisterCustomTool(
+			if regErr := agent.registerCustomTool(
 				"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 				func(ctx context.Context, args map[string]interface{}) (string, error) {
 					return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
@@ -189,7 +189,7 @@ func TestStructuredTransportSkillsSurviveNewAgent(t *testing.T) {
 				Content:     "# Canary Skill\n\nWhen asked for the canary skill's secret phrase, reply with ONLY this exact word: " + canary,
 			})
 
-			answer, err := agent.Ask(ctx, "Read the canary-skill skill and tell me its secret phrase.")
+			answer, err := agent.ask(ctx, "Read the canary-skill skill and tell me its secret phrase.")
 			if err != nil {
 				t.Fatalf("agent.Ask: %v", err)
 			}

@@ -21,7 +21,7 @@ type VirtualTool struct {
 }
 
 // CreateVirtualTools creates virtual tools for prompt and resource access
-func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
+func (a *Agent) createVirtualTools() []llmtypes.Tool {
 	var virtualTools []llmtypes.Tool
 
 	// Check if MCP servers exist - get_prompt and get_resource require MCP servers
@@ -116,7 +116,7 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 	// In code execution mode, context offloading tools are not needed
 	// (the LLM writes code that calls HTTP endpoints directly)
 	if !a.UseCodeExecutionMode {
-		largeOutputTools := a.CreateLargeOutputVirtualTools()
+		largeOutputTools := a.createLargeOutputVirtualTools()
 		virtualTools = append(virtualTools, largeOutputTools...)
 	}
 
@@ -155,7 +155,7 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 }
 
 // HandleVirtualTool handles virtual tool execution
-func (a *Agent) HandleVirtualTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
+func (a *Agent) handleVirtualTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	switch toolName {
 	case "get_prompt":
 		return a.handleGetPrompt(ctx, args)
@@ -174,7 +174,7 @@ func (a *Agent) HandleVirtualTool(ctx context.Context, toolName string, args map
 	default:
 		// Check if it's a context offloading virtual tool
 		if a.EnableContextOffloading {
-			return a.HandleLargeOutputVirtualTool(ctx, toolName, args)
+			return a.handleLargeOutputVirtualTool(ctx, toolName, args)
 		}
 		return "", fmt.Errorf("unknown virtual tool: %s", toolName)
 	}

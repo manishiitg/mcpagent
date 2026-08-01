@@ -148,7 +148,7 @@ func main() {
 	agentLogger.Info("Multi-MCP server task started", loggerv2.Field{Key: "task", Value: task})
 
 	// Step 9: Ask the agent to perform the task using multiple MCP servers
-	answer, err := agent.Ask(ctx, task)
+	answer, err := mcpagent.RunText(ctx, agent, task)
 	if err != nil {
 		agentLogger.Error("Failed to get answer from agent", err)
 		fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)
@@ -166,7 +166,7 @@ func main() {
 }
 
 func printTokenUsage(agent *mcpagent.Agent) {
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := agent.GetTokenUsage()
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := mcpagent.AgentTokenUsage(agent)
 
 	fmt.Println("\n=== Token Usage ===")
 	fmt.Printf("Prompt tokens: %d\n", promptTokens)

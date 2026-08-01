@@ -83,11 +83,6 @@ func (a *Agent) currentAgentSessionHandle() *AgentSessionHandle {
 	return handle
 }
 
-// CurrentAgentSessionHandle is retained for the legacy chat persistence path.
-func (a *Agent) CurrentAgentSessionHandle() *AgentSessionHandle {
-	return a.currentAgentSessionHandle()
-}
-
 // ApplyAgentSessionHandle restores provider-native continuation state from a
 // persisted handle. It intentionally does not restart providers itself; the next
 // generation call uses the restored state to construct provider options.
@@ -122,19 +117,13 @@ func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
 	}
 }
 
-// ApplyAgentSessionHandle is retained for chat-history restoration while that
-// path moves the handle into RuntimeConfig/Turn construction.
-func (a *Agent) ApplyAgentSessionHandle(handle *AgentSessionHandle) {
-	a.applyAgentSessionHandle(handle)
-}
-
 // ContinueAgentSessionWithHistory applies the handle and runs the normal agent
 // loop with caller-owned history. For provider-native coding agents the
 // provider layer still receives only the latest user message; mcpagent keeps the
 // full history for UI/persistence and API-backed providers.
 func (a *Agent) continueAgentSessionWithHistory(ctx context.Context, handle *AgentSessionHandle, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, *AgentSessionHandle, error) {
 	a.applyAgentSessionHandle(handle)
-	answer, history, err := a.AskWithHistory(ctx, messages)
+	answer, history, err := a.askWithHistory(ctx, messages)
 	if err != nil {
 		return answer, history, a.currentAgentSessionHandle(), err
 	}

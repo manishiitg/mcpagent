@@ -170,7 +170,7 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 
 	// Run the agent - it should use MCP tools
 	startTime := time.Now()
-	response, err := ag.Ask(ctx, question)
+	response, err := mcpagent.RunText(ctx, ag, question)
 	duration := time.Since(startTime)
 
 	if err != nil {

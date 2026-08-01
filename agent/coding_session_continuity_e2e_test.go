@@ -63,7 +63,7 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 			store := NewFileCodingSessionStore(t.TempDir())
 
 			// --- turn 1: state the code word (no tools; pure conversation memory) ---
-			ans1, err := agent.ContinueConversation(ctx,
+			ans1, err := agent.continueConversation(ctx,
 				convID,
 				fmt.Sprintf("Please remember this code word for later: %s. Just reply OK — do not write it anywhere.", codeWord),
 				store)
@@ -90,7 +90,7 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 			}
 
 			// --- turn 2: recall the code word — only native --resume can supply it ---
-			ans2, err := agent.ContinueConversation(ctx,
+			ans2, err := agent.continueConversation(ctx,
 				convID,
 				"What was the exact code word I asked you to remember earlier? Reply with ONLY that word.",
 				store)

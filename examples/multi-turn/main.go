@@ -105,7 +105,7 @@ func main() {
 		conversationHistory = append(conversationHistory, userMessage)
 
 		// Ask the agent with conversation history
-		answer, updatedHistory, err := agent.AskWithHistory(ctx, conversationHistory)
+		answer, updatedHistory, err := mcpagent.RunHistory(ctx, agent, conversationHistory)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)
 			os.Exit(1)
@@ -127,7 +127,7 @@ func main() {
 }
 
 func printTokenUsage(agent *mcpagent.Agent) {
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := agent.GetTokenUsage()
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := mcpagent.AgentTokenUsage(agent)
 
 	fmt.Println("\n=== Token Usage ===")
 	fmt.Printf("Prompt tokens: %d\n", promptTokens)

@@ -63,7 +63,7 @@ func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, 
 		t.Fatalf("NewAgent: %v", err)
 	}
 
-	answer, err := agent.Ask(ctx, "Remember this fact for later in our conversation: my project's codename is "+canary+". Just acknowledge briefly that you'll remember it.")
+	answer, err := agent.ask(ctx, "Remember this fact for later in our conversation: my project's codename is "+canary+". Just acknowledge briefly that you'll remember it.")
 	if err != nil {
 		agent.Close()
 		t.Fatalf("agent.Ask: %v", err)
@@ -129,7 +129,7 @@ func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, 
 		Role:  llmtypes.ChatMessageTypeHuman,
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Answer ONLY from our earlier conversation — do NOT run any tool or command. What was the project codename I told you to remember? Reply with ONLY the codename."}},
 	})
-	resumedAnswer, _, err := agent2.AskWithHistory(ctx, resumedMessages)
+	resumedAnswer, _, err := agent2.askWithHistory(ctx, resumedMessages)
 	if err != nil {
 		t.Logf("[best-effort] resume turn errored (not a convrecord defect — round-trip already proven hard above): %v", err)
 		return

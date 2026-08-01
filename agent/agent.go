@@ -1011,8 +1011,9 @@ type Agent struct {
 	// Tool output cleanup configuration
 	ToolOutputRetentionPeriod     time.Duration // How long to keep tool output files (0 = use default, default: 7 days)
 	CleanupToolOutputOnSessionEnd bool          // Whether to clean up current session folder on session end
+	cleanupMu                     sync.Mutex    // Protects cleanup routine lifecycle fields
 	cleanupTicker                 *time.Ticker  // Ticker for periodic cleanup of old tool output files
-	cleanupDone                   chan bool     // Channel to signal cleanup routine to stop
+	cleanupDone                   chan struct{} // Closed to signal the cleanup routine to stop
 
 	// Context summarization configuration (see context_summarization.go)
 	EnableContextSummarization     bool    // Enable context summarization feature
@@ -1090,7 +1091,8 @@ type Agent struct {
 	lastToolCallRecordedAt time.Time
 
 	// Custom tools that are handled as virtual tools
-	customTools map[string]CustomTool
+	customTools        map[string]CustomTool
+	definitionAssembly *DefinitionAssembly
 
 	// toolRegistry is the canonical name-keyed source used by discovery and
 	// routing. Legacy maps remain temporary projections while callers migrate.
@@ -1303,7 +1305,7 @@ type AgentAzureConfig = llm.AzureAPIConfig
 
 // AddSteerMessage queues a user message to be injected into the conversation
 // between tool results and the next LLM call. Thread-safe — called by HTTP handlers.
-func (a *Agent) AddSteerMessage(msg string) {
+func (a *Agent) addSteerMessage(msg string) {
 	a.steerMu.Lock()
 	defer a.steerMu.Unlock()
 	a.pendingSteerMessages = append(a.pendingSteerMessages, msg)
@@ -1311,7 +1313,7 @@ func (a *Agent) AddSteerMessage(msg string) {
 
 // DrainSteerMessages returns and clears all pending steer messages.
 // Thread-safe — called by the agent loop in conversation.go.
-func (a *Agent) DrainSteerMessages() []string {
+func (a *Agent) drainSteerMessages() []string {
 	a.steerMu.Lock()
 	defer a.steerMu.Unlock()
 	if len(a.pendingSteerMessages) == 0 {
@@ -1323,30 +1325,25 @@ func (a *Agent) DrainSteerMessages() []string {
 }
 
 // GetProvider returns the provider
-func (a *Agent) GetProvider() llm.Provider {
+func (a *Agent) getProvider() llm.Provider {
 	return a.provider
 }
 
 // GetToolOutputHandler returns the tool output handler
-func (a *Agent) GetToolOutputHandler() *ToolOutputHandler {
+func (a *Agent) getToolOutputHandler() *ToolOutputHandler {
 	return a.toolOutputHandler
-}
-
-// GetToolToServer returns the tool to server mapping
-func (a *Agent) GetToolToServer() map[string]string {
-	return a.toolToServer
 }
 
 // SetProvider is retained for legacy synthetic-agent tests. Production
 // construction sets provider through RuntimeConfig/LLM configuration.
-func (a *Agent) SetProvider(provider llm.Provider) {
+func (a *Agent) setProvider(provider llm.Provider) {
 	a.provider = provider
 }
 
 // GetLLMModelConfig returns the agent's primary LLM configuration as an LLMModel.
 // If LLMConfig.Primary is set (via WithLLMConfig), it's returned directly.
 // Otherwise, constructs one from the legacy provider/ModelID/APIKeys fields.
-func (a *Agent) GetLLMModelConfig() LLMModel {
+func (a *Agent) getLLMModelConfig() LLMModel {
 	if a.LLMConfig.Primary.Provider != "" {
 		return a.LLMConfig.Primary
 	}
@@ -1384,14 +1381,14 @@ func (a *Agent) GetLLMModelConfig() LLMModel {
 }
 
 // SetToolOutputHandler sets the tool output handler
-func (a *Agent) SetToolOutputHandler(handler *ToolOutputHandler) {
+func (a *Agent) setToolOutputHandler(handler *ToolOutputHandler) {
 	a.toolOutputHandler = handler
 }
 
 // SetFolderGuardPaths sets the folder guard paths for code execution validation
 // readPaths: paths allowed for read operations (workspace package read functions)
 // writePaths: paths allowed for write operations (workspace package write functions)
-func (a *Agent) SetFolderGuardPaths(readPaths, writePaths []string) {
+func (a *Agent) setFolderGuardPaths(readPaths, writePaths []string) {
 	a.FolderGuardReadPaths = readPaths
 	a.FolderGuardWritePaths = writePaths
 	if a.Logger != nil {
@@ -1399,11 +1396,6 @@ func (a *Agent) SetFolderGuardPaths(readPaths, writePaths []string) {
 			loggerv2.Any("read_paths", readPaths),
 			loggerv2.Any("write_paths", writePaths))
 	}
-}
-
-// GetFolderGuardPaths returns the folder guard paths
-func (a *Agent) GetFolderGuardPaths() (readPaths, writePaths []string) {
-	return a.FolderGuardReadPaths, a.FolderGuardWritePaths
 }
 
 // extractModelIDFromLLM extracts the model ID from the LLM instance
@@ -1512,7 +1504,6 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		LargeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
 		ToolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
 		CleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
-		cleanupDone:                   make(chan bool, 1),               // Initialize cleanup done channel (buffered to prevent blocking/leaks)
 		EnableContextSummarization:    false,                            // Default to disabled
 		SummarizeOnTokenThreshold:     false,                            // Default to disabled
 		TokenThresholdPercent:         0.8,                              // Default to 80% if enabled
@@ -1971,7 +1962,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	// Add virtual tools to the LLM tools list
-	virtualTools := ag.CreateVirtualTools()
+	virtualTools := ag.createVirtualTools()
 
 	// Safety net: Ensure CLI provider modes are correct before virtual tool filtering.
 	// The primary pre-detection is above (before MCP tool filtering at allMCPToolDefs).
@@ -2063,7 +2054,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			// Create a closure that captures the tool name and agent reference
 			virtualToolExecutors[toolName] = func(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
 				return func(ctx context.Context, args map[string]interface{}) (string, error) {
-					return ag.HandleVirtualTool(ctx, name, args)
+					return ag.handleVirtualTool(ctx, name, args)
 				}
 			}(toolName)
 		}
@@ -2299,7 +2290,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 func (a *Agent) startAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
 	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode, a.UseToolSearchMode)
-	a.EmitTypedEvent(ctx, agentStartEvent)
+	a.emitTypedEvent(ctx, agentStartEvent)
 }
 
 // StartLLMGeneration marks the start of an LLM generation call.
@@ -2309,7 +2300,7 @@ func (a *Agent) startAgentSession(ctx context.Context) {
 func (a *Agent) startLLMGeneration(ctx context.Context) {
 	// Emit LLM generation start event to create hierarchy
 	llmStartEvent := events.NewLLMGenerationStartEvent(0, a.ModelID, a.Temperature, len(a.filteredTools), 0)
-	a.EmitTypedEvent(ctx, llmStartEvent)
+	a.emitTypedEvent(ctx, llmStartEvent)
 }
 
 // calculateCostFromTokens calculates the cost for tokens based on model metadata
@@ -2580,7 +2571,7 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 		}
 	}
 
-	a.EmitTypedEvent(ctx, llmEndEvent)
+	a.emitTypedEvent(ctx, llmEndEvent)
 }
 
 // emitTotalTokenUsageEvent emits a total token usage event with all cumulative metrics
@@ -2664,7 +2655,7 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	// Set agent mode information
 	totalTokenEvent.SetAgentMode(string(a.AgentMode), a.UseCodeExecutionMode, a.UseToolSearchMode)
 
-	a.EmitTypedEvent(ctx, totalTokenEvent)
+	a.emitTypedEvent(ctx, totalTokenEvent)
 
 	// Log total token usage summary at Info level for visibility
 	logger := getLogger(a)
@@ -2701,7 +2692,7 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 
 // GetTokenUsage returns the current cumulative token usage metrics
 // Returns: promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount
-func (a *Agent) GetTokenUsage() (promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) {
+func (a *Agent) getTokenUsage() (promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) {
 	a.tokenTrackingMutex.RLock()
 	defer a.tokenTrackingMutex.RUnlock()
 
@@ -2719,7 +2710,7 @@ func (a *Agent) GetTokenUsage() (promptTokens, completionTokens, totalTokens, ca
 // Returns: promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount,
 //
 //	inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextUsagePercent
-func (a *Agent) GetTokenUsageWithPricing() (
+func (a *Agent) getTokenUsageWithPricing() (
 	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int,
 	inputCost, outputCost, reasoningCost, cacheCost, totalCost float64,
 	contextUsagePercent float64,
@@ -2822,7 +2813,7 @@ func (a *Agent) endAgentSession(ctx context.Context, conversationDuration time.D
 	a.emitTotalTokenUsageEvent(ctx, conversationDuration)
 
 	// Read cumulative token metrics for agent_end event
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := a.GetTokenUsage()
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := a.getTokenUsage()
 
 	// Emit agent end event with token usage information
 	agentEndEvent := events.NewAgentEndEventWithTokens(
@@ -2837,7 +2828,7 @@ func (a *Agent) endAgentSession(ctx context.Context, conversationDuration time.D
 		llmCallCount,
 		cacheEnabledCallCount,
 	)
-	a.EmitTypedEvent(ctx, agentEndEvent)
+	a.emitTypedEvent(ctx, agentEndEvent)
 
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
@@ -2914,13 +2905,23 @@ func (a *Agent) startCleanupRoutine() {
 		retentionPeriod = DefaultToolOutputRetentionPeriod
 	}
 
-	// Create ticker for periodic cleanup (default: every hour)
-	a.cleanupTicker = time.NewTicker(DefaultToolOutputCleanupInterval)
+	// Capture lifecycle state in locals so Close never races with the goroutine
+	// while detaching the Agent's cleanup fields.
+	a.cleanupMu.Lock()
+	if a.cleanupTicker != nil {
+		a.cleanupMu.Unlock()
+		return
+	}
+	ticker := time.NewTicker(DefaultToolOutputCleanupInterval)
+	done := make(chan struct{})
+	a.cleanupTicker = ticker
+	a.cleanupDone = done
+	a.cleanupMu.Unlock()
 
 	go func() {
 		for {
 			select {
-			case <-a.cleanupTicker.C:
+			case <-ticker.C:
 				// Perform periodic cleanup
 				if a.toolOutputHandler != nil && retentionPeriod > 0 {
 					if err := a.toolOutputHandler.CleanupOldFiles(retentionPeriod); err != nil {
@@ -2931,7 +2932,7 @@ func (a *Agent) startCleanupRoutine() {
 						a.Logger.Debug("Periodic cleanup of old tool output files completed", loggerv2.Any("retention_period", retentionPeriod))
 					}
 				}
-			case <-a.cleanupDone:
+			case <-done:
 				if a.Logger != nil {
 					a.Logger.Debug("Tool output cleanup routine stopped")
 				}
@@ -2944,15 +2945,18 @@ func (a *Agent) startCleanupRoutine() {
 // stopCleanupRoutine stops the background cleanup routine.
 // This should be called when the agent is closed or session ends to prevent resource leaks.
 func (a *Agent) stopCleanupRoutine() {
-	if a.cleanupTicker != nil {
-		a.cleanupTicker.Stop()
-		a.cleanupTicker = nil
-		// Signal cleanup routine to stop (non-blocking)
-		select {
-		case a.cleanupDone <- true:
-		default:
-			// Channel already has a signal, skip
-		}
+	a.cleanupMu.Lock()
+	ticker := a.cleanupTicker
+	done := a.cleanupDone
+	a.cleanupTicker = nil
+	a.cleanupDone = nil
+	a.cleanupMu.Unlock()
+
+	if ticker != nil {
+		ticker.Stop()
+	}
+	if done != nil {
+		close(done)
 	}
 }
 
@@ -3015,8 +3019,7 @@ func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, configPath string, 
 	return NewAgent(ctx, llm, configPath, append(options, WithMode(SimpleAgent))...)
 }
 
-// AddEventListener adds an event listener to the agent
-func (a *Agent) AddEventListener(listener AgentEventListener) {
+func (a *Agent) addEventListener(listener AgentEventListener) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -3038,7 +3041,7 @@ func (a *Agent) AddEventListener(listener AgentEventListener) {
 }
 
 // RemoveEventListener removes an event listener from the agent
-func (a *Agent) RemoveEventListener(listener AgentEventListener) {
+func (a *Agent) removeEventListener(listener AgentEventListener) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -3079,7 +3082,7 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 // EmitTypedEvent sends a typed event to all tracers AND all listeners.
 // Thread-safe: uses eventMu to protect hierarchy state (currentParentEventID, currentHierarchyLevel)
 // which can be mutated concurrently during parallel tool execution.
-func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) {
+func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) {
 
 	// Lock eventMu to protect hierarchy state reads and writes
 	a.eventMu.Lock()
@@ -3194,16 +3197,6 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	}
 }
 
-// HandleEvent implements the WorkspaceEventEmitter interface for workspace tools.
-// This allows workspace tools to emit events when called via the agent conversation loop.
-// The workspace_tools.go file expects this interface to emit workspace_file_operation events.
-func (a *Agent) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
-	if event != nil && event.Data != nil {
-		a.EmitTypedEvent(ctx, event.Data)
-	}
-	return nil
-}
-
 // isStartOrEndEvent checks if an event type is a start or end event that needs correlation ID
 func isStartOrEndEvent(eventType events.EventType) bool {
 	return eventType == events.ConversationStart || eventType == events.ConversationEnd ||
@@ -3230,7 +3223,7 @@ func (a *Agent) getEventStream() (<-chan *events.AgentEvent, bool) {
 }
 
 // SubscribeToEvents allows external systems to subscribe to agent events
-func (a *Agent) SubscribeToEvents(ctx context.Context) (<-chan *events.AgentEvent, func(), bool) {
+func (a *Agent) subscribeToEvents(ctx context.Context) (<-chan *events.AgentEvent, func(), bool) {
 	if streamingTracer, hasStreaming := a.streamingTracer(); hasStreaming {
 		eventChan, unsubscribe := streamingTracer.SubscribeToEvents(ctx)
 		return eventChan, unsubscribe, true
@@ -3302,7 +3295,7 @@ func (a *Agent) Close() {
 // Returns:
 //   - string: The final text response from the agent.
 //   - error: An error if the interaction fails.
-func (a *Agent) Ask(ctx context.Context, question string) (string, error) {
+func (a *Agent) ask(ctx context.Context, question string) (string, error) {
 	// Create a single user message for the question
 	userMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeHuman,
@@ -3328,7 +3321,7 @@ func (a *Agent) Ask(ctx context.Context, question string) (string, error) {
 //   - string: The final text response from the agent.
 //   - []llmtypes.MessageContent: The updated conversation history (including the new response).
 //   - error: An error if the interaction fails.
-func (a *Agent) AskWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+func (a *Agent) askWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return AskWithHistory(a, ctx, messages)
 }
 
@@ -3381,7 +3374,7 @@ func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []l
 	}
 
 	// First, get the text response using the existing method
-	textResponse, updatedMessages, err := a.AskWithHistory(ctx, messages)
+	textResponse, updatedMessages, err := a.askWithHistory(ctx, messages)
 	if err != nil {
 		var zero T
 		return zero, updatedMessages, fmt.Errorf("failed to get text response: %w", err)
@@ -3427,11 +3420,10 @@ func AskWithHistoryStructuredViaTool[T any](
 		return askWithHistoryStructuredViaToolCLI[T](a, ctx, messages, toolName, toolDescription, schema)
 	}
 
-	// Parse schema string to get tool parameters
-	toolParams, err := parseSchemaForToolParameters(schema)
+	outputTool, err := NewStructuredOutputTool(toolName, toolDescription, schema)
 	if err != nil {
 		var zero StructuredOutputResult[T]
-		return zero, fmt.Errorf("failed to parse schema for tool parameters: %w", err)
+		return zero, err
 	}
 
 	// Create a cancellable context to break conversation as soon as tool is called
@@ -3441,28 +3433,34 @@ func AskWithHistoryStructuredViaTool[T any](
 	// Channel to signal that tool was called (thread-safe)
 	toolCalledChan := make(chan bool, 1)
 
-	// Register custom tool dynamically
-	// The execution function signals that tool was called and cancels the context to break immediately
-	executionFunc := func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Signal that tool was called (non-blocking)
-		select {
-		case toolCalledChan <- true:
-		default:
-		}
-		// Cancel the context to break the conversation immediately
-		cancelToolCalled()
-		// Return minimal message - we'll break immediately so this won't be processed
-		return "", nil
-	}
+	toolCalledCtx = context.WithValue(toolCalledCtx, structuredOutputSignalContextKey{}, structuredOutputSignal{
+		toolName: toolName,
+		called:   toolCalledChan,
+		cancel:   cancelToolCalled,
+	})
 
-	// Register with "structured_output" category so it's always available even in code execution mode
-	if err := a.RegisterCustomTool(toolName, toolDescription, toolParams, executionFunc, "structured_output"); err != nil {
-		var zero StructuredOutputResult[T]
-		return zero, fmt.Errorf("failed to register custom tool: %w", err)
+	// Immutable definitions must declare the completion tool during assembly.
+	// Keep dynamic registration only for legacy NewAgent callers that do not yet
+	// have an AgentDefinition.
+	if a.getCustomToolExecutor(toolName) == nil {
+		if a.definition != nil {
+			var zero StructuredOutputResult[T]
+			return zero, fmt.Errorf("structured output tool %q is not present in the immutable agent definition", toolName)
+		}
+		if err := a.registerCustomTool(
+			outputTool.Name,
+			outputTool.Description,
+			outputTool.InputSchema,
+			outputTool.Execute,
+			outputTool.DisplayGroup,
+		); err != nil {
+			var zero StructuredOutputResult[T]
+			return zero, fmt.Errorf("failed to register legacy structured output tool: %w", err)
+		}
 	}
 
 	// Call existing AskWithHistory - will break as soon as tool is called
-	textResponse, updatedMessages, err := a.AskWithHistory(toolCalledCtx, messages)
+	textResponse, updatedMessages, err := a.askWithHistory(toolCalledCtx, messages)
 
 	// Check if tool was called (non-blocking check)
 	toolCalled := false
@@ -3527,6 +3525,43 @@ func AskWithHistoryStructuredViaTool[T any](
 		StructuredResult:    structuredResult, // zero value
 		TextResponse:        textResponse,
 		Messages:            updatedMessages,
+	}, nil
+}
+
+type structuredOutputSignalContextKey struct{}
+
+type structuredOutputSignal struct {
+	toolName string
+	called   chan<- bool
+	cancel   context.CancelFunc
+}
+
+// NewStructuredOutputTool builds the immutable completion contract used by
+// AskWithHistoryStructuredViaTool. Factories add this definition before the
+// Agent is constructed instead of mutating its registry during a turn.
+func NewStructuredOutputTool(name, description, schema string) (ToolDefinition, error) {
+	params, err := parseSchemaForToolParameters(schema)
+	if err != nil {
+		return ToolDefinition{}, fmt.Errorf("parse structured output tool %q schema: %w", name, err)
+	}
+	return ToolDefinition{
+		Name:         name,
+		Description:  description,
+		InputSchema:  params,
+		DisplayGroup: "structured_output",
+		Execute: func(ctx context.Context, _ map[string]interface{}) (string, error) {
+			signal, ok := ctx.Value(structuredOutputSignalContextKey{}).(structuredOutputSignal)
+			if ok && signal.toolName == name {
+				select {
+				case signal.called <- true:
+				default:
+				}
+				if signal.cancel != nil {
+					signal.cancel()
+				}
+			}
+			return "", nil
+		},
 	}, nil
 }
 
@@ -3605,17 +3640,17 @@ func extractStructuredToolCall[T any](messages []llmtypes.MessageContent, toolNa
 }
 
 // GetServerNames returns the list of connected server names
-func (a *Agent) GetServerNames() []string {
+func (a *Agent) getServerNames() []string {
 	return getClientNames(a.Clients)
 }
 
 // GetConfiguredServerName is retained for legacy chat runtime persistence.
-func (a *Agent) GetConfiguredServerName() string {
+func (a *Agent) getConfiguredServerName() string {
 	return a.serverName
 }
 
 // GetSelectedTools is retained for legacy chat runtime persistence.
-func (a *Agent) GetSelectedTools() []string {
+func (a *Agent) getSelectedTools() []string {
 	return append([]string(nil), a.selectedTools...)
 }
 
@@ -3628,12 +3663,6 @@ func (a *Agent) setInstructions(systemPrompt string) {
 		a.Logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
 	}
 	a.hasCustomSystemPrompt = true
-}
-
-// SetInstructions is retained while the chat/server factory moves its prompt
-// assembly before construction. Workflow orchestrators no longer use it.
-func (a *Agent) SetInstructions(systemPrompt string) {
-	a.setInstructions(systemPrompt)
 }
 
 // appendBridgeRoutingInstructions appends the bridge-tool-routing block for
@@ -3659,11 +3688,6 @@ func (a *Agent) appendInstructions(instructions ...string) {
 	for _, additionalPrompt := range instructions {
 		a.addInstructions(additionalPrompt)
 	}
-}
-
-// AddInstructions is retained for the legacy chat/server assembly path.
-func (a *Agent) AddInstructions(instructions ...string) {
-	a.appendInstructions(instructions...)
 }
 
 func (a *Agent) addInstructions(additionalPrompt string) {
@@ -3719,11 +3743,6 @@ func (a *Agent) resetInstructions(base string, supplements ...string) {
 		a.addInstructions(supplement)
 	}
 	a.hasCustomSystemPrompt = true
-}
-
-// ResetInstructions is retained for the legacy chat/server assembly path.
-func (a *Agent) ResetInstructions(base string, supplements ...string) {
-	a.resetInstructions(base, supplements...)
 }
 
 // callerChain returns a compact "fn:line <- fn:line <- …" trace of the
@@ -3788,7 +3807,7 @@ func systemPromptPreview(s string) string {
 //
 // Returns:
 //   - error: An error if registration fails (e.g., empty category).
-func (a *Agent) RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category string) error {
+func (a *Agent) registerCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category string) error {
 	if a.customTools == nil {
 		a.customTools = make(map[string]CustomTool)
 	}
@@ -4060,7 +4079,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 //   - timeout: Per-tool timeout. 0 = no timeout (tool runs indefinitely). -1 = use agent default.
 //
 // GetCustomToolExecutor returns the current execution function for a custom tool, or nil if not found.
-func (a *Agent) GetCustomToolExecutor(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
+func (a *Agent) getCustomToolExecutor(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
 	if ct, exists := a.customTools[name]; exists {
 		return ct.Execution
 	}
@@ -4071,9 +4090,9 @@ func (a *Agent) GetCustomToolExecutor(name string) func(ctx context.Context, arg
 //
 // Returns:
 //   - error: An error if registration fails (e.g., missing category).
-func (a *Agent) RegisterCustomToolWithTimeout(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), timeout time.Duration, category string) error {
+func (a *Agent) registerCustomToolWithTimeout(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), timeout time.Duration, category string) error {
 	// First register the tool using the standard method
-	err := a.RegisterCustomTool(name, description, parameters, executionFunc, category)
+	err := a.registerCustomTool(name, description, parameters, executionFunc, category)
 	if err != nil {
 		return err
 	}
@@ -4123,11 +4142,6 @@ func (a *Agent) getCustomToolCategories() []string {
 	return categories
 }
 
-// GetCustomTools returns the registered custom tools
-func (a *Agent) GetCustomTools() map[string]CustomTool {
-	return a.customTools
-}
-
 // GetVirtualToolScopeID returns a unique scope key for this agent's virtual tools.
 // This prevents parent/child agents sharing the same SessionID from overwriting
 // each other's virtual tool handlers (e.g., get_api_spec bound to different agent instances).
@@ -4142,7 +4156,7 @@ func (a *Agent) virtualToolScopeID() string {
 
 // SetToolAccess is the single public tool-policy operation. Non-empty names
 // restrict discovery and execution; nil or empty restores every registered tool.
-func (a *Agent) SetToolAccess(toolNames []string) {
+func (a *Agent) setToolAccess(toolNames []string) {
 	a.toolAllowListMu.Lock()
 	defer a.toolAllowListMu.Unlock()
 	if len(toolNames) == 0 {
@@ -4223,12 +4237,6 @@ func (a *Agent) applyToolAllowList(tools []llmtypes.Tool) []llmtypes.Tool {
 // Instructions returns the exact instruction text the model receives.
 func (a *Agent) instructions() string {
 	return a.outgoingSystemPrompt()
-}
-
-// Instructions is retained for legacy diagnostics until callers use
-// Definition and structured turn diagnostics exclusively.
-func (a *Agent) Instructions() string {
-	return a.instructions()
 }
 
 // getGeneratedDir returns the path to the generated/ directory

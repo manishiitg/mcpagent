@@ -54,10 +54,12 @@ type MCPToolSource struct {
 // MCP sources owned by the immutable definition. It will disappear as those
 // knobs move behind Session and internal runtime services.
 type RuntimeConfig struct {
-	Model         llmtypes.Model
-	MCPConfigPath string
-	ResumeHandle  *AgentSessionHandle
-	LegacyOptions []AgentOption
+	Model                 llmtypes.Model
+	MCPConfigPath         string
+	ResumeHandle          *AgentSessionHandle
+	FolderGuardReadPaths  []string
+	FolderGuardWritePaths []string
+	LegacyOptions         []AgentOption
 }
 
 // NewAgentFromDefinition constructs an Agent from a validated, cloned identity.
@@ -94,6 +96,10 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 	if runtime.ResumeHandle != nil && !runtime.ResumeHandle.Empty() {
 		agent.applyAgentSessionHandle(runtime.ResumeHandle)
 	}
+	agent.setFolderGuardPaths(
+		append([]string(nil), runtime.FolderGuardReadPaths...),
+		append([]string(nil), runtime.FolderGuardWritePaths...),
+	)
 
 	for _, skill := range definition.Skills {
 		agent.attachSkill(skill)
@@ -103,7 +109,7 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 		if group == "" {
 			group = "custom"
 		}
-		if err := agent.RegisterCustomToolWithTimeout(
+		if err := agent.registerCustomToolWithTimeout(
 			tool.Name,
 			tool.Description,
 			tool.InputSchema,

@@ -83,7 +83,7 @@ func main() {
 	// Print initial state
 	fmt.Printf("\n=== Tool Search Mode Example ===\n")
 	fmt.Printf("Initial tools available: %d (should be 1 - just search_tools)\n", len(agent.Tools))
-	fmt.Printf("Deferred tools: %d (hidden until searched)\n", agent.GetDeferredToolCount())
+	fmt.Printf("Deferred tools: %d (hidden until searched)\n", mcpagent.AgentDeferredToolCount(agent))
 	fmt.Printf("================================\n\n")
 
 	// Step 6: Ask the agent a question
@@ -97,7 +97,7 @@ func main() {
 
 	fmt.Printf("Question: %s\n\n", question)
 
-	answer, err := agent.Ask(ctx, question)
+	answer, err := mcpagent.RunText(ctx, agent, question)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)
 		os.Exit(1)
@@ -110,7 +110,7 @@ func main() {
 
 	// Show discovered tools
 	fmt.Printf("\n=== Tool Discovery Stats ===\n")
-	fmt.Printf("Discovered tools: %d\n", agent.GetDiscoveredToolCount())
+	fmt.Printf("Discovered tools: %d\n", mcpagent.AgentDiscoveredToolCount(agent))
 	fmt.Printf("Total tools now available: %d\n", len(agent.Tools))
 	fmt.Printf("============================\n")
 }

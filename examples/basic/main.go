@@ -79,7 +79,7 @@ func main() {
 		question = os.Args[2]
 	}
 
-	answer, err := agent.Ask(ctx, question)
+	answer, err := mcpagent.RunText(ctx, agent, question)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get answer: %v\n", err)
 		os.Exit(1)
@@ -93,7 +93,7 @@ func main() {
 }
 
 func printTokenUsage(agent *mcpagent.Agent) {
-	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := agent.GetTokenUsage()
+	promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount := mcpagent.AgentTokenUsage(agent)
 
 	fmt.Println("\n=== Token Usage ===")
 	fmt.Printf("Prompt tokens: %d\n", promptTokens)

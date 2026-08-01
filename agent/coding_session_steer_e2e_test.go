@@ -84,7 +84,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			defer cleanup()
 
 			signal := newFirstToolCallSignal()
-			agent.AddEventListener(signal)
+			agent.addEventListener(signal)
 			store := NewMemoryCodingSessionStore()
 
 			// Start the turn: a long tool call holds it open long enough to steer into.
@@ -94,7 +94,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			}
 			done := make(chan turnResult, 1)
 			go func() {
-				ans, aerr := agent.ContinueConversation(ctx, convID,
+				ans, aerr := agent.continueConversation(ctx, convID,
 					"Run exactly this one shell command and wait for it: sleep 25 && echo COMMAND_DONE. "+
 						"When it finishes, report the word it printed, then stop.", store)
 				done <- turnResult{answer: ans, err: aerr}
@@ -107,13 +107,13 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			case <-time.After(3 * time.Minute):
 				t.Fatalf("timed out waiting for the first tool call to start the turn")
 			}
-			if !agent.TurnInFlight() {
+			if !agent.isTurnInFlight() {
 				t.Fatalf("turn is not marked in flight at the tool-call boundary")
 			}
 			time.Sleep(2 * time.Second)
 
 			// Steer a new instruction INTO the running turn via the library entry point.
-			delivered, err := agent.Deliver(ctx, convID,
+			delivered, err := agent.deliver(ctx, convID,
 				fmt.Sprintf("Additional instruction: in your final reply, also include the exact word %s on its own line.", steerWord),
 				store)
 			if err != nil {
