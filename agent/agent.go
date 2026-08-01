@@ -3975,6 +3975,23 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	}
 	toolCategory := category
 
+	// Tool names are the model-facing address. Reject collisions before touching
+	// any registry so a direct tool cannot replace an MCP tool, and a tool cannot
+	// silently move between legacy configuration categories. Re-registering the
+	// same direct tool in the same category remains supported during migration;
+	// several builder paths use that to refresh a session-aware executor.
+	if server, exists := a.toolToServer[name]; exists && server != "custom" {
+		return fmt.Errorf("tool name %q is already registered by MCP server %q", name, server)
+	}
+	if existing, exists := a.customTools[name]; exists && existing.Category != toolCategory {
+		return fmt.Errorf(
+			"tool name %q is already registered in category %q and cannot be registered in category %q",
+			name,
+			existing.Category,
+			toolCategory,
+		)
+	}
+
 	// Create the tool definition
 	tool := llmtypes.Tool{
 		Type: "function",
@@ -3983,24 +4000,6 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 			Description: description,
 			Parameters:  llmtypes.NewParameters(parameters),
 		},
-	}
-
-	// Tool names are the agent-facing address: get_api_spec resolves by name, and
-	// $MCP_CUSTOM/{tool_name} executes by name with no category segment. That
-	// makes uniqueness load-bearing, but a map assignment silently overwrites, so
-	// today it holds by accident rather than by enforcement.
-	//
-	// Only a *conflicting* re-registration is worth reporting. Re-registering the
-	// same tool under the same category is documented, intentional, and handled
-	// idempotently a few lines below — logging that as an error would fire on
-	// normal behaviour and drown the case that matters. A category change means
-	// two different tools are claiming one address, and the later silently wins.
-	if existing, exists := a.customTools[name]; exists && existing.Category != toolCategory && a.Logger != nil {
-		a.Logger.Error("conflicting custom tool registration — one name, two categories; the later one wins and the earlier becomes unreachable",
-			fmt.Errorf("tool %q re-registered under a different category", name),
-			loggerv2.String("tool", name),
-			loggerv2.String("previous_category", existing.Category),
-			loggerv2.String("new_category", toolCategory))
 	}
 
 	// Store both definition and execution function with category
