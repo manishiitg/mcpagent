@@ -54,9 +54,6 @@ func TestIsolatedWorkspaceNativeResumeAcrossTurns(t *testing.T) {
 				if _, err := exec.LookPath(tc.binary); err != nil {
 					t.Skipf("%s CLI required", tc.binary)
 				}
-				if tc.streamEnv != "" {
-					t.Setenv(tc.streamEnv, "1")
-				}
 				t.Setenv("MCP_BRIDGE_BINARY", ensureRealBridgeBinary(t))
 
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

@@ -87,6 +87,8 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	}
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithClaudeStructuredTransport(true))
+	} else if a.EnableStreaming {
+		opts = append(opts, llmproviders.WithClaudeStreamTranscript(true))
 	}
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
@@ -192,6 +194,8 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	a.Logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithCodexStructuredTransport(true))
+	} else if a.EnableStreaming {
+		opts = append(opts, llmproviders.WithCodexStreamTranscript(true))
 	}
 	return opts, nil
 }

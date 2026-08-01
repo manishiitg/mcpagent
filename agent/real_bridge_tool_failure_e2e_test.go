@@ -83,10 +83,6 @@ func TestRealBridgeStreamingToolFailureRecovery(t *testing.T) {
 			if _, err := exec.LookPath(tc.binary); err != nil {
 				t.Skipf("%s CLI required", tc.binary)
 			}
-			if tc.streamEnv != "" {
-				t.Setenv(tc.streamEnv, "1")
-			}
-
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 			defer cancel()
 
@@ -188,10 +184,6 @@ func TestRealBridgeStreamingToolFailureGiveUp(t *testing.T) {
 			if _, err := exec.LookPath(tc.binary); err != nil {
 				t.Skipf("%s CLI required", tc.binary)
 			}
-			if tc.streamEnv != "" {
-				t.Setenv(tc.streamEnv, "1")
-			}
-
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 			defer cancel()
 

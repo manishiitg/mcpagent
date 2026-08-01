@@ -196,16 +196,13 @@ func ensureRealBridgeBinary(t *testing.T) string {
 }
 
 // realBridgeProviderCase is one coding-agent provider exercised through the REAL
-// bridge. streamEnv is the transcript-streaming opt-in env var (empty when the
-// provider streams structured chunks natively, e.g. pi's markers). apiKeyEnvs, if
-// set, names the env vars to source the provider key from (pi); CLI-native-auth
-// providers (claude/codex/cursor) leave it empty.
+// bridge. apiKeyEnvs, if set, names the env vars to source the provider key from
+// (pi); CLI-native-auth providers (claude/codex/cursor) leave it empty.
 type realBridgeProviderCase struct {
 	name       string
 	provider   llm.Provider
 	modelID    string
 	cliBin     string
-	streamEnv  string
 	apiKeyEnvs []string
 	makeKeys   func(key string) *llm.ProviderAPIKeys
 	// strictBridgeOnly enforces the BRIDGE-ONLY tool policy: EVERY tool the model
@@ -264,17 +261,17 @@ type realBridgeProviderCase struct {
 //	                       ReadOnlyOptIn.
 func realBridgeProviderCases() []realBridgeProviderCase {
 	return []realBridgeProviderCase{
-		{name: "claude", provider: llm.ProviderClaudeCode, modelID: "claude-haiku-4-5", cliBin: "claude", streamEnv: "CLAUDE_CODE_STREAM_TRANSCRIPT", strictBridgeOnly: true},
+		{name: "claude", provider: llm.ProviderClaudeCode, modelID: "claude-haiku-4-5", cliBin: "claude", strictBridgeOnly: true},
 		// codex: strictBridgeOnly=false — functions.exec is unremovable; read-only
 		// sandbox makes it read-only so writes are bridge-routed (see policy above).
-		{name: "codex", provider: llm.ProviderCodexCLI, modelID: "gpt-5.6-luna", cliBin: "codex", streamEnv: "CODEX_CLI_STREAM_TRANSCRIPT", strictBridgeOnly: false},
+		{name: "codex", provider: llm.ProviderCodexCLI, modelID: "gpt-5.6-luna", cliBin: "codex", strictBridgeOnly: false},
 		// cursor reaches the bridge via its GetMcpTools/CallMcpTool meta-tools; the
 		// mcpagent cursor integration auto-approves the MCP bridge (WithCursorApproveMCPs).
-		{name: "cursor", provider: llm.ProviderCursorCLI, modelID: "cursor-cli", cliBin: "cursor-agent", streamEnv: "CURSOR_CLI_STREAM_TRANSCRIPT", strictBridgeOnly: true},
-		// pi streams structured chunks natively via its injected marker hook (no
-		// streamEnv) and needs a Gemini/Pi key.
+		{name: "cursor", provider: llm.ProviderCursorCLI, modelID: "cursor-cli", cliBin: "cursor-agent", strictBridgeOnly: true},
+		// pi streams structured chunks natively via its injected marker hook and
+		// needs a Gemini/Pi key.
 		{
-			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.5-flash", cliBin: "pi", streamEnv: "",
+			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.5-flash", cliBin: "pi",
 			apiKeyEnvs:       []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY"},
 			makeKeys:         func(k string) *llm.ProviderAPIKeys { return &llm.ProviderAPIKeys{PiCLI: &k} },
 			strictBridgeOnly: true,
@@ -318,9 +315,6 @@ func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	}
 
 	t.Setenv("MCP_BRIDGE_BINARY", bridgeBin)
-	if pc.streamEnv != "" {
-		t.Setenv(pc.streamEnv, "1")
-	}
 
 	configPath := filepath.Join(t.TempDir(), "mcp_servers.json")
 	if err := os.WriteFile(configPath, []byte(`{"mcpServers":{}}`), 0o600); err != nil {

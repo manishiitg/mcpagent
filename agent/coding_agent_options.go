@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -261,6 +262,8 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	}
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithCursorStructuredTransport(true))
+	} else if a.EnableStreaming {
+		opts = append(opts, llmproviders.WithCursorStreamTranscript(true))
 	}
 	return opts, nil
 }

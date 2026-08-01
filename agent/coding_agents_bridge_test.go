@@ -8,6 +8,8 @@ import (
 
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
@@ -292,6 +294,7 @@ func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T
 
 	agent := bridgeTestAgent()
 	agent.SessionID = "app-session"
+	agent.EnableStreaming = true
 
 	opts, err := agent.appendCursorCLIIntegrationOptions(nil)
 	if err != nil {
@@ -314,6 +317,9 @@ func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T
 	}
 	if got[cursorcli.MetadataKeyDenyBuiltinTools] != true {
 		t.Fatalf("Cursor deny-builtin metadata = %#v, want true", got[cursorcli.MetadataKeyDenyBuiltinTools])
+	}
+	if got[cursorcli.MetadataKeyStreamTranscript] != true {
+		t.Fatalf("Cursor transcript streaming metadata = %#v, want true", got[cursorcli.MetadataKeyStreamTranscript])
 	}
 	if _, ok := got[cursorcli.MetadataKeyForce]; ok {
 		t.Fatalf("Cursor force metadata should not be set when bridge is configured: %#v", got[cursorcli.MetadataKeyForce])
@@ -392,6 +398,7 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 	t.Setenv("CODING_AGENT_MCP_TOOL_TIMEOUT", "17m")
 
 	agent := bridgeTestAgent()
+	agent.EnableStreaming = true
 	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
 	if err != nil {
 		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
@@ -408,6 +415,77 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 	}
 	if overrides, ok := got[codexcli.MetadataKeyConfigOverrides].([]string); ok && strings.Contains(strings.Join(overrides, "\n"), "MCP_API_TOKEN") {
 		t.Fatalf("Codex config overrides leaked bridge credentials: %#v", overrides)
+	}
+	if got[codexcli.MetadataKeyStreamTranscript] != true {
+		t.Fatalf("Codex transcript streaming metadata = %#v, want true", got[codexcli.MetadataKeyStreamTranscript])
+	}
+}
+
+func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	tests := []struct {
+		name        string
+		metadataKey string
+		append      func(*Agent) ([]llmtypes.CallOption, error)
+	}{
+		{
+			name:        "claude",
+			metadataKey: claudecode.MetadataKeyStreamTranscript,
+			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
+				return agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
+			},
+		},
+		{
+			name:        "codex",
+			metadataKey: codexcli.MetadataKeyStreamTranscript,
+			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
+				return agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+			},
+		},
+		{
+			name:        "cursor",
+			metadataKey: cursorcli.MetadataKeyStreamTranscript,
+			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
+				return agent.appendCursorCLIIntegrationOptions(nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nonStreamingAgent := bridgeTestAgent()
+			opts, err := tt.append(nonStreamingAgent)
+			if err != nil {
+				t.Fatalf("append non-streaming options: %v", err)
+			}
+			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != nil {
+				t.Fatalf("non-streaming agent must not enable transcript tailing, got %#v", got)
+			}
+
+			tmuxAgent := bridgeTestAgent()
+			tmuxAgent.EnableStreaming = true
+			opts, err = tt.append(tmuxAgent)
+			if err != nil {
+				t.Fatalf("append tmux options: %v", err)
+			}
+			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != true {
+				t.Fatalf("tmux transcript metadata = %#v, want true", got)
+			}
+
+			structuredAgent := bridgeTestAgent()
+			structuredAgent.EnableStreaming = true
+			structuredAgent.CodingAgentTransport = llm.CodingAgentTransportStructured
+			opts, err = tt.append(structuredAgent)
+			if err != nil {
+				t.Fatalf("append structured options: %v", err)
+			}
+			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != nil {
+				t.Fatalf("structured transport must not enable transcript tailing, got %#v", got)
+			}
+		})
 	}
 }
 

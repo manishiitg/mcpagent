@@ -32,7 +32,6 @@ type multiTurnProviderCase struct {
 	binary        string
 	provider      llm.Provider
 	modelID       string
-	streamEnv     string
 	persistentOpt func(bool) AgentOption
 	// strictBridgeOnly mirrors realBridgeProviderCase's field of the same name
 	// (real_bridge_streaming_e2e_test.go): false ONLY for Codex, whose native
@@ -46,10 +45,10 @@ type multiTurnProviderCase struct {
 }
 
 var multiTurnProviderCases = []multiTurnProviderCase{
-	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", "CLAUDE_CODE_STREAM_TRANSCRIPT", WithClaudeCodePersistentInteractiveSession, true},
-	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", "CODEX_CLI_STREAM_TRANSCRIPT", WithCodexPersistentInteractiveSession, false},
-	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "cursor-cli", "CURSOR_CLI_STREAM_TRANSCRIPT", WithCursorPersistentInteractiveSession, true},
-	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.5-flash", "", WithPiPersistentInteractiveSession, true},
+	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", WithClaudeCodePersistentInteractiveSession, true},
+	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", WithCodexPersistentInteractiveSession, false},
+	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "cursor-cli", WithCursorPersistentInteractiveSession, true},
+	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.5-flash", WithPiPersistentInteractiveSession, true},
 }
 
 // closePersistentInteractiveSession tears down the provider's persistent tmux
@@ -187,10 +186,6 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 			if _, err := exec.LookPath(tc.binary); err != nil {
 				t.Skipf("%s CLI required", tc.binary)
 			}
-			if tc.streamEnv != "" {
-				t.Setenv(tc.streamEnv, "1")
-			}
-
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 			defer cancel()
 
@@ -296,10 +291,6 @@ func TestRealBridgeStreamingConcurrent(t *testing.T) {
 			if _, err := exec.LookPath(tc.binary); err != nil {
 				t.Skipf("%s CLI required", tc.binary)
 			}
-			if tc.streamEnv != "" {
-				t.Setenv(tc.streamEnv, "1")
-			}
-
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 			defer cancel()
 
