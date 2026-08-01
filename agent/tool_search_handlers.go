@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // ToolSearchResult represents a tool found during search

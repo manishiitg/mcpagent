@@ -854,6 +854,7 @@ type Agent struct {
 
 	// Enhanced tracking info
 	systemPrompt string
+	definition   *AgentDefinition
 	TraceID      observability.TraceID
 	configPath   string // Path to MCP config file for on-demand connections
 	serverName   string // Server name(s) to connect to (default: AllServers)
@@ -1091,6 +1092,11 @@ type Agent struct {
 	// Custom tools that are handled as virtual tools
 	customTools map[string]CustomTool
 
+	// toolRegistry is the canonical name-keyed source used by discovery and
+	// routing. Legacy maps remain temporary projections while callers migrate.
+	toolRegistry        *canonicalToolRegistry
+	canonicalRegistryMu sync.Mutex
+
 	// additionalBridgeTools are custom tool names exposed as NATIVE MCP bridge
 	// tools for THIS agent instance only, on top of the small fixed set in
 	// bridgeTools (execute_shell_command, diff_patch_workspace_file,
@@ -1324,16 +1330,6 @@ func (a *Agent) GetProvider() llm.Provider {
 // GetToolOutputHandler returns the tool output handler
 func (a *Agent) GetToolOutputHandler() *ToolOutputHandler {
 	return a.toolOutputHandler
-}
-
-// GetPrompts returns the prompts map
-func (a *Agent) GetPrompts() map[string][]mcp.Prompt {
-	return a.prompts
-}
-
-// GetResources returns the resources map
-func (a *Agent) GetResources() map[string][]mcp.Resource {
-	return a.resources
 }
 
 // GetToolToServer returns the tool to server mapping
@@ -1662,6 +1658,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Update the existing agent with connection data
 	ag.Clients = clients
 	ag.toolToServer = toolToServer
+	if err := ag.initializeCanonicalToolRegistry(allLLMTools, toolToServer); err != nil {
+		return nil, fmt.Errorf("initialize canonical tool registry: %w", err)
+	}
 	// Only take the connection-derived default system prompt when the caller
 	// didn't supply one via WithSystemPrompt/AddInstructions. Unconditionally
 	// overwriting here clobbered a caller's custom prompt (set by an AgentOption
@@ -1710,7 +1709,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Create unified ToolFilter for consistent filtering across both modes
 	// This filter is used by both LLM tool registration and discovery
-	customCategories := ag.GetCustomToolCategories()
+	customCategories := ag.getCustomToolCategories()
 	ag.toolFilter = NewToolFilter(
 		ag.selectedTools,
 		ag.selectedServers,
@@ -2964,106 +2963,6 @@ func (a *Agent) closeStreamingTracers() {
 	}
 }
 
-// RebuildSystemPromptWithFilteredServers rebuilds the system prompt with only prompts/resources from relevant servers
-func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, relevantServers []string) error {
-	logger := a.Logger
-	logger.Info("🔄 Rebuilding system prompt with filtered servers",
-		loggerv2.Any("relevant_servers", relevantServers),
-		loggerv2.Int("total_servers", len(a.Clients)))
-
-	// Get fresh prompts and resources from unified cache using simple server names
-	filteredPrompts := make(map[string][]mcp.Prompt)
-	filteredResources := make(map[string][]mcp.Resource)
-
-	// Load MCP configuration to get server configs for cache keys
-	config, err := mcpclient.LoadMergedConfig(a.configPath, logger)
-	if err != nil {
-		logger.Warn("Failed to load MCP config for cache lookup", loggerv2.Error(err))
-		return fmt.Errorf("failed to load MCP config: %w", err)
-	}
-
-	// Get cache manager
-	cacheManager := mcpcache.GetCacheManager(logger)
-
-	for _, serverName := range relevantServers {
-		// Get server configuration for this server
-		serverConfig, exists := config.MCPServers[serverName]
-		if !exists {
-			logger.Warn("Server configuration not found, skipping cache lookup", loggerv2.String("server", serverName))
-			continue
-		}
-
-		// Generate configuration-aware cache key
-		cacheKey := mcpcache.GenerateUnifiedCacheKey(serverName, serverConfig)
-
-		// Try to get cached data
-		cachedEntry, found := cacheManager.Get(cacheKey)
-		if !found {
-			logger.Debug("Cache miss for server", loggerv2.String("server", serverName))
-			continue
-		}
-
-		if cachedEntry != nil && cachedEntry.IsValid {
-			logger.Info("✅ Cache hit for server - using cached prompts and resources", loggerv2.String("server", serverName))
-
-			// Add cached prompts and resources to filtered collections
-			if len(cachedEntry.Prompts) > 0 {
-				filteredPrompts[serverName] = cachedEntry.Prompts
-			}
-			if len(cachedEntry.Resources) > 0 {
-				filteredResources[serverName] = cachedEntry.Resources
-			}
-		} else {
-			logger.Debug("Cache miss or invalid entry for server", loggerv2.String("server", serverName))
-		}
-	}
-
-	// Rebuild system prompt with filtered data
-	var toolStructureJSON string
-	if a.UseCodeExecutionMode {
-		toolStructure, err := a.buildToolIndex()
-		if err != nil {
-			if a.Logger != nil {
-				a.Logger.Warn("Failed to rebuild tool index after filtering", loggerv2.Error(err))
-			}
-		} else {
-			toolStructureJSON = toolStructure
-		}
-	}
-	// Get tool categories for tool search mode
-	var toolCategoriesFiltered []string
-	if a.UseToolSearchMode {
-		for serverName := range filteredPrompts {
-			toolCategoriesFiltered = append(toolCategoriesFiltered, serverName)
-		}
-	}
-
-	newSystemPrompt := prompt.BuildSystemPromptWithoutTools(
-		filteredPrompts,
-		filteredResources,
-		string(a.AgentMode),
-		a.DiscoverResource,
-		a.DiscoverPrompt,
-		a.UseCodeExecutionMode,
-		toolStructureJSON,
-		"", // preDiscoveredToolSpecs - not needed for tool refresh (already in prompt)
-		a.UseToolSearchMode,
-		toolCategoriesFiltered,
-		a.Logger,
-		a.EnableParallelToolExecution,
-	)
-
-	// Update the agent's system prompt
-	a.systemPrompt = newSystemPrompt
-
-	logger.Info("✅ System prompt rebuilt with filtered servers",
-		loggerv2.Int("filtered_prompts_count", len(filteredPrompts)),
-		loggerv2.Int("filtered_resources_count", len(filteredResources)),
-		loggerv2.Int("new_prompt_length", len(newSystemPrompt)))
-
-	return nil
-}
-
 // NewAgentWithObservability creates a new Agent with simplified observability defaults.
 //
 // Unlike NewAgent, this constructor automatically ensures a tracer is configured
@@ -3321,14 +3220,8 @@ func (a *Agent) streamingTracer() (StreamingTracer, bool) {
 	return nil, false
 }
 
-// HasStreamingCapability returns true if the agent supports event streaming
-func (a *Agent) HasStreamingCapability() bool {
-	_, hasStreaming := a.streamingTracer()
-	return hasStreaming
-}
-
 // GetEventStream returns the event stream channel if streaming is available
-func (a *Agent) GetEventStream() (<-chan *events.AgentEvent, bool) {
+func (a *Agent) getEventStream() (<-chan *events.AgentEvent, bool) {
 	if streamingTracer, hasStreaming := a.streamingTracer(); hasStreaming {
 		return streamingTracer.GetEventStream(), true
 	}
@@ -3393,58 +3286,6 @@ func (a *Agent) Close() {
 		// content intact.
 		cleanupProjectedArtifactsOnClose(wd, a.provider, a.attachedSkills)
 	}
-}
-
-// CheckConnectionHealth performs health checks on all MCP connections
-func (a *Agent) CheckConnectionHealth(ctx context.Context) map[string]error {
-	healthResults := make(map[string]error)
-
-	for serverName, client := range a.Clients {
-		if client == nil {
-			healthResults[serverName] = fmt.Errorf("client is nil")
-			continue
-		}
-
-		// Check if connection is active by trying to list tools
-		_, err := client.ListTools(ctx)
-		if err != nil {
-			healthResults[serverName] = fmt.Errorf("connection health check failed: %w", err)
-		}
-	}
-
-	return healthResults
-}
-
-// GetConnectionStats returns statistics about all MCP connections
-func (a *Agent) GetConnectionStats() map[string]interface{} {
-	stats := make(map[string]interface{})
-
-	totalConnections := 0
-	healthyConnections := 0
-	activeServers := make([]string, 0)
-
-	for serverName, client := range a.Clients {
-		if client != nil {
-			totalConnections++
-			// Check if connection is healthy by trying to list tools
-			_, err := client.ListTools(context.Background())
-			if err == nil {
-				healthyConnections++
-				activeServers = append(activeServers, serverName)
-			}
-		}
-	}
-
-	stats["total_connections"] = totalConnections
-	stats["healthy_connections"] = healthyConnections
-	stats["active_servers"] = activeServers
-	if totalConnections > 0 {
-		stats["health_ratio"] = float64(healthyConnections) / float64(totalConnections)
-	} else {
-		stats["health_ratio"] = 0.0
-	}
-
-	return stats
 }
 
 // Ask processes a single question from the user and returns the agent's response.
@@ -3782,16 +3623,6 @@ func (a *Agent) GetSelectedTools() []string {
 	return a.selectedTools
 }
 
-// GetContext returns the agent's context for cancellation and lifecycle management
-func (a *Agent) GetContext() context.Context {
-	return a.ctx
-}
-
-// IsCancelled checks if the agent's context has been cancelled
-func (a *Agent) IsCancelled() bool {
-	return a.ctx.Err() != nil
-}
-
 // SetInstructions replaces the base instructions while preserving supplements.
 // Dynamic tool instructions are rendered only at the outbound boundary.
 func (a *Agent) SetInstructions(systemPrompt string) {
@@ -3927,20 +3758,6 @@ func systemPromptPreview(s string) string {
 	return s
 }
 
-// SetToolArgTransformer registers a per-tool argument transformer on the agent.
-// The transformer mutates args in-place before the tool is dispatched to any execution
-// backend (virtual, custom, or MCP). This is the primary interception point for
-// agent-driven tool calls. For HTTP API tool calls, see ExecutorHandlers.SetToolArgTransformer.
-//
-// Use case: a tool requires absolute host paths, but the LLM only knows
-// workspace-relative paths. A transformer resolves the path before dispatch.
-func (a *Agent) SetToolArgTransformer(toolName string, fn func(args map[string]interface{})) {
-	if a.toolArgTransformers == nil {
-		a.toolArgTransformers = make(map[string]func(args map[string]interface{}))
-	}
-	a.toolArgTransformers[toolName] = fn
-}
-
 // RegisterCustomTool registers a dynamic custom tool with the agent.
 //
 // This allows adding tools at runtime that are not provided by an MCP server.
@@ -4000,6 +3817,20 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 			Description: description,
 			Parameters:  llmtypes.NewParameters(parameters),
 		},
+	}
+	registry, err := a.canonicalRegistry()
+	if err != nil {
+		return err
+	}
+	if err := registry.register(registeredTool{
+		Name:         name,
+		Definition:   tool,
+		Kind:         toolImplementationDirect,
+		Source:       "direct",
+		DisplayGroup: toolCategory,
+		Executor:     executionFunc,
+	}); err != nil {
+		return err
 	}
 
 	// Store both definition and execution function with category
@@ -4216,15 +4047,6 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 //   - executionFunc: The Go function to execute when the tool is called.
 //   - timeout: Per-tool timeout. 0 = no timeout (tool runs indefinitely). -1 = use agent default.
 //
-// ReplaceCustomToolExecutor replaces the execution function for an already-registered custom tool.
-// Used to swap in session-aware executors (with ExtraEnv like _DEFAULT_WORKING_DIR) after agent creation.
-func (a *Agent) ReplaceCustomToolExecutor(name string, executor func(ctx context.Context, args map[string]interface{}) (string, error)) {
-	if ct, exists := a.customTools[name]; exists {
-		ct.Execution = executor
-		a.customTools[name] = ct
-	}
-}
-
 // GetCustomToolExecutor returns the current execution function for a custom tool, or nil if not found.
 func (a *Agent) GetCustomToolExecutor(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
 	if ct, exists := a.customTools[name]; exists {
@@ -4248,6 +4070,17 @@ func (a *Agent) RegisterCustomToolWithTimeout(name string, description string, p
 	if customTool, exists := a.customTools[name]; exists {
 		customTool.Timeout = timeout
 		a.customTools[name] = customTool
+		if registry, registryErr := a.canonicalRegistry(); registryErr == nil {
+			_ = registry.register(registeredTool{
+				Name:         name,
+				Definition:   customTool.Definition,
+				Kind:         toolImplementationDirect,
+				Source:       "direct",
+				DisplayGroup: customTool.Category,
+				Executor:     customTool.Execution,
+				Timeout:      timeout,
+			})
+		}
 		if a.Logger != nil {
 			if timeout == 0 {
 				a.Logger.Info("🔧 Custom tool registered with NO timeout (runs indefinitely)", loggerv2.String("tool", name))
@@ -4262,19 +4095,8 @@ func (a *Agent) RegisterCustomToolWithTimeout(name string, description string, p
 	return nil
 }
 
-// GetCustomToolsByCategory returns all custom tools filtered by category
-func (a *Agent) GetCustomToolsByCategory(category string) map[string]CustomTool {
-	result := make(map[string]CustomTool)
-	for name, tool := range a.customTools {
-		if tool.Category == category {
-			result[name] = tool
-		}
-	}
-	return result
-}
-
 // GetCustomToolCategories returns a list of all unique categories for registered custom tools
-func (a *Agent) GetCustomToolCategories() []string {
+func (a *Agent) getCustomToolCategories() []string {
 	categorySet := make(map[string]bool)
 	for _, tool := range a.customTools {
 		if tool.Category != "" {
@@ -4345,6 +4167,13 @@ func (a *Agent) isToolAllowed(toolName string) bool {
 	return a.toolAllowList[toolName]
 }
 
+func (a *Agent) isToolAllowedForContext(ctx context.Context, toolName string) bool {
+	if policy, ok := toolPolicyFromContext(ctx); ok {
+		return policy.allows(toolName)
+	}
+	return a.isToolAllowed(toolName)
+}
+
 // applyToolAllowList filters a tool slice to only include tools in the allow list.
 // The caller is responsible for including virtual/system tool names in the allow list
 // if they should remain available.
@@ -4397,43 +4226,4 @@ func (a *Agent) getGeneratedDir() string {
 	}
 
 	return path
-}
-
-// GetMCPConfigJSON returns the MCP configuration as a JSON string
-// This is used for the Claude Code adapter to pass the configuration to the CLI
-func (a *Agent) GetMCPConfigJSON() (string, error) {
-	// If no config path, return empty object
-	if a.configPath == "" {
-		return "{\"mcpServers\":{}}", nil
-	}
-
-	// Load the raw config
-	config, err := mcpclient.LoadMergedConfig(a.configPath, a.Logger)
-	if err != nil {
-		return "", fmt.Errorf("failed to load MCP config: %w", err)
-	}
-
-	// Filter servers if necessary (e.g. if a.serverName is set and not "all")
-	// For now, we'll pass all servers in the config, as the CLI can handle them.
-	// However, if we want to respect a.serverName, we should filter here.
-	if a.serverName != "" && a.serverName != mcpclient.AllServers {
-		filteredServers := make(map[string]mcpclient.MCPServerConfig)
-		// Handle comma-separated list
-		targetServers := strings.Split(a.serverName, ",")
-		for _, target := range targetServers {
-			target = strings.TrimSpace(target)
-			if server, exists := config.MCPServers[target]; exists {
-				filteredServers[target] = server
-			}
-		}
-		config.MCPServers = filteredServers
-	}
-
-	// Marshal to JSON
-	jsonBytes, err := json.Marshal(config)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal MCP config: %w", err)
-	}
-
-	return string(jsonBytes), nil
 }

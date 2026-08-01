@@ -12,7 +12,7 @@ func TestAttachSkillIdempotentOnName(t *testing.T) {
 	a.AttachSkill(&llmtypes.Skill{Name: "alpha", Description: "first"})
 	a.AttachSkill(&llmtypes.Skill{Name: "beta", Description: "second"})
 	a.AttachSkill(&llmtypes.Skill{Name: "alpha", Description: "replaced"})
-	got := a.AttachedSkills()
+	got := a.attachedSkillsSnapshot()
 	if len(got) != 2 {
 		t.Fatalf("expected 2 skills, got %d", len(got))
 	}
@@ -28,8 +28,8 @@ func TestDetachSkill(t *testing.T) {
 	a := &Agent{}
 	a.AttachSkill(&llmtypes.Skill{Name: "alpha"})
 	a.AttachSkill(&llmtypes.Skill{Name: "beta"})
-	a.DetachSkill("alpha")
-	got := a.AttachedSkills()
+	a.detachSkill("alpha")
+	got := a.attachedSkillsSnapshot()
 	if len(got) != 1 || got[0].Name != "beta" {
 		t.Errorf("expected only beta remaining, got %+v", got)
 	}
@@ -38,8 +38,8 @@ func TestDetachSkill(t *testing.T) {
 func TestClearSkills(t *testing.T) {
 	a := &Agent{}
 	a.AttachSkill(&llmtypes.Skill{Name: "alpha"})
-	a.ClearSkills()
-	if len(a.AttachedSkills()) != 0 {
+	a.clearSkills()
+	if len(a.attachedSkillsSnapshot()) != 0 {
 		t.Errorf("expected no skills after ClearSkills")
 	}
 }

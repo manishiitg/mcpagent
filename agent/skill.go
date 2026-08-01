@@ -35,7 +35,7 @@ func (a *Agent) AttachSkill(skill *llmtypes.Skill) {
 // decide what to project to disk or list in the system prompt. The
 // returned slice is a shallow copy; callers must not mutate skill
 // values in place.
-func (a *Agent) AttachedSkills() []*llmtypes.Skill {
+func (a *Agent) attachedSkillsSnapshot() []*llmtypes.Skill {
 	if a == nil || len(a.attachedSkills) == 0 {
 		return nil
 	}
@@ -46,7 +46,7 @@ func (a *Agent) AttachedSkills() []*llmtypes.Skill {
 
 // DetachSkill removes a skill by name. No-op if no skill with that name
 // is attached.
-func (a *Agent) DetachSkill(name string) {
+func (a *Agent) detachSkill(name string) {
 	if a == nil || name == "" {
 		return
 	}
@@ -60,7 +60,7 @@ func (a *Agent) DetachSkill(name string) {
 
 // ClearSkills removes every attached skill. Used at session reset and
 // before re-attaching a fresh skill set (e.g., on workshop-mode change).
-func (a *Agent) ClearSkills() {
+func (a *Agent) clearSkills() {
 	if a == nil {
 		return
 	}

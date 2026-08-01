@@ -43,14 +43,14 @@ var fileCounter uint64
 // This follows the "offload context" pattern where tool results are stored externally
 // and accessed on-demand to prevent context window overflow
 type ToolOutputHandler struct {
-	Threshold            int
-	OutputFolder         string
-	SessionID            string              // Session ID for organizing files by conversation
-	Enabled              bool
-	ServerAvailable      bool                // Whether context offloading virtual tools are available
-	LLM                  llmtypes.Model      // Optional LLM model for provider-aware token counting
-	tokenCounter         *utils.TokenCounter // Cached token counter instance
-	MaxToolOutputTokens  int                 // Absolute maximum token limit (applies even when offloading is disabled)
+	Threshold           int
+	OutputFolder        string
+	SessionID           string // Session ID for organizing files by conversation
+	Enabled             bool
+	ServerAvailable     bool                // Whether context offloading virtual tools are available
+	LLM                 llmtypes.Model      // Optional LLM model for provider-aware token counting
+	tokenCounter        *utils.TokenCounter // Cached token counter instance
+	MaxToolOutputTokens int                 // Absolute maximum token limit (applies even when offloading is disabled)
 }
 
 // NewToolOutputHandler creates a new tool output handler with default settings

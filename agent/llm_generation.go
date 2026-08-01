@@ -985,7 +985,7 @@ func (a *Agent) executeLLMForCodingAgentTransportLaunch(ctx context.Context, mod
 	// → adapter's split*SystemPrompt returns empty → prepare*ProjectFiles
 	// skips the rule-file write → user sees an empty .cursor/rules/
 	// directory mid-conversation.
-	if sp := strings.TrimSpace(a.outgoingSystemPrompt()); sp != "" {
+	if sp := strings.TrimSpace(a.outgoingSystemPromptForContext(ctx)); sp != "" {
 		opts = append(opts, llmtypes.WithCodingProviderLaunchSystemPrompt(sp))
 	}
 	return a.executeLLMInner(ctx, model, nil, opts, true)
@@ -1127,7 +1127,7 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		// file and the "launch configuration changed" guard to recycle
 		// the tmux session mid-chat.
 		continuationOpts := opts
-		if sp := strings.TrimSpace(a.outgoingSystemPrompt()); sp != "" {
+		if sp := strings.TrimSpace(a.outgoingSystemPromptForContext(ctx)); sp != "" {
 			continuationOpts = append(continuationOpts, llmtypes.WithCodingProviderLaunchSystemPrompt(sp))
 		}
 		a.Logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Continuing %s with native session %s", model.Provider, continuationHandle.NativeSessionID))
@@ -1177,12 +1177,6 @@ func (a *Agent) StartCodingAgentTransportSession(ctx context.Context) (*llmtypes
 		return &providerHandle, nil
 	}
 	return nil, fmt.Errorf("coding-agent transport session started without provider handle")
-}
-
-// StartCodingAgentTmuxSession preserves the older tmux-specific entry point for
-// callers that have not moved to the transport-level API.
-func (a *Agent) StartCodingAgentTmuxSession(ctx context.Context) (*llmtypes.CodingProviderSessionHandle, error) {
-	return a.StartCodingAgentTransportSession(ctx)
 }
 
 func (a *Agent) drainStreamingWithoutEnd(sm *streamingManager) {

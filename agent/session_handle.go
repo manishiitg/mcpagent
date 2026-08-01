@@ -117,18 +117,6 @@ func (a *Agent) ApplyAgentSessionHandle(handle *AgentSessionHandle) {
 	}
 }
 
-// ContinueAgentSession applies the handle and sends the latest message through
-// the normal agent loop. For provider-native coding agents this means only the
-// new user message is passed to the provider; the provider adapter uses the
-// handle's native session state for history.
-func (a *Agent) ContinueAgentSession(ctx context.Context, handle *AgentSessionHandle, message string) (string, []llmtypes.MessageContent, *AgentSessionHandle, error) {
-	userMessage := llmtypes.MessageContent{
-		Role:  llmtypes.ChatMessageTypeHuman,
-		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: message}},
-	}
-	return a.ContinueAgentSessionWithHistory(ctx, handle, []llmtypes.MessageContent{userMessage})
-}
-
 // ContinueAgentSessionWithHistory applies the handle and runs the normal agent
 // loop with caller-owned history. For provider-native coding agents the
 // provider layer still receives only the latest user message; mcpagent keeps the

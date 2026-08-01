@@ -7,10 +7,9 @@ import (
 )
 
 // This is the migration ratchet for the legacy Agent surface. The list starts
-// at 70 methods and must only shrink until the replacement Agent/Session API is
-// complete. Any deliberate removal updates this list in the same commit; an
-// accidental addition fails here instead of quietly expanding the lifecycle
-// callers are allowed to orchestrate.
+// at 70 legacy methods. The three target methods are added during the cutover;
+// after that, the list must only shrink until the replacement Agent/Session API
+// is complete. Any deliberate change updates this list in the same commit.
 func TestAgentPublicMethodSurface(t *testing.T) {
 	want := []string{
 		"AddEventListener",
@@ -20,40 +19,28 @@ func TestAgentPublicMethodSurface(t *testing.T) {
 		"Ask",
 		"AskWithHistory",
 		"AttachSkill",
-		"AttachedSkills",
 		"BuildBridgeMCPConfig",
 		"BuildLargeOutputFilePath",
-		"CheckConnectionHealth",
-		"ClearSkills",
 		"Close",
-		"ContinueAgentSession",
 		"ContinueAgentSessionWithHistory",
 		"ContinueConversation",
 		"CreateLargeOutputVirtualTools",
 		"CreateVirtualTools",
 		"CurrentAgentSessionHandle",
+		"Definition",
 		"Deliver",
 		"DeliverControlKey",
 		"DeliverUserMessage",
-		"DetachSkill",
 		"DrainSteerMessages",
 		"EmitTypedEvent",
 		"GetConfiguredServerName",
-		"GetConnectionStats",
-		"GetContext",
-		"GetCustomToolCategories",
 		"GetCustomToolExecutor",
 		"GetCustomTools",
-		"GetCustomToolsByCategory",
 		"GetDeferredToolCount",
 		"GetDiscoveredToolCount",
-		"GetEventStream",
 		"GetFolderGuardPaths",
 		"GetLLMModelConfig",
-		"GetMCPConfigJSON",
-		"GetPrompts",
 		"GetProvider",
-		"GetResources",
 		"GetSelectedTools",
 		"GetServerNames",
 		"GetTokenUsage",
@@ -63,22 +50,18 @@ func TestAgentPublicMethodSurface(t *testing.T) {
 		"HandleEvent",
 		"HandleLargeOutputVirtualTool",
 		"HandleVirtualTool",
-		"HasStreamingCapability",
 		"Instructions",
-		"IsCancelled",
-		"RebuildSystemPromptWithFilteredServers",
 		"RegisterCustomTool",
 		"RegisterCustomToolWithTimeout",
 		"RemoveEventListener",
-		"ReplaceCustomToolExecutor",
 		"ResetInstructions",
+		"Run",
 		"SetFolderGuardPaths",
 		"SetInstructions",
 		"SetProvider",
 		"SetToolAccess",
-		"SetToolArgTransformer",
 		"SetToolOutputHandler",
-		"StartCodingAgentTmuxSession",
+		"Start",
 		"StartCodingAgentTransportSession",
 		"SubscribeToEvents",
 		"SupportsSteering",
@@ -91,10 +74,22 @@ func TestAgentPublicMethodSurface(t *testing.T) {
 		got = append(got, typeOfAgent.Method(i).Name)
 	}
 
-	if len(got) != 70 {
-		t.Fatalf("exported *Agent method count = %d, want migration baseline 70; methods=%v", len(got), got)
+	if len(got) != 54 {
+		t.Fatalf("exported *Agent method count = %d, want cutover surface 54; methods=%v", len(got), got)
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("exported *Agent methods changed\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestSessionPublicMethodSurface(t *testing.T) {
+	want := []string{"Close", "Events", "Run", "Send", "Snapshot"}
+	typeOfSession := reflect.TypeOf((*Session)(nil))
+	got := make([]string, 0, typeOfSession.NumMethod())
+	for i := 0; i < typeOfSession.NumMethod(); i++ {
+		got = append(got, typeOfSession.Method(i).Name)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("exported *Session methods changed\n got: %v\nwant: %v", got, want)
 	}
 }

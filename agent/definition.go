@@ -110,6 +110,7 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 			return fail(fmt.Errorf("register direct tool %q: %w", tool.Name, err))
 		}
 	}
+	agent.definition = &definition
 
 	return agent, nil
 }

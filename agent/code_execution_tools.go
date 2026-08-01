@@ -60,48 +60,39 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 
 	// Resolve and authorize every name before consulting the schema cache. A
 	// cache hit is metadata reuse, never an authorization decision.
+	registry, err := a.canonicalRegistry()
+	if err != nil {
+		return "", err
+	}
 	customToolsForSpec := make(map[string]openapi.CustomToolForOpenAPI)
 	mcpToolsByServer := make(map[string][]llmtypes.Tool)
 	var unknown, notAllowed []string
-	toolSource := a.Tools
-	if a.UseCodeExecutionMode && len(a.allMCPToolDefs) > 0 {
-		toolSource = a.allMCPToolDefs
-	}
 	for _, name := range sortedNames {
-		if !a.isToolAllowed(name) {
+		if !a.isToolAllowedForContext(ctx, name) {
 			notAllowed = append(notAllowed, name)
 			continue
 		}
-		if ct, ok := a.customTools[name]; ok {
-			customToolsForSpec[name] = openapi.CustomToolForOpenAPI{Definition: ct.Definition, Category: ct.Category}
-			continue
-		}
-
-		srvName, ok := a.toolToServer[name]
-		if !ok || srvName == "custom" {
+		registered, ok := registry.lookup(name)
+		if !ok || registered.Kind == toolImplementationVirtual {
 			unknown = append(unknown, name)
 			continue
 		}
+		if registered.Kind == toolImplementationDirect {
+			customToolsForSpec[name] = openapi.CustomToolForOpenAPI{
+				Definition: registered.Definition,
+				Category:   registered.DisplayGroup,
+			}
+			continue
+		}
+
+		srvName := registered.Source
 		if !a.serverIsAvailable(srvName) {
 			notAllowed = append(notAllowed, name)
 			continue
 		}
 
-		var definition llmtypes.Tool
-		found := false
-		for _, candidate := range toolSource {
-			if candidate.Function != nil && candidate.Function.Name == name {
-				definition = candidate
-				found = true
-				break
-			}
-		}
-		if !found {
-			unknown = append(unknown, name)
-			continue
-		}
 		normalizedServer := strings.ReplaceAll(srvName, "-", "_")
-		mcpToolsByServer[normalizedServer] = append(mcpToolsByServer[normalizedServer], definition)
+		mcpToolsByServer[normalizedServer] = append(mcpToolsByServer[normalizedServer], registered.Definition)
 	}
 
 	if len(unknown) > 0 || len(notAllowed) > 0 {
@@ -158,6 +149,10 @@ func (a *Agent) cacheSpec(key string, specBytes []byte) {
 // are included inline in the system prompt so the agent doesn't need to call get_api_spec.
 // Returns empty string if no pre-discovered tools are configured or found.
 func (a *Agent) buildPreDiscoveredToolSpecs() string {
+	return a.buildPreDiscoveredToolSpecsForContext(context.Background())
+}
+
+func (a *Agent) buildPreDiscoveredToolSpecsForContext(ctx context.Context) string {
 	if len(a.preDiscoveredTools) == 0 {
 		return ""
 	}
@@ -184,7 +179,7 @@ func (a *Agent) buildPreDiscoveredToolSpecs() string {
 		if !preDiscoveredSet[tool.Function.Name] {
 			continue
 		}
-		if !a.isToolAllowed(tool.Function.Name) {
+		if !a.isToolAllowedForContext(ctx, tool.Function.Name) {
 			continue
 		}
 		// Find the server for this tool
@@ -202,7 +197,7 @@ func (a *Agent) buildPreDiscoveredToolSpecs() string {
 		if !preDiscoveredSet[toolName] {
 			continue
 		}
-		if !a.isToolAllowed(toolName) {
+		if !a.isToolAllowedForContext(ctx, toolName) {
 			continue
 		}
 		category := ct.Category
@@ -298,21 +293,45 @@ func (a *Agent) getCodeExecutionAPIBaseURL() string {
 // This is included in the system prompt so the LLM knows what's available.
 // It builds the index purely from agent internal state (no filesystem scanning).
 func (a *Agent) buildToolIndex() (string, error) {
+	return a.buildToolIndexForContext(context.Background())
+}
+
+func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
 	type ServerInfo struct {
 		Tools []string `json:"tools"`
 	}
 
 	index := make(map[string]ServerInfo)
 
-	// Build MCP server tool index from toolToServer mapping
+	registry, err := a.canonicalRegistry()
+	if err != nil {
+		return "", err
+	}
+
+	// Build the index from one canonical registry. Categories are display-only;
+	// every callable address remains the globally unique tool name.
 	serverToolsMap := make(map[string]map[string]bool)
-	for toolName, serverName := range a.toolToServer {
-		if serverName == "custom" {
-			continue // Custom tools are handled separately
-		}
-		if !a.isToolAllowed(toolName) {
+	customToolsByCategory := make(map[string][]string)
+	var blockedCustomTools []string
+	for _, registered := range registry.snapshot() {
+		toolName := registered.Name
+		if registered.Kind == toolImplementationVirtual {
 			continue
 		}
+		if !a.isToolAllowedForContext(ctx, toolName) {
+			if registered.Kind == toolImplementationDirect {
+				blockedCustomTools = append(blockedCustomTools, toolName)
+			}
+			continue
+		}
+		if registered.Kind == toolImplementationDirect {
+			if registered.DisplayGroup != "" {
+				customToolsByCategory[registered.DisplayGroup] = append(customToolsByCategory[registered.DisplayGroup], toolName)
+			}
+			continue
+		}
+
+		serverName := registered.Source
 
 		// Apply server-level filtering
 		shouldInclude := a.toolFilter.ShouldIncludeServer(serverName)
@@ -340,25 +359,12 @@ func (a *Agent) buildToolIndex() (string, error) {
 		index[serverName] = ServerInfo{Tools: tools}
 	}
 
-	// Add custom tools grouped by category to the tool index.
+	// Add direct tools grouped by optional display metadata.
 	// Even in code execution mode, custom tools must appear here so that Claude Code
 	// (which uses the MCP bridge and can only discover tools via get_api_spec) can
 	// find and call them via HTTP API. For non-Claude-Code providers, the tools are
 	// also available as direct LLM calls — having them in the index is harmless.
 	// Respect toolAllowList: if set, only include allowed custom tools in the index.
-	customToolsByCategory := make(map[string][]string)
-	var blockedCustomTools []string
-	for toolName, ct := range a.customTools {
-		category := ct.Category
-		if category == "" {
-			continue
-		}
-		if !a.isToolAllowed(toolName) {
-			blockedCustomTools = append(blockedCustomTools, toolName)
-			continue
-		}
-		customToolsByCategory[category] = append(customToolsByCategory[category], toolName)
-	}
 	if a.Logger != nil && len(blockedCustomTools) > 0 {
 		sort.Strings(blockedCustomTools)
 		a.Logger.Info("🔒 [TOOL_ALLOW_LIST] buildToolIndex blocked custom tools",

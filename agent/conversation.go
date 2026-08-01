@@ -277,10 +277,14 @@ func callToolWithTimeoutWrapper(
 
 // ensureSystemPrompt ensures that the system prompt is included in the messages
 func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes.MessageContent {
+	return ensureSystemPromptForContext(context.Background(), a, messages)
+}
+
+func ensureSystemPromptForContext(ctx context.Context, a *Agent, messages []llmtypes.MessageContent) []llmtypes.MessageContent {
 	// Always use the agent's current system prompt — it reflects the latest mode
 	// (code execution, tool search, etc.) which may differ from a stale system
 	// message carried over in conversation history from a previous turn.
-	systemPrompt := a.outgoingSystemPrompt()
+	systemPrompt := a.outgoingSystemPromptForContext(ctx)
 
 	systemMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeSystem,
@@ -342,7 +346,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	a.initializeHierarchyForContext(ctx)
 
 	// Ensure system prompt is included in messages
-	messages = ensureSystemPrompt(a, messages)
+	messages = ensureSystemPromptForContext(ctx, a, messages)
 
 	// Log prompts to disk when LOG_AGENT_PROMPTS is enabled:
 	// - Start: system prompt + user message (written now)
@@ -481,7 +485,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Store trace ID for correlation
 	agentStartEventID := traceID
-	effectivePrompt := a.outgoingSystemPrompt()
+	effectivePrompt := a.outgoingSystemPromptForContext(ctx)
 
 	// Metadata for conversation tracking (used in events)
 	conversationMetadata := map[string]interface{}{

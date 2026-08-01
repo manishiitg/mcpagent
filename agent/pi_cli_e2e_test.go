@@ -39,7 +39,7 @@ func TestPiCLIMcpAgentGeminiE2E(t *testing.T) {
 		llm.ClosePiCLIInteractiveSessionForOwner(sessionID, "test cleanup")
 		if strings.TrimSpace(tmuxSessionName) != "" {
 			llm.ClosePiCLIInteractiveSessionByTmux(tmuxSessionName, "test cleanup")
-				_ = exec.Command("tmux", "kill-session", "-t", tmuxSessionName).Run() // #nosec G204 -- test cleanup for a test-generated tmux session name.
+			_ = exec.Command("tmux", "kill-session", "-t", tmuxSessionName).Run() // #nosec G204 -- test cleanup for a test-generated tmux session name.
 		}
 	})
 

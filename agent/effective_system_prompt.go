@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"context"
 	"strings"
 
 	"github.com/manishiitg/mcpagent/agent/prompt"
@@ -19,7 +20,7 @@ const (
 // tool manifest at the final read boundary. The stored systemPrompt is not a
 // source of tool truth: registration and allow-list state can change after it
 // was set, and custom prompts can replace it entirely.
-func (a *Agent) effectiveSystemPrompt() string {
+func (a *Agent) effectiveSystemPromptForContext(ctx context.Context) string {
 	instructions := a.systemPrompt
 	for _, supplement := range a.appendedSystemPrompts {
 		if instructions == "" {
@@ -28,13 +29,17 @@ func (a *Agent) effectiveSystemPrompt() string {
 		}
 		instructions = prompt.NormalizeForAppend(instructions) + "\n\n" + supplement
 	}
-	return a.composeEffectiveSystemPrompt(instructions)
+	return a.composeEffectiveSystemPromptForContext(ctx, instructions)
 }
 
 // outgoingSystemPrompt is the exact instruction string placed on outbound
 // model requests and mirrored into prompt events/debug output.
 func (a *Agent) outgoingSystemPrompt() string {
-	systemPrompt := a.effectiveSystemPrompt()
+	return a.outgoingSystemPromptForContext(context.Background())
+}
+
+func (a *Agent) outgoingSystemPromptForContext(ctx context.Context) string {
+	systemPrompt := a.effectiveSystemPromptForContext(ctx)
 	if listing := renderSkillListing(a.attachedSkills); listing != "" {
 		if systemPrompt != "" {
 			return systemPrompt + "\n\n" + listing
@@ -47,19 +52,19 @@ func (a *Agent) outgoingSystemPrompt() string {
 // composeEffectiveSystemPrompt is shared by actual send paths, exported prompt
 // reads, and prompt-event/log rendering. This keeps what operators inspect
 // identical to what the model receives.
-func (a *Agent) composeEffectiveSystemPrompt(base string) string {
+func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base string) string {
 	if !a.UseCodeExecutionMode {
 		return strings.ReplaceAll(base, prompt.ToolStructurePlaceholder, "")
 	}
 
-	toolStructure, err := a.buildToolIndex()
+	toolStructure, err := a.buildToolIndexForContext(ctx)
 	if err != nil {
 		if a.Logger != nil {
 			a.Logger.Warn("Failed to build request-time tool manifest", loggerv2.Error(err))
 		}
 		toolStructure = ""
 	}
-	section := prompt.BuildAvailableToolsSection(toolStructure, a.buildPreDiscoveredToolSpecs())
+	section := prompt.BuildAvailableToolsSection(toolStructure, a.buildPreDiscoveredToolSpecsForContext(ctx))
 	return replaceEffectiveToolsSection(base, section)
 }
 
