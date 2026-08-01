@@ -37,6 +37,12 @@ type Usage struct {
 	ReasoningTokens      int
 	LLMCalls             int
 	CacheEnabledLLMCalls int
+	InputCostUSD         float64
+	OutputCostUSD        float64
+	ReasoningCostUSD     float64
+	CacheCostUSD         float64
+	TotalCostUSD         float64
+	ContextUsagePercent  float64
 }
 
 // Result contains the completed output and continuation state for a turn.
@@ -165,12 +171,12 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 	} else {
 		text, updated, err = s.agent.AskWithHistory(ctx, history)
 	}
-	if err != nil {
-		return Result{}, err
+	if len(updated) > 0 {
+		s.history = append([]llmtypes.MessageContent(nil), updated...)
 	}
-	s.history = append([]llmtypes.MessageContent(nil), updated...)
-	prompt, completion, total, cache, reasoning, calls, cacheCalls := s.agent.GetTokenUsage()
-	return Result{
+	prompt, completion, total, cache, reasoning, calls, cacheCalls,
+		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextUsage := s.agent.GetTokenUsageWithPricing()
+	result := Result{
 		Text:    text,
 		History: append([]llmtypes.MessageContent(nil), updated...),
 		Handle:  s.agent.CurrentAgentSessionHandle(),
@@ -182,8 +188,15 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 			ReasoningTokens:      reasoning,
 			LLMCalls:             calls,
 			CacheEnabledLLMCalls: cacheCalls,
+			InputCostUSD:         inputCost,
+			OutputCostUSD:        outputCost,
+			ReasoningCostUSD:     reasoningCost,
+			CacheCostUSD:         cacheCost,
+			TotalCostUSD:         totalCost,
+			ContextUsagePercent:  contextUsage,
 		},
-	}, nil
+	}
+	return result, err
 }
 
 // Send queues steering input for the active provider turn.
