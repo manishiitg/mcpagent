@@ -11,7 +11,7 @@ func TestAppendBridgeRoutingInstructionsDefaultUnchanged(t *testing.T) {
 	a := &Agent{}
 	a.appendBridgeRoutingInstructions(testDefaultPreamble)
 
-	got := a.Instructions()
+	got := a.instructions()
 	if !strings.Contains(got, testDefaultPreamble) {
 		t.Fatalf("expected default preamble in system prompt, got: %s", got)
 	}
@@ -35,7 +35,7 @@ func TestAppendBridgeRoutingInstructionsCustomOverride(t *testing.T) {
 	a := &Agent{bridgeRoutingInstructionsOverride: &custom}
 	a.appendBridgeRoutingInstructions(testDefaultPreamble)
 
-	got := a.Instructions()
+	got := a.instructions()
 	if !strings.Contains(got, custom) {
 		t.Fatalf("expected custom override text in system prompt, got: %s", got)
 	}
@@ -52,7 +52,7 @@ func TestAppendBridgeRoutingInstructionsEmptyOverrideSuppresses(t *testing.T) {
 	a := &Agent{bridgeRoutingInstructionsOverride: &empty}
 	a.appendBridgeRoutingInstructions(testDefaultPreamble)
 
-	got := a.Instructions()
+	got := a.instructions()
 	if got != "" {
 		t.Fatalf("expected empty system prompt when override is \"\" (suppressed), got: %s", got)
 	}

@@ -148,7 +148,7 @@ func TestTmuxProjectedArtifactsRemovedOnCloseRealWorkdir(t *testing.T) {
 				t.Fatalf("build agent: %v", err)
 			}
 
-			agent.AttachSkill(&llmtypes.Skill{
+			agent.attachSkill(&llmtypes.Skill{
 				Name:        "cleanup-canary-skill",
 				Description: "A test skill used to verify on-close disk cleanup.",
 				Content:     "# Cleanup Canary\n\nThe phrase is " + canary + ".",
@@ -252,7 +252,7 @@ func TestTmuxSkillsSurviveNewAgent(t *testing.T) {
 			}
 			defer cleanup()
 
-			agent.AttachSkill(&llmtypes.Skill{
+			agent.attachSkill(&llmtypes.Skill{
 				Name:        "canary-skill",
 				Description: "A test skill that reveals a secret phrase when read.",
 				Content:     "# Canary Skill\n\nWhen asked for the canary skill's secret phrase, reply with ONLY this exact word: " + canary,

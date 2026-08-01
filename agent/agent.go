@@ -1337,7 +1337,8 @@ func (a *Agent) GetToolToServer() map[string]string {
 	return a.toolToServer
 }
 
-// SetProvider sets the provider
+// SetProvider is retained for legacy synthetic-agent tests. Production
+// construction sets provider through RuntimeConfig/LLM configuration.
 func (a *Agent) SetProvider(provider llm.Provider) {
 	a.provider = provider
 }
@@ -3608,30 +3609,31 @@ func (a *Agent) GetServerNames() []string {
 	return getClientNames(a.Clients)
 }
 
-// GetConfiguredServerName returns the server selection the agent was configured
-// with (a comma-joined list, "all", or "NO_SERVERS") — not the set of currently
-// connected clients. Used to persist a session's runtime so a later restore can
-// replay the same MCP server selection.
+// GetConfiguredServerName is retained for legacy chat runtime persistence.
 func (a *Agent) GetConfiguredServerName() string {
 	return a.serverName
 }
 
-// GetSelectedTools returns the explicit "server:tool" selection the agent was
-// configured with (empty means no narrowing). Paired with GetConfiguredServerName
-// to faithfully reopen a session's tool catalog on restore.
+// GetSelectedTools is retained for legacy chat runtime persistence.
 func (a *Agent) GetSelectedTools() []string {
-	return a.selectedTools
+	return append([]string(nil), a.selectedTools...)
 }
 
 // SetInstructions replaces the base instructions while preserving supplements.
 // Dynamic tool instructions are rendered only at the outbound boundary.
-func (a *Agent) SetInstructions(systemPrompt string) {
+func (a *Agent) setInstructions(systemPrompt string) {
 	a.systemPrompt = systemPrompt
 
 	if a.Logger != nil {
 		a.Logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
 	}
 	a.hasCustomSystemPrompt = true
+}
+
+// SetInstructions is retained while the chat/server factory moves its prompt
+// assembly before construction. Workflow orchestrators no longer use it.
+func (a *Agent) SetInstructions(systemPrompt string) {
+	a.setInstructions(systemPrompt)
 }
 
 // appendBridgeRoutingInstructions appends the bridge-tool-routing block for
@@ -3643,20 +3645,25 @@ func (a *Agent) SetInstructions(systemPrompt string) {
 func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 	if a.bridgeRoutingInstructionsOverride != nil {
 		if *a.bridgeRoutingInstructionsOverride != "" {
-			a.AddInstructions(*a.bridgeRoutingInstructionsOverride)
+			a.appendInstructions(*a.bridgeRoutingInstructionsOverride)
 		}
 		return
 	}
-	a.AddInstructions(defaultPreamble, bridgeRoutingExplicitInstructions())
+	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions())
 }
 
 // AddInstructions records supplementary instructions. They are composed with
 // the current base prompt at the outbound boundary, so changing or clearing the
 // list cannot leave stale materialized copies in systemPrompt.
-func (a *Agent) AddInstructions(instructions ...string) {
+func (a *Agent) appendInstructions(instructions ...string) {
 	for _, additionalPrompt := range instructions {
 		a.addInstructions(additionalPrompt)
 	}
+}
+
+// AddInstructions is retained for the legacy chat/server assembly path.
+func (a *Agent) AddInstructions(instructions ...string) {
+	a.appendInstructions(instructions...)
 }
 
 func (a *Agent) addInstructions(additionalPrompt string) {
@@ -3704,7 +3711,7 @@ func (a *Agent) addInstructions(additionalPrompt string) {
 }
 
 // ResetInstructions atomically replaces the base and every supplement.
-func (a *Agent) ResetInstructions(base string, supplements ...string) {
+func (a *Agent) resetInstructions(base string, supplements ...string) {
 	a.systemPrompt = base
 	a.appendedSystemPrompts = nil
 	a.hasAppendedPrompts = false
@@ -3712,6 +3719,11 @@ func (a *Agent) ResetInstructions(base string, supplements ...string) {
 		a.addInstructions(supplement)
 	}
 	a.hasCustomSystemPrompt = true
+}
+
+// ResetInstructions is retained for the legacy chat/server assembly path.
+func (a *Agent) ResetInstructions(base string, supplements ...string) {
+	a.resetInstructions(base, supplements...)
 }
 
 // callerChain returns a compact "fn:line <- fn:line <- …" trace of the
@@ -4209,8 +4221,14 @@ func (a *Agent) applyToolAllowList(tools []llmtypes.Tool) []llmtypes.Tool {
 }
 
 // Instructions returns the exact instruction text the model receives.
-func (a *Agent) Instructions() string {
+func (a *Agent) instructions() string {
 	return a.outgoingSystemPrompt()
+}
+
+// Instructions is retained for legacy diagnostics until callers use
+// Definition and structured turn diagnostics exclusively.
+func (a *Agent) Instructions() string {
+	return a.instructions()
 }
 
 // getGeneratedDir returns the path to the generated/ directory

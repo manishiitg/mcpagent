@@ -32,10 +32,10 @@ func codeExecutionPromptAgent() *Agent {
 
 func TestEffectiveSystemPromptReflectsToolsRegisteredAfterSet(t *testing.T) {
 	a := codeExecutionPromptAgent()
-	a.SetInstructions("operator policy")
+	a.setInstructions("operator policy")
 	a.customTools["query_records"] = promptManifestTool("query_records", "database")
 
-	got := a.Instructions()
+	got := a.instructions()
 	if !strings.Contains(got, "query_records") {
 		t.Fatalf("request-time prompt omitted a tool registered after SetInstructions:\n%s", got)
 	}
@@ -48,16 +48,16 @@ func TestEffectiveSystemPromptTracksAllowListChanges(t *testing.T) {
 	a := codeExecutionPromptAgent()
 	a.customTools["query_records"] = promptManifestTool("query_records", "database")
 	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
-	a.SetInstructions("operator policy")
+	a.setInstructions("operator policy")
 
 	a.SetToolAccess([]string{"query_records"})
-	first := a.Instructions()
+	first := a.instructions()
 	if !strings.Contains(first, "query_records") || strings.Contains(first, "mutate_records") {
 		t.Fatalf("first allow-list was not reflected:\n%s", first)
 	}
 
 	a.SetToolAccess([]string{"mutate_records"})
-	second := a.Instructions()
+	second := a.instructions()
 	if strings.Contains(second, "query_records") || !strings.Contains(second, "mutate_records") {
 		t.Fatalf("changed allow-list was not reflected on the next read:\n%s", second)
 	}
@@ -66,10 +66,10 @@ func TestEffectiveSystemPromptTracksAllowListChanges(t *testing.T) {
 func TestEffectiveSystemPromptIsBalancedAndIdempotent(t *testing.T) {
 	a := codeExecutionPromptAgent()
 	a.customTools["query_records"] = promptManifestTool("query_records", "database")
-	a.SetInstructions("before\n" + prompt.ToolStructurePlaceholder + "\nafter")
+	a.setInstructions("before\n" + prompt.ToolStructurePlaceholder + "\nafter")
 
-	first := a.Instructions()
-	second := a.Instructions()
+	first := a.instructions()
+	second := a.instructions()
 	if first != second {
 		t.Fatalf("repeated reads changed the effective prompt")
 	}
@@ -86,7 +86,7 @@ func TestEffectiveSystemPromptIsBalancedAndIdempotent(t *testing.T) {
 
 func TestEnsureSystemPromptUsesCurrentAuthorizedManifest(t *testing.T) {
 	a := codeExecutionPromptAgent()
-	a.SetInstructions("operator policy")
+	a.setInstructions("operator policy")
 	a.customTools["query_records"] = promptManifestTool("query_records", "database")
 	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
 	a.SetToolAccess([]string{"query_records"})
@@ -110,9 +110,9 @@ func TestPreDiscoveredSpecsRespectAllowList(t *testing.T) {
 	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
 	a.preDiscoveredTools = []string{"query_records", "mutate_records"}
 	a.SetToolAccess([]string{"query_records"})
-	a.SetInstructions("operator policy")
+	a.setInstructions("operator policy")
 
-	got := a.Instructions()
+	got := a.instructions()
 	if strings.Contains(got, "mutate_records") {
 		t.Fatalf("pre-discovered specs disclosed a denied tool:\n%s", got)
 	}
@@ -123,9 +123,9 @@ func TestPreDiscoveredSpecsRespectAllowList(t *testing.T) {
 
 func TestNonCodeExecutionPromptDoesNotGainManifest(t *testing.T) {
 	a := &Agent{}
-	a.SetInstructions("before " + prompt.ToolStructurePlaceholder + " after")
+	a.setInstructions("before " + prompt.ToolStructurePlaceholder + " after")
 
-	if got := a.Instructions(); got != "before  after" {
+	if got := a.instructions(); got != "before  after" {
 		t.Fatalf("non-code prompt should only strip the placeholder, got %q", got)
 	}
 }

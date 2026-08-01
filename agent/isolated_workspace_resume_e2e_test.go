@@ -96,7 +96,7 @@ func TestIsolatedWorkspaceNativeResumeAcrossTurns(t *testing.T) {
 				// over, turn 2 has no native session id to resume and simply starts a
 				// new conversation — so the test would "fail" for a reason that has
 				// nothing to do with the working-directory bug under test.
-				handle := agent1.CurrentAgentSessionHandle()
+				handle := agent1.currentAgentSessionHandle()
 				if handle == nil || handle.Provider.Empty() {
 					cleanup1()
 					t.Fatalf("turn 1 produced no coding-provider session handle; nothing to resume from")
@@ -124,7 +124,7 @@ func TestIsolatedWorkspaceNativeResumeAcrossTurns(t *testing.T) {
 					agent2.CodingAgentTransport = llm.CodingAgentTransportStructured
 				}
 				// Exactly what production does with the persisted handle.
-				agent2.ApplyAgentSessionHandle(handle)
+				agent2.applyAgentSessionHandle(handle)
 
 				if got := agent2.ensureIsolatedWorkspaceDir(); got != wantDir {
 					t.Fatalf("turn 2 resolved %q, want the SAME dir as turn 1 %q — a different cwd is exactly why native resume failed", got, wantDir)

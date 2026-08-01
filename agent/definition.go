@@ -56,6 +56,7 @@ type MCPToolSource struct {
 type RuntimeConfig struct {
 	Model         llmtypes.Model
 	MCPConfigPath string
+	ResumeHandle  *AgentSessionHandle
 	LegacyOptions []AgentOption
 }
 
@@ -90,9 +91,12 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 		agent.Close()
 		return nil, cause
 	}
+	if runtime.ResumeHandle != nil && !runtime.ResumeHandle.Empty() {
+		agent.applyAgentSessionHandle(runtime.ResumeHandle)
+	}
 
 	for _, skill := range definition.Skills {
-		agent.AttachSkill(skill)
+		agent.attachSkill(skill)
 	}
 	for _, tool := range definition.Tools.Direct {
 		group := strings.TrimSpace(tool.DisplayGroup)

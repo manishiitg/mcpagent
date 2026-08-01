@@ -1172,7 +1172,7 @@ func (a *Agent) StartCodingAgentTransportSession(ctx context.Context) (*llmtypes
 		return nil, err
 	}
 	a.updateCodingProviderSessionHandleFromResponse(resp)
-	if handle := a.CurrentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
+	if handle := a.currentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
 		providerHandle := handle.Provider
 		return &providerHandle, nil
 	}

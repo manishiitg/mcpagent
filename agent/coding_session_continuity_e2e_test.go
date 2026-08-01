@@ -72,7 +72,7 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 			}
 			t.Logf("[%s] turn 1 answer: %q", tc.name, strings.TrimSpace(ans1))
 
-			handle := agent.CurrentAgentSessionHandle()
+			handle := agent.currentAgentSessionHandle()
 			if handle == nil || handle.Provider.NativeSessionID == "" {
 				t.Fatalf("turn 1 produced no resumable native session id: %+v", handle)
 			}

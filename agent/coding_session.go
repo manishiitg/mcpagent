@@ -243,7 +243,7 @@ func (a *Agent) ContinueConversation(ctx context.Context, conversationID, messag
 				a.Logger.Warn(fmt.Sprintf("ContinueConversation: load handle failed (starting cold): conversation=%q err=%v", conversationID, err))
 			}
 		} else if h != nil && !h.Empty() {
-			a.ApplyAgentSessionHandle(h)
+			a.applyAgentSessionHandle(h)
 		}
 	}
 
@@ -259,7 +259,7 @@ func (a *Agent) ContinueConversation(ctx context.Context, conversationID, messag
 	}
 
 	if store != nil {
-		if h := a.CurrentAgentSessionHandle(); h != nil {
+		if h := a.currentAgentSessionHandle(); h != nil {
 			if saveErr := store.Save(ctx, conversationID, h); saveErr != nil && a.Logger != nil {
 				a.Logger.Warn(fmt.Sprintf("ContinueConversation: save handle failed (continuity may be lost): conversation=%q err=%v", conversationID, saveErr))
 			}

@@ -60,7 +60,7 @@ func (h *AgentSessionHandle) Empty() bool {
 // CurrentAgentSessionHandle returns the latest known continuation handle for
 // the agent. It synthesizes a provider handle from legacy fields when the
 // provider has not yet returned the typed handle.
-func (a *Agent) CurrentAgentSessionHandle() *AgentSessionHandle {
+func (a *Agent) currentAgentSessionHandle() *AgentSessionHandle {
 	if a == nil {
 		return nil
 	}
@@ -83,10 +83,15 @@ func (a *Agent) CurrentAgentSessionHandle() *AgentSessionHandle {
 	return handle
 }
 
+// CurrentAgentSessionHandle is retained for the legacy chat persistence path.
+func (a *Agent) CurrentAgentSessionHandle() *AgentSessionHandle {
+	return a.currentAgentSessionHandle()
+}
+
 // ApplyAgentSessionHandle restores provider-native continuation state from a
 // persisted handle. It intentionally does not restart providers itself; the next
 // generation call uses the restored state to construct provider options.
-func (a *Agent) ApplyAgentSessionHandle(handle *AgentSessionHandle) {
+func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
 	if a == nil || handle == nil {
 		return
 	}
@@ -117,17 +122,23 @@ func (a *Agent) ApplyAgentSessionHandle(handle *AgentSessionHandle) {
 	}
 }
 
+// ApplyAgentSessionHandle is retained for chat-history restoration while that
+// path moves the handle into RuntimeConfig/Turn construction.
+func (a *Agent) ApplyAgentSessionHandle(handle *AgentSessionHandle) {
+	a.applyAgentSessionHandle(handle)
+}
+
 // ContinueAgentSessionWithHistory applies the handle and runs the normal agent
 // loop with caller-owned history. For provider-native coding agents the
 // provider layer still receives only the latest user message; mcpagent keeps the
 // full history for UI/persistence and API-backed providers.
-func (a *Agent) ContinueAgentSessionWithHistory(ctx context.Context, handle *AgentSessionHandle, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, *AgentSessionHandle, error) {
-	a.ApplyAgentSessionHandle(handle)
+func (a *Agent) continueAgentSessionWithHistory(ctx context.Context, handle *AgentSessionHandle, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, *AgentSessionHandle, error) {
+	a.applyAgentSessionHandle(handle)
 	answer, history, err := a.AskWithHistory(ctx, messages)
 	if err != nil {
-		return answer, history, a.CurrentAgentSessionHandle(), err
+		return answer, history, a.currentAgentSessionHandle(), err
 	}
-	return answer, history, a.CurrentAgentSessionHandle(), nil
+	return answer, history, a.currentAgentSessionHandle(), nil
 }
 
 func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, modelID string) (llmtypes.CodingProviderSessionHandle, bool) {

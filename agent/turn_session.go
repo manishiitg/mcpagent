@@ -166,8 +166,8 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 
 	var text string
 	var updated []llmtypes.MessageContent
-	if handle := s.agent.CurrentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
-		text, updated, _, err = s.agent.ContinueAgentSessionWithHistory(ctx, handle, history)
+	if handle := s.agent.currentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
+		text, updated, _, err = s.agent.continueAgentSessionWithHistory(ctx, handle, history)
 	} else {
 		text, updated, err = s.agent.AskWithHistory(ctx, history)
 	}
@@ -179,7 +179,7 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 	result := Result{
 		Text:    text,
 		History: append([]llmtypes.MessageContent(nil), updated...),
-		Handle:  s.agent.CurrentAgentSessionHandle(),
+		Handle:  s.agent.currentAgentSessionHandle(),
 		Usage: Usage{
 			PromptTokens:         prompt,
 			CompletionTokens:     completion,
@@ -214,7 +214,7 @@ func (s *Session) Send(_ context.Context, input string) (DeliveryResult, error) 
 }
 
 func (s *Session) Snapshot() *AgentSessionHandle {
-	return s.agent.CurrentAgentSessionHandle()
+	return s.agent.currentAgentSessionHandle()
 }
 
 func (s *Session) Events() <-chan *events.AgentEvent {

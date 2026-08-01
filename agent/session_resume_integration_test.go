@@ -317,7 +317,7 @@ func TestAgentSessionHandleApplyRestoresProviderState(t *testing.T) {
 		},
 	}
 
-	agent.ApplyAgentSessionHandle(handle)
+	agent.applyAgentSessionHandle(handle)
 
 	if agent.SessionID != "app-session-1" {
 		t.Fatalf("SessionID = %q, want app-session-1", agent.SessionID)
@@ -328,7 +328,7 @@ func TestAgentSessionHandleApplyRestoresProviderState(t *testing.T) {
 	if agent.CodexProjectDirID != "codex-project-1" {
 		t.Fatalf("CodexProjectDirID = %q, want codex-project-1", agent.CodexProjectDirID)
 	}
-	if got := agent.CurrentAgentSessionHandle(); got == nil || got.Provider.NativeSessionID != "codex-thread-1" {
+	if got := agent.currentAgentSessionHandle(); got == nil || got.Provider.NativeSessionID != "codex-thread-1" {
 		t.Fatalf("CurrentAgentSessionHandle = %#v", got)
 	}
 }
@@ -349,7 +349,7 @@ func TestAgentSessionHandleApplyPreservesConfiguredModel(t *testing.T) {
 		},
 	}
 
-	agent.ApplyAgentSessionHandle(handle)
+	agent.applyAgentSessionHandle(handle)
 
 	if agent.ModelID != "claude-sonnet-5" {
 		t.Fatalf("ModelID = %q, want configured Pulse model", agent.ModelID)

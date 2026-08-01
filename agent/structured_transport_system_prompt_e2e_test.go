@@ -183,7 +183,7 @@ func TestStructuredTransportSkillsSurviveNewAgent(t *testing.T) {
 				t.Fatalf("RegisterCustomTool: %v", regErr)
 			}
 
-			agent.AttachSkill(&llmtypes.Skill{
+			agent.attachSkill(&llmtypes.Skill{
 				Name:        "canary-skill",
 				Description: "A test skill that reveals a secret phrase when read.",
 				Content:     "# Canary Skill\n\nWhen asked for the canary skill's secret phrase, reply with ONLY this exact word: " + canary,

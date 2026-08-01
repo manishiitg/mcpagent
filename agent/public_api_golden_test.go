@@ -22,7 +22,6 @@ func TestAgentPublicMethodSurface(t *testing.T) {
 		"BuildBridgeMCPConfig",
 		"BuildLargeOutputFilePath",
 		"Close",
-		"ContinueAgentSessionWithHistory",
 		"ContinueConversation",
 		"CreateLargeOutputVirtualTools",
 		"CreateVirtualTools",
@@ -74,8 +73,8 @@ func TestAgentPublicMethodSurface(t *testing.T) {
 		got = append(got, typeOfAgent.Method(i).Name)
 	}
 
-	if len(got) != 54 {
-		t.Fatalf("exported *Agent method count = %d, want cutover surface 54; methods=%v", len(got), got)
+	if len(got) != 53 {
+		t.Fatalf("exported *Agent method count = %d, want cutover surface 53; methods=%v", len(got), got)
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("exported *Agent methods changed\n got: %v\nwant: %v", got, want)
