@@ -33,7 +33,13 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	if raw, exists := args["tool_name"]; exists && raw != nil {
 		switch v := raw.(type) {
 		case string:
-			if v != "" {
+			// A coding CLI may pass the array already serialized, so tool_name
+			// arrives as the literal string `["a","b"]`. Treating that as one
+			// tool name produced unknown=[["query_workflow_db", "mutate_workflow_db"]]
+			// — a name no registry could ever hold.
+			if decoded, ok := decodeJSONStringArray(v); ok {
+				toolNames = append(toolNames, decoded...)
+			} else if v != "" {
 				toolNames = append(toolNames, v)
 			}
 		case []interface{}:
@@ -460,4 +466,24 @@ func BuildSafeEnvironment() []string {
 		"LANG=C.UTF-8",
 		"LC_ALL=C.UTF-8",
 	}
+}
+
+// decodeJSONStringArray reports whether a string is a JSON array of strings and
+// returns its non-empty entries. Anything else is a plain tool name.
+func decodeJSONStringArray(value string) ([]string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "[") || !strings.HasSuffix(trimmed, "]") {
+		return nil, false
+	}
+	var decoded []string
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return nil, false
+	}
+	names := make([]string, 0, len(decoded))
+	for _, name := range decoded {
+		if trimmedName := strings.TrimSpace(name); trimmedName != "" {
+			names = append(names, trimmedName)
+		}
+	}
+	return names, len(names) > 0
 }

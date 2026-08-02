@@ -747,6 +747,25 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 				}
 				return executor(ctx, args)
 			}
+			// Reserved tools like get_api_spec are registered in this session's
+			// VIRTUAL partition, not its custom one. The model addresses every
+			// tool by a single name and cannot know which endpoint owns it, so a
+			// bridge that routes get_api_spec to /api/custom/execute used to die
+			// here even though the session had it. Same session, different
+			// partition — this is not the cross-session fallback that
+			// TestCallCustomToolWithSessionDoesNotBorrowGlobalExecutor forbids.
+			if registry.sessionVirtualTools != nil {
+				if virtualTools, hasVirtual := registry.sessionVirtualTools[sessionID]; hasVirtual {
+					if executor, isVirtual := virtualTools[toolName]; isVirtual {
+						if registry.logger != nil {
+							registry.logger.Debug("Custom-tool request resolved from the session's virtual tools",
+								loggerv2.String("session_id", sessionID),
+								loggerv2.String("tool", toolName))
+						}
+						return executor(ctx, args)
+					}
+				}
+			}
 			return "", fmt.Errorf("custom tool %s is not registered for session %s", toolName, sessionID)
 		}
 		// No registry exists for this session yet. Keep the legacy global path for

@@ -175,3 +175,37 @@ func TestGetAPISpecDistinguishesConnectedButEmptyFromNeverConnected(t *testing.T
 		t.Fatalf("a live-but-empty server was described as a startup failure:\n%s", err.Error())
 	}
 }
+
+// A coding CLI may serialize the array before sending it, so tool_name arrives
+// as the literal string `["a","b"]`. Treating that as a single tool name
+// produced this in production:
+//
+//	unknown=[["query_workflow_db", "mutate_workflow_db"]]
+//
+// a name no registry could ever hold, which then read as "your names are wrong".
+func TestGetAPISpecAcceptsAStringifiedToolNameArray(t *testing.T) {
+	for _, encoded := range []string{
+		`["query_workflow_db", "mutate_workflow_db"]`,
+		`["query_workflow_db"]`,
+		`  ["query_workflow_db","mutate_workflow_db"]  `,
+	} {
+		names, ok := decodeJSONStringArray(encoded)
+		if !ok {
+			t.Fatalf("decodeJSONStringArray(%q) = not an array, want decoded", encoded)
+		}
+		if len(names) == 0 || names[0] != "query_workflow_db" {
+			t.Fatalf("decodeJSONStringArray(%q) = %v", encoded, names)
+		}
+	}
+}
+
+// A plain tool name must stay a plain tool name, including odd-looking ones.
+func TestGetAPISpecLeavesPlainToolNamesAlone(t *testing.T) {
+	for _, plain := range []string{
+		"query_workflow_db", "", "[not json", "[]", `["", "  "]`, `[1,2]`, "search_issues[0]",
+	} {
+		if names, ok := decodeJSONStringArray(plain); ok {
+			t.Fatalf("decodeJSONStringArray(%q) = %v, want treated as a plain name", plain, names)
+		}
+	}
+}

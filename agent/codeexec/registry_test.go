@@ -247,3 +247,44 @@ func TestSessionToolAllowListDoesNotLeakAcrossSessions(t *testing.T) {
 		t.Fatalf("unrestricted session = %q, want ran", got)
 	}
 }
+
+// A reserved tool such as get_api_spec lives in the session's VIRTUAL partition.
+// The model addresses every tool by one name and cannot know which endpoint owns
+// it, so a bridge routing get_api_spec to the custom endpoint used to fail with
+// "custom tool get_api_spec is not registered for session ..." even though that
+// exact session had it registered.
+func TestCallCustomToolWithSessionResolvesReservedVirtualTools(t *testing.T) {
+	resetRegistryForTest(t)
+
+	InitRegistryForSession("workflow-a", map[string]func(context.Context, map[string]interface{}) (string, error){
+		"execute_shell_command": func(context.Context, map[string]interface{}) (string, error) { return "shell", nil },
+	}, nil)
+	InitRegistryVirtualToolsForSession("workflow-a", map[string]func(context.Context, map[string]interface{}) (string, error){
+		"get_api_spec": func(context.Context, map[string]interface{}) (string, error) { return "spec", nil },
+	}, nil)
+
+	got, err := CallCustomToolWithSession(context.Background(), "workflow-a", "get_api_spec", nil)
+	if err != nil {
+		t.Fatalf("CallCustomToolWithSession(get_api_spec) error = %v", err)
+	}
+	if got != "spec" {
+		t.Fatalf("CallCustomToolWithSession(get_api_spec) = %q, want spec", got)
+	}
+}
+
+// The virtual fallback is scoped to the same session. It must not become a route
+// into another session's tools.
+func TestVirtualFallbackDoesNotCrossSessions(t *testing.T) {
+	resetRegistryForTest(t)
+
+	InitRegistryForSession("workflow-a", map[string]func(context.Context, map[string]interface{}) (string, error){
+		"execute_shell_command": func(context.Context, map[string]interface{}) (string, error) { return "shell", nil },
+	}, nil)
+	InitRegistryVirtualToolsForSession("workflow-b", map[string]func(context.Context, map[string]interface{}) (string, error){
+		"get_api_spec": func(context.Context, map[string]interface{}) (string, error) { return "other-session", nil },
+	}, nil)
+
+	if _, err := CallCustomToolWithSession(context.Background(), "workflow-a", "get_api_spec", nil); err == nil {
+		t.Fatal("session workflow-a borrowed workflow-b's virtual tool")
+	}
+}
