@@ -79,9 +79,6 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
-	// Build agent options
-	options := m.buildAgentOptions(req.Config, sessionID)
-
 	managed := &ManagedAgent{
 		ID:          agentID,
 		SessionID:   sessionID,
@@ -125,14 +122,14 @@ func (m *AgentManager) CreateAgent(parentCtx context.Context, req CreateAgentReq
 			Direct: directTools,
 			MCP:    mcpSources,
 		},
-	}, mcpagent.RuntimeConfig{Model: llmModel, MCPConfigPath: configPath, LegacyOptions: options})
+	}, m.buildRuntimeConfig(req.Config, sessionID, llmModel, configPath))
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
 	session, err := agent.Start(ctx)
 	if err != nil {
-		agent.Close()
+		_ = agent.Close()
 		cancel()
 		return nil, fmt.Errorf("failed to start agent session: %w", err)
 	}
@@ -226,7 +223,7 @@ func (m *AgentManager) DestroyAgent(agentID string) error {
 	if agent.Session != nil {
 		_ = agent.Session.Close()
 	}
-	agent.Agent.Close()
+	_ = agent.Agent.Close()
 	delete(m.agents, agentID)
 
 	m.logger.Info("Agent destroyed", loggerv2.String("agent_id", agentID))
@@ -257,7 +254,7 @@ func (m *AgentManager) DestroyAll() {
 
 	for id, agent := range m.agents {
 		agent.cancel()
-		agent.Agent.Close()
+		_ = agent.Agent.Close()
 		delete(m.agents, id)
 	}
 	m.logger.Info("All agents destroyed")
@@ -311,7 +308,7 @@ func (m *AgentManager) initializeLLM(ctx context.Context, config AgentConfig) (l
 }
 
 // buildAgentOptions converts config to agent options
-func (m *AgentManager) buildAgentOptions(config AgentConfig, sessionID string) []mcpagent.AgentOption {
+func (m *AgentManager) buildRuntimeConfig(config AgentConfig, sessionID string, model llmtypes.Model, configPath string) mcpagent.RuntimeConfig {
 	// Determine provider
 	provider := llm.ProviderOpenAI // default
 	if strings.TrimSpace(config.Provider) != "" {
@@ -320,43 +317,21 @@ func (m *AgentManager) buildAgentOptions(config AgentConfig, sessionID string) [
 		}
 	}
 
-	options := []mcpagent.AgentOption{
-		mcpagent.WithLogger(m.logger),
-		mcpagent.WithSessionID(sessionID),
-		mcpagent.WithProvider(provider),
+	runtime := mcpagent.RuntimeConfig{
+		Model: model, MCPConfigPath: configPath,
+		Generation:    mcpagent.GenerationRuntimeConfig{Provider: provider, MaxTurns: config.MaxTurns},
+		Tools:         mcpagent.ToolRuntimeConfig{SelectedServers: config.SelectedServers, SelectedTools: config.SelectedTools},
+		Context:       mcpagent.ContextRuntimeConfig{SummarizationEnabled: config.EnableContextSummarization},
+		MCP:           mcpagent.MCPRuntimeConfig{SessionID: sessionID},
+		Observability: mcpagent.ObservabilityRuntimeConfig{Logger: m.logger, Streaming: config.EnableStreaming},
 	}
-
-	if config.MaxTurns > 0 {
-		options = append(options, mcpagent.WithMaxTurns(config.MaxTurns))
-	}
-
 	if config.Temperature != nil {
-		options = append(options, mcpagent.WithTemperature(*config.Temperature))
+		runtime.Generation.Temperature = *config.Temperature
 	}
-
-	if config.SystemPrompt != "" {
-		options = append(options, mcpagent.WithSystemPrompt(config.SystemPrompt))
-	}
-
-	if len(config.SelectedServers) > 0 {
-		options = append(options, mcpagent.WithSelectedServers(config.SelectedServers))
-	}
-
-	if len(config.SelectedTools) > 0 {
-		options = append(options, mcpagent.WithSelectedTools(config.SelectedTools))
-	}
-
-	if config.EnableContextSummarization {
-		options = append(options, mcpagent.WithContextSummarization(true))
-	}
-
 	if config.EnableContextOffloading {
-		options = append(options, mcpagent.WithContextOffloading(true))
+		runtime.Context.Offloading = boolPointer(true)
 	}
-
-	if config.EnableStreaming {
-		options = append(options, mcpagent.WithStreaming(true))
-	}
-
-	return options
+	return runtime
 }
+
+func boolPointer(value bool) *bool { return &value }

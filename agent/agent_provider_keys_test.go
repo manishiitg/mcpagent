@@ -79,8 +79,8 @@ func TestGetLLMModelConfigIncludesZAIAndMiniMaxKeys(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := &Agent{
 				provider: tt.provider,
-				ModelID:  "test-model",
-				APIKeys:  tt.keys,
+				modelID:  "test-model",
+				apiKeys:  tt.keys,
 			}
 
 			config := agent.getLLMModelConfig()
@@ -132,7 +132,7 @@ func TestExtractAPIKeysFromLLMPreservesCodingCLIKeys(t *testing.T) {
 func TestGetEffectiveLLMConfigAddsDefaultZAIFallback(t *testing.T) {
 	agent := &Agent{
 		provider: llm.ProviderZAI,
-		ModelID:  zaiadapter.ModelGLM51,
+		modelID:  zaiadapter.ModelGLM51,
 	}
 
 	config := agent.getEffectiveLLMConfig()

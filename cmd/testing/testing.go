@@ -13,7 +13,6 @@ import (
 	connectionisolation "github.com/manishiitg/mcpagent/cmd/testing/connection-isolation"
 	executortest "github.com/manishiitg/mcpagent/cmd/testing/executor"
 	hello "github.com/manishiitg/mcpagent/cmd/testing/hello"
-	humanfeedbackcodeexec "github.com/manishiitg/mcpagent/cmd/testing/human-feedback-code-exec"
 	langfuse "github.com/manishiitg/mcpagent/cmd/testing/langfuse"
 	langsmith "github.com/manishiitg/mcpagent/cmd/testing/langsmith"
 	largetooloutput "github.com/manishiitg/mcpagent/cmd/testing/large-tool-output"
@@ -21,11 +20,8 @@ import (
 	mcpbridge "github.com/manishiitg/mcpagent/cmd/testing/mcpbridge"
 	oauthflow "github.com/manishiitg/mcpagent/cmd/testing/oauth-flow"
 	paralleltoolexec "github.com/manishiitg/mcpagent/cmd/testing/parallel-tool-exec"
-	"github.com/manishiitg/mcpagent/cmd/testing/structured-output/conversion"
-	"github.com/manishiitg/mcpagent/cmd/testing/structured-output/tool"
 	tokentracking "github.com/manishiitg/mcpagent/cmd/testing/token-tracking"
 	toolfilter "github.com/manishiitg/mcpagent/cmd/testing/tool-filter"
-	toolsearch "github.com/manishiitg/mcpagent/cmd/testing/tool-search"
 )
 
 // TestingCmd represents the testing command group
@@ -105,15 +101,11 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(mcpagentcodeexec.GetMCPAgentCodeExecTestCmd())
 	TestingCmd.AddCommand(mcpbridge.GetMCPBridgeTestCmd())
 	TestingCmd.AddCommand(claudecodebridge.GetClaudeCodeBridgeTestCmd())
-	TestingCmd.AddCommand(humanfeedbackcodeexec.GetHumanFeedbackCodeExecTestCmd())
 	TestingCmd.AddCommand(langfuse.GetLangfuseReadTestCmd())
 	TestingCmd.AddCommand(langsmith.GetLangsmithReadTestCmd())
 	TestingCmd.AddCommand(largetooloutput.GetLargeToolOutputTestCmd())
 	TestingCmd.AddCommand(oauthflow.GetOAuthFlowTestCmd())
-	TestingCmd.AddCommand(conversion.GetStructuredOutputConversionTestCmd())
-	TestingCmd.AddCommand(tool.GetStructuredOutputToolTestCmd())
 	TestingCmd.AddCommand(tokentracking.GetTokenTrackingTestCmd())
-	TestingCmd.AddCommand(toolsearch.GetToolSearchTestCmd())
 	TestingCmd.AddCommand(paralleltoolexec.GetParallelToolExecTestCmd())
 }
 

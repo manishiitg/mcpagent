@@ -9,7 +9,7 @@ import (
 func TestCodingAgentsSkipWrapperTokenCounting(t *testing.T) {
 	agent := &Agent{
 		provider:          llm.ProviderClaudeCode,
-		ModelID:           "claude-sonnet-4-6",
+		modelID:           "claude-sonnet-4-6",
 		toolOutputHandler: NewToolOutputHandler(),
 	}
 
@@ -21,7 +21,7 @@ func TestCodingAgentsSkipWrapperTokenCounting(t *testing.T) {
 func TestNonCodingAgentsUseWrapperTokenCountingWhenConfigured(t *testing.T) {
 	agent := &Agent{
 		provider:          llm.ProviderOpenAI,
-		ModelID:           "gpt-5",
+		modelID:           "gpt-5",
 		toolOutputHandler: NewToolOutputHandler(),
 	}
 
@@ -33,7 +33,7 @@ func TestNonCodingAgentsUseWrapperTokenCountingWhenConfigured(t *testing.T) {
 func TestWrapperTokenCountingRequiresHandler(t *testing.T) {
 	agent := &Agent{
 		provider: llm.ProviderOpenAI,
-		ModelID:  "gpt-5",
+		modelID:  "gpt-5",
 	}
 
 	if agent.shouldUseWrapperTokenCounting() {

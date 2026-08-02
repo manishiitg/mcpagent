@@ -75,9 +75,9 @@ func TestIsolatedWorkspaceNativeResumeAcrossTurns(t *testing.T) {
 				if err != nil {
 					t.Fatalf("build turn-1 agent: %v", err)
 				}
-				agent1.IsolatedSessionWorkspace = true
+				agent1.isolatedSessionWorkspace = true
 				if tr.structured {
-					agent1.CodingAgentTransport = llm.CodingAgentTransportStructured
+					agent1.codingAgentTransport = llm.CodingAgentTransportStructured
 				}
 
 				if _, err := agent1.ask(ctx, "Remember this code word exactly: "+codeWord+". Reply with just: OK"); err != nil {
@@ -116,9 +116,9 @@ func TestIsolatedWorkspaceNativeResumeAcrossTurns(t *testing.T) {
 					t.Fatalf("build turn-2 agent: %v", err)
 				}
 				defer cleanup2()
-				agent2.IsolatedSessionWorkspace = true
+				agent2.isolatedSessionWorkspace = true
 				if tr.structured {
-					agent2.CodingAgentTransport = llm.CodingAgentTransportStructured
+					agent2.codingAgentTransport = llm.CodingAgentTransportStructured
 				}
 				// Exactly what production does with the persisted handle.
 				agent2.applyAgentSessionHandle(handle)

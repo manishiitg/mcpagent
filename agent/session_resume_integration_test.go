@@ -82,14 +82,14 @@ func TestSessionIDExtractionFromGenerationInfo(t *testing.T) {
 
 			extractCodingAgentSessionIDs(agent, resp)
 
-			if agent.ClaudeCodeSessionID != tt.wantClaude {
-				t.Errorf("ClaudeCodeSessionID = %q, want %q", agent.ClaudeCodeSessionID, tt.wantClaude)
+			if agent.claudeCodeSessionID != tt.wantClaude {
+				t.Errorf("ClaudeCodeSessionID = %q, want %q", agent.claudeCodeSessionID, tt.wantClaude)
 			}
-			if agent.CodexSessionID != tt.wantCodex {
-				t.Errorf("CodexSessionID = %q, want %q", agent.CodexSessionID, tt.wantCodex)
+			if agent.codexSessionID != tt.wantCodex {
+				t.Errorf("CodexSessionID = %q, want %q", agent.codexSessionID, tt.wantCodex)
 			}
-			if agent.PiSessionID != tt.wantPi {
-				t.Errorf("PiSessionID = %q, want %q", agent.PiSessionID, tt.wantPi)
+			if agent.piSessionID != tt.wantPi {
+				t.Errorf("PiSessionID = %q, want %q", agent.piSessionID, tt.wantPi)
 			}
 		})
 	}
@@ -172,14 +172,14 @@ func TestSessionIDResumeOptionsInjected(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := &Agent{
 				provider:                          tt.provider,
-				ModelID:                           tt.modelID,
-				SessionID:                         tt.sessionID,
-				ClaudeCodeSessionID:               tt.claudeSessionID,
-				CodexSessionID:                    tt.codexSessionID,
-				CursorSessionID:                   tt.cursorSessionID,
-				CursorBridgeToolsMode:             tt.cursorBridgeToolsMode,
-				PiSessionID:                       tt.piSessionID,
-				CodexPersistentInteractiveSession: tt.codexPersistentInteractiveSession,
+				modelID:                           tt.modelID,
+				sessionID:                         tt.sessionID,
+				claudeCodeSessionID:               tt.claudeSessionID,
+				codexSessionID:                    tt.codexSessionID,
+				cursorSessionID:                   tt.cursorSessionID,
+				cursorBridgeToolsMode:             tt.cursorBridgeToolsMode,
+				piSessionID:                       tt.piSessionID,
+				codexPersistentInteractiveSession: tt.codexPersistentInteractiveSession,
 			}
 
 			opts := agent.buildStructuredResumeOptions()
@@ -269,7 +269,7 @@ func TestSessionIDRoundTrip(t *testing.T) {
 }
 
 func TestTypedCodingProviderSessionHandleUpdatesAgent(t *testing.T) {
-	agent := &Agent{provider: llm.ProviderClaudeCode, ModelID: "old-model"}
+	agent := &Agent{provider: llm.ProviderClaudeCode, modelID: "old-model"}
 	resp := &llmtypes.ContentResponse{
 		Choices: []*llmtypes.ContentChoice{
 			{
@@ -291,14 +291,14 @@ func TestTypedCodingProviderSessionHandleUpdatesAgent(t *testing.T) {
 
 	extractCodingAgentSessionIDs(agent, resp)
 
-	if agent.ClaudeCodeSessionID != "claude-native-1" {
-		t.Fatalf("ClaudeCodeSessionID = %q, want claude-native-1", agent.ClaudeCodeSessionID)
+	if agent.claudeCodeSessionID != "claude-native-1" {
+		t.Fatalf("ClaudeCodeSessionID = %q, want claude-native-1", agent.claudeCodeSessionID)
 	}
-	if agent.CodingAgentWorkingDir != "/workspace" {
-		t.Fatalf("CodingAgentWorkingDir = %q, want /workspace", agent.CodingAgentWorkingDir)
+	if agent.codingAgentWorkingDir != "/workspace" {
+		t.Fatalf("CodingAgentWorkingDir = %q, want /workspace", agent.codingAgentWorkingDir)
 	}
-	if agent.CodingProviderSessionHandle.TmuxSession != "tmux-1" {
-		t.Fatalf("typed handle not stored: %#v", agent.CodingProviderSessionHandle)
+	if agent.codingProviderSessionHandle.TmuxSession != "tmux-1" {
+		t.Fatalf("typed handle not stored: %#v", agent.codingProviderSessionHandle)
 	}
 }
 
@@ -319,14 +319,14 @@ func TestAgentSessionHandleApplyRestoresProviderState(t *testing.T) {
 
 	agent.applyAgentSessionHandle(handle)
 
-	if agent.SessionID != "app-session-1" {
-		t.Fatalf("SessionID = %q, want app-session-1", agent.SessionID)
+	if agent.sessionID != "app-session-1" {
+		t.Fatalf("SessionID = %q, want app-session-1", agent.sessionID)
 	}
-	if agent.CodexSessionID != "codex-thread-1" {
-		t.Fatalf("CodexSessionID = %q, want codex-thread-1", agent.CodexSessionID)
+	if agent.codexSessionID != "codex-thread-1" {
+		t.Fatalf("CodexSessionID = %q, want codex-thread-1", agent.codexSessionID)
 	}
-	if agent.CodexProjectDirID != "codex-project-1" {
-		t.Fatalf("CodexProjectDirID = %q, want codex-project-1", agent.CodexProjectDirID)
+	if agent.codexProjectDirID != "codex-project-1" {
+		t.Fatalf("CodexProjectDirID = %q, want codex-project-1", agent.codexProjectDirID)
 	}
 	if got := agent.currentAgentSessionHandle(); got == nil || got.Provider.NativeSessionID != "codex-thread-1" {
 		t.Fatalf("CurrentAgentSessionHandle = %#v", got)
@@ -336,7 +336,7 @@ func TestAgentSessionHandleApplyRestoresProviderState(t *testing.T) {
 func TestAgentSessionHandleApplyPreservesConfiguredModel(t *testing.T) {
 	agent := &Agent{
 		provider: llm.ProviderClaudeCode,
-		ModelID:  "claude-sonnet-5",
+		modelID:  "claude-sonnet-5",
 	}
 	handle := &AgentSessionHandle{
 		SessionID: "pulse-session",
@@ -351,23 +351,23 @@ func TestAgentSessionHandleApplyPreservesConfiguredModel(t *testing.T) {
 
 	agent.applyAgentSessionHandle(handle)
 
-	if agent.ModelID != "claude-sonnet-5" {
-		t.Fatalf("ModelID = %q, want configured Pulse model", agent.ModelID)
+	if agent.modelID != "claude-sonnet-5" {
+		t.Fatalf("ModelID = %q, want configured Pulse model", agent.modelID)
 	}
-	if agent.CodingProviderSessionHandle.Model != "claude-sonnet-5" {
-		t.Fatalf("stored handle model = %q, want configured Pulse model", agent.CodingProviderSessionHandle.Model)
+	if agent.codingProviderSessionHandle.Model != "claude-sonnet-5" {
+		t.Fatalf("stored handle model = %q, want configured Pulse model", agent.codingProviderSessionHandle.Model)
 	}
-	if agent.ClaudeCodeSessionID != "builder-conversation" {
-		t.Fatalf("ClaudeCodeSessionID = %q, want restored conversation", agent.ClaudeCodeSessionID)
+	if agent.claudeCodeSessionID != "builder-conversation" {
+		t.Fatalf("ClaudeCodeSessionID = %q, want restored conversation", agent.claudeCodeSessionID)
 	}
 }
 
 func TestCodingProviderContinuationHandleUsesRequestedModel(t *testing.T) {
 	agent := &Agent{
 		provider:              llm.ProviderClaudeCode,
-		ModelID:               "claude-sonnet-5",
-		CodingAgentWorkingDir: "/tmp/work",
-		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+		modelID:               "claude-sonnet-5",
+		codingAgentWorkingDir: "/tmp/work",
+		codingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
 			Provider:        string(llm.ProviderClaudeCode),
 			Transport:       llmtypes.CodingProviderTransportTmux,
 			NativeSessionID: "builder-conversation",
@@ -387,9 +387,9 @@ func TestCodingProviderContinuationHandleUsesRequestedModel(t *testing.T) {
 func TestCodingProviderContinuationHandleForModelRequiresMatchingNativeHandle(t *testing.T) {
 	agent := &Agent{
 		provider:              llm.ProviderClaudeCode,
-		ModelID:               "claude-sonnet-4-6",
-		CodingAgentWorkingDir: "/tmp/work",
-		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+		modelID:               "claude-sonnet-4-6",
+		codingAgentWorkingDir: "/tmp/work",
+		codingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
 			Provider:        string(llm.ProviderClaudeCode),
 			Transport:       llmtypes.CodingProviderTransportTmux,
 			NativeSessionID: "claude-native",
@@ -411,7 +411,7 @@ func TestCodingProviderContinuationHandleForModelRequiresMatchingNativeHandle(t 
 		t.Fatal("expected provider mismatch to be rejected")
 	}
 
-	agent.CodingProviderSessionHandle.NativeSessionID = ""
+	agent.codingProviderSessionHandle.NativeSessionID = ""
 	if _, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderClaudeCode, "claude-sonnet-4-6"); ok {
 		t.Fatal("expected missing native session id to be rejected")
 	}
@@ -420,9 +420,9 @@ func TestCodingProviderContinuationHandleForModelRequiresMatchingNativeHandle(t 
 func TestCodingProviderContinuationHandleAcceptsPiNativeResume(t *testing.T) {
 	agent := &Agent{
 		provider:              llm.ProviderPiCLI,
-		ModelID:               "google/gemini-3.5-flash",
-		CodingAgentWorkingDir: "/tmp/pi-work",
-		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+		modelID:               "google/gemini-3.5-flash",
+		codingAgentWorkingDir: "/tmp/pi-work",
+		codingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
 			Provider:        string(llm.ProviderPiCLI),
 			Transport:       llmtypes.CodingProviderTransportTmux,
 			NativeSessionID: "owner-session",

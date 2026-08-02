@@ -83,13 +83,12 @@ func initializeAgentRegistry(ctx context.Context, logger loggerv2.Logger, t *tes
 	}
 
 	// Create minimal agent with empty config
-	agent, err := mcpagent.NewAgent(
-		ctx,
-		llmInstance,
-		"configs/mcp_servers_simple.json",       // Config path
-		mcpagent.WithServerName("test-session"), // Server name
-		mcpagent.WithLogger(logger),
-	)
+	agent, err := mcpagent.NewAgentFromDefinition(ctx, mcpagent.AgentDefinition{
+		Tools: mcpagent.ToolSet{MCP: []mcpagent.MCPToolSource{{Name: "test-session"}}},
+	}, mcpagent.RuntimeConfig{
+		Model: llmInstance, MCPConfigPath: "configs/mcp_servers_simple.json",
+		Observability: mcpagent.ObservabilityRuntimeConfig{Logger: logger},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}

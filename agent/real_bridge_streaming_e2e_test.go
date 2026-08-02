@@ -31,7 +31,7 @@ func realBridgeRandHex(n int) string {
 
 // isBridgeOrWebsearchTool reports whether a streamed tool name is ALLOWED under
 // the bridge-only policy: an mcpbridge tool (execute_shell_command,
-// diff_patch_workspace_file, agent_browser, get_api_spec — directly or via
+// diff_patch_workspace_file, agent_browser, get_api_spec, read_skill — directly or via
 // claude's mcp__api-bridge__ prefix), a provider's MCP-access meta-tool (how
 // cursor/pi reach the bridge), or websearch — the ONE built-in tool we permit.
 // Anything else is a NATIVE tool (codex exec/shell, claude Bash/Read/Write,
@@ -39,7 +39,7 @@ func realBridgeRandHex(n int) string {
 // session-scoping, no controlled tool set — which the policy forbids.
 func isBridgeOrWebsearchTool(name string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
-	for _, b := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec"} {
+	for _, b := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec", "read_skill"} {
 		if strings.Contains(n, b) {
 			return true
 		}
@@ -130,7 +130,7 @@ func startRealExecutorServer(t *testing.T, configPath string) (string, string) {
 // boots the executor HTTP API — the SAME wiring examples/basic_claude_code uses —
 // on 127.0.0.1:0 and returns its URL, token, and a stop func. It does NOT set any
 // global env, so multiple executors can run in parallel; each Agent gets its
-// URL/token via WithAPIConfig.
+// URL/token via withAPIConfig.
 func bootRealExecutor(configPath string) (string, string, func(), error) {
 	apiToken := executor.GenerateAPIToken()
 	handlers := executor.NewExecutorHandlers(configPath, nil)
@@ -241,7 +241,7 @@ type realBridgeProviderCase struct {
 //	                       shell access, or the caller is interactive/single-owner
 //	                       and bridge-only containment buys no real safety). This
 //	                       test's codex case explicitly opts INTO "read-only" (see
-//	                       the WithCodexSandbox call above) specifically to keep
+//	                       the withCodexSandbox call above) specifically to keep
 //	                       the narrower containment guarantee under live test
 //	                       coverage: under read-only, native exec can read but
 //	                       CANNOT write or mutate the host — every state change is
@@ -255,8 +255,8 @@ type realBridgeProviderCase struct {
 //	                       only, no shell on the bridge" — read-only is the only
 //	                       thing that makes that restriction hold for codex) or
 //	                       needs an audit trail native exec would bypass — see
-//	                       Agent.CodexSandboxMode / WithCodexSandbox /
-//	                       WithCodexNetworkAccess and
+//	                       Agent.CodexSandboxMode / withCodexSandbox /
+//	                       withCodexNetworkAccess and
 //	                       TestAppendCodexCLIIntegrationOptionsSandbox
 //	                       ReadOnlyOptIn.
 func realBridgeProviderCases() []realBridgeProviderCase {
@@ -351,11 +351,11 @@ func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
 
-	agentOpts := []AgentOption{
-		WithProvider(pc.provider),
-		WithAPIConfig(apiURL, apiToken),
-		WithStreaming(true),
-		WithCodingAgentWorkingDir(workDir),
+	agentOpts := []agentOption{
+		withProvider(pc.provider),
+		withAPIConfig(apiURL, apiToken),
+		withStreaming(true),
+		withCodingAgentWorkingDir(workDir),
 	}
 	if pc.provider == llm.ProviderCodexCLI {
 		// The P0 guarantee this test enforces for codex (assertNoNativeWrites,
@@ -363,13 +363,13 @@ func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		// workspace-write (see Agent.CodexSandboxMode doc), so opt in explicitly
 		// to keep this containment actually tested rather than silently
 		// untested once the default changed.
-		agentOpts = append(agentOpts, WithCodexSandbox("read-only"))
+		agentOpts = append(agentOpts, withCodexSandbox("read-only"))
 	}
-	agent, err = NewAgent(ctx, llmModel, configPath, agentOpts...)
+	agent, err = newAgent(ctx, llmModel, configPath, agentOpts...)
 	if err != nil {
-		t.Fatalf("NewAgent: %v", err)
+		t.Fatalf("newAgent: %v", err)
 	}
-	t.Cleanup(agent.Close)
+	t.Cleanup(func() { _ = agent.Close() })
 
 	// Register the REAL shell tool the bridge will expose and route to.
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)

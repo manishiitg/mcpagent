@@ -8,17 +8,8 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-func customToolFixture(name, category string) CustomTool {
-	return CustomTool{
-		Category: category,
-		Definition: llmtypes.Tool{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        name,
-				Description: name + " description",
-			},
-		},
-	}
+func customToolFixture(name, category string) registeredTool {
+	return directToolFixture(name, category)
 }
 
 // The bridge prompt teaches `$MCP_CUSTOM/{tool_name}` and states the categories
@@ -30,12 +21,12 @@ func customToolFixture(name, category string) CustomTool {
 // call to this on 2026-08-01 requesting four workflow tools.
 func TestGetAPISpecResolvesToolsWhenServerNameIsCustom(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{
-			"start_pulse_fix_attempt":   customToolFixture("start_pulse_fix_attempt", "workflow"),
-			"mark_pulse_module_result":  customToolFixture("mark_pulse_module_result", "workflow"),
-			"get_pulse_module_state":    customToolFixture("get_pulse_module_state", "workflow"),
-			"get_pulse_finding_backlog": customToolFixture("get_pulse_finding_backlog", "workflow"),
-		},
+		toolRegistry: directToolRegistry(
+			customToolFixture("start_pulse_fix_attempt", "workflow"),
+			customToolFixture("mark_pulse_module_result", "workflow"),
+			customToolFixture("get_pulse_module_state", "workflow"),
+			customToolFixture("get_pulse_finding_backlog", "workflow"),
+		),
 		toolFilter: NewToolFilter(nil, nil, nil, nil, nil),
 	}
 
@@ -61,10 +52,10 @@ func TestGetAPISpecResolvesToolsWhenServerNameIsCustom(t *testing.T) {
 // agent to ignore.
 func TestGetAPISpecCustomServerSpansCategories(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{
-			"get_pulse_module_state": customToolFixture("get_pulse_module_state", "workflow"),
-			"notify_user":            customToolFixture("notify_user", "human_tools"),
-		},
+		toolRegistry: directToolRegistry(
+			customToolFixture("get_pulse_module_state", "workflow"),
+			customToolFixture("notify_user", "human_tools"),
+		),
 		toolFilter: NewToolFilter(nil, nil, nil, nil, nil),
 	}
 
@@ -84,10 +75,8 @@ func TestGetAPISpecCustomServerSpansCategories(t *testing.T) {
 // unknown tool must still surface an error rather than being quietly absorbed.
 func TestGetAPISpecUnknownToolStillErrors(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{
-			"get_pulse_module_state": customToolFixture("get_pulse_module_state", "workflow"),
-		},
-		toolFilter: NewToolFilter(nil, nil, nil, nil, nil),
+		toolRegistry: directToolRegistry(customToolFixture("get_pulse_module_state", "workflow")),
+		toolFilter:   NewToolFilter(nil, nil, nil, nil, nil),
 	}
 
 	if _, err := agent.handleGetAPISpec(context.Background(), map[string]interface{}{
@@ -106,10 +95,10 @@ func TestGetAPISpecUnknownToolStillErrors(t *testing.T) {
 // workflow tools under auto_improvement.
 func TestGetAPISpecResolvesToolsUnderTheWrongValidCategory(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{
-			"get_pulse_module_state": customToolFixture("get_pulse_module_state", "workflow"),
-			"get_reference_doc":      customToolFixture("get_reference_doc", "auto_improvement"),
-		},
+		toolRegistry: directToolRegistry(
+			customToolFixture("get_pulse_module_state", "workflow"),
+			customToolFixture("get_reference_doc", "auto_improvement"),
+		),
 		toolFilter: NewToolFilter(nil, nil, nil, []string{"workflow", "auto_improvement"}, nil),
 	}
 
@@ -125,16 +114,16 @@ func TestGetAPISpecResolvesToolsUnderTheWrongValidCategory(t *testing.T) {
 	}
 }
 
-// Name-based resolution reads a.customTools directly, while the tool index
+// Name-based resolution reads the canonical registry directly, while the tool index
 // applies isToolAllowed. Without the same check here, resolving by name hands
 // back the spec for a tool the session was deliberately denied —
 // SetToolAccess is exactly how a Pulse Fixer stage is bounded.
 func TestGetAPISpecDoesNotDiscloseDeniedTools(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{
-			"get_pulse_module_state":          customToolFixture("get_pulse_module_state", "workflow"),
-			"mark_pulse_final_command_result": customToolFixture("mark_pulse_final_command_result", "workflow"),
-		},
+		toolRegistry: directToolRegistry(
+			customToolFixture("get_pulse_module_state", "workflow"),
+			customToolFixture("mark_pulse_final_command_result", "workflow"),
+		),
 		toolFilter:    NewToolFilter(nil, nil, nil, []string{"workflow"}, nil),
 		toolAllowList: map[string]bool{"get_pulse_module_state": true},
 	}
@@ -151,10 +140,8 @@ func TestGetAPISpecDoesNotDiscloseDeniedTools(t *testing.T) {
 // silently received one has no way to see which is missing until it calls it.
 func TestGetAPISpecFailsAtomicallyOnAPartlyResolvableRequest(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{
-			"get_pulse_module_state": customToolFixture("get_pulse_module_state", "workflow"),
-		},
-		toolFilter: NewToolFilter(nil, nil, nil, []string{"workflow"}, nil),
+		toolRegistry: directToolRegistry(customToolFixture("get_pulse_module_state", "workflow")),
+		toolFilter:   NewToolFilter(nil, nil, nil, []string{"workflow"}, nil),
 	}
 
 	_, err := agent.handleGetAPISpec(context.Background(), map[string]interface{}{
@@ -175,10 +162,10 @@ func TestGetAPISpecFailsAtomicallyOnAPartlyResolvableRequest(t *testing.T) {
 // resolve by tool name alone.
 func TestGetAPISpecResolvesWithNoServerNameAtAll(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{
-			"get_pulse_module_state":    customToolFixture("get_pulse_module_state", "workflow"),
-			"get_pulse_finding_backlog": customToolFixture("get_pulse_finding_backlog", "workflow"),
-		},
+		toolRegistry: directToolRegistry(
+			customToolFixture("get_pulse_module_state", "workflow"),
+			customToolFixture("get_pulse_finding_backlog", "workflow"),
+		),
 		toolFilter: NewToolFilter(nil, nil, nil, []string{"workflow"}, nil),
 	}
 
@@ -199,8 +186,8 @@ func TestGetAPISpecResolvesWithNoServerNameAtAll(t *testing.T) {
 // call answerable with no address at all.
 func TestGetAPISpecStillRequiresToolName(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{"x": customToolFixture("x", "workflow")},
-		toolFilter:  NewToolFilter(nil, nil, nil, []string{"workflow"}, nil),
+		toolRegistry: directToolRegistry(customToolFixture("x", "workflow")),
+		toolFilter:   NewToolFilter(nil, nil, nil, []string{"workflow"}, nil),
 	}
 
 	if _, err := agent.handleGetAPISpec(context.Background(), map[string]interface{}{}); err == nil {
@@ -212,9 +199,7 @@ func TestGetAPISpecStillRequiresToolName(t *testing.T) {
 // checked before a hit is returned, including after an allow-list change.
 func TestGetAPISpecValidatesPolicyBeforeCacheLookup(t *testing.T) {
 	agent := &Agent{
-		customTools: map[string]CustomTool{
-			"mutate_records": customToolFixture("mutate_records", "database"),
-		},
+		toolRegistry:     directToolRegistry(customToolFixture("mutate_records", "database")),
 		toolFilter:       NewToolFilter(nil, nil, nil, []string{"database"}, nil),
 		toolAllowList:    map[string]bool{"query_records": true},
 		openAPISpecCache: map[string][]byte{"tools:mutate_records": []byte("FORBIDDEN CACHED SPEC")},
@@ -229,7 +214,7 @@ func TestGetAPISpecValidatesPolicyBeforeCacheLookup(t *testing.T) {
 
 func TestGetAPISpecResolvesMCPToolByNameOnly(t *testing.T) {
 	agent := &Agent{
-		Tools: []llmtypes.Tool{toolFixture("search_issues")},
+		tools: []llmtypes.Tool{toolFixture("search_issues")},
 		toolToServer: map[string]string{
 			"search_issues": "github-server",
 		},
@@ -249,7 +234,7 @@ func TestGetAPISpecResolvesMCPToolByNameOnly(t *testing.T) {
 
 func TestGetAPISpecCompatibilityServerCannotChangeRouting(t *testing.T) {
 	agent := &Agent{
-		Tools: []llmtypes.Tool{toolFixture("search_issues")},
+		tools: []llmtypes.Tool{toolFixture("search_issues")},
 		toolToServer: map[string]string{
 			"search_issues": "github-server",
 		},

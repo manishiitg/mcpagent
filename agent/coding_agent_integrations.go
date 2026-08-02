@@ -37,7 +37,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// Use restricted permissions instead of skipping them entirely. Allow our
 	// bridge tools and WebSearch to run without prompts. In enforced mode the
 	// wildcard is replaced with an explicit allowlist DERIVED from the actual
-	// registered bridge tool set (core + WithAdditionalBridgeTools) — not a
+	// registered bridge tool set (core + withAdditionalBridgeTools) — not a
 	// hardcoded 4-tool literal, which silently rejected any additional tool a
 	// caller had registered.
 	allowedTools := "mcp__api-bridge__*,WebSearch"
@@ -52,14 +52,14 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	if claudeHTTPHooksEnabled {
 		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools)
 		if hookErr != nil {
-			a.Logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
+			a.logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
 		} else {
 			settingsJSON, settingsErr := buildClaudeHTTPRoutingSettings(hookPath)
 			if settingsErr != nil {
-				a.Logger.Warn("Failed to build Claude Code hook settings", loggerv2.Error(settingsErr))
+				a.logger.Warn("Failed to build Claude Code hook settings", loggerv2.Error(settingsErr))
 			} else {
 				opts = append(opts, llm.WithClaudeCodeSettings(settingsJSON))
-				a.Logger.Info("🪝 Claude Code HTTP tool routing enforcement enabled",
+				a.logger.Info("🪝 Claude Code HTTP tool routing enforcement enabled",
 					loggerv2.String("env", "MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING"),
 					loggerv2.String("hook_path", hookPath))
 			}
@@ -77,23 +77,23 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		// tools. BuildBridgeMCPConfig set this path just above.
 		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
 	}
-	a.Logger.Info("🌉 Using MCP bridge for Claude Code tool access via HTTP API")
+	a.logger.Info("🌉 Using MCP bridge for Claude Code tool access via HTTP API")
 
-	if a.MaxTurns > 0 {
-		opts = append(opts, llm.WithMaxTurns(a.MaxTurns))
+	if a.maxTurns > 0 {
+		opts = append(opts, llm.WithMaxTurns(a.maxTurns))
 	}
-	if a.ClaudeCodeSessionID != "" {
-		opts = append(opts, llm.WithResumeSessionID(a.ClaudeCodeSessionID))
+	if a.claudeCodeSessionID != "" {
+		opts = append(opts, llm.WithResumeSessionID(a.claudeCodeSessionID))
 	}
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithClaudeStructuredTransport(true))
-	} else if a.EnableStreaming {
+	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithClaudeStreamTranscript(true))
 	}
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
 			opts = append(opts, llm.WithClaudeCodeEffort(effort))
-			a.Logger.Info(fmt.Sprintf("🧠 [CLAUDE_CODE] Effort level set to: %s", effort))
+			a.logger.Info(fmt.Sprintf("🧠 [CLAUDE_CODE] Effort level set to: %s", effort))
 		}
 	}
 	return opts, nil
@@ -133,7 +133,7 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	// restricts its tool set (e.g. "web_search only, no shell on the bridge") or
 	// needs every action to hit an audit trail that native exec would bypass
 	// needs the stronger guarantee — that caller opts INTO "read-only" via
-	// Agent.CodexSandboxMode / WithCodexSandbox. Under read-only, native exec can
+	// Agent.CodexSandboxMode / withCodexSandbox. Under read-only, native exec can
 	// read but CANNOT write or mutate the host, so every state change is forced
 	// through the MCP bridge (execute_shell_command runs in the executor
 	// process, not codex's sandbox, so bridge writes still work) — but note
@@ -142,16 +142,16 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	// "read-only, no network", so read-only is a deliberate, narrow opt-in, not
 	// something to reach for casually. See TestRealBridgeStreamingE2E (codex
 	// case), which explicitly opts into read-only to keep that guarantee tested.
-	sandboxMode := a.CodexSandboxMode
+	sandboxMode := a.codexSandboxMode
 	if strings.TrimSpace(sandboxMode) == "" {
 		sandboxMode = "workspace-write"
 	}
 	opts = append(opts, llm.WithCodexSandbox(sandboxMode))
-	if sandboxMode == "workspace-write" && a.CodexNetworkAccess {
+	if sandboxMode == "workspace-write" && a.codexNetworkAccess {
 		opts = append(opts, llm.WithCodexConfigOverrides([]string{"sandbox_workspace_write.network_access=true"}))
 	}
-	if a.CodexSessionID != "" {
-		opts = append(opts, llm.WithCodexResumeSessionID(a.CodexSessionID))
+	if a.codexSessionID != "" {
+		opts = append(opts, llm.WithCodexResumeSessionID(a.codexSessionID))
 	}
 
 	bridgeConfig, bridgeErr := a.buildBridgeMCPConfig()
@@ -183,18 +183,18 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		// tools connected (tools/list answered) — see BuildBridgeMCPConfig.
 		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
 	}
-	a.Logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge through a session TOML profile (MCP tool timeout=%s, layer=codex_mcp_client)", mcpToolTimeout))
+	a.logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge through a session TOML profile (MCP tool timeout=%s, layer=codex_mcp_client)", mcpToolTimeout))
 
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
 			opts = append(opts, llm.WithCodexReasoningEffort(effort))
-			a.Logger.Info(fmt.Sprintf("🧠 [CODEX_CLI] Reasoning effort set to: %s", effort))
+			a.logger.Info(fmt.Sprintf("🧠 [CODEX_CLI] Reasoning effort set to: %s", effort))
 		}
 	}
-	a.Logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
+	a.logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithCodexStructuredTransport(true))
-	} else if a.EnableStreaming {
+	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithCodexStreamTranscript(true))
 	}
 	return opts, nil

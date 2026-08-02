@@ -304,5 +304,4 @@ cmd := exec.Command("jq", query, filePath)
 ## 📖 Related Documentation
 
 - [doc_writing_guide.md](./doc_writing_guide.md) - Standards for writing technical documentation
-- [tool_search_mode.md](./tool_search_mode.md) - Dynamic discovery for large tool catalogs
 - [mcp_cache_system.md](./mcp_cache_system.md) - MCP server caching system

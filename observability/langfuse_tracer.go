@@ -98,11 +98,6 @@ const (
 	EventTypeCacheMiss  = "cache_miss"
 	EventTypeCacheWrite = "cache_write"
 	EventTypeCacheError = "cache_error"
-
-	// Structured output events
-	EventTypeStructuredOutputStart = "structured_output_start"
-	EventTypeStructuredOutputEnd   = "structured_output_end"
-	EventTypeStructuredOutputError = "structured_output_error"
 )
 
 // LangfuseTracer implements the Tracer interface using Langfuse v2 API patterns.
@@ -988,14 +983,6 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 		return l.handleCacheWrite(event)
 	case EventTypeCacheError:
 		return l.handleCacheError(event)
-
-	// Structured output events
-	case EventTypeStructuredOutputStart:
-		return l.handleStructuredOutputStart(event)
-	case EventTypeStructuredOutputEnd:
-		return l.handleStructuredOutputEnd(event)
-	case EventTypeStructuredOutputError:
-		return l.handleStructuredOutputError(event)
 
 	default:
 		v2Logger.Debug("Langfuse: Unhandled event type", loggerv2.String("type", event.GetType()))
@@ -2359,111 +2346,6 @@ func (l *LangfuseTracer) handleCacheError(event AgentEvent) error {
 	v2Logger := l.getV2Logger()
 	v2Logger.Info("Langfuse: Created cache error span",
 		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// ============================================================================
-// Structured Output Handlers
-// ============================================================================
-
-// handleStructuredOutputStart creates a span for structured output start
-func (l *LangfuseTracer) handleStructuredOutputStart(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	// Get LLM generation span as parent
-	l.mu.RLock()
-	parentSpanID := l.llmGenerationSpans[traceID]
-	l.mu.RUnlock()
-	if parentSpanID == "" {
-		parentSpanID = traceID
-	}
-
-	spanName := "structured_output"
-	if soEvent, ok := event.GetData().(*events.StructuredOutputStartEvent); ok {
-		if soEvent.SchemaName != "" {
-			spanName = fmt.Sprintf("structured_output_%s", soEvent.SchemaName)
-		}
-	}
-
-	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
-
-	// Store for later completion
-	l.mu.Lock()
-	l.mcpConnectionSpans["structured_output_"+traceID] = string(spanID)
-	l.mu.Unlock()
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Started structured output span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleStructuredOutputEnd ends the structured output span
-func (l *LangfuseTracer) handleStructuredOutputEnd(event AgentEvent) error {
-	traceID := event.GetTraceID()
-	v2Logger := l.getV2Logger()
-
-	spanKey := "structured_output_" + traceID
-	l.mu.RLock()
-	spanID := l.mcpConnectionSpans[spanKey]
-	l.mu.RUnlock()
-
-	var output map[string]interface{}
-	if soEvent, ok := event.GetData().(*events.StructuredOutputEndEvent); ok {
-		output = map[string]interface{}{
-			"success":       soEvent.Success,
-			"schema_name":   soEvent.SchemaName,
-			"target_type":   soEvent.TargetType,
-			"parsed_output": soEvent.ParsedOutput,
-		}
-	}
-
-	if spanID != "" {
-		l.EndSpan(SpanID(spanID), output, nil)
-		l.mu.Lock()
-		delete(l.mcpConnectionSpans, spanKey)
-		l.mu.Unlock()
-	} else {
-		newSpanID := l.StartSpan(traceID, "structured_output_completed", event.GetData())
-		l.EndSpan(newSpanID, output, nil)
-	}
-
-	v2Logger.Debug("Langfuse: Ended structured output span",
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleStructuredOutputError handles structured output errors
-func (l *LangfuseTracer) handleStructuredOutputError(event AgentEvent) error {
-	traceID := event.GetTraceID()
-	v2Logger := l.getV2Logger()
-
-	spanKey := "structured_output_" + traceID
-	l.mu.RLock()
-	spanID := l.mcpConnectionSpans[spanKey]
-	l.mu.RUnlock()
-
-	var err error
-	if errEvent, ok := event.GetData().(*events.StructuredOutputErrorEvent); ok {
-		err = fmt.Errorf("%s", errEvent.Error)
-	}
-
-	if spanID != "" {
-		l.EndSpan(SpanID(spanID), event.GetData(), err)
-		l.mu.Lock()
-		delete(l.mcpConnectionSpans, spanKey)
-		l.mu.Unlock()
-	} else {
-		newSpanID := l.StartSpan(traceID, "structured_output_error", event.GetData())
-		l.EndSpan(newSpanID, event.GetData(), err)
-	}
-
-	v2Logger.Info("Langfuse: Created structured output error span",
 		loggerv2.String("trace_id", traceID))
 
 	return nil

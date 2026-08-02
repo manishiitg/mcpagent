@@ -283,23 +283,23 @@ func (c *langsmithAPIClient) getSessionIDByName(name string) (string, error) {
 
 // RunResponse represents a LangSmith run
 type runResponse struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	RunType      string                 `json:"run_type"`
-	StartTime    string                 `json:"start_time,omitempty"`
-	EndTime      string                 `json:"end_time,omitempty"`
-	Inputs       map[string]interface{} `json:"inputs,omitempty"`
-	Outputs      map[string]interface{} `json:"outputs,omitempty"`
-	ParentRunID  string                 `json:"parent_run_id,omitempty"`
-	TraceID      string                 `json:"trace_id,omitempty"`
-	SessionName  string                 `json:"session_name,omitempty"`
-	Error        string                 `json:"error,omitempty"`
-	Extra        map[string]interface{} `json:"extra,omitempty"`
-	Tags         []string               `json:"tags,omitempty"`
-	Status       string                 `json:"status,omitempty"`
-	TotalTokens  int                    `json:"total_tokens,omitempty"`
-	PromptTokens int                    `json:"prompt_tokens,omitempty"`
-	CompletionTokens int               `json:"completion_tokens,omitempty"`
+	ID               string                 `json:"id"`
+	Name             string                 `json:"name"`
+	RunType          string                 `json:"run_type"`
+	StartTime        string                 `json:"start_time,omitempty"`
+	EndTime          string                 `json:"end_time,omitempty"`
+	Inputs           map[string]interface{} `json:"inputs,omitempty"`
+	Outputs          map[string]interface{} `json:"outputs,omitempty"`
+	ParentRunID      string                 `json:"parent_run_id,omitempty"`
+	TraceID          string                 `json:"trace_id,omitempty"`
+	SessionName      string                 `json:"session_name,omitempty"`
+	Error            string                 `json:"error,omitempty"`
+	Extra            map[string]interface{} `json:"extra,omitempty"`
+	Tags             []string               `json:"tags,omitempty"`
+	Status           string                 `json:"status,omitempty"`
+	TotalTokens      int                    `json:"total_tokens,omitempty"`
+	PromptTokens     int                    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int                    `json:"completion_tokens,omitempty"`
 }
 
 // getRun retrieves a specific run by ID
@@ -392,8 +392,8 @@ func (c *langsmithAPIClient) getRuns(limit int, project, projectID, runType stri
 func (c *langsmithAPIClient) getRunsByTrace(traceID string, limit int) ([]map[string]interface{}, error) {
 	// Use POST /runs/query with trace filter
 	queryReq := map[string]interface{}{
-		"trace":   traceID,
-		"limit":   limit,
+		"trace": traceID,
+		"limit": limit,
 	}
 
 	reqBody, err := json.Marshal(queryReq)
@@ -436,20 +436,20 @@ func (c *langsmithAPIClient) getRunsByTrace(traceID string, limit int) ([]map[st
 // convertRunToMap converts a runResponse to a map
 func convertRunToMap(run runResponse) map[string]interface{} {
 	result := map[string]interface{}{
-		"id":           run.ID,
-		"name":         run.Name,
-		"run_type":     run.RunType,
-		"start_time":   run.StartTime,
-		"end_time":     run.EndTime,
-		"inputs":       run.Inputs,
-		"outputs":      run.Outputs,
+		"id":            run.ID,
+		"name":          run.Name,
+		"run_type":      run.RunType,
+		"start_time":    run.StartTime,
+		"end_time":      run.EndTime,
+		"inputs":        run.Inputs,
+		"outputs":       run.Outputs,
 		"parent_run_id": run.ParentRunID,
-		"trace_id":     run.TraceID,
-		"session_name": run.SessionName,
-		"error":        run.Error,
-		"extra":        run.Extra,
-		"tags":         run.Tags,
-		"status":       run.Status,
+		"trace_id":      run.TraceID,
+		"session_name":  run.SessionName,
+		"error":         run.Error,
+		"extra":         run.Extra,
+		"tags":          run.Tags,
+		"status":        run.Status,
 	}
 
 	// Add token info if present

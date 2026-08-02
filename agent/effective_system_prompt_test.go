@@ -8,23 +8,10 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-func promptManifestTool(name, category string) CustomTool {
-	return CustomTool{
-		Category: category,
-		Definition: llmtypes.Tool{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        name,
-				Description: name + " description",
-			},
-		},
-	}
-}
-
 func codeExecutionPromptAgent() *Agent {
 	return &Agent{
-		UseCodeExecutionMode: true,
-		customTools:          make(map[string]CustomTool),
+		useCodeExecutionMode: true,
+		toolRegistry:         newCanonicalToolRegistry(),
 		toolToServer:         make(map[string]string),
 		toolFilter:           NewToolFilter(nil, nil, nil, nil, nil),
 	}
@@ -33,7 +20,7 @@ func codeExecutionPromptAgent() *Agent {
 func TestEffectiveSystemPromptReflectsToolsRegisteredAfterSet(t *testing.T) {
 	a := codeExecutionPromptAgent()
 	a.setInstructions("operator policy")
-	a.customTools["query_records"] = promptManifestTool("query_records", "database")
+	addDirectToolFixture(t, a, directToolFixture("query_records", "database"))
 
 	got := a.instructions()
 	if !strings.Contains(got, "query_records") {
@@ -46,8 +33,8 @@ func TestEffectiveSystemPromptReflectsToolsRegisteredAfterSet(t *testing.T) {
 
 func TestEffectiveSystemPromptTracksAllowListChanges(t *testing.T) {
 	a := codeExecutionPromptAgent()
-	a.customTools["query_records"] = promptManifestTool("query_records", "database")
-	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
+	addDirectToolFixture(t, a, directToolFixture("query_records", "database"))
+	addDirectToolFixture(t, a, directToolFixture("mutate_records", "database"))
 	a.setInstructions("operator policy")
 
 	a.setToolAccess([]string{"query_records"})
@@ -65,7 +52,7 @@ func TestEffectiveSystemPromptTracksAllowListChanges(t *testing.T) {
 
 func TestEffectiveSystemPromptIsBalancedAndIdempotent(t *testing.T) {
 	a := codeExecutionPromptAgent()
-	a.customTools["query_records"] = promptManifestTool("query_records", "database")
+	addDirectToolFixture(t, a, directToolFixture("query_records", "database"))
 	a.setInstructions("before\n" + prompt.ToolStructurePlaceholder + "\nafter")
 
 	first := a.instructions()
@@ -87,8 +74,8 @@ func TestEffectiveSystemPromptIsBalancedAndIdempotent(t *testing.T) {
 func TestEnsureSystemPromptUsesCurrentAuthorizedManifest(t *testing.T) {
 	a := codeExecutionPromptAgent()
 	a.setInstructions("operator policy")
-	a.customTools["query_records"] = promptManifestTool("query_records", "database")
-	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
+	addDirectToolFixture(t, a, directToolFixture("query_records", "database"))
+	addDirectToolFixture(t, a, directToolFixture("mutate_records", "database"))
 	a.setToolAccess([]string{"query_records"})
 
 	messages := ensureSystemPrompt(a, nil)
@@ -101,23 +88,6 @@ func TestEnsureSystemPromptUsesCurrentAuthorizedManifest(t *testing.T) {
 	}
 	if !strings.Contains(textPart.Text, "query_records") || strings.Contains(textPart.Text, "mutate_records") {
 		t.Fatalf("actual conversation system message has a stale/unauthorized manifest:\n%s", textPart.Text)
-	}
-}
-
-func TestPreDiscoveredSpecsRespectAllowList(t *testing.T) {
-	a := codeExecutionPromptAgent()
-	a.customTools["query_records"] = promptManifestTool("query_records", "database")
-	a.customTools["mutate_records"] = promptManifestTool("mutate_records", "database")
-	a.preDiscoveredTools = []string{"query_records", "mutate_records"}
-	a.setToolAccess([]string{"query_records"})
-	a.setInstructions("operator policy")
-
-	got := a.instructions()
-	if strings.Contains(got, "mutate_records") {
-		t.Fatalf("pre-discovered specs disclosed a denied tool:\n%s", got)
-	}
-	if !strings.Contains(got, "query_records") {
-		t.Fatalf("allowed pre-discovered tool is missing:\n%s", got)
 	}
 }
 

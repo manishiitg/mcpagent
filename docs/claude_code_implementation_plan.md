@@ -30,9 +30,7 @@ Integrate the Claude Code CLI adapter into the MCP Agent system (`mcpagent`), en
 | Context Offloading | **Silently disabled** | CLI handles natively |
 | Context Summarization | **Error if enabled** | CLI handles natively |
 | Context Editing | **Error if enabled** | CLI handles natively |
-| Tool Search Mode | **Error if enabled** | CLI handles natively |
 | Code Execution Mode | **Error if enabled** | Not supported via CLI wrapper |
-| Structured Output (`AskStructured`, etc.) | **Error** | Requires second LLM call or tool-based extraction not available via CLI |
 | Parallel Tool Execution | **Flag ignored** | CLI manages its own parallel execution internally |
 
 ## Implementation Details
@@ -89,10 +87,9 @@ type StreamChunk struct {
 
 #### Auto-Configuration (`agent/agent.go`)
 In both `NewAgent` and `NewAgentWithObservability`:
-*   **Errors** for: `UseToolSearchMode`, `UseCodeExecutionMode`, `EnableContextEditing`, `EnableContextSummarization`
+*   **Errors** for: `UseCodeExecutionMode`, `EnableContextEditing`, `EnableContextSummarization`
 *   **Silently disables**: `EnableContextOffloading`
 *   **Auto-enables**: `EnableStreaming` (required for tool call observability)
-*   **Structured output** methods (`AskStructured`, `AskWithHistoryStructured`, `AskWithHistoryStructuredViaTool`) return error when provider is `claude-code`.
 
 #### Tool Event Bridge (`agent/llm_generation.go`)
 `processChunks` in `streamingManager` handles:
@@ -151,5 +148,5 @@ Tool results are captured from the CLI's internal `tool_result` messages. If a t
 
 ### `mcpagent`
 *   `llm/providers.go` — `ProviderClaudeCode` registration
-*   `agent/agent.go` — Auto-configuration block, structured output guards, `GetMCPConfigJSON`
+*   `agent/agent.go` — Auto-configuration block and `GetMCPConfigJSON`
 *   `agent/llm_generation.go` — `processChunks` tool event bridge, `executeLLM` MCP config injection

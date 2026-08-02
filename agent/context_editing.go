@@ -49,18 +49,18 @@ func CompactStaleToolResponses(a *Agent, ctx context.Context, messages []llmtype
 // by replacing them with file path references when they exceed token threshold
 // and are older than the turn threshold
 func compactStaleToolResponses(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, currentTurn int) ([]llmtypes.MessageContent, error) {
-	v2Logger := a.Logger
+	v2Logger := a.logger
 
-	if !a.EnableContextEditing {
+	if !a.enableContextEditing {
 		v2Logger.Info("⏭️ [CONTEXT_EDITING] Skipping - context editing disabled",
 			loggerv2.Int("current_turn", currentTurn))
 		return messages, nil
 	}
-	threshold := a.ContextEditingThreshold
+	threshold := a.contextEditingThreshold
 	if threshold == 0 {
 		threshold = DefaultContextEditingThreshold
 	}
-	turnThreshold := a.ContextEditingTurnThreshold
+	turnThreshold := a.contextEditingTurnThreshold
 	if turnThreshold == 0 {
 		turnThreshold = DefaultContextEditingTurnThreshold
 	}
@@ -176,7 +176,7 @@ func compactStaleToolResponses(a *Agent, ctx context.Context, messages []llmtype
 		}
 
 		// Count tokens for this tool response
-		tokenCount := a.toolOutputHandler.CountTokensForModel(content, a.ModelID)
+		tokenCount := a.toolOutputHandler.CountTokensForModel(content, a.modelID)
 
 		// Calculate turn age: simple approach - count user messages before to determine creation turn
 		turnAge := calculateTurnAge(modifiedMessages, i, currentTurn)

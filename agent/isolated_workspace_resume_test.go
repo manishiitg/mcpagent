@@ -18,8 +18,8 @@ import (
 func TestIsolatedWorkspaceDirIsStableAcrossTurnsOfSameSession(t *testing.T) {
 	const sessionID = "msgseq-iteration-0-job-search-step-4-search-find-and-shortlist"
 
-	turn1 := &Agent{SessionID: sessionID, IsolatedSessionWorkspace: true}
-	turn2 := &Agent{SessionID: sessionID, IsolatedSessionWorkspace: true}
+	turn1 := &Agent{sessionID: sessionID, isolatedSessionWorkspace: true}
+	turn2 := &Agent{sessionID: sessionID, isolatedSessionWorkspace: true}
 
 	dir1 := turn1.ensureIsolatedWorkspaceDir()
 	dir2 := turn2.ensureIsolatedWorkspaceDir()
@@ -39,8 +39,8 @@ func TestIsolatedWorkspaceDirIsStableAcrossTurnsOfSameSession(t *testing.T) {
 // Isolation is the whole point of the feature: distinct sessions (e.g. two
 // concurrent workflow steps) must never share a workspace.
 func TestIsolatedWorkspaceDirDiffersAcrossSessions(t *testing.T) {
-	stepA := &Agent{SessionID: "step-a", IsolatedSessionWorkspace: true}
-	stepB := &Agent{SessionID: "step-b", IsolatedSessionWorkspace: true}
+	stepA := &Agent{sessionID: "step-a", isolatedSessionWorkspace: true}
+	stepB := &Agent{sessionID: "step-b", isolatedSessionWorkspace: true}
 
 	dirA := stepA.ensureIsolatedWorkspaceDir()
 	dirB := stepB.ensureIsolatedWorkspaceDir()
@@ -72,7 +72,7 @@ func TestIsolatedWorkspaceDirSanitizesSessionID(t *testing.T) {
 // No session ID means the session could never be resumed anyway, so it keeps
 // the historical random-dir behaviour — and stays eligible for rm -rf on Close.
 func TestIsolatedWorkspaceWithoutSessionIDIsRandomAndDisposable(t *testing.T) {
-	a := &Agent{IsolatedSessionWorkspace: true}
+	a := &Agent{isolatedSessionWorkspace: true}
 	dir := a.ensureIsolatedWorkspaceDir()
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
@@ -89,9 +89,9 @@ func TestIsolatedWorkspaceWithoutSessionIDIsRandomAndDisposable(t *testing.T) {
 // CLI looked for it under the wrong project key and reported it missing.
 func TestContinuationHandleResumesIntoIsolatedWorkspace(t *testing.T) {
 	a := &Agent{
-		SessionID:                "resume-into-isolated",
-		IsolatedSessionWorkspace: true,
-		CodingAgentWorkingDir:    "/Users/someone/workspace-docs/Workflow/upwork",
+		sessionID:                "resume-into-isolated",
+		isolatedSessionWorkspace: true,
+		codingAgentWorkingDir:    "/Users/someone/workspace-docs/Workflow/upwork",
 	}
 	isolated := a.ensureIsolatedWorkspaceDir()
 	t.Cleanup(func() { _ = os.RemoveAll(isolated) })
@@ -109,10 +109,10 @@ func TestContinuationHandleResumesIntoIsolatedWorkspace(t *testing.T) {
 // chosen workspace — that's the "agent edits my files" UX.
 func TestContinuationHandleKeepsRealWorkingDirWhenNotIsolated(t *testing.T) {
 	a := &Agent{
-		SessionID:             "chat-session",
-		CodingAgentWorkingDir: "/Users/someone/workspace-docs/Workflow/upwork",
+		sessionID:             "chat-session",
+		codingAgentWorkingDir: "/Users/someone/workspace-docs/Workflow/upwork",
 	}
-	if got := a.resolveContinuationWorkingDir(""); got != a.CodingAgentWorkingDir {
+	if got := a.resolveContinuationWorkingDir(""); got != a.codingAgentWorkingDir {
 		t.Fatalf("non-isolated session must resume in the real workspace, got %q", got)
 	}
 }
@@ -126,20 +126,20 @@ func TestContinuationHandleKeepsRealWorkingDirWhenNotIsolated(t *testing.T) {
 func TestRecordedWorkingDirStillValidOnNextTurn(t *testing.T) {
 	const sessionID = "tmux-shaped-session"
 
-	turn1 := &Agent{Logger: loggerv2.NewDefault(), SessionID: sessionID, IsolatedSessionWorkspace: true}
+	turn1 := &Agent{logger: loggerv2.NewDefault(), sessionID: sessionID, isolatedSessionWorkspace: true}
 	recorded := turn1.ensureIsolatedWorkspaceDir() // what the adapter would persist
 	t.Cleanup(func() { CloseSession(sessionID) })
 	if recorded == "" {
 		t.Fatal("expected an isolated workspace dir")
 	}
-	turn1.Close() // end of turn 1 — must NOT destroy the session's workspace
+	_ = turn1.Close() // end of turn 1 — must NOT destroy the session's workspace
 
 	if _, err := os.Stat(recorded); err != nil {
 		t.Fatalf("dir recorded in the handle must survive between turns: %v", err)
 	}
 
 	// Turn 2: a brand-new Agent resumes with the recorded handle dir.
-	turn2 := &Agent{Logger: loggerv2.NewDefault(), SessionID: sessionID, IsolatedSessionWorkspace: true}
+	turn2 := &Agent{logger: loggerv2.NewDefault(), sessionID: sessionID, isolatedSessionWorkspace: true}
 	if got := turn2.resolveContinuationWorkingDir(recorded); got != recorded {
 		t.Fatalf("resume must return to the recorded dir; want %q got %q", recorded, got)
 	}

@@ -168,7 +168,7 @@ func TestDedupeFallbacks(t *testing.T) {
 func TestGetEffectiveLLMConfigLegacyFieldPromotion(t *testing.T) {
 	agent := &Agent{
 		provider: llm.ProviderAnthropic,
-		ModelID:  "claude-opus-4-7-20250610",
+		modelID:  "claude-opus-4-7-20250610",
 	}
 
 	config := agent.getEffectiveLLMConfig()
@@ -184,8 +184,8 @@ func TestGetEffectiveLLMConfigLegacyFieldPromotion(t *testing.T) {
 func TestGetEffectiveLLMConfigNewConfigPassthrough(t *testing.T) {
 	agent := &Agent{
 		provider: llm.ProviderOpenAI,
-		ModelID:  "gpt-5",
-		LLMConfig: AgentLLMConfiguration{
+		modelID:  "gpt-5",
+		llmConfig: AgentLLMConfiguration{
 			Primary: LLMModel{Provider: "openai", ModelID: "gpt-5"},
 			Fallbacks: []LLMModel{
 				{Provider: "anthropic", ModelID: "claude-sonnet-4-6"},
@@ -209,8 +209,8 @@ func TestGetEffectiveLLMConfigNewConfigPassthrough(t *testing.T) {
 func TestGetEffectiveLLMConfigDeduplicatesFallbacks(t *testing.T) {
 	agent := &Agent{
 		provider: llm.ProviderOpenAI,
-		ModelID:  "gpt-5",
-		LLMConfig: AgentLLMConfiguration{
+		modelID:  "gpt-5",
+		llmConfig: AgentLLMConfiguration{
 			Primary: LLMModel{Provider: "openai", ModelID: "gpt-5"},
 			Fallbacks: []LLMModel{
 				{Provider: "anthropic", ModelID: "claude-sonnet-4-6"},

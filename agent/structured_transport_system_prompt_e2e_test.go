@@ -22,26 +22,26 @@ type structuredTransportProviderCase struct {
 	binary           string
 	provider         llm.Provider
 	modelID          string
-	structuredOption AgentOption
+	structuredOption agentOption
 }
 
 var structuredTransportProviderCases = []structuredTransportProviderCase{
-	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "cursor-cli", WithCodingAgentTransport(llm.CodingAgentTransportStructured)},
-	{"Codex", "codex", llm.ProviderCodexCLI, "codex-cli", WithCodingAgentTransport(llm.CodingAgentTransportStructured)},
-	{"Pi", "pi", llm.ProviderPiCLI, "pi-cli", WithCodingAgentTransport(llm.CodingAgentTransportStructured)},
-	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", WithCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "auto", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Codex", "codex", llm.ProviderCodexCLI, "codex-cli", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Pi", "pi", llm.ProviderPiCLI, "pi-cli", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
 }
 
 // TestStructuredTransportSystemPromptSurvivesNewAgent is the mcpagent-layer
 // regression guard for commit 57b4dd9 ("agent: don't clobber a custom system
-// prompt with the connection default"): NewAgent used to unconditionally
-// overwrite a caller-supplied WithSystemPrompt with a connection-derived
+// prompt with the connection default"): newAgent used to unconditionally
+// overwrite a caller-supplied withSystemPrompt with a connection-derived
 // default, silently discarding it. An adapter-layer test (in
 // multi-llm-provider-go) cannot see this class of bug — it hand-constructs
 // the message list itself and calls the adapter directly, never going
-// through NewAgent/WithSystemPrompt at all. This test does the opposite: it
-// builds a real Agent the way an actual mcpagent consumer would (NewAgent +
-// WithSystemPrompt, on the real bridge — each provider's
+// through newAgent/withSystemPrompt at all. This test does the opposite: it
+// builds a real Agent the way an actual mcpagent consumer would (newAgent +
+// withSystemPrompt, on the real bridge — each provider's
 // appendXxxCLIIntegrationOptions requires it unconditionally, so a
 // bridgeless agent can't even reach the structured-transport option) and
 // drives it through the real CLI under WithXxxStructuredTransport(true),
@@ -86,10 +86,10 @@ func TestStructuredTransportSystemPromptSurvivesNewAgent(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
 
-			agent, err := NewAgent(ctx, llmModel, configPath,
-				WithProvider(tc.provider),
-				WithAPIConfig(apiURL, apiToken),
-				WithSystemPrompt(customPrompt),
+			agent, err := newAgent(ctx, llmModel, configPath,
+				withProvider(tc.provider),
+				withAPIConfig(apiURL, apiToken),
+				withSystemPrompt(customPrompt),
 				tc.structuredOption,
 				// Isolate the CLI process's cwd to an empty tmp dir. Without this
 				// the process inherits the test binary's cwd (this repo checkout),
@@ -97,10 +97,10 @@ func TestStructuredTransportSystemPromptSurvivesNewAgent(t *testing.T) {
 				// off disk and answer from that instead of the injected system
 				// prompt — a false negative unrelated to the 57b4dd9 class of bug
 				// this test guards.
-				WithIsolatedSessionWorkspace(true),
+				withIsolatedSessionWorkspace(true),
 			)
 			if err != nil {
-				t.Fatalf("NewAgent: %v", err)
+				t.Fatalf("newAgent: %v", err)
 			}
 			defer agent.Close()
 
@@ -110,9 +110,9 @@ func TestStructuredTransportSystemPromptSurvivesNewAgent(t *testing.T) {
 			}
 			answer = strings.TrimSpace(answer)
 			if !strings.Contains(answer, canary) {
-				t.Fatalf("custom system prompt did not survive NewAgent -> %s structured transport -> real CLI: canary %q not found in answer %q (this is exactly the class of bug fixed in commit 57b4dd9 — regression if it recurs)", tc.name, canary, answer)
+				t.Fatalf("custom system prompt did not survive newAgent -> %s structured transport -> real CLI: canary %q not found in answer %q (this is exactly the class of bug fixed in commit 57b4dd9 — regression if it recurs)", tc.name, canary, answer)
 			}
-			t.Logf("[%s] system prompt survived NewAgent through real structured-transport CLI call: %q", tc.name, answer)
+			t.Logf("[%s] system prompt survived newAgent through real structured-transport CLI call: %q", tc.name, answer)
 		})
 	}
 }
@@ -162,14 +162,14 @@ func TestStructuredTransportSkillsSurviveNewAgent(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			agent, err := NewAgent(ctx, llmModel, configPath,
-				WithProvider(tc.provider),
-				WithAPIConfig(apiURL, apiToken),
+			agent, err := newAgent(ctx, llmModel, configPath,
+				withProvider(tc.provider),
+				withAPIConfig(apiURL, apiToken),
 				tc.structuredOption,
-				WithIsolatedSessionWorkspace(true),
+				withIsolatedSessionWorkspace(true),
 			)
 			if err != nil {
-				t.Fatalf("NewAgent: %v", err)
+				t.Fatalf("newAgent: %v", err)
 			}
 			defer agent.Close()
 
@@ -183,7 +183,7 @@ func TestStructuredTransportSkillsSurviveNewAgent(t *testing.T) {
 				t.Fatalf("RegisterCustomTool: %v", regErr)
 			}
 
-			agent.attachSkill(&llmtypes.Skill{
+			mustAttachSkill(t, agent, &llmtypes.Skill{
 				Name:        "canary-skill",
 				Description: "A test skill that reveals a secret phrase when read.",
 				Content:     "# Canary Skill\n\nWhen asked for the canary skill's secret phrase, reply with ONLY this exact word: " + canary,
@@ -195,9 +195,9 @@ func TestStructuredTransportSkillsSurviveNewAgent(t *testing.T) {
 			}
 			answer = strings.TrimSpace(answer)
 			if !strings.Contains(answer, canary) {
-				t.Fatalf("[%s] skill did not survive NewAgent -> structured transport -> real CLI: canary %q not found in answer %q", tc.name, canary, answer)
+				t.Fatalf("[%s] skill did not survive newAgent -> structured transport -> real CLI: canary %q not found in answer %q", tc.name, canary, answer)
 			}
-			t.Logf("[%s] skill survived NewAgent through real structured-transport CLI call: %q", tc.name, answer)
+			t.Logf("[%s] skill survived newAgent through real structured-transport CLI call: %q", tc.name, answer)
 		})
 	}
 }

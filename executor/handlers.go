@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
@@ -15,6 +16,7 @@ import (
 	"github.com/manishiitg/mcpagent/mcpcache"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/toolcalllog"
+	"github.com/manishiitg/mcpagent/toolerr"
 )
 
 func resolveCustomToolTimeout(tool string) time.Duration {
@@ -438,15 +440,26 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 
 	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION END - Time: %s, Tool: %s, Server: %s, Duration: %v", time.Now().Format(time.RFC3339), req.Tool, req.Server, time.Since(mcpToolStartTime)))
 	if err != nil {
-		h.logger.Error("Tool execution failed", err,
+		// Same marker and envelope as the custom and virtual handlers. This path
+		// serves every MCP server tool, and it previously logged a bare
+		// "Tool execution failed" with no marker and built its own error string
+		// without `layer=` — so MCP failures were absent from
+		// `grep '\[TOOL_ERROR\]'` and did not match the UI's harness-error
+		// detector either. Both surfaces were blind to this entire tool category.
+		h.logger.Error(toolerr.Marker+" mcp tool failed", err,
+			loggerv2.String("layer", "mcp_tool_handler"),
 			loggerv2.String("tool", req.Tool),
-			loggerv2.String("server", req.Server))
+			loggerv2.String("server", req.Server),
+			loggerv2.String("session_id", req.SessionID),
+			loggerv2.String("duration", time.Since(mcpToolStartTime).String()),
+			loggerv2.String("args", truncateForLog(string(argsJSON), 400)))
+		errorText := toolExecutionError("mcp_tool_handler", req.Tool, req.SessionID, toolTimeout, err)
 		if req.SessionID != "" {
-			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), fmt.Sprintf("Tool execution failed: %v", err), mcpToolStartTime)
+			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), errorText, mcpToolStartTime)
 		}
 		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
-			Error:   fmt.Sprintf("Tool execution failed: %v", err),
+			Error:   errorText,
 		})
 		return
 	}
@@ -506,6 +519,19 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	h.logger.Info("✅ Tool executed successfully",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.Int("result_length", len(resultStr)))
+
+	// The transport says OK; the payload may not. This is the exact class that
+	// produced 34 green-checked failures in a day — a shell denial or harness
+	// envelope carried as content under exit_code 0. Over-matching is intended.
+	if signal, suspicious := toolerr.Suspicious(resultStr); suspicious {
+		h.logger.Error(toolerr.SuspectMarker+" mcp tool reported success but the result reads like a failure", nil,
+			loggerv2.String("layer", "mcp_tool_handler"),
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("server", req.Server),
+			loggerv2.String("session_id", req.SessionID),
+			loggerv2.String("signal", signal),
+			loggerv2.String("result", toolerr.TruncateForLog(resultStr)))
+	}
 
 	// Record completed call so LLMAgentWrapper can reconstruct history on cancellation.
 	if req.SessionID != "" {
@@ -584,7 +610,17 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	toolDuration := time.Since(toolStartTime)
 	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION END - Time: %s, Tool: %s, Duration: %v", time.Now().Format(time.RFC3339), req.Tool, toolDuration))
 	if err != nil {
-		h.logger.Error("Custom tool execution failed", err, loggerv2.String("tool", req.Tool))
+		// One greppable marker with everything needed to locate the call. These
+		// failures reach the model as stdout with exit_code 0, so they are
+		// invisible unless the log says so plainly: a day of rollouts on
+		// 2026-08-01 held 34 of them and every one rendered as a success.
+		// `grep '\[TOOL_ERROR\]'` should be the whole debugging story.
+		h.logger.Error(toolerr.Marker+" custom tool failed", err,
+			loggerv2.String("layer", "custom_tool_handler"),
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("session_id", req.SessionID),
+			loggerv2.String("duration", toolDuration.String()),
+			loggerv2.String("args", truncateForLog(string(argsJSON), 400)))
 		errorText := toolExecutionError("custom_tool_handler", req.Tool, req.SessionID, toolTimeout, err)
 		if req.SessionID != "" {
 			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), errorText, toolStartedAt)
@@ -599,6 +635,15 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 	h.logger.Info("✅ Custom tool executed successfully",
 		loggerv2.String("tool", req.Tool),
 		loggerv2.Int("result_length", len(result)))
+
+	if signal, suspicious := toolerr.Suspicious(result); suspicious {
+		h.logger.Error(toolerr.SuspectMarker+" custom tool reported success but the result reads like a failure", nil,
+			loggerv2.String("layer", "custom_tool_handler"),
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("session_id", req.SessionID),
+			loggerv2.String("signal", signal),
+			loggerv2.String("result", toolerr.TruncateForLog(result)))
+	}
 
 	// Record completed call so LLMAgentWrapper can reconstruct history on cancellation.
 	if req.SessionID != "" {
@@ -665,7 +710,15 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 		loggerv2.String("session_id", req.SessionID))
 	result, err := codeexec.CallVirtualToolWithSession(ctx, req.SessionID, req.Tool, req.Args)
 	if err != nil {
-		h.logger.Error("Virtual tool execution failed", err, loggerv2.String("tool", req.Tool))
+		// Same marker as the custom path. get_api_spec lives here, and it was the
+		// single largest source of failed tool calls in the system while being
+		// completely invisible in logs and UI alike.
+		argsForLog, _ := json.Marshal(req.Args)
+		h.logger.Error(toolerr.Marker+" virtual tool failed", err,
+			loggerv2.String("layer", "virtual_tool_handler"),
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("session_id", req.SessionID),
+			loggerv2.String("args", truncateForLog(string(argsForLog), 400)))
 		errorText := toolExecutionError("virtual_tool_handler", req.Tool, req.SessionID, toolTimeout, err)
 		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
@@ -683,4 +736,17 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 		Success: true,
 		Result:  result,
 	})
+}
+
+// truncateForLog bounds a value going into a log line. Tool arguments are the
+// most useful field for reproducing a failure and also the most likely to be
+// enormous — a prompt, a file body, a SQL result. Logging them whole turns one
+// failure into an unreadable log; logging none of them means the line says a
+// tool failed without saying what was asked of it.
+func truncateForLog(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + fmt.Sprintf("…(+%d bytes)", len(s)-max)
 }

@@ -12,7 +12,7 @@ import (
 )
 
 func isolatedWorkspaceTestAgent() *Agent {
-	return &Agent{Logger: loggerv2.NewDefault(), SessionID: "isolated-workspace-test"}
+	return &Agent{logger: loggerv2.NewDefault(), sessionID: "isolated-workspace-test"}
 }
 
 // TestEnsureIsolatedWorkspaceDirCreatesTmpDirOnceAndCleansUpOnClose
@@ -34,8 +34,8 @@ func isolatedWorkspaceTestAgent() *Agent {
 // Session-scoped dirs now live until CloseSession — the real end of session.
 func TestEnsureIsolatedWorkspaceDirCreatesTmpDirOnceAndCleansUpOnClose(t *testing.T) {
 	a := isolatedWorkspaceTestAgent()
-	a.IsolatedSessionWorkspace = true
-	t.Cleanup(func() { CloseSession(a.SessionID) })
+	a.isolatedSessionWorkspace = true
+	t.Cleanup(func() { CloseSession(a.sessionID) })
 
 	dir1 := a.ensureIsolatedWorkspaceDir()
 	if dir1 == "" {
@@ -60,13 +60,13 @@ func TestEnsureIsolatedWorkspaceDirCreatesTmpDirOnceAndCleansUpOnClose(t *testin
 
 	// Closing one turn's Agent must leave the session's workspace intact, or
 	// the next turn cannot resume the conversation that lives inside it.
-	a.Close()
+	_ = a.Close()
 	if _, err := os.Stat(dir1); err != nil {
 		t.Errorf("Agent.Close must NOT remove a session-derived workspace (the next turn resumes into it); stat err=%v (dir=%q)", err, dir1)
 	}
 
 	// CloseSession is the real end of the session and reclaims the dir.
-	CloseSession(a.SessionID)
+	CloseSession(a.sessionID)
 	if _, err := os.Stat(dir1); !os.IsNotExist(err) {
 		t.Errorf("CloseSession must rm -rf the isolated workspace dir; stat err=%v (dir=%q)", err, dir1)
 	}
@@ -75,14 +75,14 @@ func TestEnsureIsolatedWorkspaceDirCreatesTmpDirOnceAndCleansUpOnClose(t *testin
 // The random fallback dir (no session ID, so never resumable) keeps the
 // original lifecycle: Agent.Close still reclaims it immediately.
 func TestAgentCloseRemovesRandomFallbackWorkspace(t *testing.T) {
-	a := &Agent{Logger: loggerv2.NewDefault()} // no SessionID
-	a.IsolatedSessionWorkspace = true
+	a := &Agent{logger: loggerv2.NewDefault()} // no SessionID
+	a.isolatedSessionWorkspace = true
 
 	dir := a.ensureIsolatedWorkspaceDir()
 	if dir == "" {
 		t.Fatal("expected a random fallback workspace dir")
 	}
-	a.Close()
+	_ = a.Close()
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("Agent.Close must rm -rf a non-resumable random workspace; stat err=%v (dir=%q)", err, dir)
 	}
@@ -95,8 +95,8 @@ func TestAgentCloseRemovesRandomFallbackWorkspace(t *testing.T) {
 // get a tmp dir override and lose the "agent edits my files" UX.
 func TestEnsureIsolatedWorkspaceDirRespectsFlag(t *testing.T) {
 	a := isolatedWorkspaceTestAgent()
-	a.IsolatedSessionWorkspace = false
-	a.CodingAgentWorkingDir = "/Users/test/workspace"
+	a.isolatedSessionWorkspace = false
+	a.codingAgentWorkingDir = "/Users/test/workspace"
 
 	opts := a.appendCodingAgentWorkingDirOptionForProvider(nil, llm.ProviderCursorCLI, "cursor-cli")
 	if a.isolatedWorkspacePath != "" {
@@ -117,8 +117,8 @@ func TestEnsureIsolatedWorkspaceDirRespectsFlag(t *testing.T) {
 // workspace from accidental model writes.
 func TestAppendCodingAgentWorkingDirOverridesWithIsolatedTmpDir(t *testing.T) {
 	a := isolatedWorkspaceTestAgent()
-	a.IsolatedSessionWorkspace = true
-	a.CodingAgentWorkingDir = "/Users/test/workspace"
+	a.isolatedSessionWorkspace = true
+	a.codingAgentWorkingDir = "/Users/test/workspace"
 	defer a.Close()
 
 	opts := a.appendCodingAgentWorkingDirOptionForProvider(nil, llm.ProviderCursorCLI, "cursor-cli")
@@ -136,17 +136,17 @@ func TestAppendCodingAgentWorkingDirOverridesWithIsolatedTmpDir(t *testing.T) {
 }
 
 // TestWithIsolatedSessionWorkspaceOptionThreadsThroughField asserts
-// the public AgentOption wires the bool onto the Agent struct
+// the public agentOption wires the bool onto the Agent struct
 // correctly. Belt-and-suspenders against future field renames.
 func TestWithIsolatedSessionWorkspaceOptionThreadsThroughField(t *testing.T) {
 	a := isolatedWorkspaceTestAgent()
-	WithIsolatedSessionWorkspace(true)(a)
-	if !a.IsolatedSessionWorkspace {
-		t.Error("WithIsolatedSessionWorkspace(true) must set IsolatedSessionWorkspace=true")
+	withIsolatedSessionWorkspace(true)(a)
+	if !a.isolatedSessionWorkspace {
+		t.Error("withIsolatedSessionWorkspace(true) must set IsolatedSessionWorkspace=true")
 	}
-	WithIsolatedSessionWorkspace(false)(a)
-	if a.IsolatedSessionWorkspace {
-		t.Error("WithIsolatedSessionWorkspace(false) must set IsolatedSessionWorkspace=false")
+	withIsolatedSessionWorkspace(false)(a)
+	if a.isolatedSessionWorkspace {
+		t.Error("withIsolatedSessionWorkspace(false) must set IsolatedSessionWorkspace=false")
 	}
 }
 
@@ -158,7 +158,7 @@ func TestWithIsolatedSessionWorkspaceOptionThreadsThroughField(t *testing.T) {
 // one assigned.
 func TestIsolatedWorkspaceDirConcurrencyCreatesOnlyOneDir(t *testing.T) {
 	a := isolatedWorkspaceTestAgent()
-	a.IsolatedSessionWorkspace = true
+	a.isolatedSessionWorkspace = true
 	defer a.Close()
 
 	const goroutines = 32

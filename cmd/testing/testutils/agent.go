@@ -21,10 +21,23 @@ type TestAgentConfig struct {
 	ServerName string
 	ConfigPath string
 	// ModelID is no longer needed - it's automatically extracted from LLM
-	Tracer  observability.Tracer
-	TraceID observability.TraceID
-	Logger  loggerv2.Logger
-	Options []mcpagent.AgentOption
+	Tracer     observability.Tracer
+	TraceID    observability.TraceID
+	Logger     loggerv2.Logger
+	Definition mcpagent.AgentDefinition
+	Runtime    mcpagent.RuntimeConfig
+}
+
+// RunText keeps command-test ergonomics out of the public mcpagent API.
+func RunText(ctx context.Context, agent *mcpagent.Agent, input string) (string, error) {
+	result, err := agent.Run(ctx, mcpagent.Turn{Input: input})
+	return result.Text, err
+}
+
+// AgentTokenUsage exposes the legacy tuple shape only inside command tests.
+func AgentTokenUsage(agent *mcpagent.Agent) (promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCalls, cacheEnabledCalls int) {
+	usage := mcpagent.ReadAgentDiagnostics(agent).Usage
+	return usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CacheTokens, usage.ReasoningTokens, usage.LLMCalls, usage.CacheEnabledLLMCalls
 }
 
 // CreateTestAgent creates a test agent with the specified configuration.
@@ -41,31 +54,26 @@ func CreateTestAgent(ctx context.Context, cfg *TestAgentConfig) (*mcpagent.Agent
 		cfg.Logger = loggerv2.NewNoop()
 	}
 
-	// Build options from config
-	options := cfg.Options
+	runtime := cfg.Runtime
+	runtime.Model = cfg.LLM
+	runtime.MCPConfigPath = cfg.ConfigPath
 	if cfg.Provider != "" {
-		options = append(options, mcpagent.WithProvider(cfg.Provider))
+		runtime.Generation.Provider = cfg.Provider
 	}
 	if cfg.ServerName != "" {
-		options = append(options, mcpagent.WithServerName(cfg.ServerName))
+		cfg.Definition.Tools.MCP = append(cfg.Definition.Tools.MCP, mcpagent.MCPToolSource{Name: cfg.ServerName})
 	}
 	if cfg.Tracer != nil {
-		options = append(options, mcpagent.WithTracer(cfg.Tracer))
+		runtime.Observability.Tracers = append(runtime.Observability.Tracers, cfg.Tracer)
 	}
 	if cfg.TraceID != "" {
-		options = append(options, mcpagent.WithTraceID(cfg.TraceID))
+		runtime.Observability.TraceID = cfg.TraceID
 	}
 	if cfg.Logger != nil {
-		options = append(options, mcpagent.WithLogger(cfg.Logger))
+		runtime.Observability.Logger = cfg.Logger
 	}
 
-	// Create agent
-	agent, err := mcpagent.NewAgent(
-		ctx,
-		cfg.LLM,
-		cfg.ConfigPath,
-		options...,
-	)
+	agent, err := mcpagent.NewAgentFromDefinition(ctx, cfg.Definition, runtime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
@@ -101,7 +109,11 @@ func CreateMinimalAgent(ctx context.Context, model llmtypes.Model, provider llm.
 }
 
 // CreateAgentWithTracer creates a test agent with a specific tracer.
-func CreateAgentWithTracer(ctx context.Context, model llmtypes.Model, provider llm.Provider, configPath string, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, options ...mcpagent.AgentOption) (*mcpagent.Agent, error) {
+func CreateAgentWithTracer(ctx context.Context, model llmtypes.Model, provider llm.Provider, configPath string, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, runtime ...mcpagent.RuntimeConfig) (*mcpagent.Agent, error) {
+	var runtimeConfig mcpagent.RuntimeConfig
+	if len(runtime) > 0 {
+		runtimeConfig = runtime[0]
+	}
 	cfg := &TestAgentConfig{
 		LLM:        model,
 		Provider:   provider,
@@ -109,7 +121,7 @@ func CreateAgentWithTracer(ctx context.Context, model llmtypes.Model, provider l
 		Tracer:     tracer,
 		TraceID:    traceID,
 		Logger:     logger,
-		Options:    options,
+		Runtime:    runtimeConfig,
 	}
 
 	return CreateTestAgent(ctx, cfg)

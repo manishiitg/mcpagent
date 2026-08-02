@@ -28,12 +28,12 @@ func (l *recordingAgentEventListener) Name() string {
 func TestStreamingManagerForwardsContentChunks(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-content-stream-test",
+		sessionID: "session-content-stream-test",
 		listeners: []AgentEventListener{listener},
 	}
 
 	var callbackChunks []llmtypes.StreamChunk
-	agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
+	agent.streamingCallback = func(chunk llmtypes.StreamChunk) {
 		callbackChunks = append(callbackChunks, chunk)
 	}
 
@@ -77,12 +77,12 @@ func TestStreamingManagerForwardsContentChunks(t *testing.T) {
 func TestStreamingManagerForwardsToolCallStartChunks(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-tool-start-test",
+		sessionID: "session-tool-start-test",
 		listeners: []AgentEventListener{listener},
 	}
 
 	var callbackChunks []llmtypes.StreamChunk
-	agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
+	agent.streamingCallback = func(chunk llmtypes.StreamChunk) {
 		callbackChunks = append(callbackChunks, chunk)
 	}
 
@@ -129,12 +129,12 @@ func TestStreamingManagerForwardsToolCallStartChunks(t *testing.T) {
 func TestStreamingManagerForwardsToolCallEndChunks(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-tool-end-test",
+		sessionID: "session-tool-end-test",
 		listeners: []AgentEventListener{listener},
 	}
 
 	var callbackChunks []llmtypes.StreamChunk
-	agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
+	agent.streamingCallback = func(chunk llmtypes.StreamChunk) {
 		callbackChunks = append(callbackChunks, chunk)
 	}
 
@@ -192,12 +192,12 @@ func TestStreamingManagerForwardsToolCallEndChunks(t *testing.T) {
 func TestStreamingManagerMixedChunkFlow(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-mixed-flow-test",
+		sessionID: "session-mixed-flow-test",
 		listeners: []AgentEventListener{listener},
 	}
 
 	var callbackTypes []llmtypes.StreamChunkType
-	agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
+	agent.streamingCallback = func(chunk llmtypes.StreamChunk) {
 		callbackTypes = append(callbackTypes, chunk.Type)
 	}
 
@@ -268,14 +268,14 @@ func TestStreamingManagerMixedChunkFlow(t *testing.T) {
 func TestStreamingManagerForwardsTerminalChunks(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-terminal-stream-test",
+		sessionID: "session-terminal-stream-test",
 		listeners: []AgentEventListener{
 			listener,
 		},
 	}
 
 	var callbackChunks []llmtypes.StreamChunk
-	agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
+	agent.streamingCallback = func(chunk llmtypes.StreamChunk) {
 		callbackChunks = append(callbackChunks, chunk)
 	}
 
@@ -327,7 +327,7 @@ func TestStreamingManagerForwardsTerminalChunks(t *testing.T) {
 // commit's parent change.
 //
 // Background: the agentwrapper in mcp-agent-builder-go calls
-// WithGenerationStreamingEvents(false) (i.e. SuppressGenerationStreamingEvents
+// withGenerationStreamingEvents(false) (i.e. SuppressGenerationStreamingEvents
 // = true) to keep per-token text-generation streaming events out of the
 // chat event store. But terminal pane snapshots (StreamChunkTypeTerminal)
 // are NOT generation events — they're a separate UX channel that the
@@ -341,7 +341,7 @@ func TestStreamingManagerForwardsTerminalChunks(t *testing.T) {
 func TestStreamingManagerEmitsTerminalChunkEventEvenWhenSuppressEventsTrue(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-terminal-suppress-events-test",
+		sessionID: "session-terminal-suppress-events-test",
 		listeners: []AgentEventListener{listener},
 	}
 
@@ -388,7 +388,7 @@ func TestStreamingManagerEmitsTerminalChunkEventEvenWhenSuppressEventsTrue(t *te
 func TestStreamingManagerSuppressesContentChunksWhenSuppressEventsTrue(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-content-suppress-events-test",
+		sessionID: "session-content-suppress-events-test",
 		listeners: []AgentEventListener{listener},
 	}
 
@@ -470,9 +470,9 @@ func TestStreamingManagerChunkRoutingMatrixProductionConfig(t *testing.T) {
 			listener := &recordingAgentEventListener{}
 			var callbackChunks []llmtypes.StreamChunk
 			agent := &Agent{
-				SessionID: "session-chunk-routing-matrix-" + tc.name,
+				sessionID: "session-chunk-routing-matrix-" + tc.name,
 				listeners: []AgentEventListener{listener},
-				StreamingCallback: func(c llmtypes.StreamChunk) {
+				streamingCallback: func(c llmtypes.StreamChunk) {
 					callbackChunks = append(callbackChunks, c)
 				},
 			}
@@ -530,12 +530,12 @@ func TestStreamingManagerChunkRoutingMatrixProductionConfig(t *testing.T) {
 func TestStreamingManagerDrainsAfterContextCancel(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-ctx-cancel-test",
+		sessionID: "session-ctx-cancel-test",
 		listeners: []AgentEventListener{listener},
 	}
 
 	var callbackChunks []llmtypes.StreamChunk
-	agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
+	agent.streamingCallback = func(chunk llmtypes.StreamChunk) {
 		callbackChunks = append(callbackChunks, chunk)
 	}
 
@@ -569,7 +569,7 @@ func TestStreamingManagerDrainsAfterContextCancel(t *testing.T) {
 
 func TestStreamingManagerCLIToolCallsAccumulation(t *testing.T) {
 	agent := &Agent{
-		SessionID: "session-tool-accumulation-test",
+		sessionID: "session-tool-accumulation-test",
 		listeners: []AgentEventListener{&recordingAgentEventListener{}},
 	}
 
@@ -620,12 +620,12 @@ func TestStreamingManagerCLIToolCallsAccumulation(t *testing.T) {
 
 func TestStreamingManagerEmptyContentSkipped(t *testing.T) {
 	agent := &Agent{
-		SessionID: "session-empty-content-test",
+		sessionID: "session-empty-content-test",
 		listeners: []AgentEventListener{&recordingAgentEventListener{}},
 	}
 
 	var callbackCount int
-	agent.StreamingCallback = func(_ llmtypes.StreamChunk) {
+	agent.streamingCallback = func(_ llmtypes.StreamChunk) {
 		callbackCount++
 	}
 
@@ -652,8 +652,8 @@ func TestStreamingManagerEmptyContentSkipped(t *testing.T) {
 func TestFinishStreamingEmitsEndEvent(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-finish-streaming-test",
-		ModelID:   "claude-opus-4-6",
+		sessionID: "session-finish-streaming-test",
+		modelID:   "claude-opus-4-6",
 		listeners: []AgentEventListener{listener},
 	}
 
@@ -729,7 +729,7 @@ func TestFinishStreamingTerminalEndIncludesRetentionMetadata(t *testing.T) {
 		t.Run(tc.provider, func(t *testing.T) {
 			listener := &recordingAgentEventListener{}
 			agent := &Agent{
-				SessionID: "session-terminal-retention-test-" + tc.provider,
+				sessionID: "session-terminal-retention-test-" + tc.provider,
 				provider:  llm.Provider(tc.provider),
 				listeners: []AgentEventListener{listener},
 			}
@@ -788,7 +788,7 @@ func TestFinishStreamingTerminalEndIncludesRetentionMetadata(t *testing.T) {
 func TestFinishStreamingSafeDoubleClose(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-double-close-test",
+		sessionID: "session-double-close-test",
 		listeners: []AgentEventListener{listener},
 	}
 
@@ -818,7 +818,7 @@ func TestFinishStreamingSafeDoubleClose(t *testing.T) {
 
 func TestFinishStreamingNilManager(t *testing.T) {
 	agent := &Agent{
-		SessionID: "session-nil-sm-test",
+		sessionID: "session-nil-sm-test",
 		listeners: []AgentEventListener{&recordingAgentEventListener{}},
 	}
 	agent.finishStreaming(context.Background(), nil, nil)
@@ -827,7 +827,7 @@ func TestFinishStreamingNilManager(t *testing.T) {
 func TestFinishStreamingNilResponse(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
-		SessionID: "session-nil-resp-test",
+		sessionID: "session-nil-resp-test",
 		listeners: []AgentEventListener{listener},
 	}
 
@@ -864,7 +864,7 @@ func TestFinishStreamingNilResponse(t *testing.T) {
 // real-bridge finding that terminal frames were indistinguishable from clean text.
 func TestStreamingManagerLabelsChunkSource(t *testing.T) {
 	listener := &recordingAgentEventListener{}
-	agent := &Agent{SessionID: "session-source-label-test", listeners: []AgentEventListener{listener}}
+	agent := &Agent{sessionID: "session-source-label-test", listeners: []AgentEventListener{listener}}
 
 	sm := &streamingManager{
 		streamChan:    make(chan llmtypes.StreamChunk, 4),
@@ -916,7 +916,7 @@ func TestStreamingManagerLabelsChunkSource(t *testing.T) {
 // real-bridge review finding). Regression guard.
 func TestStreamingManagerPropagatesDeltaMarker(t *testing.T) {
 	listener := &recordingAgentEventListener{}
-	agent := &Agent{SessionID: "session-delta-marker-test", listeners: []AgentEventListener{listener}}
+	agent := &Agent{sessionID: "session-delta-marker-test", listeners: []AgentEventListener{listener}}
 
 	sm := &streamingManager{
 		streamChan:    make(chan llmtypes.StreamChunk, 8),

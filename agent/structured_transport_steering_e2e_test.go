@@ -36,12 +36,12 @@ func buildStructuredBridgeAgent(ctx context.Context, tc structuredTransportProvi
 		stopExecutor()
 		return nil, nil, err
 	}
-	agent, err := NewAgent(ctx, llmModel, configPath,
-		WithProvider(tc.provider),
-		WithAPIConfig(apiURL, apiToken),
-		WithStreaming(true),
-		WithCodingAgentWorkingDir(workDir),
-		WithSessionID(sessionID),
+	agent, err := newAgent(ctx, llmModel, configPath,
+		withProvider(tc.provider),
+		withAPIConfig(apiURL, apiToken),
+		withStreaming(true),
+		withCodingAgentWorkingDir(workDir),
+		withSessionID(sessionID),
 		tc.structuredOption,
 	)
 	if err != nil {
@@ -55,11 +55,11 @@ func buildStructuredBridgeAgent(ctx context.Context, tc structuredTransportProvi
 			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
 		}, "workspace_advanced",
 	); regErr != nil {
-		agent.Close()
+		_ = agent.Close()
 		stopExecutor()
 		return nil, nil, regErr
 	}
-	return agent, func() { agent.Close(); stopExecutor() }, nil
+	return agent, func() { _ = agent.Close(); stopExecutor() }, nil
 }
 
 // TestStructuredTransportDeliverQueuesMidTurn is the live-CLI proof of the

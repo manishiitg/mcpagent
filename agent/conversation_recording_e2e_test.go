@@ -20,7 +20,7 @@ import (
 // Transport-agnostic: the recording hook lives in AskWithHistory, so the same
 // assertions hold on tmux and structured/json. The extra options carry the
 // structured-transport flag for the json cases.
-func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, binary string, extra ...AgentOption) {
+func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, binary string, extra ...agentOption) {
 	if _, err := exec.LookPath(binary); err != nil {
 		t.Skipf("%s CLI required", binary)
 	}
@@ -52,23 +52,23 @@ func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	opts := append([]AgentOption{
-		WithProvider(provider),
-		WithAPIConfig(apiURL, apiToken),
-		WithConversationSink(sink),
-		WithIsolatedSessionWorkspace(true),
+	opts := append([]agentOption{
+		withProvider(provider),
+		withAPIConfig(apiURL, apiToken),
+		withConversationSink(sink),
+		withIsolatedSessionWorkspace(true),
 	}, extra...)
-	agent, err := NewAgent(ctx, llmModel, configPath, opts...)
+	agent, err := newAgent(ctx, llmModel, configPath, opts...)
 	if err != nil {
-		t.Fatalf("NewAgent: %v", err)
+		t.Fatalf("newAgent: %v", err)
 	}
 
 	answer, err := agent.ask(ctx, "Remember this fact for later in our conversation: my project's codename is "+canary+". Just acknowledge briefly that you'll remember it.")
 	if err != nil {
-		agent.Close()
+		_ = agent.Close()
 		t.Fatalf("agent.Ask: %v", err)
 	}
-	agent.Close()
+	_ = agent.Close()
 	t.Logf("first turn ack: %q", answer)
 
 	// #nosec G304 - logPath is a test-controlled temp file.
@@ -114,14 +114,14 @@ func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, 
 	if err != nil {
 		t.Fatalf("InitializeLLM (resume): %v", err)
 	}
-	resumeOpts := append([]AgentOption{
-		WithProvider(provider),
-		WithAPIConfig(apiURL, apiToken),
-		WithIsolatedSessionWorkspace(true),
+	resumeOpts := append([]agentOption{
+		withProvider(provider),
+		withAPIConfig(apiURL, apiToken),
+		withIsolatedSessionWorkspace(true),
 	}, extra...)
-	agent2, err := NewAgent(ctx, llmModel2, configPath, resumeOpts...)
+	agent2, err := newAgent(ctx, llmModel2, configPath, resumeOpts...)
 	if err != nil {
-		t.Fatalf("NewAgent (resume): %v", err)
+		t.Fatalf("newAgent (resume): %v", err)
 	}
 	defer agent2.Close()
 

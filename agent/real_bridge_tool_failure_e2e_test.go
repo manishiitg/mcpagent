@@ -44,12 +44,12 @@ func newRealBridgeAgentWithShell(t *testing.T, ctx context.Context, tc multiTurn
 	if err != nil {
 		t.Fatalf("InitializeLLM: %v", err)
 	}
-	agent, err := NewAgent(ctx, llmModel, configPath,
-		WithProvider(tc.provider), WithAPIConfig(apiURL, apiToken),
-		WithStreaming(true), WithCodingAgentWorkingDir(workDir),
-		WithSessionID("toolfail-"+realBridgeRandHex(4)))
+	agent, err := newAgent(ctx, llmModel, configPath,
+		withProvider(tc.provider), withAPIConfig(apiURL, apiToken),
+		withStreaming(true), withCodingAgentWorkingDir(workDir),
+		withSessionID("toolfail-"+realBridgeRandHex(4)))
 	if err != nil {
-		t.Fatalf("NewAgent: %v", err)
+		t.Fatalf("newAgent: %v", err)
 	}
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
 	if regErr := agent.registerCustomTool(
@@ -59,10 +59,10 @@ func newRealBridgeAgentWithShell(t *testing.T, ctx context.Context, tc multiTurn
 		},
 		"workspace_advanced",
 	); regErr != nil {
-		agent.Close()
+		_ = agent.Close()
 		t.Fatalf("RegisterCustomTool: %v", regErr)
 	}
-	return agent, func() { agent.Close() }
+	return agent, func() { _ = agent.Close() }
 }
 
 // TestRealBridgeStreamingToolFailureRecovery proves the stream + turn degrade

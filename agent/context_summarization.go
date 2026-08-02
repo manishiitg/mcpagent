@@ -35,7 +35,7 @@ const (
 // summarizeConversationHistory summarizes old conversation messages using LLM
 // Returns: (summary, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, response, error)
 func summarizeConversationHistory(a *Agent, ctx context.Context, oldMessages []llmtypes.MessageContent) (string, int, int, int, int, int, *llmtypes.ContentResponse, error) {
-	v2Logger := a.Logger
+	v2Logger := a.logger
 
 	// Build a text representation of old messages for summarization
 	conversationText := buildConversationTextForSummarization(oldMessages)
@@ -67,9 +67,9 @@ func summarizeConversationHistory(a *Agent, ctx context.Context, oldMessages []l
 	v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Generating conversation summary via LLM",
 		loggerv2.Int("old_messages_count", len(oldMessages)),
 		loggerv2.Int("conversation_text_length", len(conversationText)),
-		loggerv2.String("model_id", a.ModelID))
+		loggerv2.String("model_id", a.modelID))
 
-	resp, _, err := GenerateContentWithRetry(a, ctx, summaryMessages, summaryOpts, 0)
+	resp, _, err := generateContentWithRetry(a, ctx, summaryMessages, summaryOpts, 0)
 	if err != nil {
 		return "", 0, 0, 0, 0, 0, nil, fmt.Errorf("failed to generate conversation summary: %w", err)
 	}
@@ -306,7 +306,7 @@ func rebuildMessagesWithSummary(
 	messages []llmtypes.MessageContent,
 	keepLastMessages int,
 ) ([]llmtypes.MessageContent, error) {
-	v2Logger := a.Logger
+	v2Logger := a.logger
 
 	// Validate and clamp keepLastMessages
 	if keepLastMessages < 0 {
@@ -464,41 +464,41 @@ func rebuildMessagesWithSummary(
 // 1. The threshold percentage of the model's context window (if SummarizeOnTokenThreshold is enabled)
 // 2. The fixed token threshold (if SummarizeOnFixedTokenThreshold is enabled)
 // Uses OR logic: either threshold can trigger summarization
-func ShouldSummarizeOnTokenThreshold(a *Agent, currentTokenUsage int) (bool, error) {
-	if !a.EnableContextSummarization {
+func shouldSummarizeOnTokenThreshold(a *Agent, currentTokenUsage int) (bool, error) {
+	if !a.enableContextSummarization {
 		return false, nil
 	}
 
 	// Check fixed token threshold first (doesn't require model metadata)
-	if a.SummarizeOnFixedTokenThreshold && a.FixedTokenThreshold > 0 {
-		if currentTokenUsage >= a.FixedTokenThreshold {
+	if a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
+		if currentTokenUsage >= a.fixedTokenThreshold {
 			return true, nil
 		}
 	}
 
 	// Check percentage-based threshold (requires model metadata)
-	if !a.SummarizeOnTokenThreshold {
+	if !a.summarizeOnTokenThreshold {
 		return false, nil
 	}
 
 	// Get model metadata to determine context window
-	if a.LLM == nil {
+	if a.llmModel == nil {
 		return false, fmt.Errorf("LLM is nil, cannot determine context window")
 	}
 
-	modelID := a.ModelID
+	modelID := a.modelID
 	if modelID == "" {
-		modelID = a.LLM.GetModelID()
+		modelID = a.llmModel.GetModelID()
 	}
 
-	metadata, err := a.LLM.GetModelMetadata(modelID)
+	metadata, err := a.llmModel.GetModelMetadata(modelID)
 	if err != nil || metadata == nil {
 		// Metadata unavailable: caller can fall back to max-turns (treat as "no decision" not hard error)
 		return false, nil
 	}
 
 	// Calculate threshold in tokens
-	percent := a.TokenThresholdPercent
+	percent := a.tokenThresholdPercent
 	if percent <= 0 || percent > 1 {
 		percent = 0.8
 	}
@@ -511,17 +511,17 @@ func ShouldSummarizeOnTokenThreshold(a *Agent, currentTokenUsage int) (bool, err
 }
 
 // GetSummaryKeepLastMessages returns the number of recent messages to keep when summarizing
-func GetSummaryKeepLastMessages(a *Agent) int {
-	if a.SummaryKeepLastMessages > 0 {
-		return a.SummaryKeepLastMessages
+func getSummaryKeepLastMessages(a *Agent) int {
+	if a.summaryKeepLastMessages > 0 {
+		return a.summaryKeepLastMessages
 	}
 	return DefaultSummaryKeepLastMessages
 }
 
 // GetSummarizationCooldownTurns returns the number of turns to wait after summarization
-func GetSummarizationCooldownTurns(a *Agent) int {
-	if a.SummarizationCooldownTurns > 0 {
-		return a.SummarizationCooldownTurns
+func getSummarizationCooldownTurns(a *Agent) int {
+	if a.summarizationCooldownTurns > 0 {
+		return a.summarizationCooldownTurns
 	}
 	return DefaultSummarizationCooldownTurns
 }

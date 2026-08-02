@@ -10,20 +10,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// GetToolSearchInstructions returns the tool search mode instructions section
-// This provides guidance on how to use the search_tools virtual tool to discover tools
-func GetToolSearchInstructions() string {
-	return `**Tool Discovery:**
-
-You have access to a large catalog of tools, but they are not loaded by default. Use these to discover and load them:
-- **show_all_tools**() — list all available tools across all servers
-- **search_tools**(query="pattern") — find tools by name/description (supports regex, falls back to fuzzy search)
-- **add_tool**(tool_names=["tool1", "tool2"], server="optional") — load tools for use
-- **remove_tool**(tool_names=["tool1"]) — unload tools (optional, useful for long-running tasks)
-
-Search or list first, add what you need, then use the tools. If the same tool exists on multiple servers, specify the server parameter in add_tool.`
-}
-
 // GetCodeExecutionInstructions returns the code execution mode instructions section.
 // workspacePath: the actual workspace path to substitute in examples.
 // If workspacePath is empty (chat mode), workspace-related instructions are excluded.
@@ -66,22 +52,13 @@ If you need retries, backoff, or structured logging, write a small helper in the
 
 // BuildAvailableToolsSection renders the one replaceable, agent-facing tool
 // manifest used by both the default prompt builder and request-time composition.
-// Keep the inventory and pre-discovered specs inside explicit tags so callers
-// never have to infer section boundaries from markdown headings.
-func BuildAvailableToolsSection(toolStructureJSON, preDiscoveredToolSpecs string) string {
-	var getAPISpecNote string
-	if preDiscoveredToolSpecs != "" {
-		getAPISpecNote = "Pre-loaded tool specs are provided below. Use get_api_spec only for tools NOT listed in the pre-loaded specs.\n"
-	} else {
-		getAPISpecNote = "Call get_api_spec(tool_name=\"...\") to get the full API spec for specific tools.\n"
-	}
-
+func BuildAvailableToolsSection(toolStructureJSON string) string {
 	var inventory string
 	if toolStructureJSON == "" {
 		inventory = "Tool inventory is unavailable. Do not guess tool names; report that discovery is unavailable.\n"
 	} else {
 		inventory = "The following MCP servers and their tools are accessible via HTTP API.\n" +
-			getAPISpecNote + "\n" +
+			"Call get_api_spec(tool_name=\"...\") to get the full API spec for specific tools.\n\n" +
 			"```json\n" + toolStructureJSON + "\n```\n\n" +
 			"Domain tools (MCP and custom) are called via HTTP API. System tools (execute_shell_command, agent_browser) are called directly — see your provider's tool list for exact names.\n"
 	}
@@ -89,17 +66,13 @@ func BuildAvailableToolsSection(toolStructureJSON, preDiscoveredToolSpecs string
 	return "<available_tools>\n" +
 		"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
 		inventory +
-		preDiscoveredToolSpecs +
 		"</available_tools>"
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 // toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
-// preDiscoveredToolSpecs is optional - pre-generated compact specs for pre-discovered tools (inline in prompt)
-// useToolSearchMode enables tool search mode instructions when true
-// toolCategories is optional list of tool categories for tool search mode
-func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, preDiscoveredToolSpecs string, useToolSearchMode bool, toolCategories []string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
+func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
 	// Build prompts section with previews (only if discoverPrompt is true and NOT in code execution mode)
 	// In code execution mode, prompts/resources are not accessible via get_prompt/get_resource
 	var promptsSection string
@@ -119,7 +92,7 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 	}
 
 	// Build virtual tools section (only mention tools that are actually available)
-	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode, useToolSearchMode, prompts, resources)
+	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode, prompts, resources)
 
 	// Get current date and time
 	now := time.Now()
@@ -141,17 +114,6 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 3. **Solve Fully:** Strive to reach the final answer or state before returning control.
 ` + autonomousNote + `
 </core_principles>`
-	} else if useToolSearchMode {
-		corePrinciplesSection = `<core_principles>
-**Your Goal:** Complete the user's request using discovered tools.
-
-**Operating Rules:**
-1. **Search First:** Use search_tools to find relevant tools before attempting to use them.
-2. **Be Proactive:** Once tools are discovered, use them without asking for permission.
-3. **Chain Actions:** If a tool output leads to a next step, take it immediately.
-4. **Search Again:** If you need additional capabilities, search for more tools.
-` + autonomousNote + `
-</core_principles>`
 	} else {
 		corePrinciplesSection = `<core_principles>
 **Your Goal:** Complete the user's request.
@@ -169,19 +131,12 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 	if useCodeExecutionMode {
 		codeExecutionInstructions := GetCodeExecutionInstructions("")
 
-		toolStructureSection := BuildAvailableToolsSection(toolStructureJSON, preDiscoveredToolSpecs)
+		toolStructureSection := BuildAvailableToolsSection(toolStructureJSON)
 		codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
 
 		toolUsageSection = `<code_usage>
 ` + codeExecutionInstructions + `
 </code_usage>`
-	} else if useToolSearchMode {
-		// Get tool search instructions
-		toolSearchInstructions := GetToolSearchInstructions()
-
-		toolUsageSection = `<tool_search>
-` + toolSearchInstructions + `
-</tool_search>`
 	} else {
 		var parallelToolHint string
 		if enableParallelToolExecution {
@@ -362,34 +317,14 @@ func buildResourcesSection(resources map[string][]mcp.Resource) string {
 
 // buildVirtualToolsSection builds the virtual tools section
 // Only mentions tools that are actually available (prompts/resources must exist)
-func buildVirtualToolsSection(useCodeExecutionMode bool, useToolSearchMode bool, prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource) string {
+func buildVirtualToolsSection(useCodeExecutionMode bool, prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource) string {
 	if useCodeExecutionMode {
 		return `AVAILABLE FUNCTIONS:
 
-- **get_api_spec** - Get the full OpenAPI spec for specific tool(s). Skip this for tools whose specs are already pre-loaded in the system prompt.
+- **get_api_spec** - Get the full OpenAPI spec for specific tool(s).
   Usage: get_api_spec(tool_name="<tool>")
   Multiple tools: get_api_spec(tool_name=["<tool1>", "<tool2>"])
   Optional disambiguation for a real MCP-server collision: server_name="<server>"`
-	}
-
-	if useToolSearchMode {
-		// Tool search mode: Show search_tools as the primary discovery mechanism
-		return `🔧 TOOL DISCOVERY:
-
-- **search_tools** - Search for available tools by name or description
-  Usage: search_tools(query="regex_pattern")
-  Returns matching tools with server names (you must use add_tool to load them)
-  Supports regex patterns and fuzzy matching
-
-- **add_tool** - Add one or more tools to your toolkit
-  Usage: add_tool(tool_names=["name1", "name2"])
-  Optional: add_tool(tool_names=["name1"], server="server_name") to pick a specific server when duplicates exist
-
-- **remove_tool** - Remove tools you no longer need from your active toolkit
-  Usage: remove_tool(tool_names=["name1", "name2"])
-
-Once you discover tools using search_tools, add them using add_tool, then they will be available for you to call directly.
-When you finish a phase of work, use remove_tool to unload tools you no longer need — this keeps your toolkit focused and reduces noise.`
 	}
 
 	// Check if prompts actually exist

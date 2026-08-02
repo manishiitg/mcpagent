@@ -25,7 +25,7 @@ func (a *Agent) createVirtualTools() []llmtypes.Tool {
 	var virtualTools []llmtypes.Tool
 
 	// Check if MCP servers exist - get_prompt and get_resource require MCP servers
-	hasMCPServers := len(a.Clients) > 0
+	hasMCPServers := len(a.clients) > 0
 	// Also check if NO_SERVERS is explicitly selected (overrides client count)
 	if len(a.selectedServers) > 0 {
 		// If selectedServers contains only "NO_SERVERS", then no MCP servers
@@ -115,7 +115,7 @@ func (a *Agent) createVirtualTools() []llmtypes.Tool {
 	// Add context offloading virtual tools if enabled
 	// In code execution mode, context offloading tools are not needed
 	// (the LLM writes code that calls HTTP endpoints directly)
-	if !a.UseCodeExecutionMode {
+	if !a.useCodeExecutionMode {
 		largeOutputTools := a.createLargeOutputVirtualTools()
 		virtualTools = append(virtualTools, largeOutputTools...)
 	}
@@ -163,17 +163,9 @@ func (a *Agent) handleVirtualTool(ctx context.Context, toolName string, args map
 		return a.handleGetResource(ctx, args)
 	case "get_api_spec":
 		return a.handleGetAPISpec(ctx, args)
-	case "search_tools":
-		return a.handleSearchTools(ctx, args)
-	case "add_tool":
-		return a.handleAddTool(ctx, args)
-	case "remove_tool":
-		return a.handleRemoveTool(ctx, args)
-	case "show_all_tools":
-		return a.handleShowAllTools(ctx, args)
 	default:
 		// Check if it's a context offloading virtual tool
-		if a.EnableContextOffloading {
+		if a.enableContextOffloading {
 			return a.handleLargeOutputVirtualTool(ctx, toolName, args)
 		}
 		return "", fmt.Errorf("unknown virtual tool: %s", toolName)
@@ -193,8 +185,8 @@ func (a *Agent) handleGetPrompt(ctx context.Context, args map[string]interface{}
 	}
 
 	// First, try to fetch from server (prioritize fresh data)
-	if a.Clients != nil {
-		if client, exists := a.Clients[server]; exists {
+	if a.clients != nil {
+		if client, exists := a.clients[server]; exists {
 			promptResult, err := client.GetPrompt(ctx, name)
 			if err == nil && promptResult != nil {
 				// Extract content from messages
@@ -253,8 +245,8 @@ func (a *Agent) handleGetResource(ctx context.Context, args map[string]interface
 	}
 
 	// First, try to fetch from server (prioritize fresh data)
-	if a.Clients != nil {
-		if client, exists := a.Clients[server]; exists {
+	if a.clients != nil {
+		if client, exists := a.clients[server]; exists {
 
 			resourceResult, err := client.GetResource(ctx, uri)
 			if err == nil && resourceResult != nil {
@@ -296,8 +288,8 @@ func (a *Agent) handleGetResource(ctx context.Context, args map[string]interface
 
 					// If we have cached resource metadata but no content, try to fetch from server again
 					// This handles cases where the resource exists but wasn't fetched during initialization
-					if a.Clients != nil {
-						if client, exists := a.Clients[server]; exists {
+					if a.clients != nil {
+						if client, exists := a.clients[server]; exists {
 							resourceResult, err := client.GetResource(ctx, uri)
 							if err == nil && resourceResult != nil && resourceResult.Contents != nil {
 								var contentParts []string
@@ -324,8 +316,8 @@ func (a *Agent) handleGetResource(ctx context.Context, args map[string]interface
 
 	// If all attempts failed, provide a helpful error message
 	errorMsg := fmt.Sprintf("resource %s not found in server %s. Available resources can be found in the system prompt's 'AVAILABLE RESOURCES' section", uri, server)
-	if a.Logger != nil {
-		a.Logger.Error("🔧 [get_resource] Resource not found", fmt.Errorf("%s", errorMsg), loggerv2.String("server", server), loggerv2.String("uri", uri))
+	if a.logger != nil {
+		a.logger.Error("🔧 [get_resource] Resource not found", fmt.Errorf("%s", errorMsg), loggerv2.String("server", server), loggerv2.String("uri", uri))
 	}
 	return "", fmt.Errorf("resource %s not found in server %s. Available resources can be found in the system prompt's 'AVAILABLE RESOURCES' section", uri, server)
 }

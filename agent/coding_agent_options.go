@@ -14,21 +14,21 @@ import (
 )
 
 var codingAgentPersistentInteractiveEnabledByProvider = map[llm.Provider]func(*Agent) bool{
-	llm.ProviderClaudeCode: func(a *Agent) bool { return a.ClaudeCodePersistentInteractiveSession },
-	llm.ProviderCodexCLI:   func(a *Agent) bool { return a.CodexPersistentInteractiveSession },
-	llm.ProviderCursorCLI:  func(a *Agent) bool { return a.CursorPersistentInteractiveSession },
-	llm.ProviderPiCLI:      func(a *Agent) bool { return a.PiPersistentInteractiveSession },
+	llm.ProviderClaudeCode: func(a *Agent) bool { return a.claudeCodePersistentInteractiveSession },
+	llm.ProviderCodexCLI:   func(a *Agent) bool { return a.codexPersistentInteractiveSession },
+	llm.ProviderCursorCLI:  func(a *Agent) bool { return a.cursorPersistentInteractiveSession },
+	llm.ProviderPiCLI:      func(a *Agent) bool { return a.piPersistentInteractiveSession },
 }
 
 func (a *Agent) appendCodingAgentInteractiveOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
-	return a.appendCodingAgentInteractiveOptionsForProvider(opts, a.provider, a.ModelID)
+	return a.appendCodingAgentInteractiveOptionsForProvider(opts, a.provider, a.modelID)
 }
 
 func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
 	opts = a.appendCodingAgentWorkingDirOptionForProvider(opts, provider, modelID)
 	opts = a.appendCLISecurityPolicyOption(opts, provider)
 
-	sessionID := strings.TrimSpace(a.SessionID)
+	sessionID := strings.TrimSpace(a.sessionID)
 	if sessionID == "" || !codingAgentInteractiveEnabledForProvider(provider, modelID, sessionID) {
 		return opts
 	}
@@ -49,8 +49,8 @@ func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.C
 	}
 
 	if provider == llm.ProviderCodexCLI {
-		if strings.TrimSpace(a.CodingAgentWorkingDir) == "" {
-			if legacyDir := strings.TrimSpace(a.CodexProjectDirID); legacyDir != "" {
+		if strings.TrimSpace(a.codingAgentWorkingDir) == "" {
+			if legacyDir := strings.TrimSpace(a.codexProjectDirID); legacyDir != "" {
 				opts = append(opts, llm.WithCodexProjectDirID(legacyDir))
 			}
 		}
@@ -83,12 +83,12 @@ func codingAgentInteractiveEnabledForProvider(provider llm.Provider, modelID, se
 }
 
 func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
-	workingDir := strings.TrimSpace(a.CodingAgentWorkingDir)
+	workingDir := strings.TrimSpace(a.codingAgentWorkingDir)
 	// IsolatedSessionWorkspace overrides the caller-supplied workingDir
 	// with a fresh per-Agent tmp dir. The dir is created lazily on
 	// first call and rm -rf'd by Agent.Close. Workflow steps opt into
 	// this; chat code paths don't.
-	if a.IsolatedSessionWorkspace {
+	if a.isolatedSessionWorkspace {
 		if tmpDir := a.ensureIsolatedWorkspaceDir(); tmpDir != "" {
 			workingDir = tmpDir
 		}
@@ -159,18 +159,18 @@ func isolatedWorkspaceDirForSession(sessionID string) string {
 // isolation is belt-and-suspenders, not a hard contract.
 func (a *Agent) ensureIsolatedWorkspaceDir() string {
 	a.isolatedWorkspaceOnce.Do(func() {
-		if dir := isolatedWorkspaceDirForSession(a.SessionID); dir != "" {
+		if dir := isolatedWorkspaceDirForSession(a.sessionID); dir != "" {
 			// MkdirAll, not MkdirTemp: on the second and later turns of a
 			// session this dir already exists and MUST be reused, not replaced.
 			if err := os.MkdirAll(dir, 0o700); err == nil {
 				a.isolatedWorkspacePath = dir
 				a.isolatedWorkspaceStable = true
-				if a.Logger != nil {
-					a.Logger.Info("IsolatedSessionWorkspace: using session dir " + dir)
+				if a.logger != nil {
+					a.logger.Info("IsolatedSessionWorkspace: using session dir " + dir)
 				}
 				return
-			} else if a.Logger != nil {
-				a.Logger.Warn("IsolatedSessionWorkspace: MkdirAll failed for session dir; falling back to a random dir: " + err.Error())
+			} else if a.logger != nil {
+				a.logger.Warn("IsolatedSessionWorkspace: MkdirAll failed for session dir; falling back to a random dir: " + err.Error())
 			}
 		}
 
@@ -179,14 +179,14 @@ func (a *Agent) ensureIsolatedWorkspaceDir() string {
 		// rm -rf's this one — see the isolatedWorkspaceStable check there.
 		dir, err := os.MkdirTemp("", "mlp-cli-session-*")
 		if err != nil {
-			if a.Logger != nil {
-				a.Logger.Warn("IsolatedSessionWorkspace: os.MkdirTemp failed; falling back to CodingAgentWorkingDir")
+			if a.logger != nil {
+				a.logger.Warn("IsolatedSessionWorkspace: os.MkdirTemp failed; falling back to CodingAgentWorkingDir")
 			}
 			return
 		}
 		a.isolatedWorkspacePath = dir
-		if a.Logger != nil {
-			a.Logger.Info("IsolatedSessionWorkspace: created tmp dir " + dir)
+		if a.logger != nil {
+			a.logger.Info("IsolatedSessionWorkspace: created tmp dir " + dir)
 		}
 	})
 	return a.isolatedWorkspacePath
@@ -202,22 +202,22 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 		return
 	}
 	if sid, ok := additional["claude_code_session_id"].(string); ok && sid != "" {
-		a.ClaudeCodeSessionID = sid
+		a.claudeCodeSessionID = sid
 	}
 	if sid, ok := additional["codex_thread_id"].(string); ok && sid != "" {
-		if a.Logger != nil && a.CodexSessionID != sid {
-			a.Logger.Debug(fmt.Sprintf("CodexSessionID set from response: session=%q old=%q new=%q isolated=%v", a.SessionID, a.CodexSessionID, sid, a.IsolatedSessionWorkspace))
+		if a.logger != nil && a.codexSessionID != sid {
+			a.logger.Debug(fmt.Sprintf("CodexSessionID set from response: session=%q old=%q new=%q isolated=%v", a.sessionID, a.codexSessionID, sid, a.isolatedSessionWorkspace))
 		}
-		a.CodexSessionID = sid
+		a.codexSessionID = sid
 	}
 	if sid, ok := additional["cursor_session_id"].(string); ok && sid != "" {
-		a.CursorSessionID = sid
+		a.cursorSessionID = sid
 	}
 	if sid, ok := additional["pi_session_id"].(string); ok && sid != "" {
-		a.PiSessionID = sid
+		a.piSessionID = sid
 	}
-	if a.CodingProviderSessionHandle.Empty() {
-		a.CodingProviderSessionHandle = a.legacyCodingProviderSessionHandle()
+	if a.codingProviderSessionHandle.Empty() {
+		a.codingProviderSessionHandle = a.legacyCodingProviderSessionHandle()
 	}
 }
 
@@ -255,14 +255,14 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	// hook layer, forcing the agent to route tool calls through the MCP
 	// bridge we just configured.
 	opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
-	if a.Logger != nil {
-		a.Logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
-		a.Logger.Info("⏱️ [CURSOR_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
-		a.Logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
+	if a.logger != nil {
+		a.logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
+		a.logger.Info("⏱️ [CURSOR_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
+		a.logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
 	}
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithCursorStructuredTransport(true))
-	} else if a.EnableStreaming {
+	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithCursorStreamTranscript(true))
 	}
 	return opts, nil

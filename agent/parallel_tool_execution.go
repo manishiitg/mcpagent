@@ -22,6 +22,7 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/toolerr"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -39,6 +40,7 @@ type toolExecutionPlan struct {
 
 	isCustomTool bool
 	isVirtual    bool
+	directTool   registeredTool
 
 	toolTimeout  time.Duration
 	hasNoTimeout bool
@@ -83,7 +85,7 @@ func executeToolCallsParallel(
 	agentCtx context.Context,
 ) ([]llmtypes.MessageContent, error) {
 
-	v2Logger := a.Logger
+	v2Logger := a.logger
 
 	// ─── Phase 1: Sequential preparation ───────────────────────────────────
 
@@ -144,8 +146,6 @@ func executeToolCallsParallel(
 
 	// ─── Phase 3: Sequential assembly ──────────────────────────────────────
 
-	needToolRefresh := false
-
 	for i, plan := range plans {
 		res := results[i]
 		tc := plan.toolCall
@@ -166,11 +166,30 @@ func executeToolCallsParallel(
 		}
 
 		if res.toolErr != nil {
+			// Durable record alongside the event. See conversation.go: events are
+			// pruned and lazily fetched, logs are not.
+			v2Logger.Error(toolerr.Marker+" tool failed", res.toolErr,
+				loggerv2.String("layer", "agent_tool_loop_parallel"),
+				loggerv2.String("tool", tc.FunctionCall.Name),
+				loggerv2.String("server", plan.serverName),
+				loggerv2.String("session_id", a.sessionID),
+				loggerv2.String("duration", res.duration.String()))
+
 			// Tool execution error — emit error event
 			toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, res.toolErr.Error(), plan.serverName, res.duration)
 			toolErrorEvent.ToolCallID = tc.ID
 			a.emitTypedEvent(ctx, toolErrorEvent)
 		} else if res.result == nil || !res.result.IsError {
+			if signal, suspicious := toolerr.Suspicious(res.resultText); suspicious {
+				v2Logger.Error(toolerr.SuspectMarker+" tool reported success but the result reads like a failure", nil,
+					loggerv2.String("layer", "agent_tool_loop_parallel"),
+					loggerv2.String("tool", tc.FunctionCall.Name),
+					loggerv2.String("server", plan.serverName),
+					loggerv2.String("session_id", a.sessionID),
+					loggerv2.String("signal", signal),
+					loggerv2.String("duration", res.duration.String()),
+					loggerv2.String("result", toolerr.TruncateForLog(res.resultText)))
+			}
 			// Success — emit tool call end event
 			_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.getTokenUsageWithPricing()
 			a.tokenTrackingMutex.RLock()
@@ -178,10 +197,18 @@ func executeToolCallsParallel(
 			contextWindowUsage := a.currentContextWindowUsage
 			a.tokenTrackingMutex.RUnlock()
 
-			toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, res.resultText, plan.serverName, res.duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
+			toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, res.resultText, plan.serverName, res.duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.modelID)
 			toolEndEvent.ToolCallID = tc.ID
 			a.emitTypedEvent(ctx, toolEndEvent)
 		} else if res.result != nil && res.result.IsError {
+			v2Logger.Error(toolerr.Marker+" tool returned an error result", nil,
+				loggerv2.String("layer", "agent_tool_loop_parallel"),
+				loggerv2.String("tool", tc.FunctionCall.Name),
+				loggerv2.String("server", plan.serverName),
+				loggerv2.String("session_id", a.sessionID),
+				loggerv2.String("duration", res.duration.String()),
+				loggerv2.String("result", toolerr.TruncateForLog(res.resultText)))
+
 			// Tool returned error in result
 			toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, res.resultText, plan.serverName, res.duration)
 			toolErrorEvent.ToolCallID = tc.ID
@@ -196,18 +223,6 @@ func executeToolCallsParallel(
 			}
 		}
 
-		// Track if add_tool was called for tool refresh
-		if a.UseToolSearchMode && tc.FunctionCall != nil && tc.FunctionCall.Name == "add_tool" && res.toolErr == nil {
-			needToolRefresh = true
-		}
-	}
-
-	// Refresh tools if any add_tool was in the batch
-	if needToolRefresh {
-		a.filteredTools = a.getToolsForToolSearchMode()
-		v2Logger.Debug("🔍 [TOOL_SEARCH] Tools refreshed after parallel add_tool",
-			loggerv2.Int("discovered_count", a.getDiscoveredToolCount()),
-			loggerv2.Int("total_available", len(a.filteredTools)))
 	}
 
 	return messages, nil
@@ -227,7 +242,7 @@ func prepareToolExecution(
 	agentCtx context.Context,
 ) toolExecutionPlan {
 
-	v2Logger := a.Logger
+	v2Logger := a.logger
 
 	plan := toolExecutionPlan{
 		index:    index,
@@ -274,6 +289,9 @@ func prepareToolExecution(
 			loggerv2.String("arguments", tc.FunctionCall.Arguments))
 
 		feedbackMessage := generateEmptyToolNameFeedback(tc.FunctionCall.Arguments)
+		v2Logger.Error(toolerr.Marker+" empty tool name", nil,
+			loggerv2.String("layer", "agent_tool_loop_parallel"),
+			loggerv2.String("session_id", a.sessionID))
 		toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", "empty tool name", "", time.Since(conversationStartTime))
 		toolNameErrorEvent.ToolCallID = tc.ID
 		a.emitTypedEvent(ctx, toolNameErrorEvent)
@@ -292,6 +310,10 @@ func prepareToolExecution(
 	if err != nil {
 		v2Logger.Error("Tool args parsing error", err)
 		feedbackMessage := generateToolArgsParsingFeedback(tc.FunctionCall.Name, tc.FunctionCall.Arguments, err)
+		v2Logger.Error(toolerr.Marker+" tool args parse failed", err,
+			loggerv2.String("layer", "agent_tool_loop_parallel"),
+			loggerv2.String("tool", tc.FunctionCall.Name),
+			loggerv2.String("session_id", a.sessionID))
 		toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
 		toolArgsParsingErrorEvent.ToolCallID = tc.ID
 		a.emitTypedEvent(ctx, toolArgsParsingErrorEvent)
@@ -306,12 +328,7 @@ func prepareToolExecution(
 	}
 	plan.args = args
 
-	// Check custom tools
-	if a.customTools != nil {
-		if _, exists := a.customTools[tc.FunctionCall.Name]; exists {
-			plan.isCustomTool = true
-		}
-	}
+	plan.directTool, plan.isCustomTool = a.lookupDirectTool(tc.FunctionCall.Name)
 
 	// Resolve only the client mapped to this tool.
 	mappedServerName := ""
@@ -319,7 +336,8 @@ func prepareToolExecution(
 	if a.toolToServer != nil {
 		if mapped, ok := a.toolToServer[tc.FunctionCall.Name]; ok {
 			if mapped == "custom" {
-				plan.isCustomTool = true
+				// Compatibility marker only; the canonical registry above owns
+				// direct-tool identity and execution.
 			} else {
 				plan.client, mappedServerName, hasMappedServer = a.mappedMCPClient(tc.FunctionCall.Name)
 			}
@@ -331,6 +349,10 @@ func prepareToolExecution(
 		if !hasMappedServer || mappedServerName == "" {
 			feedbackMessage := a.unknownToolFeedback(tc.FunctionCall.Name)
 
+			v2Logger.Error(toolerr.Marker+" tool not found", nil,
+				loggerv2.String("layer", "agent_tool_loop_parallel"),
+				loggerv2.String("tool", tc.FunctionCall.Name),
+				loggerv2.String("session_id", a.sessionID))
 			toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
 			toolNotFoundEvent.ToolCallID = tc.ID
 			a.emitTypedEvent(ctx, toolNotFoundEvent)
@@ -365,10 +387,10 @@ func prepareToolExecution(
 
 		// Cache the exact mapped client so subsequent calls reuse it.
 		a.clientsMu.Lock()
-		if a.Clients == nil {
-			a.Clients = make(map[string]mcpclient.ClientInterface)
+		if a.clients == nil {
+			a.clients = make(map[string]mcpclient.ClientInterface)
 		}
-		a.Clients[mappedServerName] = onDemandClient
+		a.clients[mappedServerName] = onDemandClient
 		a.clientsMu.Unlock()
 		plan.client = onDemandClient
 	}
@@ -377,12 +399,12 @@ func prepareToolExecution(
 	plan.toolTimeout = getToolExecutionTimeout(a)
 	plan.hasNoTimeout = plan.toolTimeout <= 0
 	if plan.isCustomTool {
-		if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists && customTool.Timeout != -1 {
-			if customTool.Timeout == 0 {
+		if plan.directTool.Timeout != -1 {
+			if plan.directTool.Timeout == 0 {
 				plan.hasNoTimeout = true
-			} else if customTool.Timeout > 0 {
+			} else if plan.directTool.Timeout > 0 {
 				plan.hasNoTimeout = false
-				plan.toolTimeout = customTool.Timeout
+				plan.toolTimeout = plan.directTool.Timeout
 			}
 		}
 	}
@@ -418,7 +440,7 @@ func executeToolCall(
 	agentCtx context.Context,
 ) toolExecutionResult {
 
-	v2Logger := a.Logger
+	v2Logger := a.logger
 	tc := plan.toolCall
 	result := toolExecutionResult{}
 
@@ -451,7 +473,7 @@ func executeToolCall(
 		loggerv2.String("timeout", timeoutStr))
 
 	// Cache hit event
-	if len(a.Tracers) > 0 && plan.serverName != "" && plan.serverName != "virtual-tools" {
+	if len(a.tracers) > 0 && plan.serverName != "" && plan.serverName != "virtual-tools" {
 		connectionCacheHitEvent := events.NewCacheHitEvent(plan.serverName, fmt.Sprintf("unified_%s", plan.serverName), "unified_cache", 1, time.Duration(0))
 		a.emitTypedEvent(ctx, connectionCacheHitEvent)
 	}
@@ -486,23 +508,12 @@ func executeToolCall(
 				Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
 			}
 		}
-	} else if a.customTools != nil {
-		if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists {
-			resultText, ctErr := customTool.Execution(toolCtx, plan.args)
-			if ctErr != nil {
-				mcpResult = &mcp.CallToolResult{
-					IsError: true,
-					Content: []mcp.Content{&mcp.TextContent{Text: ctErr.Error()}},
-				}
-			} else {
-				mcpResult = &mcp.CallToolResult{
-					IsError: false,
-					Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
-				}
-			}
+	} else if plan.isCustomTool {
+		resultText, ctErr := plan.directTool.Executor(toolCtx, plan.args)
+		if ctErr != nil {
+			mcpResult = &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: ctErr.Error()}}}
 		} else {
-			// Fallback to MCP client
-			mcpResult, toolErr = callToolWithTimeoutWrapper(toolCtx, plan.client, actualToolName, plan.args, v2Logger, plan.serverName)
+			mcpResult = &mcp.CallToolResult{IsError: false, Content: []mcp.Content{&mcp.TextContent{Text: resultText}}}
 		}
 	} else {
 		mcpResult, toolErr = callToolWithTimeoutWrapper(toolCtx, plan.client, actualToolName, plan.args, v2Logger, plan.serverName)
@@ -518,7 +529,7 @@ func executeToolCall(
 	// Handle tool execution errors
 	if toolErr != nil {
 		// Attempt error recovery
-		errorRecoveryHandler := NewErrorRecoveryHandler(a)
+		errorRecoveryHandler := newErrorRecoveryHandler(a)
 		recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
 			ctx, &tc, plan.serverName, toolErr, time.Now().Add(-result.duration), plan.isCustomTool, plan.isVirtual)
 
@@ -554,7 +565,7 @@ func executeToolCall(
 		// Check for broken pipe in content
 		if mcpclient.IsBrokenPipeInContent(resultText) {
 			v2Logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE DETECTED IN RESULT] Turn %d, Tool: %s, Server: %s", turn+1, tc.FunctionCall.Name, plan.serverName))
-			errorRecoveryHandler := NewErrorRecoveryHandler(a)
+			errorRecoveryHandler := newErrorRecoveryHandler(a)
 			fakeErr := fmt.Errorf("broken pipe detected in result: %s", resultText)
 			recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
 				ctx, &tc, plan.serverName, fakeErr, time.Now().Add(-result.duration), plan.isCustomTool, plan.isVirtual)
@@ -567,8 +578,8 @@ func executeToolCall(
 		}
 
 		// Context offloading
-		if a.EnableContextOffloading && a.shouldUseWrapperTokenCounting() {
-			if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
+		if a.enableContextOffloading && a.shouldUseWrapperTokenCounting() {
+			if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.modelID) {
 				detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
 				detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
 				a.emitTypedEvent(ctx, detectedEvent)
@@ -589,8 +600,8 @@ func executeToolCall(
 
 		// Safety check: Apply max token limit truncation regardless of context offloading setting
 		// This prevents API errors from prompts exceeding model context limits
-		if a.shouldUseWrapperTokenCounting() && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
-			truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.ModelID, tc.FunctionCall.Name)
+		if a.shouldUseWrapperTokenCounting() && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.modelID) {
+			truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.modelID, tc.FunctionCall.Name)
 			if wasTruncated {
 				v2Logger.Warn("Tool output exceeded max token limit, truncated",
 					loggerv2.String("tool", tc.FunctionCall.Name),

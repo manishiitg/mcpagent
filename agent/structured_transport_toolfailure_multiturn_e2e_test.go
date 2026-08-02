@@ -37,14 +37,14 @@ func buildStructuredBridgeAgentWithShell(t *testing.T, ctx context.Context, tc s
 		stopExecutor()
 		t.Fatalf("InitializeLLM: %v", err)
 	}
-	agent, err := NewAgent(ctx, llmModel, configPath,
-		WithProvider(tc.provider), WithAPIConfig(apiURL, apiToken),
-		WithStreaming(true), WithCodingAgentWorkingDir(workDir),
+	agent, err := newAgent(ctx, llmModel, configPath,
+		withProvider(tc.provider), withAPIConfig(apiURL, apiToken),
+		withStreaming(true), withCodingAgentWorkingDir(workDir),
 		tc.structuredOption,
-		WithSessionID("jsontoolfail-"+realBridgeRandHex(4)))
+		withSessionID("jsontoolfail-"+realBridgeRandHex(4)))
 	if err != nil {
 		stopExecutor()
-		t.Fatalf("NewAgent: %v", err)
+		t.Fatalf("newAgent: %v", err)
 	}
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
 	if regErr := agent.registerCustomTool(
@@ -53,11 +53,11 @@ func buildStructuredBridgeAgentWithShell(t *testing.T, ctx context.Context, tc s
 			return handler(ctx, args, shellEnv)
 		}, "workspace_advanced",
 	); regErr != nil {
-		agent.Close()
+		_ = agent.Close()
 		stopExecutor()
 		t.Fatalf("RegisterCustomTool: %v", regErr)
 	}
-	return agent, func() { agent.Close(); stopExecutor() }
+	return agent, func() { _ = agent.Close(); stopExecutor() }
 }
 
 // requireCodexStructuredToolIdentity guards the complete bridge-only adapter ->

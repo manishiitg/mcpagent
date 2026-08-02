@@ -11,7 +11,7 @@ import (
 // TestClaudeBridgeAllowedToolIdentifiersIncludesAdditional pins the fix for a
 // real bug: enforced-mode Claude routing (MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING)
 // hardcoded a 4-tool allowlist in two places (--allowedTools and the PreToolUse
-// hook), silently rejecting any tool registered via WithAdditionalBridgeTools.
+// hook), silently rejecting any tool registered via withAdditionalBridgeTools.
 // Both now derive from this single function.
 func TestClaudeBridgeAllowedToolIdentifiersIncludesAdditional(t *testing.T) {
 	got := claudeBridgeAllowedToolIdentifiers([]string{"my_custom_tool"})
@@ -55,7 +55,7 @@ func TestClaudeBridgeAllowedToolIdentifiersIncludesAdditional(t *testing.T) {
 // generates the actual enforced-mode PreToolUse hook script (the same one
 // installed into a live Claude Code session) and EXECUTES it with python3,
 // feeding it a PreToolUse payload for a tool registered only via
-// WithAdditionalBridgeTools. Before the fix this was denied unconditionally
+// withAdditionalBridgeTools. Before the fix this was denied unconditionally
 // (hardcoded 4-tool ALLOWED set); it must now be allowed (exit 0, no denial
 // on stdout), while a tool that was never registered anywhere must still be
 // denied.
@@ -108,7 +108,7 @@ func TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool(t *testing.T) {
 
 // TestClaudeHTTPRoutingHookPathIsContentAddressed pins the fix for a real
 // concurrency bug: writeClaudeHTTPRoutingHook always wrote to the SAME fixed
-// path regardless of the allowlist content. Before WithAdditionalBridgeTools
+// path regardless of the allowlist content. Before withAdditionalBridgeTools
 // was wired into the allowlist (the fix this test file's first two tests
 // pin), every agent wrote byte-identical content there, so the shared path
 // was harmless. Once the content genuinely varies per agent, two concurrent

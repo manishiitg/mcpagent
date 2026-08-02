@@ -15,7 +15,20 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+func newFilteredAgent(ctx context.Context, model llmtypes.Model, configPath string, provider llm.Provider, server, traceID string, logger loggerv2.Logger, selectedTools []string, codeExecution bool) (*mcpagent.Agent, error) {
+	return mcpagent.NewAgentFromDefinition(ctx, mcpagent.AgentDefinition{
+		Tools: mcpagent.ToolSet{MCP: []mcpagent.MCPToolSource{{Name: server}}},
+	}, mcpagent.RuntimeConfig{
+		Model: model, MCPConfigPath: configPath,
+		Generation:    mcpagent.GenerationRuntimeConfig{Provider: provider},
+		Tools:         mcpagent.ToolRuntimeConfig{SelectedTools: selectedTools, CodeExecution: codeExecution},
+		Observability: mcpagent.ObservabilityRuntimeConfig{Logger: logger, TraceID: observability.TraceID(traceID)},
+	})
+}
 
 var toolFilterTestCmd = &cobra.Command{
 	Use:   "tool-filter",
@@ -622,17 +635,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, log loggerv2.Logger)
 	}
 
 	// modelID is automatically extracted from llmModel
-	agentInstance, err := mcpagent.NewAgent(
-		ctx,
-		llmModel,
-		configPath,
-		mcpagent.WithProvider(llmProvider),
-		mcpagent.WithServerName(testServerName),
-		mcpagent.WithTraceID("test-trace"),
-		mcpagent.WithLogger(log),
-		mcpagent.WithSelectedTools([]string{selectedTool}),
-		// NOT using WithCodeExecutionMode - this is normal mode
-	)
+	agentInstance, err := newFilteredAgent(ctx, llmModel, configPath, llmProvider, testServerName, "test-trace", log, []string{selectedTool}, false)
 	if err != nil {
 		log.Warn("Failed to create agent", loggerv2.Error(err))
 		return nil
@@ -640,7 +643,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, log loggerv2.Logger)
 	defer agentInstance.Close()
 
 	// Verify: Agent should have tools from the selected server
-	tools := agentInstance.Tools
+	tools := agentInstance.Definition().Tools
 	log.Info("Normal mode: Agent has tools registered", loggerv2.Int("count", len(tools)))
 
 	if len(tools) == 0 {
@@ -649,9 +652,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, log loggerv2.Logger)
 
 	// Verify tools are from the expected server (check tool names)
 	for _, tool := range tools {
-		if tool.Function != nil {
-			log.Info("  - Tool", loggerv2.String("name", tool.Function.Name))
-		}
+		log.Info("  - Tool", loggerv2.String("name", tool.Name))
 	}
 
 	log.Info("✅ Normal mode integration test passed", loggerv2.Int("tools_registered", len(tools)))
@@ -697,17 +698,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, log loggerv2.
 	}
 
 	// modelID is automatically extracted from llmModel
-	agentInstance, err := mcpagent.NewAgent(
-		ctx,
-		llmModel,
-		configPath,
-		mcpagent.WithProvider(llmProvider),
-		mcpagent.WithServerName(testServerName),
-		mcpagent.WithTraceID("test-trace"),
-		mcpagent.WithLogger(log),
-		mcpagent.WithSelectedTools([]string{selectedTool}),
-		mcpagent.WithCodeExecutionMode(true), // Enable code execution mode
-	)
+	agentInstance, err := newFilteredAgent(ctx, llmModel, configPath, llmProvider, testServerName, "test-trace", log, []string{selectedTool}, true)
 	if err != nil {
 		log.Warn("Failed to create agent with code execution mode", loggerv2.Error(err))
 		return nil
@@ -715,21 +706,19 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, log loggerv2.
 	defer agentInstance.Close()
 
 	// In code execution mode, agent should only have virtual tools (get_api_spec, execute_shell_command)
-	tools := agentInstance.Tools
+	tools := agentInstance.Definition().Tools
 	log.Info("Code execution mode: Agent has LLM tools (should be virtual tools only)", loggerv2.Int("count", len(tools)))
 
 	// Verify: Should have virtual tools
 	hasGetAPISpec := false
 	hasExecuteShellCommand := false
 	for _, tool := range tools {
-		if tool.Function != nil {
-			log.Info("  - Tool", loggerv2.String("name", tool.Function.Name))
-			if tool.Function.Name == "get_api_spec" {
-				hasGetAPISpec = true
-			}
-			if tool.Function.Name == "execute_shell_command" {
-				hasExecuteShellCommand = true
-			}
+		log.Info("  - Tool", loggerv2.String("name", tool.Name))
+		if tool.Name == "get_api_spec" {
+			hasGetAPISpec = true
+		}
+		if tool.Name == "execute_shell_command" {
+			hasExecuteShellCommand = true
 		}
 	}
 
@@ -807,16 +796,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 
 	// Create agent in normal mode
 	// modelID is automatically extracted from llmModel
-	normalAgent, err := mcpagent.NewAgent(
-		ctx,
-		llmModel,
-		configPath,
-		mcpagent.WithProvider(llmProvider),
-		mcpagent.WithServerName(testServerName),
-		mcpagent.WithTraceID("test-trace-normal"),
-		mcpagent.WithLogger(log),
-		mcpagent.WithSelectedTools(selectedTools),
-	)
+	normalAgent, err := newFilteredAgent(ctx, llmModel, configPath, llmProvider, testServerName, "test-trace-normal", log, selectedTools, false)
 	if err != nil {
 		log.Warn("Failed to create normal mode agent", loggerv2.Error(err))
 		return nil
@@ -825,17 +805,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 
 	// Create agent in code execution mode
 	// modelID is automatically extracted from llmModel
-	codeExecAgent, err := mcpagent.NewAgent(
-		ctx,
-		llmModel,
-		configPath,
-		mcpagent.WithProvider(llmProvider),
-		mcpagent.WithServerName(testServerName),
-		mcpagent.WithTraceID("test-trace-codeexec"),
-		mcpagent.WithLogger(log),
-		mcpagent.WithSelectedTools(selectedTools),
-		mcpagent.WithCodeExecutionMode(true),
-	)
+	codeExecAgent, err := newFilteredAgent(ctx, llmModel, configPath, llmProvider, testServerName, "test-trace-codeexec", log, selectedTools, true)
 	if err != nil {
 		log.Warn("Failed to create code execution mode agent", loggerv2.Error(err))
 		return nil
@@ -843,16 +813,14 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 	defer codeExecAgent.Close()
 
 	// Get tools from normal mode (direct LLM tools)
-	normalTools := normalAgent.Tools
+	normalTools := normalAgent.Definition().Tools
 	normalMCPToolCount := 0
 	for _, tool := range normalTools {
-		if tool.Function != nil {
-			// Count non-virtual tools
-			name := tool.Function.Name
-			if name != "get_prompt" && name != "get_resource" && name != "discover_code_structure" &&
-				name != "get_api_spec" && name != "execute_shell_command" {
-				normalMCPToolCount++
-			}
+		// Count non-virtual tools
+		name := tool.Name
+		if name != "get_prompt" && name != "get_resource" && name != "discover_code_structure" &&
+			name != "get_api_spec" && name != "execute_shell_command" {
+			normalMCPToolCount++
 		}
 	}
 

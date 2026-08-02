@@ -4,8 +4,8 @@ import "testing"
 
 func TestGetCodeExecutionAPIBaseURLAddsSessionPrefix(t *testing.T) {
 	agent := &Agent{
-		APIBaseURL: "http://host.docker.internal:8000",
-		SessionID:  "session-123",
+		apiBaseURL: "http://host.docker.internal:8000",
+		sessionID:  "session-123",
 	}
 
 	got := agent.getCodeExecutionAPIBaseURL()
@@ -17,8 +17,8 @@ func TestGetCodeExecutionAPIBaseURLAddsSessionPrefix(t *testing.T) {
 
 func TestGetCodeExecutionAPIBaseURLKeepsExistingSessionPrefix(t *testing.T) {
 	agent := &Agent{
-		APIBaseURL: "http://host.docker.internal:8000/s/session-123",
-		SessionID:  "session-123",
+		apiBaseURL: "http://host.docker.internal:8000/s/session-123",
+		sessionID:  "session-123",
 	}
 
 	got := agent.getCodeExecutionAPIBaseURL()

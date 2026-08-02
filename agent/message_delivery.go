@@ -93,7 +93,7 @@ func (a *Agent) deliverControlKey(ctx context.Context, req ControlKeyDeliveryReq
 		}
 	}
 
-	contract, isCodingAgent := llm.GetCodingAgentProviderContract(provider, a.ModelID)
+	contract, isCodingAgent := llm.GetCodingAgentProviderContract(provider, a.modelID)
 	if !isCodingAgent || !contract.SupportsLiveInput {
 		return result, &CodingAgentDeliveryError{
 			Kind:     DeliveryErrorKindNotSupported,
@@ -103,7 +103,7 @@ func (a *Agent) deliverControlKey(ctx context.Context, req ControlKeyDeliveryReq
 	}
 	result.Transport = contract.Transport
 
-	if err := llm.SendCodingAgentControlKey(ctx, provider, a.ModelID, req.SessionID, key); err != nil {
+	if err := llm.SendCodingAgentControlKey(ctx, provider, a.modelID, req.SessionID, key); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -126,7 +126,7 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 		}
 	}
 
-	contract, isCodingAgent := llm.GetCodingAgentProviderContract(provider, a.ModelID)
+	contract, isCodingAgent := llm.GetCodingAgentProviderContract(provider, a.modelID)
 	if isCodingAgent {
 		result.Transport = contract.Transport
 	}
@@ -138,7 +138,7 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 	// mirrors SupportsSteering() (coding_session.go). Without this a structured
 	// coding-agent turn would try to tmux-inject into a one-shot process.
 	if isCodingAgent && contract.SupportsLiveInput && !a.usesStructuredTransport() {
-		if err := llm.SendCodingAgentLiveInput(ctx, provider, a.ModelID, req.SessionID, message); err != nil {
+		if err := llm.SendCodingAgentLiveInput(ctx, provider, a.modelID, req.SessionID, message); err != nil {
 			return result, fmt.Errorf("failed to submit live input to %s: %w", provider, err)
 		}
 		result.DeliveryStatus = UserMessageDeliveryStatusSentToCLI

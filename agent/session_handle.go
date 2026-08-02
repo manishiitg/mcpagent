@@ -22,30 +22,30 @@ type AgentSessionHandle struct {
 }
 
 var codingAgentNativeSessionIDSetters = map[llm.Provider]func(*Agent, string){
-	llm.ProviderClaudeCode: func(a *Agent, id string) { a.ClaudeCodeSessionID = id },
+	llm.ProviderClaudeCode: func(a *Agent, id string) { a.claudeCodeSessionID = id },
 	llm.ProviderCodexCLI: func(a *Agent, id string) {
-		if a.Logger != nil && a.CodexSessionID != id {
-			a.Logger.Debug(fmt.Sprintf("CodexSessionID set via handle: session=%q old=%q new=%q isolated=%v", a.SessionID, a.CodexSessionID, id, a.IsolatedSessionWorkspace))
+		if a.logger != nil && a.codexSessionID != id {
+			a.logger.Debug(fmt.Sprintf("CodexSessionID set via handle: session=%q old=%q new=%q isolated=%v", a.sessionID, a.codexSessionID, id, a.isolatedSessionWorkspace))
 		}
-		a.CodexSessionID = id
+		a.codexSessionID = id
 	},
-	llm.ProviderCursorCLI: func(a *Agent, id string) { a.CursorSessionID = id },
-	llm.ProviderPiCLI:     func(a *Agent, id string) { a.PiSessionID = id },
+	llm.ProviderCursorCLI: func(a *Agent, id string) { a.cursorSessionID = id },
+	llm.ProviderPiCLI:     func(a *Agent, id string) { a.piSessionID = id },
 }
 
 var codingAgentProjectDirIDSetters = map[llm.Provider]func(*Agent, string){
-	llm.ProviderCodexCLI: func(a *Agent, dir string) { a.CodexProjectDirID = dir },
+	llm.ProviderCodexCLI: func(a *Agent, dir string) { a.codexProjectDirID = dir },
 }
 
 var codingAgentNativeSessionIDGetters = map[llm.Provider]func(*Agent) string{
-	llm.ProviderClaudeCode: func(a *Agent) string { return a.ClaudeCodeSessionID },
-	llm.ProviderCodexCLI:   func(a *Agent) string { return a.CodexSessionID },
-	llm.ProviderCursorCLI:  func(a *Agent) string { return a.CursorSessionID },
-	llm.ProviderPiCLI:      func(a *Agent) string { return a.PiSessionID },
+	llm.ProviderClaudeCode: func(a *Agent) string { return a.claudeCodeSessionID },
+	llm.ProviderCodexCLI:   func(a *Agent) string { return a.codexSessionID },
+	llm.ProviderCursorCLI:  func(a *Agent) string { return a.cursorSessionID },
+	llm.ProviderPiCLI:      func(a *Agent) string { return a.piSessionID },
 }
 
 var codingAgentProjectDirIDGetters = map[llm.Provider]func(*Agent) string{
-	llm.ProviderCodexCLI: func(a *Agent) string { return a.CodexProjectDirID },
+	llm.ProviderCodexCLI: func(a *Agent) string { return a.codexProjectDirID },
 }
 
 func (h *AgentSessionHandle) Empty() bool {
@@ -64,20 +64,20 @@ func (a *Agent) currentAgentSessionHandle() *AgentSessionHandle {
 	if a == nil {
 		return nil
 	}
-	providerHandle := a.CodingProviderSessionHandle
+	providerHandle := a.codingProviderSessionHandle
 	if providerHandle.Empty() {
 		providerHandle = a.legacyCodingProviderSessionHandle()
 	}
-	if providerHandle.Empty() && strings.TrimSpace(a.SessionID) == "" {
+	if providerHandle.Empty() && strings.TrimSpace(a.sessionID) == "" {
 		return nil
 	}
 	handle := &AgentSessionHandle{
-		SessionID:     strings.TrimSpace(a.SessionID),
-		OwnerID:       strings.TrimSpace(a.SessionID),
-		CorrelationID: string(a.TraceID),
+		SessionID:     strings.TrimSpace(a.sessionID),
+		OwnerID:       strings.TrimSpace(a.sessionID),
+		CorrelationID: string(a.traceID),
 		Provider:      providerHandle,
 	}
-	if llm.IsCodingAgentProvider(a.provider, a.ModelID) {
+	if llm.IsCodingAgentProvider(a.provider, a.modelID) {
 		handle.Scope = "coding_agent"
 	}
 	return handle
@@ -91,19 +91,19 @@ func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
 		return
 	}
 	configuredProvider := a.provider
-	configuredModel := strings.TrimSpace(a.ModelID)
+	configuredModel := strings.TrimSpace(a.modelID)
 	if sessionID := strings.TrimSpace(handle.SessionID); sessionID != "" {
-		a.SessionID = sessionID
-	} else if ownerID := strings.TrimSpace(handle.OwnerID); ownerID != "" && strings.TrimSpace(a.SessionID) == "" {
-		a.SessionID = ownerID
+		a.sessionID = sessionID
+	} else if ownerID := strings.TrimSpace(handle.OwnerID); ownerID != "" && strings.TrimSpace(a.sessionID) == "" {
+		a.sessionID = ownerID
 	}
 	if handle.Provider.Empty() {
 		return
 	}
-	if a.Logger != nil {
-		a.Logger.Debug(fmt.Sprintf("Applying coding-agent session handle: session=%q provider=%q nativeSessionID=%q workingDir=%q isolated=%v", a.SessionID, handle.Provider.Provider, handle.Provider.NativeSessionID, handle.Provider.WorkingDir, a.IsolatedSessionWorkspace))
+	if a.logger != nil {
+		a.logger.Debug(fmt.Sprintf("Applying coding-agent session handle: session=%q provider=%q nativeSessionID=%q workingDir=%q isolated=%v", a.sessionID, handle.Provider.Provider, handle.Provider.NativeSessionID, handle.Provider.WorkingDir, a.isolatedSessionWorkspace))
 	}
-	a.CodingProviderSessionHandle = handle.Provider
+	a.codingProviderSessionHandle = handle.Provider
 	a.applyCodingProviderSessionHandle(handle.Provider)
 	// A persisted handle identifies the provider-native conversation, but its
 	// model describes the previous turn. Preserve an explicitly configured
@@ -111,9 +111,9 @@ func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
 	// resume the same conversation with the model selected for the new turn.
 	if configuredProvider != "" && configuredModel != "" {
 		a.provider = configuredProvider
-		a.ModelID = configuredModel
-		a.CodingProviderSessionHandle.Provider = string(configuredProvider)
-		a.CodingProviderSessionHandle.Model = configuredModel
+		a.modelID = configuredModel
+		a.codingProviderSessionHandle.Provider = string(configuredProvider)
+		a.codingProviderSessionHandle.Model = configuredModel
 	}
 }
 
@@ -148,7 +148,7 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	// per-provider *SessionID fields seeded above) recovers the missing
 	// piece. Fall back to legacy whenever the primary handle would reject;
 	// the legacy handle's stricter Empty() check guards correctness.
-	handle := a.CodingProviderSessionHandle
+	handle := a.codingProviderSessionHandle
 	useLegacy := handle.Empty() ||
 		!strings.EqualFold(strings.TrimSpace(handle.Provider), strings.TrimSpace(string(provider))) ||
 		strings.TrimSpace(handle.NativeSessionID) == ""
@@ -169,8 +169,8 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 	// authoritative for the new turn; the handle's model belongs to the turn
 	// that originally created or last persisted the conversation.
 	handle.Model = modelID
-	if a.Logger != nil {
-		a.Logger.Debug(fmt.Sprintf("Resolved coding-agent continuation handle: session=%q provider=%q nativeSessionID=%q useLegacy=%v isolated=%v workingDir=%q", a.SessionID, provider, handle.NativeSessionID, useLegacy, a.IsolatedSessionWorkspace, handle.WorkingDir))
+	if a.logger != nil {
+		a.logger.Debug(fmt.Sprintf("Resolved coding-agent continuation handle: session=%q provider=%q nativeSessionID=%q useLegacy=%v isolated=%v workingDir=%q", a.sessionID, provider, handle.NativeSessionID, useLegacy, a.isolatedSessionWorkspace, handle.WorkingDir))
 	}
 	return handle, true
 }
@@ -190,12 +190,12 @@ func (a *Agent) resolveContinuationWorkingDir(handleWorkingDir string) string {
 	if dir := strings.TrimSpace(handleWorkingDir); dir != "" {
 		return dir
 	}
-	if a.IsolatedSessionWorkspace {
+	if a.isolatedSessionWorkspace {
 		if dir := strings.TrimSpace(a.ensureIsolatedWorkspaceDir()); dir != "" {
 			return dir
 		}
 	}
-	return strings.TrimSpace(a.CodingAgentWorkingDir)
+	return strings.TrimSpace(a.codingAgentWorkingDir)
 }
 
 func (a *Agent) updateCodingProviderSessionHandleFromResponse(resp *llmtypes.ContentResponse) {
@@ -203,7 +203,7 @@ func (a *Agent) updateCodingProviderSessionHandleFromResponse(resp *llmtypes.Con
 		return
 	}
 	if handle, ok := llmtypes.ExtractCodingProviderSessionHandleFromResponse(resp); ok {
-		a.CodingProviderSessionHandle = handle
+		a.codingProviderSessionHandle = handle
 		a.applyCodingProviderSessionHandle(handle)
 	}
 }
@@ -217,10 +217,10 @@ func (a *Agent) applyCodingProviderSessionHandle(handle llmtypes.CodingProviderS
 		a.provider = llm.Provider(provider)
 	}
 	if model := strings.TrimSpace(handle.Model); model != "" {
-		a.ModelID = model
+		a.modelID = model
 	}
 	if dir := strings.TrimSpace(handle.WorkingDir); dir != "" {
-		a.CodingAgentWorkingDir = dir
+		a.codingAgentWorkingDir = dir
 	}
 	providerID := llm.Provider(provider)
 	if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
@@ -241,7 +241,7 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	}
 	handle := llmtypes.CodingProviderSessionHandle{
 		Provider: string(a.provider),
-		Model:    a.ModelID,
+		Model:    a.modelID,
 		Status:   llmtypes.CodingProviderSessionStatusIdle,
 	}
 	// Transport-aware, not just Force-aware: a per-provider structured flag
@@ -253,9 +253,9 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	// native session through the tmux path (`Continuing … with native session`)
 	// instead of `--json --resume`, silently losing all turn-1 context on
 	// Codex/Cursor (found live: multi-turn wrote a hallucinated build id).
-	if llm.IsTmuxCodingAgentProvider(a.provider, a.ModelID) && !a.usesStructuredTransport() {
+	if llm.IsTmuxCodingAgentProvider(a.provider, a.modelID) && !a.usesStructuredTransport() {
 		handle.Transport = llmtypes.CodingProviderTransportTmux
-	} else if llm.IsCodingAgentProvider(a.provider, a.ModelID) {
+	} else if llm.IsCodingAgentProvider(a.provider, a.modelID) {
 		handle.Transport = llmtypes.CodingProviderTransportStructured
 	}
 	if getter, ok := codingAgentNativeSessionIDGetters[a.provider]; ok {

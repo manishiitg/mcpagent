@@ -17,8 +17,7 @@ func (definitionObserver) Name() string                                         
 func TestTurnToolPolicyControlsRequestTimeManifestWithoutMutatingDefinition(t *testing.T) {
 	agent := &Agent{
 		systemPrompt:         "inspect the workflow",
-		UseCodeExecutionMode: true,
-		customTools:          make(map[string]CustomTool),
+		useCodeExecutionMode: true,
 		toolToServer:         make(map[string]string),
 		toolFilter:           NewToolFilter(nil, nil, nil, nil, nil),
 	}
@@ -73,10 +72,10 @@ func TestNormalizeToolPolicyRejectsWhitespace(t *testing.T) {
 	}
 }
 
-func TestDefinitionSnapshotsStaticSupplementsSkillsAndObservers(t *testing.T) {
+func TestDefinitionSnapshotsOnlyIdentityInputs(t *testing.T) {
 	agent := &Agent{
 		systemPrompt: "base",
-		customTools:  make(map[string]CustomTool),
+		toolRegistry: newCanonicalToolRegistry(),
 	}
 	agent.appendedSystemPrompts = []string{"supplement", "supplement"}
 	agent.attachedSkills = []*llmtypes.Skill{{Name: "workflow", Description: "original"}}
@@ -88,9 +87,6 @@ func TestDefinitionSnapshotsStaticSupplementsSkillsAndObservers(t *testing.T) {
 	}
 	if len(view.SkillDefinitions) != 1 || view.SkillDefinitions[0].Name != "workflow" {
 		t.Fatalf("definition skills = %#v", view.SkillDefinitions)
-	}
-	if len(view.Observers) != 1 || view.Observers[0].Name() != "definition-observer" {
-		t.Fatalf("definition observers = %#v", view.Observers)
 	}
 	view.SkillDefinitions[0].Description = "mutated"
 	if agent.attachedSkills[0].Description != "original" {

@@ -77,6 +77,6 @@ The resilience layer emits detailed events to track system health:
 
 ## 💡 Best Practices
 
-1.  **Context Management**: While fallbacks help, prevent context errors with tool-search mode, context offloading, and summarization.
+1.  **Context Management**: While fallbacks help, prevent context errors with context offloading and summarization.
 2.  **Provider Diversity**: Configure at least two different providers (e.g., AWS and OpenAI) to ensure true high availability.
 3.  **Monitoring**: Watch for `fallback_attempt` events. Frequent fallbacks indicate your primary model is undersized for the workload.

@@ -1,8 +1,13 @@
 package mcpagent
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +29,203 @@ func TestAgentPublicMethodSurface(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("exported *Agent methods changed\n got: %v\nwant: %v", got, want)
 	}
+}
+
+func TestAgentHasNoExportedFields(t *testing.T) {
+	typeOfAgent := reflect.TypeOf(Agent{})
+	var exported []string
+	for i := 0; i < typeOfAgent.NumField(); i++ {
+		field := typeOfAgent.Field(i)
+		if field.IsExported() {
+			exported = append(exported, field.Name)
+		}
+	}
+	if len(exported) != 0 {
+		t.Fatalf("Agent exposes mutable fields: %v", exported)
+	}
+}
+
+func TestAgentAndSessionCloseContractsMatch(t *testing.T) {
+	errorType := reflect.TypeOf((*error)(nil)).Elem()
+	for _, target := range []struct {
+		name string
+		typ  reflect.Type
+	}{
+		{name: "Agent", typ: reflect.TypeOf((*Agent)(nil))},
+		{name: "Session", typ: reflect.TypeOf((*Session)(nil))},
+	} {
+		method, ok := target.typ.MethodByName("Close")
+		if !ok || method.Type.NumOut() != 1 || method.Type.Out(0) != errorType {
+			t.Fatalf("%s.Close must return exactly error; method=%v", target.name, method)
+		}
+	}
+}
+
+func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
+	want := []string{
+		"ApplyAgentResumeHandle",
+		"BuildSafeEnvironment",
+		"ClearHTTPSessionStopped",
+		"ClearSessionsStopped",
+		"CloseAllSessions",
+		"CloseHTTPSession",
+		"CloseSession",
+		"CloseSessionServer",
+		"CompactStaleToolResponses",
+		"ConvertToolChoice",
+		"DeliverAgentControlKey",
+		"DeliverAgentInput",
+		"ExtractActualContent",
+		"GetAllSessionStats",
+		"GetDefaultMaxTurns",
+		"GetMaxContextTokenLimit",
+		"GetSessionConnections",
+		"GetSessionRegistry",
+		"GetSessionStats",
+		"HandleLoopDetection",
+		"HasSession",
+		"InvokeAgentVirtualTool",
+		"IsBrokenPipeError",
+		"ListSessions",
+		"MarkSessionsStopped",
+		"NewAgentConnectionWithSession",
+		"NewAgentFromDefinition",
+		"NewFileCodingSessionStore",
+		"NewMemoryCodingSessionStore",
+		"NewStreamingTracer",
+		"NewToolFilter",
+		"NewToolLoopDetector",
+		"NewToolOutputHandler",
+		"NewToolOutputHandlerWithConfig",
+		"ReadAgentDiagnostics",
+		"ReadAgentRuntimeInfo",
+		"RegisterBrowserSessionOverride",
+		"RegisterHTTPSession",
+		"RemoveIsolatedSessionWorkspace",
+		"ResolveConnectionSessionID",
+		"RetireReplacedAgent",
+		"SnapshotAgentSession",
+		"StartAgentTransportSession",
+		"SubscribeAgentEvents",
+		"SummarizeConversationHistory",
+	}
+	fset := token.NewFileSet()
+	packages, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := packages["mcpagent"]
+	if pkg == nil {
+		t.Fatal("mcpagent package not found")
+	}
+	var exported []string
+	for _, file := range pkg.Files {
+		for _, declaration := range file.Decls {
+			fn, ok := declaration.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || !fn.Name.IsExported() {
+				continue
+			}
+			exported = append(exported, fn.Name.Name)
+			if strings.HasSuffix(fn.Name.Name, "ForTesting") {
+				t.Fatalf("test-only helper leaked into production API: %s", fn.Name.Name)
+			}
+		}
+	}
+	slices.Sort(exported)
+	if !slices.Equal(exported, want) {
+		t.Fatalf("exported package function inventory changed\n got (%d): %v\nwant (%d): %v", len(exported), exported, len(want), want)
+	}
+}
+
+func TestAgentFacadeFunctionSurface(t *testing.T) {
+	want := []string{
+		"ApplyAgentResumeHandle",
+		"CompactStaleToolResponses",
+		"DeliverAgentControlKey",
+		"DeliverAgentInput",
+		"HandleLoopDetection",
+		"InvokeAgentVirtualTool",
+		"NewAgentFromDefinition",
+		"ReadAgentDiagnostics",
+		"ReadAgentRuntimeInfo",
+		"RetireReplacedAgent",
+		"SnapshotAgentSession",
+		"StartAgentTransportSession",
+		"SubscribeAgentEvents",
+		"SummarizeConversationHistory",
+	}
+
+	fset := token.NewFileSet()
+	packages, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := packages["mcpagent"]
+	if pkg == nil {
+		t.Fatal("mcpagent package not found")
+	}
+	var got []string
+	for _, file := range pkg.Files {
+		for _, declaration := range file.Decls {
+			fn, ok := declaration.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || !fn.Name.IsExported() {
+				continue
+			}
+			if fieldListMentionsAgent(fn.Type.Params) || fieldListMentionsAgent(fn.Type.Results) {
+				got = append(got, fn.Name.Name)
+			}
+		}
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("exported Agent facade changed\n got (%d): %v\nwant (%d): %v", len(got), got, len(want), want)
+	}
+}
+
+func fieldListMentionsAgent(fields *ast.FieldList) bool {
+	if fields == nil {
+		return false
+	}
+	for _, field := range fields.List {
+		if expressionMentionsAgent(field.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func expressionMentionsAgent(expression ast.Expr) bool {
+	switch value := expression.(type) {
+	case *ast.StarExpr:
+		identifier, ok := value.X.(*ast.Ident)
+		return ok && identifier.Name == "Agent"
+	case *ast.ArrayType:
+		return expressionMentionsAgent(value.Elt)
+	case *ast.MapType:
+		return expressionMentionsAgent(value.Key) || expressionMentionsAgent(value.Value)
+	case *ast.ChanType:
+		return expressionMentionsAgent(value.Value)
+	case *ast.Ellipsis:
+		return expressionMentionsAgent(value.Elt)
+	case *ast.FuncType:
+		return fieldListMentionsAgent(value.Params) || fieldListMentionsAgent(value.Results)
+	case *ast.IndexExpr:
+		return expressionMentionsAgent(value.X) || expressionMentionsAgent(value.Index)
+	case *ast.IndexListExpr:
+		if expressionMentionsAgent(value.X) {
+			return true
+		}
+		for _, index := range value.Indices {
+			if expressionMentionsAgent(index) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestSessionPublicMethodSurface(t *testing.T) {

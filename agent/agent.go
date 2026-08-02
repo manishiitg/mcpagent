@@ -28,14 +28,6 @@ import (
 	"github.com/manishiitg/mcpagent/toolcalllog"
 )
 
-// CustomTool represents a custom tool with its definition and execution function
-type CustomTool struct {
-	Definition llmtypes.Tool
-	Execution  func(ctx context.Context, args map[string]interface{}) (string, error)
-	Category   string        // Tool category (e.g., "workspace", "human_tools", "virtual", "custom", etc.)
-	Timeout    time.Duration // Per-tool timeout. 0 = no timeout (tool runs indefinitely). -1 = use agent default.
-}
-
 // AgentEventListener defines the interface for event listeners
 type AgentEventListener interface {
 	HandleEvent(ctx context.Context, event *events.AgentEvent) error
@@ -50,36 +42,23 @@ const (
 	SimpleAgent AgentMode = "simple"
 )
 
-// AgentOption defines a functional option for configuring an Agent.
-// These options modify the Agent's state during initialization (NewAgent).
-type AgentOption func(*Agent)
+// agentOption defines a functional option for configuring an Agent.
+// These options modify the Agent's state during initialization (newAgent).
+type agentOption func(*Agent)
 
-// WithMode sets the agent's operational mode.
-//
-// Supported modes:
-//   - SimpleAgent: Standard tool-using agent (default).
-//   - ReActAgent (if available): Reasoning + Acting loop.
-//
-// Default: SimpleAgent
-func WithMode(mode AgentMode) AgentOption {
-	return func(a *Agent) {
-		a.AgentMode = mode
-	}
-}
-
-// WithLogger sets a custom logger implementation.
+// withLogger sets a custom logger implementation.
 //
 // Allows injecting a specialized logger for structured logging or integrating
 // with existing application loggers.
 //
 // Default: loggerv2.NewDefault() (Standard output logger)
-func WithLogger(logger loggerv2.Logger) AgentOption {
+func withLogger(logger loggerv2.Logger) agentOption {
 	return func(a *Agent) {
-		a.Logger = logger
+		a.logger = logger
 	}
 }
 
-// WithTracer adds an observability tracer to the agent.
+// withTracer adds an observability tracer to the agent.
 //
 // The provided tracer will be wrapped in a StreamingTracer to support real-time
 // event streaming. Multiple tracers can be added by calling this option multiple times.
@@ -87,68 +66,68 @@ func WithLogger(logger loggerv2.Logger) AgentOption {
 // Parameters:
 //   - tracer: The observability tracer implementation (e.g., Langfuse, Console, etc.).
 //
-// Default: No tracers (unless NewAgentWithObservability is used)
-func WithTracer(tracer observability.Tracer) AgentOption {
+// Default: No tracers (unless newAgentWithObservability is used)
+func withTracer(tracer observability.Tracer) agentOption {
 	return func(a *Agent) {
 		if tracer != nil {
 			// Create streaming tracer that wraps the base tracer
 			streamingTracer := NewStreamingTracer(tracer, 100)
 			// Add to tracers slice
-			a.Tracers = append(a.Tracers, streamingTracer)
+			a.tracers = append(a.tracers, streamingTracer)
 		}
 	}
 }
 
-// WithTraceID sets a specific Trace ID for the agent session.
+// withTraceID sets a specific Trace ID for the agent session.
 //
 // Useful for correlating agent activities with external systems or requests
 // (e.g., setting the TraceID to match an incoming HTTP request ID).
 //
-// Default: Generated automatically by NewAgent.
-func WithTraceID(traceID observability.TraceID) AgentOption {
+// Default: Generated automatically by newAgent.
+func withTraceID(traceID observability.TraceID) agentOption {
 	return func(a *Agent) {
-		a.TraceID = traceID
+		a.traceID = traceID
 	}
 }
 
-// WithProvider explicitly sets the LLM provider name.
+// withProvider explicitly sets the LLM provider name.
 //
 // This is primarily used for logging and tracking purposes, as the actual
 // provider logic is encapsulated in the llmtypes.Model interface.
-func WithProvider(provider llm.Provider) AgentOption {
+func withProvider(provider llm.Provider) agentOption {
 	return func(a *Agent) {
 		a.provider = provider
 	}
 }
 
-// WithClaudeCodePersistentInteractiveSession keeps Claude Code tmux sessions
+// withClaudeCodePersistentInteractiveSession keeps Claude Code tmux sessions
 // alive across completed turns. Coding CLI providers now use this interactive
 // path whenever an owner session id is available; this option remains for
 // callers that set metadata explicitly.
-func WithClaudeCodePersistentInteractiveSession(enabled bool) AgentOption {
+func withClaudeCodePersistentInteractiveSession(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.ClaudeCodePersistentInteractiveSession = enabled
+		a.claudeCodePersistentInteractiveSession = enabled
 	}
 }
 
-// WithClaudeCodeTransport selects the Claude Code transport for this agent.
+// withClaudeCodeTransport selects the Claude Code transport for this agent.
 // Use llm.ClaudeCodeTransportExperimental for the normal interactive tmux/no
 // -p path, or llm.ClaudeCodeTransportTmux for explicit tmux transport.
-func WithClaudeCodeTransport(transport string) AgentOption {
+func withClaudeCodeTransport(transport string) agentOption {
 	return func(a *Agent) {
-		a.ClaudeCodeTransport = transport
+		a.claudeCodeTransport = transport
 	}
 }
 
-// WithCodingAgentWorkingDir sets the process working directory for interactive
+// withCodingAgentWorkingDir sets the process working directory for interactive
 // coding CLI providers. The caller owns choosing the right user/workspace path.
-func WithCodingAgentWorkingDir(dir string) AgentOption {
+func withCodingAgentWorkingDir(dir string) agentOption {
 	return func(a *Agent) {
-		a.CodingAgentWorkingDir = strings.TrimSpace(dir)
+		a.codingAgentWorkingDir = strings.TrimSpace(dir)
 	}
 }
 
-// WithIsolatedSessionWorkspace asks the coding-CLI session to run in a
+// withIsolatedSessionWorkspace asks the coding-CLI session to run in a
 // fresh per-call os.MkdirTemp directory instead of CodingAgentWorkingDir.
 // When enabled, the agent:
 //
@@ -174,41 +153,41 @@ func WithCodingAgentWorkingDir(dir string) AgentOption {
 //
 // See docs/WORKFLOW_STEP_ISOLATION.md in multi-llm-provider-go for the
 // design rationale and per-CLI sandbox interaction details.
-func WithIsolatedSessionWorkspace(enabled bool) AgentOption {
+func withIsolatedSessionWorkspace(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.IsolatedSessionWorkspace = enabled
+		a.isolatedSessionWorkspace = enabled
 	}
 }
 
-// WithCodexPersistentInteractiveSession keeps Codex CLI tmux sessions alive
+// withCodexPersistentInteractiveSession keeps Codex CLI tmux sessions alive
 // across completed turns. Coding CLI providers now use this interactive path
 // whenever an owner session id is available; this option remains for callers
 // that set metadata explicitly.
-func WithCodexPersistentInteractiveSession(enabled bool) AgentOption {
+func withCodexPersistentInteractiveSession(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.CodexPersistentInteractiveSession = enabled
+		a.codexPersistentInteractiveSession = enabled
 	}
 }
 
-// WithCodexSandbox overrides codex's sandbox mode ("read-only" [default],
+// withCodexSandbox overrides codex's sandbox mode ("read-only" [default],
 // "workspace-write", or "danger-full-access"). See the CodexSandboxMode field
 // doc comment on Agent for when to change this from the default.
-func WithCodexSandbox(mode string) AgentOption {
+func withCodexSandbox(mode string) agentOption {
 	return func(a *Agent) {
-		a.CodexSandboxMode = mode
+		a.codexSandboxMode = mode
 	}
 }
 
-// WithCodexNetworkAccess enables codex's native network access under
+// withCodexNetworkAccess enables codex's native network access under
 // "workspace-write" sandbox mode. No effect under "read-only" or
 // "danger-full-access". See the CodexNetworkAccess field doc comment on Agent.
-func WithCodexNetworkAccess(enabled bool) AgentOption {
+func withCodexNetworkAccess(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.CodexNetworkAccess = enabled
+		a.codexNetworkAccess = enabled
 	}
 }
 
-// WithCodingAgentTransport is THE way to choose a coding-agent CLI provider's
+// withCodingAgentTransport is THE way to choose a coding-agent CLI provider's
 // process transport for this agent:
 //
 //   - llm.CodingAgentTransportTmux — a live tmux pane. Choose when a human may
@@ -225,41 +204,41 @@ func WithCodexNetworkAccess(enabled bool) AgentOption {
 // overlapping mechanisms (WithForceStructuredCodingAgent and four per-provider
 // With*StructuredTransport options) were removed — they let the same decision
 // be expressed four different ways, and the generic one silently didn't work.
-func WithCodingAgentTransport(transport llm.CodingAgentTransport) AgentOption {
+func withCodingAgentTransport(transport llm.CodingAgentTransport) agentOption {
 	return func(a *Agent) {
-		a.CodingAgentTransport = transport
+		a.codingAgentTransport = transport
 	}
 }
 
-// WithCursorPersistentInteractiveSession keeps Cursor CLI tmux sessions alive
+// withCursorPersistentInteractiveSession keeps Cursor CLI tmux sessions alive
 // across completed chat turns. Use only for interactive chat; workflow steps
 // should keep the default per-turn lifecycle.
-func WithCursorPersistentInteractiveSession(enabled bool) AgentOption {
+func withCursorPersistentInteractiveSession(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.CursorPersistentInteractiveSession = enabled
+		a.cursorPersistentInteractiveSession = enabled
 	}
 }
 
-// WithPiPersistentInteractiveSession keeps Pi CLI tmux sessions alive across
+// withPiPersistentInteractiveSession keeps Pi CLI tmux sessions alive across
 // completed chat turns.
-func WithPiPersistentInteractiveSession(enabled bool) AgentOption {
+func withPiPersistentInteractiveSession(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.PiPersistentInteractiveSession = enabled
+		a.piPersistentInteractiveSession = enabled
 	}
 }
 
-// WithCursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
+// withCursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 // The flag is retained for API compatibility but no longer sets --mode ask:
 // that mode hard-refuses natural-language writes with "Switch to Agent mode",
 // making chat unusable. Cursor runs in its default agent mode; the MCP bridge
 // is still mounted via .cursor/mcp.json for tools the model chooses to use.
-func WithCursorBridgeToolsMode(enabled bool) AgentOption {
+func withCursorBridgeToolsMode(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.CursorBridgeToolsMode = enabled
+		a.cursorBridgeToolsMode = enabled
 	}
 }
 
-// WithMaxTurns sets the maximum number of conversation turns allowed.
+// withMaxTurns sets the maximum number of conversation turns allowed.
 //
 // A turn consists of one user message and one agent response (which may include multiple tool calls).
 // This prevents infinite loops or excessive token usage.
@@ -269,50 +248,50 @@ func WithCursorBridgeToolsMode(enabled bool) AgentOption {
 //     Use a negative value to disable the turn cap.
 //
 // Default: Value returned by GetDefaultMaxTurns()
-func WithMaxTurns(maxTurns int) AgentOption {
+func withMaxTurns(maxTurns int) agentOption {
 	return func(a *Agent) {
-		a.MaxTurns = maxTurns
+		a.maxTurns = maxTurns
 	}
 }
 
-// WithTemperature sets the sampling temperature for the LLM.
+// withTemperature sets the sampling temperature for the LLM.
 //
 // Higher values (e.g., 0.8) make output more random/creative.
 // Lower values (e.g., 0.2) make output more focused/deterministic.
 //
 // Default: 0.0 (Deterministic)
-func WithTemperature(temperature float64) AgentOption {
+func withTemperature(temperature float64) agentOption {
 	return func(a *Agent) {
-		a.Temperature = temperature
+		a.temperature = temperature
 	}
 }
 
-// WithToolChoice forces a specific tool choice strategy.
+// withToolChoice forces a specific tool choice strategy.
 //
 // Parameters:
 //   - toolChoice: "auto", "none", or a specific tool name (depending on provider support).
 //
 // Default: "auto"
-func WithToolChoice(toolChoice string) AgentOption {
+func withToolChoice(toolChoice string) agentOption {
 	return func(a *Agent) {
-		a.ToolChoice = toolChoice
+		a.toolChoice = toolChoice
 	}
 }
 
-// WithContextOffloading enables the "Context Offloading" pattern.
+// withContextOffloading enables the "Context Offloading" pattern.
 //
 // When enabled, if a tool returns a massive output (exceeding LargeOutputThreshold),
 // the agent will automatically save it to a file and provide the LLM with a "virtual tool"
 // to read that file on demand, rather than flooding the context window.
 //
 // Default: true (Enabled)
-func WithContextOffloading(enabled bool) AgentOption {
+func withContextOffloading(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.EnableContextOffloading = enabled
+		a.enableContextOffloading = enabled
 	}
 }
 
-// WithLargeOutputThreshold sets the token count threshold for context offloading.
+// withLargeOutputThreshold sets the token count threshold for context offloading.
 //
 // Tool outputs larger than this value will be offloaded to the filesystem.
 // The count is based on token estimate, not character count.
@@ -321,13 +300,13 @@ func WithContextOffloading(enabled bool) AgentOption {
 //   - threshold: Token count limit.
 //
 // Default: 10,000 tokens
-func WithLargeOutputThreshold(threshold int) AgentOption {
+func withLargeOutputThreshold(threshold int) agentOption {
 	return func(a *Agent) {
-		a.LargeOutputThreshold = threshold
+		a.largeOutputThreshold = threshold
 	}
 }
 
-// WithToolOutputRetentionPeriod sets the retention policy for offloaded tool output files.
+// withToolOutputRetentionPeriod sets the retention policy for offloaded tool output files.
 //
 // Files created by context offloading will be deleted if they are older than this duration.
 // A periodic cleanup routine runs every hour to remove files older than the retention period.
@@ -336,37 +315,37 @@ func WithLargeOutputThreshold(threshold int) AgentOption {
 //   - retentionPeriod: Duration to keep files. Set to 0 to disable automatic cleanup.
 //
 // Default: 7 days (DefaultToolOutputRetentionPeriod). Periodic cleanup runs every hour.
-func WithToolOutputRetentionPeriod(retentionPeriod time.Duration) AgentOption {
+func withToolOutputRetentionPeriod(retentionPeriod time.Duration) agentOption {
 	return func(a *Agent) {
-		a.ToolOutputRetentionPeriod = retentionPeriod
+		a.toolOutputRetentionPeriod = retentionPeriod
 	}
 }
 
-// WithCleanupToolOutputOnSessionEnd configures immediate cleanup behavior.
+// withCleanupToolOutputOnSessionEnd configures immediate cleanup behavior.
 //
 // If enabled, all tool output files created during this session will be deleted
 // when EndAgentSession is called.
 //
 // Default: false (Files persist for debugging or future reference)
-func WithCleanupToolOutputOnSessionEnd(enabled bool) AgentOption {
+func withCleanupToolOutputOnSessionEnd(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.CleanupToolOutputOnSessionEnd = enabled
+		a.cleanupToolOutputOnSessionEnd = enabled
 	}
 }
 
-// WithContextSummarization enables automatic conversation summarization.
+// withContextSummarization enables automatic conversation summarization.
 //
 // When the context window fills up (based on TokenThresholdPercent), the agent will
 // summarize older messages to free up space while retaining context.
 //
 // Default: false (Disabled)
-func WithContextSummarization(enabled bool) AgentOption {
+func withContextSummarization(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.EnableContextSummarization = enabled
+		a.enableContextSummarization = enabled
 	}
 }
 
-// WithSummarizeOnTokenThreshold configures the trigger for summarization.
+// withSummarizeOnTokenThreshold configures the trigger for summarization.
 //
 // Parameters:
 //   - enabled: Whether to use token-based triggering.
@@ -374,129 +353,129 @@ func WithContextSummarization(enabled bool) AgentOption {
 //     that triggers summarization.
 //
 // Default: 0.8 (80%) if enabled.
-func WithSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) AgentOption {
+func withSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) agentOption {
 	return func(a *Agent) {
-		a.SummarizeOnTokenThreshold = enabled
+		a.summarizeOnTokenThreshold = enabled
 		if thresholdPercent > 0 && thresholdPercent <= 1.0 {
-			a.TokenThresholdPercent = thresholdPercent
+			a.tokenThresholdPercent = thresholdPercent
 		} else {
-			a.TokenThresholdPercent = 0.8 // Default to 80%
+			a.tokenThresholdPercent = 0.8 // Default to 80%
 		}
 	}
 }
 
-// WithSummarizeOnFixedTokenThreshold enables fixed token-based summarization triggering
+// withSummarizeOnFixedTokenThreshold enables fixed token-based summarization triggering
 // When enabled, summarization triggers when token usage exceeds the fixed threshold
 // (e.g., 200000 = 200k tokens, regardless of context window size)
 // Requires EnableContextSummarization to be true
-// Can be used together with WithSummarizeOnTokenThreshold (OR logic: either threshold can trigger)
-func WithSummarizeOnFixedTokenThreshold(enabled bool, thresholdTokens int) AgentOption {
+// Can be used together with withSummarizeOnTokenThreshold (OR logic: either threshold can trigger)
+func withSummarizeOnFixedTokenThreshold(enabled bool, thresholdTokens int) agentOption {
 	return func(a *Agent) {
-		a.SummarizeOnFixedTokenThreshold = enabled
+		a.summarizeOnFixedTokenThreshold = enabled
 		if thresholdTokens > 0 {
-			a.FixedTokenThreshold = thresholdTokens
+			a.fixedTokenThreshold = thresholdTokens
 		}
 	}
 }
 
-// WithSummaryKeepLastMessages sets the number of recent messages to keep when summarizing
+// withSummaryKeepLastMessages sets the number of recent messages to keep when summarizing
 // Default is 4 messages (roughly 2 turns)
-func WithSummaryKeepLastMessages(count int) AgentOption {
+func withSummaryKeepLastMessages(count int) agentOption {
 	return func(a *Agent) {
-		a.SummaryKeepLastMessages = count
+		a.summaryKeepLastMessages = count
 	}
 }
 
-// WithSummarizationCooldown sets the number of turns to wait after summarization before allowing another
+// withSummarizationCooldown sets the number of turns to wait after summarization before allowing another
 // This prevents repeated summarization loops when the summarized context is still large
 // Default is 3 turns
-func WithSummarizationCooldown(turns int) AgentOption {
+func withSummarizationCooldown(turns int) agentOption {
 	return func(a *Agent) {
-		a.SummarizationCooldownTurns = turns
+		a.summarizationCooldownTurns = turns
 	}
 }
 
-// WithParallelToolExecution enables concurrent execution of multiple tool calls.
+// withParallelToolExecution enables concurrent execution of multiple tool calls.
 //
 // When the LLM returns multiple tool calls in a single response, they will be
 // executed concurrently using goroutines (fork-join pattern). Results are collected
 // in deterministic order matching the original tool call order.
 //
 // Default: false (Sequential execution)
-func WithParallelToolExecution(enabled bool) AgentOption {
+func withParallelToolExecution(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.EnableParallelToolExecution = enabled
+		a.enableParallelToolExecution = enabled
 	}
 }
 
-// WithContextEditing enables dynamic context reduction.
+// withContextEditing enables dynamic context reduction.
 //
 // Unlike summarization (which compresses history), context editing targets specific
 // large tool outputs in the history and replaces them with references if they become
 // too old or too large, optimizing the context window.
 //
 // Default: false (Disabled)
-func WithContextEditing(enabled bool) AgentOption {
+func withContextEditing(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.EnableContextEditing = enabled
+		a.enableContextEditing = enabled
 	}
 }
 
-// WithContextEditingThreshold sets the size threshold for context editing.
+// withContextEditingThreshold sets the size threshold for context editing.
 //
 // Tool outputs larger than this token count are candidates for compaction when they
 // become "stale" (old).
 //
 // Default: 1000 tokens
-func WithContextEditingThreshold(threshold int) AgentOption {
+func withContextEditingThreshold(threshold int) agentOption {
 	return func(a *Agent) {
-		a.ContextEditingThreshold = threshold
+		a.contextEditingThreshold = threshold
 	}
 }
 
-// WithContextEditingTurnThreshold sets the age threshold for context editing.
+// withContextEditingTurnThreshold sets the age threshold for context editing.
 //
 // Tool outputs must be at least this many turns old before they are compacted.
 // This ensures recent tool outputs stay in context for immediate reference.
 //
 // Default: 10 turns
-func WithContextEditingTurnThreshold(turns int) AgentOption {
+func withContextEditingTurnThreshold(turns int) agentOption {
 	return func(a *Agent) {
-		a.ContextEditingTurnThreshold = turns
+		a.contextEditingTurnThreshold = turns
 	}
 }
 
-// WithToolTimeout sets a global timeout for tool execution.
+// withToolTimeout sets a global timeout for tool execution.
 //
 // If a tool takes longer than this duration, it will be cancelled.
 // A timeout <= 0 means no agent-level tool timeout.
 //
 // Default: no timeout
-func WithToolTimeout(timeout time.Duration) AgentOption {
+func withToolTimeout(timeout time.Duration) agentOption {
 	return func(a *Agent) {
-		a.ToolTimeout = timeout
+		a.toolTimeout = timeout
 	}
 }
 
-// WithSystemPrompt sets a custom system prompt.
+// withSystemPrompt sets a custom system prompt.
 //
 // This overrides the default system prompt generation logic. The agent will use
 // this exact string as the system instruction.
 //
 // Note: To add supplementary instructions, use AddInstructions.
-func WithSystemPrompt(systemPrompt string) AgentOption {
+func withSystemPrompt(systemPrompt string) agentOption {
 	return func(a *Agent) {
 		a.systemPrompt = systemPrompt
 		a.hasCustomSystemPrompt = true
 	}
 }
 
-// WithBridgeRoutingInstructions overrides the default bridge-tool-routing
+// withBridgeRoutingInstructions overrides the default bridge-tool-routing
 // system-prompt text mcpagent appends for EVERY CLI coding-agent provider —
 // Claude Code, Codex CLI, Cursor CLI, and Pi CLI each get their own
 // provider-specific preamble plus the shared bridgeRoutingExplicitInstructions
 // block (see coding_agent_bridge_routing_prompt.go and the per-provider
-// auto-configure sections in NewAgent). The default is tuned for AgentWorks'
+// auto-configure sections in newAgent). The default is tuned for AgentWorks'
 // large, dynamic tool catalog — discovering tools via get_api_spec and
 // calling them through execute_shell_command + curl with $MCP_CUSTOM/$MCP_AUTH
 // — and uses urgent "CRITICAL"/"DO NOT"/override-style language to make sure
@@ -513,13 +492,13 @@ func WithSystemPrompt(systemPrompt string) AgentOption {
 // routing at all, and can pass calmer, app-specific wording here instead —
 // or "" to suppress the block entirely for this agent. Applies uniformly to
 // whichever provider this agent ends up using, not just Claude Code.
-func WithBridgeRoutingInstructions(text string) AgentOption {
+func withBridgeRoutingInstructions(text string) agentOption {
 	return func(a *Agent) {
 		a.bridgeRoutingInstructionsOverride = &text
 	}
 }
 
-// WithConversationSink attaches a convrecord.Sink so every completed LLM
+// withConversationSink attaches a convrecord.Sink so every completed LLM
 // call is persisted as a convrecord.TurnRecord — messages, tool calls (with
 // timing), token usage, and cost. OFF by default: no file/store I/O happens
 // unless a caller opts in.
@@ -530,13 +509,13 @@ func WithBridgeRoutingInstructions(text string) AgentOption {
 // in two different, incompatible shapes, one of them tracking no cost at
 // all). Use convrecord.NewFileJSONSink(path) for the common case, or
 // implement Sink yourself for a different store (SQLite, etc.).
-func WithConversationSink(sink convrecord.Sink) AgentOption {
+func withConversationSink(sink convrecord.Sink) agentOption {
 	return func(a *Agent) {
 		a.conversationSink = sink
 	}
 }
 
-// WithAdditionalBridgeTools exposes the named custom tools (already
+// withAdditionalBridgeTools exposes the named custom tools (already
 // registered via RegisterCustomTool) as NATIVE MCP bridge tools for THIS
 // agent instance — callable directly by name, without the get_api_spec +
 // execute_shell_command+curl discovery route. Scoped to this agent only; it
@@ -548,66 +527,66 @@ func WithConversationSink(sink convrecord.Sink) AgentOption {
 // agentsession-based app) where native calling is more reliable than asking
 // the model to discover-then-curl each tool. Do not use the shared
 // bridgeTools var for this — see coding_agents_bridge.go.
-func WithAdditionalBridgeTools(names ...string) AgentOption {
+func withAdditionalBridgeTools(names ...string) agentOption {
 	return func(a *Agent) {
 		a.additionalBridgeTools = append(a.additionalBridgeTools, names...)
 	}
 }
 
-// WithDiscoverResource enables/disables automatic resource discovery.
+// withDiscoverResource enables/disables automatic resource discovery.
 //
 // If enabled, the agent will query all connected MCP servers for their available resources
 // and include them in the system prompt.
 //
 // Default: true
-func WithDiscoverResource(enabled bool) AgentOption {
+func withDiscoverResource(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.DiscoverResource = enabled
+		a.discoverResource = enabled
 	}
 }
 
-// WithDiscoverPrompt enables/disables automatic prompt discovery.
+// withDiscoverPrompt enables/disables automatic prompt discovery.
 //
 // If enabled, the agent will query all connected MCP servers for their available prompts
 // and include them in the system prompt.
 //
 // Default: true
-func WithDiscoverPrompt(enabled bool) AgentOption {
+func withDiscoverPrompt(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.DiscoverPrompt = enabled
+		a.discoverPrompt = enabled
 	}
 }
 
-// WithLLMConfig sets the full LLM configuration (primary + fallbacks).
+// withLLMConfig sets the full LLM configuration (primary + fallbacks).
 // This is the canonical configuration for provider and model fallback routing.
-func WithLLMConfig(config AgentLLMConfiguration) AgentOption {
+func withLLMConfig(config AgentLLMConfiguration) agentOption {
 	return func(a *Agent) {
-		a.LLMConfig = config
+		a.llmConfig = config
 		// Sync legacy fields for backward compatibility
-		a.ModelID = config.Primary.ModelID
+		a.modelID = config.Primary.ModelID
 		a.provider = llm.Provider(config.Primary.Provider)
 	}
 }
 
-// WithSelectedTools restricts the agent to a specific subset of tools.
+// withSelectedTools restricts the agent to a specific subset of tools.
 //
 // Parameters:
 //   - tools: A list of tool identifiers in "server:tool" format (e.g., "github:create_issue").
 //
 // Only the specified tools will be available to the agent.
-func WithSelectedTools(tools []string) AgentOption {
+func withSelectedTools(tools []string) agentOption {
 	return func(a *Agent) {
 		a.selectedTools = tools
 	}
 }
 
-// WithSelectedServers restricts the agent to tools from specific servers.
+// withSelectedServers restricts the agent to tools from specific servers.
 //
 // Parameters:
 //   - servers: A list of server names (e.g., "github", "filesystem").
 //
 // All tools from these servers will be available. Tools from other servers will be hidden.
-func WithSelectedServers(servers []string) AgentOption {
+func withSelectedServers(servers []string) agentOption {
 	return func(a *Agent) {
 		// Store selected servers for tool filtering logic
 		// This is used to determine which servers should use "all tools" mode
@@ -615,7 +594,7 @@ func WithSelectedServers(servers []string) AgentOption {
 	}
 }
 
-// WithCodeExecutionMode enables the Code Execution mode.
+// withCodeExecutionMode enables the Code Execution mode.
 //
 // In this mode, both MCP server tools and custom tools are accessed via HTTP endpoints documented in an OpenAPI spec.
 // The LLM uses get_api_spec to discover endpoints, then writes code in any language
@@ -625,66 +604,25 @@ func WithSelectedServers(servers []string) AgentOption {
 //   - Disabled: All MCP tools are exposed directly (Standard mode).
 //
 // Default: false (Standard mode)
-func WithCodeExecutionMode(enabled bool) AgentOption {
+func withCodeExecutionMode(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.UseCodeExecutionMode = enabled
+		a.useCodeExecutionMode = enabled
 	}
 }
 
-// WithToolSearchMode enables the Tool Search mode.
-//
-// In this mode, instead of exposing all tools upfront, only the "search_tools"
-// virtual tool is initially available. The LLM must search for tools using
-// regex patterns, and discovered tools become available for subsequent calls.
-//
-//   - Enabled: Only "search_tools" is initially exposed. LLM discovers tools via search.
-//   - Disabled: All MCP tools are exposed directly (Standard mode).
-//
-// This mode is useful when working with large tool catalogs (30+ tools) to
-// reduce context usage and improve tool selection accuracy.
-//
-// Default: false (Standard mode)
-func WithToolSearchMode(enabled bool) AgentOption {
-	return func(a *Agent) {
-		a.UseToolSearchMode = enabled
-		if enabled {
-			a.discoveredTools = make(map[string]llmtypes.Tool)
-		}
-	}
-}
-
-// WithPreDiscoveredTools sets tools that are always available without searching.
-//
-// When tool search mode is enabled, these tools will be immediately available
-// alongside the "search_tools" tool, without requiring the LLM to discover them.
-//
-// This is useful for frequently used tools that should always be accessible.
-//
-// Example:
-//
-//	agent, _ := mcpagent.NewAgent(ctx, llm, configPath,
-//	    mcpagent.WithToolSearchMode(true),
-//	    mcpagent.WithPreDiscoveredTools([]string{"get_weather", "send_message"}),
-//	)
-func WithPreDiscoveredTools(toolNames []string) AgentOption {
-	return func(a *Agent) {
-		a.preDiscoveredTools = toolNames
-	}
-}
-
-// WithDisableCache controls the MCP client connection cache.
+// withDisableCache controls the MCP client connection cache.
 //
 //   - disable=true: Always establish fresh connections (slower, but safer for ephemeral tasks).
 //   - disable=false: Reuse connections from the pool (faster, default).
 //
 // Default: false (Caching enabled)
-func WithDisableCache(disable bool) AgentOption {
+func withDisableCache(disable bool) agentOption {
 	return func(a *Agent) {
-		a.DisableCache = disable
+		a.disableCache = disable
 	}
 }
 
-// WithRuntimeOverrides sets runtime configuration overrides for MCP servers.
+// withRuntimeOverrides sets runtime configuration overrides for MCP servers.
 //
 // This allows workflow-specific modifications to server configs, such as:
 //   - Changing output directories per workflow run
@@ -698,40 +636,40 @@ func WithDisableCache(disable bool) AgentOption {
 //	        EnvOverride: map[string]string{"WORKFLOW_ID": "workflow-123"},
 //	    },
 //	}
-//	agent, _ := mcpagent.NewAgent(ctx, llm, configPath, mcpagent.WithRuntimeOverrides(overrides))
-func WithRuntimeOverrides(overrides mcpclient.RuntimeOverrides) AgentOption {
+//	agent, _ := mcpagent.newAgent(ctx, llm, configPath, mcpagent.withRuntimeOverrides(overrides))
+func withRuntimeOverrides(overrides mcpclient.RuntimeOverrides) agentOption {
 	return func(a *Agent) {
-		a.RuntimeOverrides = overrides
+		a.runtimeOverrides = overrides
 	}
 }
 
-// WithStreaming enables streaming for LLM text responses.
+// withStreaming enables streaming for LLM text responses.
 //
 // When enabled, provider stream chunks are consumed by the agent. Generation
 // streaming events can be independently disabled with
-// WithGenerationStreamingEvents while still keeping provider stream chunks for
+// withGenerationStreamingEvents while still keeping provider stream chunks for
 // CLI tool observability.
 //
 // Default: false (Streaming disabled)
-func WithStreaming(enabled bool) AgentOption {
+func withStreaming(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.EnableStreaming = enabled
+		a.enableStreaming = enabled
 	}
 }
 
-// WithGenerationStreamingEvents controls whether provider text chunks emit
+// withGenerationStreamingEvents controls whether provider text chunks emit
 // generation streaming events. Terminal snapshot chunks may still emit
 // StreamingChunkEvent/StreamingEndEvent because they drive terminal
 // observability, not chat text generation.
 //
 // Default: true (emit generation streaming events when streaming is enabled)
-func WithGenerationStreamingEvents(enabled bool) AgentOption {
+func withGenerationStreamingEvents(enabled bool) agentOption {
 	return func(a *Agent) {
-		a.SuppressGenerationStreamingEvents = !enabled
+		a.suppressGenerationStreamingEvents = !enabled
 	}
 }
 
-// WithStreamingCallback sets an optional callback function for streaming chunks.
+// withStreamingCallback sets an optional callback function for streaming chunks.
 //
 // The callback is invoked for each streaming chunk (content fragments only).
 // Tool calls are not passed to this callback - they are processed normally.
@@ -740,25 +678,42 @@ func WithGenerationStreamingEvents(enabled bool) AgentOption {
 //   - callback: Function that receives StreamChunk objects (content fragments only).
 //
 // Default: nil (No callback)
-func WithStreamingCallback(callback func(chunk llmtypes.StreamChunk)) AgentOption {
+func withStreamingCallback(callback func(chunk llmtypes.StreamChunk)) agentOption {
 	return func(a *Agent) {
-		a.StreamingCallback = callback
+		a.streamingCallback = callback
 	}
 }
 
-// WithServerName filters the agent to connect to a specific server(s).
+// withPromptLogLabel sets the diagnostic label used for prompt-log filenames.
+// The label is runtime observability metadata and is fixed at construction.
+func withPromptLogLabel(label string) agentOption {
+	return func(a *Agent) {
+		a.promptLogLabel = label
+	}
+}
+
+// withAPIKeys supplies provider credentials used when constructing fallback
+// models. The value is cloned so callers cannot mutate agent runtime state
+// after construction.
+func withAPIKeys(keys *AgentAPIKeys) agentOption {
+	return func(a *Agent) {
+		a.apiKeys = keys.Clone()
+	}
+}
+
+// withServerName filters the agent to connect to a specific server(s).
 //
 // Parameters:
 //   - serverName: A specific server name, a comma-separated list, or "all".
 //
 // Default: "all" (Connect to all configured servers)
-func WithServerName(serverName string) AgentOption {
+func withServerName(serverName string) agentOption {
 	return func(a *Agent) {
 		a.serverName = serverName
 	}
 }
 
-// WithSessionID sets the session ID for connection sharing across agents.
+// withSessionID sets the session ID for connection sharing across agents.
 //
 // When set: MCP connections are managed by SessionConnectionRegistry and persist across
 // multiple agents with the same SessionID. Agent.Close() does NOT close connections.
@@ -770,32 +725,32 @@ func WithServerName(serverName string) AgentOption {
 // Usage:
 //
 //	// Create agents with shared session
-//	agent1, _ := NewSimpleAgent(ctx, llm, config, WithSessionID("workflow-123"))
+//	agent1, _ := newSimpleAgent(ctx, llm, config, withSessionID("workflow-123"))
 //	agent1.Close() // Connections preserved
 //
-//	agent2, _ := NewSimpleAgent(ctx, llm, config, WithSessionID("workflow-123"))
+//	agent2, _ := newSimpleAgent(ctx, llm, config, withSessionID("workflow-123"))
 //	agent2.Close() // Connections still preserved
 //
 //	// At workflow end
 //	CloseSession("workflow-123") // Now connections are closed
-func WithSessionID(sessionID string) AgentOption {
+func withSessionID(sessionID string) agentOption {
 	return func(a *Agent) {
-		a.SessionID = sessionID
+		a.sessionID = sessionID
 	}
 }
 
-// WithAPIConfig sets the executor API base URL and bearer token for code execution mode.
+// withAPIConfig sets the executor API base URL and bearer token for code execution mode.
 // Code execution subprocesses receive these as MCP_API_URL and MCP_API_TOKEN environment variables.
 // The consumer application is responsible for starting the HTTP server and generating the token
 // (see executor.GenerateAPIToken and executor.AuthMiddleware).
-func WithAPIConfig(baseURL, token string) AgentOption {
+func withAPIConfig(baseURL, token string) agentOption {
 	return func(a *Agent) {
-		a.APIBaseURL = baseURL
-		a.APIToken = token
+		a.apiBaseURL = baseURL
+		a.apiToken = token
 	}
 }
 
-// WithUserID sets the user ID for per-user OAuth token isolation.
+// withUserID sets the user ID for per-user OAuth token isolation.
 //
 // When set, OAuth tokens for MCP servers are stored at user-specific paths:
 // ~/.config/mcpagent/tokens/{userID}/{serverName}.json
@@ -805,9 +760,9 @@ func WithAPIConfig(baseURL, token string) AgentOption {
 //
 // When empty (default): OAuth tokens use the path from MCP server configuration
 // (typically a shared default path).
-func WithUserID(userID string) AgentOption {
+func withUserID(userID string) agentOption {
 	return func(a *Agent) {
-		a.UserID = userID
+		a.userID = userID
 	}
 }
 
@@ -832,22 +787,22 @@ type Agent struct {
 	ctx context.Context
 
 	// MCP clients keyed by server name.
-	Clients map[string]mcpclient.ClientInterface
+	clients map[string]mcpclient.ClientInterface
 
 	// Map tool name → server name (quick dispatch)
 	toolToServer map[string]string
 
-	LLM     llmtypes.Model
-	Tracers []observability.Tracer // Support multiple tracers
-	Tools   []llmtypes.Tool
+	llmModel llmtypes.Model
+	tracers  []observability.Tracer // Support multiple tracers
+	tools    []llmtypes.Tool
 
 	// Configuration knobs
-	MaxTurns        int
-	Temperature     float64
-	ToolChoice      string
-	ModelID         string
-	AgentMode       AgentMode     // NEW: Agent mode (Simple or ReAct)
-	ToolTimeout     time.Duration // Tool execution timeout (default: 5 minutes)
+	maxTurns        int
+	temperature     float64
+	toolChoice      string
+	modelID         string
+	agentMode       AgentMode     // NEW: Agent mode (Simple or ReAct)
+	toolTimeout     time.Duration // Tool execution timeout (default: 5 minutes)
 	selectedTools   []string      // Selected tools in "server:tool" format
 	selectedServers []string      // Selected servers list for "all tools" mode determination
 	toolFilter      *ToolFilter   // Unified tool filter for consistent filtering
@@ -855,7 +810,7 @@ type Agent struct {
 	// Enhanced tracking info
 	systemPrompt string
 	definition   *AgentDefinition
-	TraceID      observability.TraceID
+	traceID      observability.TraceID
 	configPath   string // Path to MCP config file for on-demand connections
 	serverName   string // Server name(s) to connect to (default: AllServers)
 
@@ -868,32 +823,32 @@ type Agent struct {
 	// Latest provider-native continuation handle returned by a coding-agent
 	// adapter. This is the typed replacement for provider-specific session ID
 	// fields below; the legacy fields remain while callers migrate.
-	CodingProviderSessionHandle llmtypes.CodingProviderSessionHandle
+	codingProviderSessionHandle llmtypes.CodingProviderSessionHandle
 
 	// Claude Code CLI session ID for --resume on subsequent turns
-	ClaudeCodeSessionID string
+	claudeCodeSessionID string
 
 	// Claude Code experimental persistent tmux mode for interactive chat
-	ClaudeCodePersistentInteractiveSession bool
+	claudeCodePersistentInteractiveSession bool
 
 	// Claude Code transport override for this agent.
-	ClaudeCodeTransport string
+	claudeCodeTransport string
 
 	// Process working directory for interactive coding CLI providers.
-	CodingAgentWorkingDir string
+	codingAgentWorkingDir string
 
 	// CLISecurityPolicy is resolved by the owning application before launch.
 	// Providers receive an immutable copy through CallOptions. Nil preserves the
 	// backward-compatible compatibility mode.
-	CLISecurityPolicy *llmtypes.CLISecurityPolicy
+	cliSecurityPolicy *llmtypes.CLISecurityPolicy
 
 	// IsolatedSessionWorkspace, when true, asks the coding-CLI session
 	// to run in a fresh os.MkdirTemp directory instead of
 	// CodingAgentWorkingDir. The tmp dir is created at session launch
 	// and rm -rf'd at session teardown. Intended for workflow steps;
-	// chat code paths leave this false. See WithIsolatedSessionWorkspace
+	// chat code paths leave this false. See withIsolatedSessionWorkspace
 	// and docs/WORKFLOW_STEP_ISOLATION.md in multi-llm-provider-go.
-	IsolatedSessionWorkspace bool
+	isolatedSessionWorkspace bool
 
 	// isolatedWorkspacePath and isolatedWorkspaceOnce back the lazy
 	// per-Agent tmp dir created when IsolatedSessionWorkspace is true.
@@ -902,7 +857,7 @@ type Agent struct {
 	// multiple goroutines. Agent.Close rm -rf's the dir if it was
 	// ever created. Unexported because the lifecycle is managed
 	// internally; callers control the feature via
-	// WithIsolatedSessionWorkspace.
+	// withIsolatedSessionWorkspace.
 	isolatedWorkspacePath string
 	isolatedWorkspaceOnce sync.Once
 
@@ -931,7 +886,7 @@ type Agent struct {
 	// native network (there is no read-only+network mode), and codex tends to
 	// disengage from tools entirely when its own preamble says "read-only, no
 	// network".
-	CodexSandboxMode string
+	codexSandboxMode string
 
 	// CodexNetworkAccess enables codex's native network access when
 	// CodexSandboxMode is "workspace-write" (via `-c
@@ -940,25 +895,25 @@ type Agent struct {
 	// network via the executor process regardless of this setting. Meaningless
 	// under "read-only" (network is unconditionally off there) or
 	// "danger-full-access" (network is unconditionally on there).
-	CodexNetworkAccess bool
+	codexNetworkAccess bool
 
 	// Codex CLI project directory ID for per-invocation isolation (hooks, config)
-	CodexProjectDirID string
+	codexProjectDirID string
 
 	// Codex CLI thread ID for legacy exec-json resume on subsequent turns
-	CodexSessionID string
+	codexSessionID string
 
 	// Codex CLI persistent tmux mode
-	CodexPersistentInteractiveSession bool
+	codexPersistentInteractiveSession bool
 
 	// Cursor CLI persistent tmux mode for interactive chat
-	CursorPersistentInteractiveSession bool
+	cursorPersistentInteractiveSession bool
 
 	// Pi CLI persistent tmux mode for interactive chat
-	PiPersistentInteractiveSession bool
+	piPersistentInteractiveSession bool
 
 	// Pi CLI native session ID for --session-id resume on subsequent turns.
-	PiSessionID string
+	piSessionID string
 
 	// turnInFlight tracks whether a ContinueConversation turn is currently
 	// running for this agent. Deliver reads it to make the steer-vs-query
@@ -974,13 +929,13 @@ type Agent struct {
 	// event (and by the interactive adapter from its sqlite agentId after
 	// each turn — best-effort), so a restored chat can pick up cursor's
 	// native chat memory instead of starting fresh.
-	CursorSessionID string
+	cursorSessionID string
 
 	// CursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 	// Retained for API compatibility; no longer sets --mode ask (that mode
 	// refuses natural-language writes with "Switch to Agent mode" and breaks
 	// chat). Cursor runs in default agent mode regardless of this flag.
-	CursorBridgeToolsMode bool
+	cursorBridgeToolsMode bool
 
 	// CodingAgentTransport is THE explicit transport choice for coding-agent
 	// CLI providers: llm.CodingAgentTransportTmux or
@@ -993,49 +948,49 @@ type Agent struct {
 	// (workflow steps, background agents) where explicit completion/usage
 	// events beat scraping a terminal.
 	//
-	// Set via WithCodingAgentTransport — the single source of truth, resolved
+	// Set via withCodingAgentTransport — the single source of truth, resolved
 	// by wantsStructuredTransport. Replaced the older overlapping mechanisms
 	// (ForceStructuredCodingAgent + four per-provider *StructuredTransport
 	// flags), which are gone.
-	CodingAgentTransport llm.CodingAgentTransport
+	codingAgentTransport llm.CodingAgentTransport
 
 	// Context offloading: handles offloading large tool outputs to filesystem
 	toolOutputHandler *ToolOutputHandler
 
 	// Context offloading configuration: enables virtual tools for accessing offloaded outputs
-	EnableContextOffloading bool
+	enableContextOffloading bool
 
 	// Context offloading threshold: custom threshold for when to offload tool outputs (0 = use default)
-	LargeOutputThreshold int
+	largeOutputThreshold int
 
 	// Tool output cleanup configuration
-	ToolOutputRetentionPeriod     time.Duration // How long to keep tool output files (0 = use default, default: 7 days)
-	CleanupToolOutputOnSessionEnd bool          // Whether to clean up current session folder on session end
+	toolOutputRetentionPeriod     time.Duration // How long to keep tool output files (0 = use default, default: 7 days)
+	cleanupToolOutputOnSessionEnd bool          // Whether to clean up current session folder on session end
 	cleanupMu                     sync.Mutex    // Protects cleanup routine lifecycle fields
 	cleanupTicker                 *time.Ticker  // Ticker for periodic cleanup of old tool output files
 	cleanupDone                   chan struct{} // Closed to signal the cleanup routine to stop
 
 	// Context summarization configuration (see context_summarization.go)
-	EnableContextSummarization     bool    // Enable context summarization feature
-	SummaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default)
-	SummarizeOnTokenThreshold      bool    // Enable token-based summarization trigger (percentage-based)
-	TokenThresholdPercent          float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
-	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
-	SummarizationCooldownTurns     int     // Number of turns to wait after summarization before allowing another (0 = use default: 3)
+	enableContextSummarization     bool    // Enable context summarization feature
+	summaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default)
+	summarizeOnTokenThreshold      bool    // Enable token-based summarization trigger (percentage-based)
+	tokenThresholdPercent          float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+	summarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
+	fixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
+	summarizationCooldownTurns     int     // Number of turns to wait after summarization before allowing another (0 = use default: 3)
 	lastSummarizationTurn          int     // Track when last summarization occurred (turn number)
 
 	// Context editing configuration (see context_editing.go)
-	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
-	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 1000)
-	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 10)
+	enableContextEditing        bool // Enable context editing (dynamic context reduction)
+	contextEditingThreshold     int  // Token threshold for context editing (0 = use default: 1000)
+	contextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 10)
 
 	// Parallel tool execution configuration
 	// When enabled and LLM returns multiple tool calls in a single response,
 	// tool calls execute concurrently using goroutines (fork-join pattern).
 	// Results are collected in deterministic order matching the original tool call order.
 	// When disabled (default): tool calls execute sequentially as before.
-	EnableParallelToolExecution bool
+	enableParallelToolExecution bool
 
 	// Mutex for concurrent access to Clients map during parallel tool execution
 	// Used by broken pipe recovery to safely read/write the Clients map
@@ -1054,7 +1009,7 @@ type Agent struct {
 	// Populated by EmitTypedEvent for tool_call_start/end events (works for ALL providers
 	// including coding-agent CLIs where tool calls happen inside the CLI).
 	// Cleared at start of AskWithHistory, dumped by logConversationEnd.
-	ToolCallLog   []string
+	toolCallLog   []string
 	toolCallLogMu sync.Mutex
 
 	// Dynamic tool allow list: when non-nil, only tools whose names appear in this set
@@ -1074,12 +1029,12 @@ type Agent struct {
 	// bridgeRoutingInstructionsOverride replaces the default per-provider
 	// bridge-tool-routing preamble + bridgeRoutingExplicitInstructions text
 	// (appended for every CLI coding-agent provider: Claude Code, Codex,
-	// Cursor, Pi) when set via WithBridgeRoutingInstructions. nil means
+	// Cursor, Pi) when set via withBridgeRoutingInstructions. nil means
 	// use the default for whichever provider this agent runs; a pointer to
 	// "" suppresses the block entirely for this agent.
 	bridgeRoutingInstructionsOverride *string
 
-	// conversationSink, when set via WithConversationSink, receives one
+	// conversationSink, when set via withConversationSink, receives one
 	// convrecord.TurnRecord per completed LLM call. nil (the default) means
 	// no persistence happens at all.
 	conversationSink convrecord.Sink
@@ -1090,19 +1045,16 @@ type Agent struct {
 	// in-process registry) don't re-emit the same calls turn after turn.
 	lastToolCallRecordedAt time.Time
 
-	// Custom tools that are handled as virtual tools
-	customTools        map[string]CustomTool
-	definitionAssembly *DefinitionAssembly
-
-	// toolRegistry is the canonical name-keyed source used by discovery and
-	// routing. Legacy maps remain temporary projections while callers migrate.
+	// toolRegistry is the sole name-keyed source for tool identity, schema,
+	// direct execution, timeout, and display metadata. Provider-facing tool
+	// slices and code-execution session maps are derived runtime projections.
 	toolRegistry        *canonicalToolRegistry
 	canonicalRegistryMu sync.Mutex
 
 	// additionalBridgeTools are custom tool names exposed as NATIVE MCP bridge
 	// tools for THIS agent instance only, on top of the small fixed set in
 	// bridgeTools (execute_shell_command, diff_patch_workspace_file,
-	// agent_browser, get_api_spec). Set via WithAdditionalBridgeTools —
+	// agent_browser, get_api_spec). Set via withAdditionalBridgeTools —
 	// callers must NOT edit the shared package-level bridgeTools var to add
 	// their own tools, since that list is global across every consumer of
 	// this module (see docs/core/mcp_bridge_layer.md and
@@ -1127,17 +1079,14 @@ type Agent struct {
 	toolArgTransformers map[string]func(args map[string]interface{})
 
 	// Custom logger (optional) - uses v2.Logger interface
-	Logger loggerv2.Logger
+	logger loggerv2.Logger
 
 	// Listeners for typed events
 	listeners []AgentEventListener
 	mu        sync.RWMutex
 
 	// Pre-filtered tool set used for the outgoing LLM call. Updated by
-	// the tool-search-mode path (see conversation.go's
-	// applyToolAllowList + getToolsForToolSearchMode) and by direct
-	// allow-list filters; falls back to a.Tools when neither path
-	// trims the set.
+	// request-scoped allow-list filters and otherwise mirrors the registered tools.
 	filteredTools []llmtypes.Tool
 
 	// Track appended system prompts so callers can rebuild the final
@@ -1148,63 +1097,58 @@ type Agent struct {
 	// Skills attached to this agent. Skills are Anthropic-format SKILL.md
 	// bundles (folder = one skill) that adapters project to provider-native
 	// locations (.claude/skills/, .agents/skills/, etc.) at session launch.
-	// API-transport adapters surface skills via the system prompt listing
-	// instead of disk projection. See agent/skill.go for the attachment
+	// API transports surface skills via the system prompt listing plus the
+	// intrinsic read_skill tool instead of disk projection. See agent/skill.go for the attachment
 	// methods (AttachSkill / AttachedSkills / ClearSkills); the Skill
 	// value type lives in llmtypes so adapters can reference it without
 	// importing mcpagent.
 	attachedSkills []*llmtypes.Skill
+	// read_skill is intrinsic to attached skill identity. These flags reserve
+	// its model-facing name from caller tools while allowing the internal
+	// construction path to register it through the normal direct-tool runtime.
+	skillReaderInstalled  bool
+	installingSkillReader bool
 
 	// Hierarchy tracking fields for event tree structure
 	currentParentEventID  string // Track current parent event ID
 	currentHierarchyLevel int    // Track current hierarchy level (0=root, 1=child, etc.)
 
 	// Resource discovery configuration
-	DiscoverResource bool // If true, include resource details in system prompt (default: true)
+	discoverResource bool // If true, include resource details in system prompt (default: true)
 
 	// Prompt discovery configuration
-	DiscoverPrompt bool // If true, include prompt details in system prompt (default: true)
+	discoverPrompt bool // If true, include prompt details in system prompt (default: true)
 
 	// Code execution mode configuration
 	// When enabled: Custom tools + get_api_spec virtual tool are exposed to the LLM
 	// MCP server tools are accessed via HTTP API (documented in OpenAPI specs from get_api_spec)
 	// When disabled (default): All MCP tools are added directly as LLM tools
-	UseCodeExecutionMode bool
-
-	// Tool search mode configuration
-	// When enabled: Only search_tools virtual tool is initially exposed to the LLM
-	// LLM must search for tools using regex patterns, discovered tools become available
-	// When disabled (default): All tools are exposed directly
-	UseToolSearchMode      bool                     // Enable tool search mode
-	discoveredTools        map[string]llmtypes.Tool // Tools discovered during this session
-	allDeferredTools       []llmtypes.Tool          // All available tools (hidden until discovered), may include duplicates
-	allDeferredToolServers []string                 // Parallel slice: server name for each entry in allDeferredTools
-	preDiscoveredTools     []string                 // Tool names that are always available without searching
+	useCodeExecutionMode bool
 
 	// Cache configuration
 	// When enabled: Skips cache lookup and always performs fresh connections
 	// When disabled (default): Uses cache to speed up connection establishment (60-85% faster)
-	DisableCache bool
+	disableCache bool
 
 	// Runtime MCP configuration overrides
 	// Allows workflow-specific modifications to server configs (e.g., output directories)
-	RuntimeOverrides mcpclient.RuntimeOverrides
+	runtimeOverrides mcpclient.RuntimeOverrides
 
 	// Session-scoped connection management
 	// When set: Connections are stored in SessionConnectionRegistry and shared across agents with same SessionID
 	//           Agent.Close() does NOT close connections - call CloseSession(sessionID) at workflow end
 	// Constructors normalize an empty value to "global".
-	SessionID string
+	sessionID string
 
 	// PromptLogLabel is an optional label used in prompt log filenames to identify
 	// the agent type (e.g. "workflow-builder", "step-execution", "learning", "todo-task").
 	// Set by the orchestrator before execution. If empty, derived from system prompt header.
-	PromptLogLabel string
+	promptLogLabel string
 
 	// API configuration for code execution mode
 	// When set, code execution subprocesses receive these as MCP_API_URL and MCP_API_TOKEN env vars
-	APIBaseURL string
-	APIToken   string
+	apiBaseURL string
+	apiToken   string
 
 	// Cached OpenAPI specs per server (generated on-demand by get_api_spec)
 	openAPISpecCache   map[string][]byte
@@ -1218,22 +1162,22 @@ type Agent struct {
 	// User ID for per-user OAuth token isolation
 	// When set: OAuth tokens are stored per-user at ~/.config/mcpagent/tokens/{UserID}/{serverName}.json
 	// When empty: OAuth tokens use the default path from MCP config
-	UserID string
+	userID string
 
 	// Streaming configuration
 	// EnableStreaming consumes provider stream chunks. SuppressGenerationStreamingEvents
 	// controls whether those chunks are hidden from streaming_start/chunk/end events.
-	EnableStreaming                   bool                             // Enable provider streaming (default: false)
-	SuppressGenerationStreamingEvents bool                             // Suppress generation streaming events (default: false)
-	StreamingCallback                 func(chunk llmtypes.StreamChunk) // Optional callback for streaming chunks
+	enableStreaming                   bool                             // Enable provider streaming (default: false)
+	suppressGenerationStreamingEvents bool                             // Suppress generation streaming events (default: false)
+	streamingCallback                 func(chunk llmtypes.StreamChunk) // Optional callback for streaming chunks
 
 	// Folder guard paths for code execution mode
 	// These paths are validated at AST level before code execution
-	FolderGuardReadPaths  []string // Paths allowed for read operations
-	FolderGuardWritePaths []string // Paths allowed for write operations
+	folderGuardReadPaths  []string // Paths allowed for read operations
+	folderGuardWritePaths []string // Paths allowed for write operations
 
 	// API keys for providers (used for fallback LLM creation)
-	APIKeys *AgentAPIKeys
+	apiKeys *AgentAPIKeys
 
 	// Cumulative token tracking for entire conversation
 	cumulativePromptTokens     int          // Cumulative prompt/input tokens
@@ -1265,7 +1209,7 @@ type Agent struct {
 	modelContextWindow        int // Cached model context window size (0 = not cached yet)
 
 	// LLM Configuration
-	LLMConfig AgentLLMConfiguration
+	llmConfig AgentLLMConfiguration
 
 	// quotaExhaustedModels tracks models that hit permanent quota exhaustion (daily/monthly limits).
 	// These are skipped on subsequent turns to avoid wasted API calls.
@@ -1334,65 +1278,54 @@ func (a *Agent) getToolOutputHandler() *ToolOutputHandler {
 	return a.toolOutputHandler
 }
 
-// SetProvider is retained for legacy synthetic-agent tests. Production
-// construction sets provider through RuntimeConfig/LLM configuration.
-func (a *Agent) setProvider(provider llm.Provider) {
-	a.provider = provider
-}
-
 // GetLLMModelConfig returns the agent's primary LLM configuration as an LLMModel.
-// If LLMConfig.Primary is set (via WithLLMConfig), it's returned directly.
+// If LLMConfig.Primary is set (via withLLMConfig), it's returned directly.
 // Otherwise, constructs one from the legacy provider/ModelID/APIKeys fields.
 func (a *Agent) getLLMModelConfig() LLMModel {
-	if a.LLMConfig.Primary.Provider != "" {
-		return a.LLMConfig.Primary
+	if a.llmConfig.Primary.Provider != "" {
+		return a.llmConfig.Primary
 	}
 	config := LLMModel{
 		Provider: string(a.provider),
-		ModelID:  a.ModelID,
+		ModelID:  a.modelID,
 	}
-	if a.APIKeys != nil {
+	if a.apiKeys != nil {
 		switch a.provider {
 		case llm.ProviderAnthropic:
-			config.APIKey = a.APIKeys.Anthropic
+			config.APIKey = a.apiKeys.Anthropic
 		case llm.ProviderOpenAI:
-			config.APIKey = a.APIKeys.OpenAI
+			config.APIKey = a.apiKeys.OpenAI
 		case llm.ProviderOpenRouter:
-			config.APIKey = a.APIKeys.OpenRouter
+			config.APIKey = a.apiKeys.OpenRouter
 		case llm.ProviderVertex:
-			config.APIKey = a.APIKeys.Vertex
+			config.APIKey = a.apiKeys.Vertex
 		case llm.ProviderZAI:
-			config.APIKey = a.APIKeys.ZAI
+			config.APIKey = a.apiKeys.ZAI
 		case llm.ProviderKimi:
-			config.APIKey = a.APIKeys.Kimi
+			config.APIKey = a.apiKeys.Kimi
 		case llm.ProviderCodexCLI:
-			config.APIKey = a.APIKeys.CodexCLI
+			config.APIKey = a.apiKeys.CodexCLI
 		case llm.ProviderCursorCLI:
-			config.APIKey = a.APIKeys.CursorCLI
+			config.APIKey = a.apiKeys.CursorCLI
 		case llm.ProviderPiCLI:
-			config.APIKey = a.APIKeys.PiCLI
+			config.APIKey = a.apiKeys.PiCLI
 		case llm.ProviderMiniMax:
-			config.APIKey = a.APIKeys.MiniMax
+			config.APIKey = a.apiKeys.MiniMax
 		case llm.ProviderMiniMaxCodingPlan:
-			config.APIKey = a.APIKeys.MiniMaxCodingPlan
+			config.APIKey = a.apiKeys.MiniMaxCodingPlan
 		}
 	}
 	return config
-}
-
-// SetToolOutputHandler sets the tool output handler
-func (a *Agent) setToolOutputHandler(handler *ToolOutputHandler) {
-	a.toolOutputHandler = handler
 }
 
 // SetFolderGuardPaths sets the folder guard paths for code execution validation
 // readPaths: paths allowed for read operations (workspace package read functions)
 // writePaths: paths allowed for write operations (workspace package write functions)
 func (a *Agent) setFolderGuardPaths(readPaths, writePaths []string) {
-	a.FolderGuardReadPaths = readPaths
-	a.FolderGuardWritePaths = writePaths
-	if a.Logger != nil {
-		a.Logger.Info("🔒 [CODE_EXECUTION] Folder guard paths set",
+	a.folderGuardReadPaths = readPaths
+	a.folderGuardWritePaths = writePaths
+	if a.logger != nil {
+		a.logger.Info("🔒 [CODE_EXECUTION] Folder guard paths set",
 			loggerv2.Any("read_paths", readPaths),
 			loggerv2.Any("write_paths", writePaths))
 	}
@@ -1463,23 +1396,23 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 	return nil
 }
 
-// NewAgent creates a new Agent instance with the provided configuration.
+// newAgent creates a new Agent instance with the provided configuration.
 //
 // It initializes the agent with the given context, LLM model, and MCP configuration path.
-// Additional behavior can be configured using AgentOption functions.
+// Additional behavior can be configured using agentOption functions.
 //
 // Parameters:
 //   - ctx: The base context for the agent's lifecycle.
 //   - llm: The LLM provider implementation (must implement llmtypes.Model).
 //   - configPath: Path to the MCP configuration file (e.g., mcp_config.json).
-//   - options: Variadic list of AgentOption functions to configure the agent.
+//   - options: Variadic list of agentOption functions to configure the agent.
 //
 // Returns:
 //   - *Agent: A pointer to the initialized Agent.
 //   - error: An error if initialization fails (e.g., LLM is nil, config load fails).
 //
-// By default, the agent connects to all servers defined in the config. Use WithServerName() option to filter.
-func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
+// By default, the agent connects to all servers defined in the config. Use withServerName() option to filter.
+func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, options ...agentOption) (*Agent, error) {
 	if llm == nil {
 		return nil, fmt.Errorf("LLM cannot be nil")
 	}
@@ -1491,48 +1424,47 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Create agent with default values
 	ag := &Agent{
 		ctx:                           ctx,
-		LLM:                           llm,
-		Tracers:                       []observability.Tracer{}, // Default: empty tracers array
-		MaxTurns:                      GetDefaultMaxTurns(),
-		Temperature:                   0.0,    // Default temperature
-		ToolChoice:                    "auto", // Default tool choice
-		ModelID:                       modelID,
-		AgentMode:                     SimpleAgent,                      // Default to simple mode
-		TraceID:                       "",                               // Default: empty trace ID
+		llmModel:                      llm,
+		tracers:                       []observability.Tracer{}, // Default: empty tracers array
+		maxTurns:                      GetDefaultMaxTurns(),
+		temperature:                   0.0,    // Default temperature
+		toolChoice:                    "auto", // Default tool choice
+		modelID:                       modelID,
+		agentMode:                     SimpleAgent,                      // Default to simple mode
+		traceID:                       "",                               // Default: empty trace ID
 		provider:                      "",                               // Will be set by caller or extracted
-		EnableContextOffloading:       true,                             // Default to enabled
-		LargeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
-		ToolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
-		CleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
-		EnableContextSummarization:    false,                            // Default to disabled
-		SummarizeOnTokenThreshold:     false,                            // Default to disabled
-		TokenThresholdPercent:         0.8,                              // Default to 80% if enabled
-		SummaryKeepLastMessages:       0,                                // Default: 0 means use default (4 messages)
-		SummarizationCooldownTurns:    0,                                // Default: 0 means use default (3 turns)
+		enableContextOffloading:       true,                             // Default to enabled
+		largeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
+		toolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
+		cleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
+		enableContextSummarization:    false,                            // Default to disabled
+		summarizeOnTokenThreshold:     false,                            // Default to disabled
+		tokenThresholdPercent:         0.8,                              // Default to 80% if enabled
+		summaryKeepLastMessages:       0,                                // Default: 0 means use default (4 messages)
+		summarizationCooldownTurns:    0,                                // Default: 0 means use default (3 turns)
 		lastSummarizationTurn:         -1,                               // Default: -1 means never summarized
-		EnableContextEditing:          false,                            // Default to disabled
-		ContextEditingThreshold:       0,                                // Default: 0 means use default threshold (1000)
-		ContextEditingTurnThreshold:   0,                                // Default: 0 means use default (10 turns)
-		Logger:                        loggerv2.NewDefault(),            // Default logger
-		customTools:                   make(map[string]CustomTool),      // Initialize custom tools map
+		enableContextEditing:          false,                            // Default to disabled
+		contextEditingThreshold:       0,                                // Default: 0 means use default threshold (1000)
+		contextEditingTurnThreshold:   0,                                // Default: 0 means use default (10 turns)
+		logger:                        loggerv2.NewDefault(),            // Default logger
 
 		// Initialize hierarchy tracking fields
 		currentParentEventID:  "", // Start with no parent
 		currentHierarchyLevel: 0,  // Start at root level
 
 		// Initialize resource discovery (default: true - include resources in system prompt)
-		DiscoverResource: true,
+		discoverResource: true,
 
 		// Initialize prompt discovery (default: true - include prompts in system prompt)
-		DiscoverPrompt: true,
+		discoverPrompt: true,
 
 		// Initialize cache (default: false - caching enabled by default)
-		DisableCache: false,
+		disableCache: false,
 
 		// Initialize streaming (default: provider streaming disabled, event emission enabled if streaming is turned on)
-		EnableStreaming:                   false,
-		SuppressGenerationStreamingEvents: false,
-		StreamingCallback:                 nil,
+		enableStreaming:                   false,
+		suppressGenerationStreamingEvents: false,
+		streamingCallback:                 nil,
 
 		// Initialize server name (default: AllServers - connect to all servers)
 		serverName: mcpclient.AllServers,
@@ -1550,15 +1482,15 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Extract API keys from LLM if available
 	// This allows users to pass keys only when creating the LLM
-	if ag.APIKeys == nil {
-		ag.APIKeys = extractAPIKeysFromLLM(llm)
+	if ag.apiKeys == nil {
+		ag.apiKeys = extractAPIKeysFromLLM(llm)
 	}
 
 	// Use logger from options (or default if not set)
-	logger := ag.Logger
+	logger := ag.logger
 	if logger == nil {
 		logger = loggerv2.NewDefault()
-		ag.Logger = logger
+		ag.logger = logger
 	}
 
 	// Use serverName from options (or default AllServers)
@@ -1568,24 +1500,24 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	// Initialize TraceID if not set (prevent empty folder collisions)
-	if ag.TraceID == "" {
-		ag.TraceID = observability.TraceID(uuid.New().String())
+	if ag.traceID == "" {
+		ag.traceID = observability.TraceID(uuid.New().String())
 	}
 
-	logger.Info("🔍 [DEBUG] NewAgent: Starting initialization", loggerv2.String("config_path", configPath), loggerv2.String("server_name", serverName))
-	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
-	logger.Info("NewAgent initialization", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
+	logger.Info("🔍 [DEBUG] newAgent: Starting initialization", loggerv2.String("config_path", configPath), loggerv2.String("server_name", serverName))
+	logger.Info("newAgent started", loggerv2.String("config_path", configPath))
+	logger.Info("newAgent initialization", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath))
 
 	// Load merged MCP servers configuration (base + user)
-	logger.Info("🔍 [DEBUG] NewAgent: About to load merged MCP config", loggerv2.String("config_path", configPath))
+	logger.Info("🔍 [DEBUG] newAgent: About to load merged MCP config", loggerv2.String("config_path", configPath))
 	configLoadStartTime := time.Now()
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
 	configLoadDuration := time.Since(configLoadStartTime)
 	if err != nil {
-		logger.Error("❌ [DEBUG] NewAgent: Failed to load merged MCP config", err, loggerv2.String("duration", configLoadDuration.String()))
+		logger.Error("❌ [DEBUG] newAgent: Failed to load merged MCP config", err, loggerv2.String("duration", configLoadDuration.String()))
 		return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
-	logger.Info("✅ [DEBUG] NewAgent: Merged MCP config loaded successfully", loggerv2.String("duration", configLoadDuration.String()), loggerv2.Int("server_count", len(config.MCPServers)))
+	logger.Info("✅ [DEBUG] newAgent: Merged MCP config loaded successfully", loggerv2.String("duration", configLoadDuration.String()), loggerv2.Int("server_count", len(config.MCPServers)))
 
 	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
 	for name := range config.MCPServers {
@@ -1597,7 +1529,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			loggerv2.String("fallback", "unknown"))
 	}
 
-	logger.Info("🔍 [DEBUG] NewAgent: About to call NewAgentConnectionWithSession", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.DisableCache), loggerv2.String("session_id", ag.SessionID))
+	logger.Info("🔍 [DEBUG] newAgent: About to call NewAgentConnectionWithSession", loggerv2.String("server_name", serverName), loggerv2.String("config_path", configPath), loggerv2.Any("disable_cache", ag.disableCache), loggerv2.String("session_id", ag.sessionID))
 	connectionStartTime := time.Now()
 
 	// Check if session-scoped connection management is enabled
@@ -1612,29 +1544,29 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// SessionID is mandatory for connection management via the session registry.
 	// Default to "global" if not set, so all agents share connections and we never
 	// fall into the legacy path that spawns fresh subprocesses on every call.
-	if ag.SessionID == "" {
-		ag.SessionID = "global"
+	if ag.sessionID == "" {
+		ag.sessionID = "global"
 		logger.Warn("SessionID not set — defaulting to 'global' for shared connection management")
 	}
 
-	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.SessionID))
+	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.sessionID))
 	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
-		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.SessionID, string(ag.TraceID), ag.Tracers, logger, ag.DisableCache, ag.RuntimeOverrides, ag.UserID)
+		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.sessionID, string(ag.traceID), ag.tracers, logger, ag.disableCache, ag.runtimeOverrides, ag.userID)
 
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
-		logger.Error("❌ [DEBUG] NewAgent: NewAgentConnectionWithSession failed", err, loggerv2.String("duration", connectionDuration.String()), loggerv2.String("server_name", serverName))
+		logger.Error("❌ [DEBUG] newAgent: NewAgentConnectionWithSession failed", err, loggerv2.String("duration", connectionDuration.String()), loggerv2.String("server_name", serverName))
 		return nil, err
 	}
-	logger.Info("✅ [DEBUG] NewAgent: NewAgentConnectionWithSession completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)), loggerv2.String("session_id", ag.SessionID))
+	logger.Info("✅ [DEBUG] newAgent: NewAgentConnectionWithSession completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)), loggerv2.String("session_id", ag.sessionID))
 
 	// Initialize tool output handler
 	toolOutputHandler := NewToolOutputHandler()
 
-	// Apply custom threshold if set via WithLargeOutputThreshold option
-	if ag.LargeOutputThreshold > 0 {
-		toolOutputHandler.SetThreshold(ag.LargeOutputThreshold)
-		logger.Info("Context offloading threshold set", loggerv2.Int("threshold", ag.LargeOutputThreshold))
+	// Apply custom threshold if set via withLargeOutputThreshold option
+	if ag.largeOutputThreshold > 0 {
+		toolOutputHandler.SetThreshold(ag.largeOutputThreshold)
+		logger.Info("Context offloading threshold set", loggerv2.Int("threshold", ag.largeOutputThreshold))
 	}
 
 	// Large output handling is now done via virtual tools, not MCP server
@@ -1642,24 +1574,24 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	toolOutputHandler.SetServerAvailable(true) // Always available with virtual tools
 
 	// Set session ID for organizing files by conversation
-	toolOutputHandler.SetSessionID(string(ag.TraceID))
+	toolOutputHandler.SetSessionID(string(ag.traceID))
 
 	// Set LLM for provider-aware token counting
 	toolOutputHandler.SetLLM(llm)
 
 	// Update the existing agent with connection data
-	ag.Clients = clients
+	ag.clients = clients
 	ag.toolToServer = toolToServer
 	if err := ag.initializeCanonicalToolRegistry(allLLMTools, toolToServer); err != nil {
 		return nil, fmt.Errorf("initialize canonical tool registry: %w", err)
 	}
 	// Only take the connection-derived default system prompt when the caller
-	// didn't supply one via WithSystemPrompt/AddInstructions. Unconditionally
-	// overwriting here clobbered a caller's custom prompt (set by an AgentOption
+	// didn't supply one via withSystemPrompt/AddInstructions. Unconditionally
+	// overwriting here clobbered a caller's custom prompt (set by an agentOption
 	// applied earlier in this same constructor, before this connection setup
 	// runs) with whatever NewAgentConnectionWithSession computed on its own —
 	// confirmed live: ag.systemPrompt held the real ~14k-char custom prompt
-	// right after WithSystemPrompt ran, then dropped to just the much shorter
+	// right after withSystemPrompt ran, then dropped to just the much shorter
 	// bridge-routing preamble by the time the LLM call was built, because this
 	// line reset it in between with no guard. Mirrors the same
 	// hasCustomSystemPrompt check already used at the BuildSystemPromptWithoutTools
@@ -1678,7 +1610,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// In code execution mode, OpenAPI specs are generated on-demand per server
 	// when the LLM calls get_api_spec(server_name=...) — no upfront code generation needed
-	if ag.UseCodeExecutionMode {
+	if ag.useCodeExecutionMode {
 		ag.openAPISpecCache = make(map[string][]byte)
 		logger.Debug("Code execution mode: OpenAPI specs will be generated on-demand via get_api_spec")
 	}
@@ -1710,26 +1642,20 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		logger,
 	)
 
-	// Pre-detect coding CLI providers to set correct modes BEFORE MCP tool filtering.
+	// Pre-detect coding CLI providers to set code execution mode BEFORE MCP tool filtering.
 	// CLI providers always need code execution mode (tools accessed via HTTP bridge).
-	// Without this, the tool filtering below would take the UseToolSearchMode path instead of
-	// UseCodeExecutionMode, leaving allMCPToolDefs empty and breaking get_api_spec.
-	if isCodingCLIBridgeProvider(ag.provider, ag.ModelID) {
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
+	// Without this, allMCPToolDefs remains empty and get_api_spec cannot resolve tools.
+	if isCodingCLIBridgeProvider(ag.provider, ag.modelID) {
+		if !ag.useCodeExecutionMode {
+			ag.useCodeExecutionMode = true
 			logger.Debug("[BRIDGE_DEBUG] Pre-set UseCodeExecutionMode for CLI provider before MCP tool filtering",
-				loggerv2.String("provider", string(ag.provider)))
-		}
-		if ag.UseToolSearchMode {
-			ag.UseToolSearchMode = false
-			logger.Debug("[BRIDGE_DEBUG] Pre-disabled UseToolSearchMode for CLI provider before MCP tool filtering",
 				loggerv2.String("provider", string(ag.provider)))
 		}
 	}
 
 	// Handle code execution mode: filter out MCP and custom tools (both accessed via HTTP API)
 	var toolsToUse []llmtypes.Tool
-	if ag.UseCodeExecutionMode {
+	if ag.useCodeExecutionMode {
 		// Code execution mode: Only virtual tools as direct LLM calls
 		// Exclude both MCP server tools and custom tools (they're accessed via HTTP endpoints documented in OpenAPI spec)
 		logger.Debug("Code execution mode enabled - excluding MCP and custom tools from LLM (accessed via HTTP API)")
@@ -1752,7 +1678,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			if isMCPTool && serverName == "custom" {
 				// System-category custom tools (execute_shell_command, workspace tools) stay as direct LLM calls
 				// Non-system custom tools (e.g. get_weather) go through HTTP API
-				if ct, exists := ag.customTools[tool.Function.Name]; exists && ag.toolFilter.IsSystemCategory(ct.Category) {
+				if direct, exists := ag.lookupDirectTool(tool.Function.Name); exists && ag.toolFilter.IsSystemCategory(direct.DisplayGroup) {
 					toolsToUse = append(toolsToUse, tool)
 				}
 				continue
@@ -1762,127 +1688,12 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		logger.Debug("Code execution mode: tools available (virtual only, MCP + custom excluded)",
 			loggerv2.Int("tool_count", len(toolsToUse)),
 			loggerv2.Int("mcp_tool_defs_stored", len(ag.allMCPToolDefs)))
-	} else if ag.UseToolSearchMode {
-		// Tool search mode: Store filtered tools as deferred, expose only search_tools
-		logger.Debug("Tool search mode enabled - storing tools as deferred (with filtering)")
-
-		// Apply tool filtering to deferred tools
-		// Only tools that pass the filter should be discoverable via search_tools
-		if !ag.toolFilter.IsNoFilteringActive() {
-			// Build set of custom tool names for category determination
-			customToolNames := make(map[string]bool)
-			for toolName, customTool := range ag.customTools {
-				customToolNames[toolName] = true
-				if customTool.Category != "" {
-					customToolNames[customTool.Category+":"+toolName] = true
-				}
-			}
-
-			// Filter deferred tools
-			var filteredDeferredTools []llmtypes.Tool
-			for _, tool := range allLLMTools {
-				if tool.Function == nil {
-					continue
-				}
-				toolName := tool.Function.Name
-
-				// Determine the package/server name and tool type
-				serverName, isMCPTool := toolToServer[toolName]
-				isCustomTool := customToolNames[toolName]
-
-				// Determine package name
-				var packageName string
-				if isMCPTool {
-					packageName = serverName
-				} else if isCustomTool {
-					if customTool, ok := ag.customTools[toolName]; ok && customTool.Category != "" {
-						packageName = customTool.Category
-					} else {
-						packageName = "custom"
-					}
-				} else {
-					// Virtual tool - always include in deferred (will be filtered later)
-					filteredDeferredTools = append(filteredDeferredTools, tool)
-					continue
-				}
-
-				// Use unified filter to check if tool should be included
-				if ag.toolFilter.ShouldIncludeTool(packageName, toolName, isCustomTool, false) {
-					filteredDeferredTools = append(filteredDeferredTools, tool)
-				}
-			}
-			ag.allDeferredTools = filteredDeferredTools
-			logger.Debug("Tool search mode: Filtered tools deferred for discovery",
-				loggerv2.Int("deferred_count", len(ag.allDeferredTools)),
-				loggerv2.Int("total_available", len(allLLMTools)))
-		} else {
-			// No filtering - all tools available for discovery
-			ag.allDeferredTools = allLLMTools
-			logger.Debug("Tool search mode: All MCP tools deferred for discovery (no filtering)",
-				loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
-		}
-
-		// Build parallel server slice for deferred tools (for tool search disambiguation)
-		ag.allDeferredToolServers = make([]string, len(ag.allDeferredTools))
-		for i, tool := range ag.allDeferredTools {
-			if tool.Function != nil {
-				if srv, ok := toolToServer[tool.Function.Name]; ok {
-					ag.allDeferredToolServers[i] = srv
-				}
-			}
-		}
-
-		// Re-discover tools from each client to find duplicates that were dropped
-		// during connection dedup. This ensures tool search shows all tools from all servers.
-		seenToolServers := make(map[string]map[string]bool) // tool name -> set of servers
-		for i, tool := range ag.allDeferredTools {
-			if tool.Function != nil {
-				if seenToolServers[tool.Function.Name] == nil {
-					seenToolServers[tool.Function.Name] = make(map[string]bool)
-				}
-				seenToolServers[tool.Function.Name][ag.allDeferredToolServers[i]] = true
-			}
-		}
-		for srvName, client := range clients {
-			if client == nil {
-				continue
-			}
-			mcpTools, listErr := client.ListTools(ctx)
-			if listErr != nil {
-				logger.Debug("Failed to list tools for duplicate detection",
-					loggerv2.String("server", srvName), loggerv2.Error(listErr))
-				continue
-			}
-			llmTools, convErr := mcpclient.ToolsAsLLM(mcpTools)
-			if convErr != nil {
-				continue
-			}
-			for _, tool := range llmTools {
-				if tool.Function == nil {
-					continue
-				}
-				toolName := tool.Function.Name
-				if seenToolServers[toolName] != nil && !seenToolServers[toolName][srvName] {
-					// Duplicate tool from a different server — add to deferred list
-					ag.allDeferredTools = append(ag.allDeferredTools, tool)
-					ag.allDeferredToolServers = append(ag.allDeferredToolServers, srvName)
-					seenToolServers[toolName][srvName] = true
-					logger.Info("Added duplicate tool for tool search disambiguation",
-						loggerv2.String("tool", toolName),
-						loggerv2.String("server", srvName))
-				}
-			}
-		}
-
-		// Don't add any MCP tools to the active tool list yet
-		// They will be discovered dynamically via search_tools
-		toolsToUse = []llmtypes.Tool{}
 	} else {
 		// Normal mode: Use all tools
 		toolsToUse = allLLMTools
 	}
 
-	ag.Tools = toolsToUse
+	ag.tools = toolsToUse
 	ag.filteredTools = toolsToUse
 
 	// Apply selected tools filter using unified ToolFilter
@@ -1897,11 +1708,11 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 		// Build set of custom tool names for category determination
 		customToolNames := make(map[string]bool)
-		for toolName, customTool := range ag.customTools {
-			customToolNames[toolName] = true
+		for _, directTool := range ag.directToolSnapshot() {
+			customToolNames[directTool.Name] = true
 			// Also store category for this tool
-			if customTool.Category != "" {
-				customToolNames[customTool.Category+":"+toolName] = true
+			if directTool.DisplayGroup != "" {
+				customToolNames[directTool.DisplayGroup+":"+directTool.Name] = true
 			}
 		}
 
@@ -1923,8 +1734,8 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 				packageName = serverName
 			} else if isCustomTool {
 				// Find the category for this custom tool
-				if customTool, ok := ag.customTools[toolName]; ok && customTool.Category != "" {
-					packageName = customTool.Category
+				if directTool, ok := ag.lookupDirectTool(toolName); ok && directTool.DisplayGroup != "" {
+					packageName = directTool.DisplayGroup
 				} else {
 					packageName = "custom"
 				}
@@ -1944,44 +1755,36 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		logger.Debug("Tool filtering complete",
 			loggerv2.Int("selected_tools", len(filteredTools)),
 			loggerv2.Int("total_tools", len(toolsToUse)))
-		ag.Tools = filteredTools
+		ag.tools = filteredTools
 		ag.filteredTools = filteredTools
 	} else {
 		// No filtering active - use all available tools (already filtered by code execution mode if enabled)
 		logger.Debug("Using all available tools (no filtering applied)",
 			loggerv2.Int("tool_count", len(toolsToUse)))
-		ag.Tools = toolsToUse
+		ag.tools = toolsToUse
 		ag.filteredTools = toolsToUse
 	}
 
 	// Initialize tool registry for code execution
 	// Convert custom tools to executor functions
-	customToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
-	for name, customTool := range ag.customTools {
-		customToolExecutors[name] = customTool.Execution
-	}
+	customToolExecutors := ag.directToolExecutors()
 
 	// Add virtual tools to the LLM tools list
 	virtualTools := ag.createVirtualTools()
 
-	// Safety net: Ensure CLI provider modes are correct before virtual tool filtering.
+	// Safety net: Ensure CLI provider code-execution mode is active before virtual tool filtering.
 	// The primary pre-detection is above (before MCP tool filtering at allMCPToolDefs).
 	// This block is a safety net in case code is reordered in the future.
-	if isCodingCLIBridgeProvider(ag.provider, ag.ModelID) {
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
+	if isCodingCLIBridgeProvider(ag.provider, ag.modelID) {
+		if !ag.useCodeExecutionMode {
+			ag.useCodeExecutionMode = true
 			logger.Warn("[BRIDGE_DEBUG] CLI provider UseCodeExecutionMode was not pre-set — enforcing before virtual tool filtering (safety net)",
-				loggerv2.String("provider", string(ag.provider)))
-		}
-		if ag.UseToolSearchMode {
-			ag.UseToolSearchMode = false
-			logger.Warn("[BRIDGE_DEBUG] CLI provider UseToolSearchMode still active — disabling before virtual tool filtering (safety net)",
 				loggerv2.String("provider", string(ag.provider)))
 		}
 	}
 
 	// Filter virtual tools based on mode
-	if ag.UseCodeExecutionMode {
+	if ag.useCodeExecutionMode {
 		// In code execution mode, only include get_api_spec
 		var filteredVirtualTools []llmtypes.Tool
 		for _, tool := range virtualTools {
@@ -1995,35 +1798,6 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		virtualTools = filteredVirtualTools
 		logger.Debug("Code execution mode: virtual tools after filtering",
 			loggerv2.Int("count", len(virtualTools)))
-	} else if ag.UseToolSearchMode {
-		// In tool search mode, only include search_tools and context offloading tools
-		var filteredVirtualTools []llmtypes.Tool
-		for _, tool := range virtualTools {
-			if tool.Function != nil {
-				toolName := tool.Function.Name
-
-				// Exclude code execution tools from discovery in tool search mode
-				if toolName == "get_api_spec" {
-					continue
-				}
-
-				// Context offloading tools must be immediately available
-				isContextOffloadingTool := toolName == "search_large_output"
-
-				if toolName == "search_tools" || isContextOffloadingTool {
-					filteredVirtualTools = append(filteredVirtualTools, tool)
-				} else {
-					ag.allDeferredTools = append(ag.allDeferredTools, tool)
-				}
-			}
-		}
-		filteredVirtualTools = append(filteredVirtualTools, CreateToolSearchTools()...)
-		virtualTools = filteredVirtualTools
-		logger.Debug("Tool search mode: search_tools and context offloading tools available, other virtual tools deferred",
-			loggerv2.Int("virtual_count", len(virtualTools)),
-			loggerv2.Int("deferred_count", len(ag.allDeferredTools)))
-
-		ag.initializeToolSearch()
 	} else {
 		// In non-code execution mode, exclude get_api_spec
 		var filteredVirtualTools []llmtypes.Tool
@@ -2039,10 +1813,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		logger.Debug("Non-code execution mode: Excluded get_api_spec from virtual tools")
 	}
 
-	ag.Tools = append(ag.Tools, virtualTools...)
+	ag.tools = append(ag.tools, virtualTools...)
 
 	logger.Debug("[BRIDGE_DEBUG] Tools after virtual tools appended",
-		loggerv2.Int("total_tools", len(ag.Tools)),
+		loggerv2.Int("total_tools", len(ag.tools)),
 		loggerv2.Int("virtual_tools_added", len(virtualTools)))
 
 	// Convert virtual tools to executor functions
@@ -2061,60 +1835,50 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	// Initialize registry with virtual tools
-	codeexec.InitRegistryWithVirtualTools(ag.Clients, customToolExecutors, virtualToolExecutors, ag.toolToServer, logger)
+	codeexec.InitRegistryWithVirtualTools(ag.clients, customToolExecutors, virtualToolExecutors, ag.toolToServer, logger)
 
 	// Also register session-scoped tools to prevent cross-workflow contamination
-	if ag.SessionID != "" {
-		codeexec.InitRegistryForSession(ag.SessionID, customToolExecutors, logger)
+	if ag.sessionID != "" {
+		codeexec.InitRegistryForSession(ag.sessionID, customToolExecutors, logger)
 		logger.Info("✅ Session-scoped custom tools registered during initialization",
-			loggerv2.String("session_id", ag.SessionID),
+			loggerv2.String("session_id", ag.sessionID),
 			loggerv2.Int("count", len(customToolExecutors)))
 
 		virtualScopeID := ag.virtualToolScopeID()
 		codeexec.InitRegistryVirtualToolsForSession(virtualScopeID, virtualToolExecutors, logger)
-		logger.Info("✅ Session-scoped virtual tools registered during initialization (NewAgent)",
-			loggerv2.String("session_id", ag.SessionID),
+		logger.Info("✅ Session-scoped virtual tools registered during initialization (newAgent)",
+			loggerv2.String("session_id", ag.sessionID),
 			loggerv2.String("virtual_scope_id", virtualScopeID),
 			loggerv2.Int("virtual_tool_count", len(virtualToolExecutors)),
-			loggerv2.Int("custom_tool_count", len(ag.customTools)),
+			loggerv2.Int("custom_tool_count", len(ag.directToolSnapshot())),
 			loggerv2.String("agent_ptr", fmt.Sprintf("%p", ag)))
 	}
 
 	// In code execution mode, build tool index from agent internal state
 	var toolStructureJSON string
-	var preDiscoveredToolSpecs string
-	if ag.UseCodeExecutionMode {
+	if ag.useCodeExecutionMode {
 		toolStructure, err := ag.buildToolIndex()
 		if err != nil {
 			logger.Warn("Failed to build tool index for system prompt", loggerv2.Error(err))
 		} else {
 			toolStructureJSON = toolStructure
 		}
-		// Build pre-discovered tool specs (inline specs for tools that don't need get_api_spec)
-		preDiscoveredToolSpecs = ag.buildPreDiscoveredToolSpecs()
 	}
 
 	// Always rebuild system prompt with the correct agent mode and tool structure
 	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts
 	// In code execution mode, tool structure is automatically included
 	if !ag.hasCustomSystemPrompt {
-		// Get tool categories for tool search mode (server/package names)
-		var toolCategories []string
-		if ag.UseToolSearchMode {
-			for serverName := range ag.Clients {
-				toolCategories = append(toolCategories, serverName)
-			}
-		}
-		ag.systemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, preDiscoveredToolSpecs, ag.UseToolSearchMode, toolCategories, ag.Logger, ag.EnableParallelToolExecution)
+		ag.systemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.agentMode), ag.discoverResource, ag.discoverPrompt, ag.useCodeExecutionMode, toolStructureJSON, ag.logger, ag.enableParallelToolExecution)
 	}
 
 	// Initialize the filtered-tool set used by the outgoing LLM call.
-	// Conversation paths (tool-search mode, allow-list filtering) may
-	// further trim this slice per turn; until they do it mirrors Tools.
-	ag.filteredTools = ag.Tools
+	// Conversation allow-list filtering may further trim this slice per turn;
+	// until then it mirrors the registered tools.
+	ag.filteredTools = ag.tools
 	logger.Debug("Initialized filtered tool set",
-		loggerv2.Int("tool_count", len(ag.Tools)),
-		loggerv2.Int("client_count", len(ag.Clients)))
+		loggerv2.Int("tool_count", len(ag.tools)),
+		loggerv2.Int("client_count", len(ag.clients)))
 
 	// No more event listeners - events go directly to tracer
 	// Langfuse tracing is handled by the tracer itself
@@ -2129,38 +1893,33 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.appendBridgeRoutingInstructions("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
-		if ag.UseToolSearchMode {
-			ag.UseToolSearchMode = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Tool Search Mode (handled natively by CLI)")
-		}
-
 		// Code execution mode is pre-set before virtual tool filtering (see pre-detection
 		// block above CreateVirtualTools). Enforce as safety net in case that block is
 		// bypassed or reordered in the future.
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
+		if !ag.useCodeExecutionMode {
+			ag.useCodeExecutionMode = true
 			logger.Warn("[BRIDGE_DEBUG] CLAUDE_CODE: UseCodeExecutionMode was not pre-set — enforcing now (safety net)")
 		}
 
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
+		if ag.enableContextEditing {
+			ag.enableContextEditing = false
 			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Editing (handled natively by CLI)")
 		}
 
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
+		if ag.enableContextSummarization {
+			ag.enableContextSummarization = false
 			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Summarization (handled natively by CLI)")
 		}
 
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
+		if ag.enableContextOffloading {
+			ag.enableContextOffloading = false
 			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Offloading (handled natively by CLI)")
 		}
 
 		// Auto-enable streaming — required for tool call observability events
 		// (ToolCallStart/ToolCallEnd) since the CLI manages its own agentic loop
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
+		if !ag.enableStreaming {
+			ag.enableStreaming = true
 			logger.Debug("🔧 [CLAUDE_CODE] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
@@ -2170,28 +1929,28 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
+		if !ag.useCodeExecutionMode {
+			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [CODEX_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
+		if ag.enableContextEditing {
+			ag.enableContextEditing = false
 			logger.Debug("🔧 [CODEX_CLI] Disabled Context Editing (handled natively by CLI)")
 		}
 
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
+		if ag.enableContextSummarization {
+			ag.enableContextSummarization = false
 			logger.Debug("🔧 [CODEX_CLI] Disabled Context Summarization (handled natively by CLI)")
 		}
 
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
+		if ag.enableContextOffloading {
+			ag.enableContextOffloading = false
 			logger.Debug("🔧 [CODEX_CLI] Disabled Context Offloading (handled natively by CLI)")
 		}
 
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
+		if !ag.enableStreaming {
+			ag.enableStreaming = true
 			logger.Debug("🔧 [CODEX_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
@@ -2219,28 +1978,28 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.appendBridgeRoutingInstructions("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
+		if !ag.useCodeExecutionMode {
+			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
+		if ag.enableContextEditing {
+			ag.enableContextEditing = false
 			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Editing (handled natively by CLI)")
 		}
 
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
+		if ag.enableContextSummarization {
+			ag.enableContextSummarization = false
 			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Summarization (handled natively by CLI)")
 		}
 
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
+		if ag.enableContextOffloading {
+			ag.enableContextOffloading = false
 			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Offloading (handled natively by CLI)")
 		}
 
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
+		if !ag.enableStreaming {
+			ag.enableStreaming = true
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
@@ -2252,28 +2011,28 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.appendBridgeRoutingInstructions("IMPORTANT: You are running inside Pi CLI with built-in tools disabled. Use the MCP bridge through Pi's MCP gateway: call mcp({ search: \"tool words\" }) to discover tools, mcp({ describe: \"api_bridge_execute_shell_command\" }) for schemas when needed, and mcp({ tool: \"api_bridge_execute_shell_command\", args: \"{...}\" }) or the direct api_bridge_* tools when available. If a built-in tool is unavailable, use the declared MCP bridge tools instead of reporting that no MCP server exists.")
 		logger.Debug("🔧 [PI_CLI] Provider detected - using tmux marker transport with MCP bridge")
 
-		if !ag.UseCodeExecutionMode {
-			ag.UseCodeExecutionMode = true
+		if !ag.useCodeExecutionMode {
+			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [PI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.EnableContextEditing {
-			ag.EnableContextEditing = false
+		if ag.enableContextEditing {
+			ag.enableContextEditing = false
 			logger.Debug("🔧 [PI_CLI] Disabled Context Editing (handled natively by CLI)")
 		}
 
-		if ag.EnableContextSummarization {
-			ag.EnableContextSummarization = false
+		if ag.enableContextSummarization {
+			ag.enableContextSummarization = false
 			logger.Debug("🔧 [PI_CLI] Disabled Context Summarization (handled natively by CLI)")
 		}
 
-		if ag.EnableContextOffloading {
-			ag.EnableContextOffloading = false
+		if ag.enableContextOffloading {
+			ag.enableContextOffloading = false
 			logger.Debug("🔧 [PI_CLI] Disabled Context Offloading (handled natively by CLI)")
 		}
 
-		if !ag.EnableStreaming {
-			ag.EnableStreaming = true
+		if !ag.enableStreaming {
+			ag.enableStreaming = true
 			logger.Debug("🔧 [PI_CLI] Auto-enabled streaming (required for terminal observability)")
 		}
 	}
@@ -2289,7 +2048,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 // observability/tracing system. This creates the root or high-level node in the event tree.
 func (a *Agent) startAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
-	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode, a.UseToolSearchMode)
+	agentStartEvent := events.NewAgentStartEvent(string(a.agentMode), a.modelID, string(a.provider), a.useCodeExecutionMode)
 	a.emitTypedEvent(ctx, agentStartEvent)
 }
 
@@ -2299,7 +2058,7 @@ func (a *Agent) startAgentSession(ctx context.Context) {
 // immediately before sending a request to the LLM provider.
 func (a *Agent) startLLMGeneration(ctx context.Context) {
 	// Emit LLM generation start event to create hierarchy
-	llmStartEvent := events.NewLLMGenerationStartEvent(0, a.ModelID, a.Temperature, len(a.filteredTools), 0)
+	llmStartEvent := events.NewLLMGenerationStartEvent(0, a.modelID, a.temperature, len(a.filteredTools), 0)
 	a.emitTypedEvent(ctx, llmStartEvent)
 }
 
@@ -2397,15 +2156,15 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 
 	// Calculate and accumulate pricing
 	// Get model metadata to calculate costs (fetch once and cache context window)
-	modelID := a.ModelID
+	modelID := a.modelID
 	if modelID == "" {
-		modelID = a.LLM.GetModelID()
+		modelID = a.llmModel.GetModelID()
 	}
 
 	// Calculate costs for this turn
 	var inputCost, outputCost, reasoningCost, cacheCost float64
-	if a.LLM != nil {
-		metadata, err := a.LLM.GetModelMetadata(modelID)
+	if a.llmModel != nil {
+		metadata, err := a.llmModel.GetModelMetadata(modelID)
 		if err == nil && metadata != nil {
 			// Cache context window if not already cached
 			if a.modelContextWindow == 0 {
@@ -2538,8 +2297,8 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
 	}
 	// Calculate fixed threshold percentage if enabled
-	if a.SummarizeOnFixedTokenThreshold && a.FixedTokenThreshold > 0 {
-		fixedThresholdPercent = (float64(currentUsage) / float64(a.FixedTokenThreshold)) * 100.0
+	if a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
+		fixedThresholdPercent = (float64(currentUsage) / float64(a.fixedTokenThreshold)) * 100.0
 	}
 	a.tokenTrackingMutex.RUnlock()
 
@@ -2556,7 +2315,7 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 	}
 	if fixedThresholdPercent > 0 {
 		llmEndEvent.Metadata["fixed_threshold_percent"] = fixedThresholdPercent
-		llmEndEvent.Metadata["fixed_threshold_tokens"] = a.FixedTokenThreshold
+		llmEndEvent.Metadata["fixed_threshold_tokens"] = a.fixedTokenThreshold
 	}
 
 	// Propagate provider-specific metadata from GenerationInfo.Additional
@@ -2587,8 +2346,8 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
 	}
 	// Calculate fixed threshold percentage if enabled
-	if a.SummarizeOnFixedTokenThreshold && a.FixedTokenThreshold > 0 {
-		fixedThresholdPercent = (float64(currentUsage) / float64(a.FixedTokenThreshold)) * 100.0
+	if a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
+		fixedThresholdPercent = (float64(currentUsage) / float64(a.fixedTokenThreshold)) * 100.0
 	}
 
 	// Create generation info map with cumulative cache information and pricing
@@ -2623,14 +2382,14 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	generationInfo["context_usage_percent"] = contextUsagePercent
 	if fixedThresholdPercent > 0 {
 		generationInfo["fixed_threshold_percent"] = fixedThresholdPercent
-		generationInfo["fixed_threshold_tokens"] = a.FixedTokenThreshold
+		generationInfo["fixed_threshold_tokens"] = a.fixedTokenThreshold
 	}
 
 	// Emit total token usage event
 	totalTokenEvent := events.NewTokenUsageEventWithCache(
 		0, // turn (this is a summary event, not tied to a specific turn)
 		"conversation_total",
-		a.ModelID,
+		a.modelID,
 		string(a.provider),
 		a.cumulativePromptTokens,
 		a.cumulativeCompletionTokens,
@@ -2653,7 +2412,7 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	totalTokenEvent.ContextUsagePercent = contextUsagePercent
 
 	// Set agent mode information
-	totalTokenEvent.SetAgentMode(string(a.AgentMode), a.UseCodeExecutionMode, a.UseToolSearchMode)
+	totalTokenEvent.SetAgentMode(string(a.agentMode), a.useCodeExecutionMode)
 
 	a.emitTypedEvent(ctx, totalTokenEvent)
 
@@ -2742,7 +2501,7 @@ func (a *Agent) getTokenUsageWithPricing() (
 
 // recordConversationTurn builds a convrecord.TurnRecord for one completed LLM
 // call and hands it to a.conversationSink, if one is configured via
-// WithConversationSink. A no-op (and no cost of computing anything) when no
+// withConversationSink. A no-op (and no cost of computing anything) when no
 // sink is set — call sites do not need to check first.
 //
 // messages is the caller's own history slice, already including this turn's
@@ -2757,7 +2516,7 @@ func (a *Agent) recordConversationTurn(turn int, duration time.Duration, message
 	}
 
 	var toolCalls []convrecord.ToolCallRecord
-	if sessionID := strings.TrimSpace(a.SessionID); sessionID != "" {
+	if sessionID := strings.TrimSpace(a.sessionID); sessionID != "" {
 		for _, call := range toolcalllog.Snapshot(sessionID) {
 			if call.Status != "done" || !call.CompletedAt.After(a.lastToolCallRecordedAt) {
 				continue
@@ -2778,11 +2537,11 @@ func (a *Agent) recordConversationTurn(turn int, duration time.Duration, message
 	}
 
 	rec := convrecord.TurnRecord{
-		SessionID:  a.SessionID,
+		SessionID:  a.sessionID,
 		Turn:       turn,
 		Timestamp:  time.Now(),
 		Provider:   string(a.provider),
-		ModelID:    a.ModelID,
+		ModelID:    a.modelID,
 		DurationMS: duration.Milliseconds(),
 		Messages:   messages,
 		ToolCalls:  toolCalls,
@@ -2795,8 +2554,8 @@ func (a *Agent) recordConversationTurn(turn int, duration time.Duration, message
 		},
 	}
 
-	if err := a.conversationSink.WriteTurn(rec); err != nil && a.Logger != nil {
-		a.Logger.Warn("convrecord: WriteTurn failed", loggerv2.Error(err))
+	if err := a.conversationSink.WriteTurn(rec); err != nil && a.logger != nil {
+		a.logger.Warn("convrecord: WriteTurn failed", loggerv2.Error(err))
 	}
 }
 
@@ -2817,7 +2576,7 @@ func (a *Agent) endAgentSession(ctx context.Context, conversationDuration time.D
 
 	// Emit agent end event with token usage information
 	agentEndEvent := events.NewAgentEndEventWithTokens(
-		string(a.AgentMode),
+		string(a.agentMode),
 		true,
 		"",
 		promptTokens,
@@ -2835,31 +2594,31 @@ func (a *Agent) endAgentSession(ctx context.Context, conversationDuration time.D
 	a.closeStreamingTracers()
 
 	// Cleanup agent-specific generated directory (only in code execution mode)
-	if a.UseCodeExecutionMode {
+	if a.useCodeExecutionMode {
 		a.cleanupAgentGeneratedDir()
 	}
 
 	// Cleanup tool output files
 	if a.toolOutputHandler != nil {
 		// Clean up old files if retention period is configured
-		if a.ToolOutputRetentionPeriod > 0 {
-			if err := a.toolOutputHandler.CleanupOldFiles(a.ToolOutputRetentionPeriod); err != nil {
-				if a.Logger != nil {
-					a.Logger.Warn("Failed to cleanup old tool output files", loggerv2.Error(err))
+		if a.toolOutputRetentionPeriod > 0 {
+			if err := a.toolOutputHandler.CleanupOldFiles(a.toolOutputRetentionPeriod); err != nil {
+				if a.logger != nil {
+					a.logger.Warn("Failed to cleanup old tool output files", loggerv2.Error(err))
 				}
-			} else if a.Logger != nil {
-				a.Logger.Info("Cleaned up old tool output files", loggerv2.Any("retention_period", a.ToolOutputRetentionPeriod))
+			} else if a.logger != nil {
+				a.logger.Info("Cleaned up old tool output files", loggerv2.Any("retention_period", a.toolOutputRetentionPeriod))
 			}
 		}
 
 		// Clean up current session folder if enabled
-		if a.CleanupToolOutputOnSessionEnd {
+		if a.cleanupToolOutputOnSessionEnd {
 			if err := a.toolOutputHandler.CleanupCurrentSessionFolder(); err != nil {
-				if a.Logger != nil {
-					a.Logger.Warn("Failed to cleanup current session tool output folder", loggerv2.Error(err))
+				if a.logger != nil {
+					a.logger.Warn("Failed to cleanup current session tool output folder", loggerv2.Error(err))
 				}
-			} else if a.Logger != nil {
-				a.Logger.Info("Cleaned up current session tool output folder")
+			} else if a.logger != nil {
+				a.logger.Info("Cleaned up current session tool output folder")
 			}
 		}
 	}
@@ -2877,11 +2636,11 @@ func (a *Agent) cleanupAgentGeneratedDir() {
 
 	// Remove the entire agent directory
 	if err := os.RemoveAll(agentDir); err != nil {
-		if a.Logger != nil {
-			a.Logger.Warn("⚠️ Failed to cleanup agent directory", loggerv2.Error(err), loggerv2.String("directory", agentDir))
+		if a.logger != nil {
+			a.logger.Warn("⚠️ Failed to cleanup agent directory", loggerv2.Error(err), loggerv2.String("directory", agentDir))
 		}
-	} else if a.Logger != nil {
-		a.Logger.Info("🧹 Cleaned up agent directory", loggerv2.String("directory", agentDir))
+	} else if a.logger != nil {
+		a.logger.Info("🧹 Cleaned up agent directory", loggerv2.String("directory", agentDir))
 	}
 }
 
@@ -2890,17 +2649,17 @@ func (a *Agent) cleanupAgentGeneratedDir() {
 // This ensures cleanup happens even if sessions don't end properly or agents run for long periods.
 func (a *Agent) startCleanupRoutine() {
 	// Only start if context offloading is enabled and retention period is set
-	if !a.EnableContextOffloading || a.toolOutputHandler == nil {
+	if !a.enableContextOffloading || a.toolOutputHandler == nil {
 		return
 	}
 
 	// If retention period is 0, automatic cleanup is disabled
-	if a.ToolOutputRetentionPeriod == 0 {
+	if a.toolOutputRetentionPeriod == 0 {
 		return
 	}
 
 	// Use default retention period if negative (safety check)
-	retentionPeriod := a.ToolOutputRetentionPeriod
+	retentionPeriod := a.toolOutputRetentionPeriod
 	if retentionPeriod < 0 {
 		retentionPeriod = DefaultToolOutputRetentionPeriod
 	}
@@ -2925,16 +2684,16 @@ func (a *Agent) startCleanupRoutine() {
 				// Perform periodic cleanup
 				if a.toolOutputHandler != nil && retentionPeriod > 0 {
 					if err := a.toolOutputHandler.CleanupOldFiles(retentionPeriod); err != nil {
-						if a.Logger != nil {
-							a.Logger.Warn("Periodic cleanup of old tool output files failed", loggerv2.Error(err))
+						if a.logger != nil {
+							a.logger.Warn("Periodic cleanup of old tool output files failed", loggerv2.Error(err))
 						}
-					} else if a.Logger != nil {
-						a.Logger.Debug("Periodic cleanup of old tool output files completed", loggerv2.Any("retention_period", retentionPeriod))
+					} else if a.logger != nil {
+						a.logger.Debug("Periodic cleanup of old tool output files completed", loggerv2.Any("retention_period", retentionPeriod))
 					}
 				}
 			case <-done:
-				if a.Logger != nil {
-					a.Logger.Debug("Tool output cleanup routine stopped")
+				if a.logger != nil {
+					a.logger.Debug("Tool output cleanup routine stopped")
 				}
 				return
 			}
@@ -2961,62 +2720,11 @@ func (a *Agent) stopCleanupRoutine() {
 }
 
 func (a *Agent) closeStreamingTracers() {
-	for _, tracer := range a.Tracers {
+	for _, tracer := range a.tracers {
 		if streamingTracer, ok := tracer.(*streamingTracerImpl); ok {
 			_ = streamingTracer.Close()
 		}
 	}
-}
-
-// NewAgentWithObservability creates a new Agent with simplified observability defaults.
-//
-// Unlike NewAgent, this constructor automatically ensures a tracer is configured
-// (using a noop tracer if none is provided). NewAgent already generates a TraceID
-// when one is not specified.
-//
-// Parameters:
-//   - ctx: Context for the agent.
-//   - llm: The LLM model.
-//   - configPath: Path to MCP config.
-//   - options: Configuration options.
-//
-// Returns:
-//   - *Agent: The initialized agent.
-//   - error: An error if initialization fails.
-func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
-	return NewAgent(ctx, llm, configPath, append(options, withDefaultObservability())...)
-}
-
-func withDefaultObservability() AgentOption {
-	return func(a *Agent) {
-		if len(a.Tracers) != 0 {
-			return
-		}
-		logger := a.Logger
-		if logger == nil {
-			logger = loggerv2.NewDefault()
-		}
-		baseTracer := observability.GetTracerWithLogger("noop", logger)
-		a.Tracers = []observability.Tracer{NewStreamingTracer(baseTracer, 100)}
-	}
-}
-
-// NewSimpleAgent creates a pre-configured Agent in "Simple" mode.
-//
-// This is a convenience constructor that applies the WithMode(SimpleAgent) option automatically.
-// Simple agents are optimized for direct tool usage without complex reasoning loops.
-//
-// Parameters:
-//   - ctx: Context for the agent.
-//   - llm: The LLM model.
-//   - configPath: Path to MCP config.
-//   - options: Additional configuration options.
-//
-// Returns:
-//   - *Agent: The initialized simple agent.
-//   - error: An error if initialization fails.
-func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, configPath string, options ...AgentOption) (*Agent, error) {
-	return NewAgent(ctx, llm, configPath, append(options, WithMode(SimpleAgent))...)
 }
 
 func (a *Agent) addEventListener(listener AgentEventListener) {
@@ -3031,25 +2739,12 @@ func (a *Agent) addEventListener(listener AgentEventListener) {
 	// Streaming tracers forward events to subscribers; direct listeners remain
 	// the integration point used by the builder and server event bridges.
 	if _, hasStreaming := a.streamingTracer(); hasStreaming {
-		a.Logger.Info("🔍 Streaming tracer enabled for event listener", loggerv2.String("listener", listener.Name()))
+		a.logger.Info("🔍 Streaming tracer enabled for event listener", loggerv2.String("listener", listener.Name()))
 
 		// The streaming tracer is already active and will forward events to all listeners
 		// No additional setup needed - events automatically flow through the streaming system
 	} else {
-		a.Logger.Warn("Streaming tracer not available, using traditional event listener system")
-	}
-}
-
-// RemoveEventListener removes an event listener from the agent
-func (a *Agent) removeEventListener(listener AgentEventListener) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	for i, l := range a.listeners {
-		if l == listener {
-			a.listeners = append(a.listeners[:i], a.listeners[i+1:]...)
-			break
-		}
+		a.logger.Warn("Streaming tracer not available, using traditional event listener system")
 	}
 }
 
@@ -3094,16 +2789,16 @@ func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) 
 	}); ok {
 		// Use SessionID for event storage (links events to chat sessions)
 		// Fall back to TraceID if SessionID is not set (legacy behavior)
-		sessionIDForEvents := a.SessionID
+		sessionIDForEvents := a.sessionID
 		if sessionIDForEvents == "" {
-			sessionIDForEvents = string(a.TraceID)
+			sessionIDForEvents = string(a.traceID)
 		}
 		baseEventData.SetHierarchyFields(a.currentParentEventID, a.currentHierarchyLevel, sessionIDForEvents, events.GetComponentFromEventType(eventData.GetEventType()))
 	}
 
 	// Create event with correlation ID for start/end event pairs
 	event := events.NewAgentEvent(eventData)
-	event.TraceID = string(a.TraceID)
+	event.TraceID = string(a.traceID)
 
 	// Generate a unique SpanID for this event
 	event.SpanID = fmt.Sprintf("span_%s_%d", string(eventData.GetEventType()), time.Now().UnixNano())
@@ -3161,7 +2856,7 @@ func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) 
 			}
 			entry := fmt.Sprintf("**Tool Call**: `%s` (server: %s, turn: %d)\n```json\n%s\n```\n", e.ToolName, e.ServerName, e.Turn, args)
 			a.toolCallLogMu.Lock()
-			a.ToolCallLog = append(a.ToolCallLog, entry)
+			a.toolCallLog = append(a.toolCallLog, entry)
 			a.toolCallLogMu.Unlock()
 		case *events.ToolCallEndEvent:
 			result := e.Result
@@ -3170,16 +2865,16 @@ func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) 
 			}
 			entry := fmt.Sprintf("**Tool Result**: `%s` (duration: %v)\n```\n%s\n```\n", e.ToolName, e.Duration, result)
 			a.toolCallLogMu.Lock()
-			a.ToolCallLog = append(a.ToolCallLog, entry)
+			a.toolCallLog = append(a.toolCallLog, entry)
 			a.toolCallLogMu.Unlock()
 		}
 	}
 
 	// Send to all tracers (multiple tracer support)
 	// The streaming tracer will automatically forward events to subscribers
-	for _, tracer := range a.Tracers {
+	for _, tracer := range a.tracers {
 		if err := tracer.EmitEvent(event); err != nil {
-			a.Logger.Warn("Failed to emit event to tracer", loggerv2.Error(err), loggerv2.String("tracer_type", fmt.Sprintf("%T", tracer)))
+			a.logger.Warn("Failed to emit event to tracer", loggerv2.Error(err), loggerv2.String("tracer_type", fmt.Sprintf("%T", tracer)))
 		}
 	}
 
@@ -3192,7 +2887,7 @@ func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) 
 
 	for _, listener := range listeners {
 		if err := listener.HandleEvent(ctx, event); err != nil {
-			a.Logger.Warn("Failed to emit event to listener", loggerv2.Error(err), loggerv2.String("listener_type", fmt.Sprintf("%T", listener)))
+			a.logger.Warn("Failed to emit event to listener", loggerv2.Error(err), loggerv2.String("listener_type", fmt.Sprintf("%T", listener)))
 		}
 	}
 }
@@ -3206,8 +2901,8 @@ func isStartOrEndEvent(eventType events.EventType) bool {
 
 // GetStreamingTracer returns the streaming tracer if available
 func (a *Agent) streamingTracer() (StreamingTracer, bool) {
-	if len(a.Tracers) > 0 {
-		if streamingTracer, ok := a.Tracers[0].(StreamingTracer); ok {
+	if len(a.tracers) > 0 {
+		if streamingTracer, ok := a.tracers[0].(StreamingTracer); ok {
 			return streamingTracer, true
 		}
 	}
@@ -3244,16 +2939,18 @@ func getClientNames(clients map[string]mcpclient.ClientInterface) []string {
 //
 // It iterates through all active MCP client connections and closes them.
 // This method should be called when the agent is no longer needed to prevent resource leaks.
-func (a *Agent) Close() {
+func (a *Agent) Close() error {
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
 	a.closeStreamingTracers()
 
 	// Connections are shared and managed by the session registry. Do not close
 	// them here; they persist until CloseSession(sessionID) is called.
-	a.Logger.Info("Agent closed (connections persist in session registry)",
-		loggerv2.String("session_id", a.SessionID),
-		loggerv2.Int("client_count", len(a.Clients)))
+	if a.logger != nil {
+		a.logger.Info("Agent closed (connections persist in session registry)",
+			loggerv2.String("session_id", a.sessionID),
+			loggerv2.Int("client_count", len(a.clients)))
+	}
 
 	// IsolatedSessionWorkspace cleanup: rm -rf the tmp dir we created in
 	// ensureIsolatedWorkspaceDir. Errors are silently ignored — the OS will
@@ -3268,10 +2965,10 @@ func (a *Agent) Close() {
 	// fresh. Those are reclaimed by CloseSession at true session end.
 	if a.isolatedWorkspacePath != "" && !a.isolatedWorkspaceStable {
 		_ = os.RemoveAll(a.isolatedWorkspacePath)
-		if a.Logger != nil {
-			a.Logger.Info("IsolatedSessionWorkspace: removed tmp dir " + a.isolatedWorkspacePath)
+		if a.logger != nil {
+			a.logger.Info("IsolatedSessionWorkspace: removed tmp dir " + a.isolatedWorkspacePath)
 		}
-	} else if wd := strings.TrimSpace(a.CodingAgentWorkingDir); wd != "" && llm.IsCodingAgentProvider(a.provider, a.ModelID) {
+	} else if wd := strings.TrimSpace(a.codingAgentWorkingDir); wd != "" && llm.IsCodingAgentProvider(a.provider, a.modelID) {
 		// Real (non-isolated) workdir: the whole-tree rm -rf above never runs, so
 		// skills + the managed system prompt this session projected would otherwise
 		// linger in the operator's repo after close (Claude/Codex/Pi don't wipe
@@ -3280,6 +2977,7 @@ func (a *Agent) Close() {
 		// content intact.
 		cleanupProjectedArtifactsOnClose(wd, a.provider, a.attachedSkills)
 	}
+	return nil
 }
 
 // Ask processes a single question from the user and returns the agent's response.
@@ -3303,7 +3001,7 @@ func (a *Agent) ask(ctx context.Context, question string) (string, error) {
 	}
 
 	// Call AskWithHistory with the single message
-	answer, _, err := AskWithHistory(a, ctx, []llmtypes.MessageContent{userMessage})
+	answer, _, err := askWithHistory(a, ctx, []llmtypes.MessageContent{userMessage})
 	return answer, err
 }
 
@@ -3322,326 +3020,12 @@ func (a *Agent) ask(ctx context.Context, question string) (string, error) {
 //   - []llmtypes.MessageContent: The updated conversation history (including the new response).
 //   - error: An error if the interaction fails.
 func (a *Agent) askWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	return AskWithHistory(a, ctx, messages)
-}
-
-// AskStructured processes a single question and strictly forces the output to match a structured schema.
-//
-// It performs a standard agent interaction and then uses a reliable conversion process
-// to map the agent's textual response into the specified Go struct type T.
-//
-// Parameters:
-//   - a: The Agent instance.
-//   - ctx: Context for the request.
-//   - question: The user's input question.
-//   - schema: An instance of generic type T (used for type inference).
-//   - schemaString: A JSON schema string describing T, used to guide the LLM.
-//
-// Returns:
-//   - T: The result parsed into type T.
-//   - error: An error if processing or conversion fails.
-func AskStructured[T any](a *Agent, ctx context.Context, question string, schema T, schemaString string) (T, error) {
-	// Create a single user message for the question
-	userMessage := llmtypes.MessageContent{
-		Role:  llmtypes.ChatMessageTypeHuman,
-		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: question}},
-	}
-
-	// Call AskWithHistoryStructured with the single message
-	answer, _, err := AskWithHistoryStructured(a, ctx, []llmtypes.MessageContent{userMessage}, schema, schemaString)
-	return answer, err
-}
-
-// AskWithHistoryStructured runs a multi-turn interaction and converts the final result to structured output.
-//
-// It extends AskWithHistory by applying a structured output conversion step to the final response.
-//
-// Parameters:
-//   - a: The Agent instance.
-//   - ctx: Context for the request.
-//   - messages: The conversation history.
-//   - schema: An instance of generic type T.
-//   - schemaString: A JSON schema string describing T.
-//
-// Returns:
-//   - T: The result parsed into type T.
-//   - []llmtypes.MessageContent: The updated conversation history.
-//   - error: An error if processing or conversion fails.
-func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error) {
-	// 🔧 CLI INTEGRATION: Use prompt-injection + local JSON extraction for CLI providers
-	if isCLIProvider(a.provider) {
-		return askWithHistoryStructuredCLI[T](a, ctx, messages, schema, schemaString)
-	}
-
-	// First, get the text response using the existing method
-	textResponse, updatedMessages, err := a.askWithHistory(ctx, messages)
-	if err != nil {
-		var zero T
-		return zero, updatedMessages, fmt.Errorf("failed to get text response: %w", err)
-	}
-
-	// Convert the text response to structured output
-	structuredResult, err := ConvertToStructuredOutput(a, ctx, textResponse, schema, schemaString)
-	if err != nil {
-		var zero T
-		return zero, updatedMessages, fmt.Errorf("failed to convert to structured output: %w", err)
-	}
-
-	return structuredResult, updatedMessages, nil
-}
-
-// AskWithHistoryStructuredViaTool runs an interaction where the structured output is delivered via a specific tool call.
-//
-// Instead of parsing the final text response, this method registers a temporary tool with the given schema.
-// It instructs the LLM to call this tool to provide the answer. This often yields higher reliability
-// for complex structured data than text parsing.
-//
-// Parameters:
-//   - a: The Agent instance.
-//   - ctx: Context for the request.
-//   - messages: Conversation history.
-//   - toolName: Name for the temporary tool (e.g., "submit_report").
-//   - toolDescription: Description for the tool (e.g., "Submit the final report").
-//   - schema: JSON schema string defining the expected data structure.
-//
-// Returns:
-//   - StructuredOutputResult[T]: Result containing the structured data or fallback text.
-//   - error: An error if the process fails.
-func AskWithHistoryStructuredViaTool[T any](
-	a *Agent,
-	ctx context.Context,
-	messages []llmtypes.MessageContent,
-	toolName string,
-	toolDescription string,
-	schema string,
-) (StructuredOutputResult[T], error) {
-	// 🔧 CLI INTEGRATION: Use prompt-injection + local JSON extraction for CLI providers
-	if isCLIProvider(a.provider) {
-		return askWithHistoryStructuredViaToolCLI[T](a, ctx, messages, toolName, toolDescription, schema)
-	}
-
-	outputTool, err := NewStructuredOutputTool(toolName, toolDescription, schema)
-	if err != nil {
-		var zero StructuredOutputResult[T]
-		return zero, err
-	}
-
-	// Create a cancellable context to break conversation as soon as tool is called
-	toolCalledCtx, cancelToolCalled := context.WithCancel(ctx)
-	defer cancelToolCalled()
-
-	// Channel to signal that tool was called (thread-safe)
-	toolCalledChan := make(chan bool, 1)
-
-	toolCalledCtx = context.WithValue(toolCalledCtx, structuredOutputSignalContextKey{}, structuredOutputSignal{
-		toolName: toolName,
-		called:   toolCalledChan,
-		cancel:   cancelToolCalled,
-	})
-
-	// Immutable definitions must declare the completion tool during assembly.
-	// Keep dynamic registration only for legacy NewAgent callers that do not yet
-	// have an AgentDefinition.
-	if a.getCustomToolExecutor(toolName) == nil {
-		if a.definition != nil {
-			var zero StructuredOutputResult[T]
-			return zero, fmt.Errorf("structured output tool %q is not present in the immutable agent definition", toolName)
-		}
-		if err := a.registerCustomTool(
-			outputTool.Name,
-			outputTool.Description,
-			outputTool.InputSchema,
-			outputTool.Execute,
-			outputTool.DisplayGroup,
-		); err != nil {
-			var zero StructuredOutputResult[T]
-			return zero, fmt.Errorf("failed to register legacy structured output tool: %w", err)
-		}
-	}
-
-	// Call existing AskWithHistory - will break as soon as tool is called
-	textResponse, updatedMessages, err := a.askWithHistory(toolCalledCtx, messages)
-
-	// Check if tool was called (non-blocking check)
-	toolCalled := false
-	select {
-	case <-toolCalledChan:
-		toolCalled = true
-	default:
-	}
-
-	// If tool was called, context cancellation is expected - we still need to extract structured output
-	if toolCalled {
-		// Scan messages for structured tool call (even if AskWithHistory returned error due to cancellation)
-		structuredResult, found, extractErr := extractStructuredToolCall[T](updatedMessages, toolName)
-		if extractErr != nil {
-			var zero StructuredOutputResult[T]
-			return zero, fmt.Errorf("tool was called but structured output extraction failed: %w", extractErr)
-		}
-
-		if found {
-			// Structured tool was called - return structured result immediately
-			return StructuredOutputResult[T]{
-				HasStructuredOutput: true,
-				StructuredResult:    structuredResult,
-				TextResponse:        "",
-				Messages:            updatedMessages,
-			}, nil
-		}
-
-		// Tool was called but not found in messages - error
-		var zero StructuredOutputResult[T]
-		return zero, fmt.Errorf("tool was called but not found in messages")
-	}
-
-	// Tool was not called according to flag - but check messages anyway
-	// (context cancellation might have happened even if tool was called)
-	// Scan messages for structured tool call (in case it was called but flag wasn't set)
-	structuredResult, found, extractErr := extractStructuredToolCall[T](updatedMessages, toolName)
-	if extractErr != nil {
-		var zero StructuredOutputResult[T]
-		return zero, fmt.Errorf("failed to extract structured tool call: %w", extractErr)
-	}
-
-	if found {
-		// Structured tool was called - return structured result (even if there was an error)
-		return StructuredOutputResult[T]{
-			HasStructuredOutput: true,
-			StructuredResult:    structuredResult,
-			TextResponse:        "",
-			Messages:            updatedMessages,
-		}, nil
-	}
-
-	// Tool was not found in messages - check if there was an error
-	if err != nil {
-		var zero StructuredOutputResult[T]
-		return zero, fmt.Errorf("failed to get response from conversation: %w", err)
-	}
-
-	// Structured tool was not called - return text response (conversational input)
-	return StructuredOutputResult[T]{
-		HasStructuredOutput: false,
-		StructuredResult:    structuredResult, // zero value
-		TextResponse:        textResponse,
-		Messages:            updatedMessages,
-	}, nil
-}
-
-type structuredOutputSignalContextKey struct{}
-
-type structuredOutputSignal struct {
-	toolName string
-	called   chan<- bool
-	cancel   context.CancelFunc
-}
-
-// NewStructuredOutputTool builds the immutable completion contract used by
-// AskWithHistoryStructuredViaTool. Factories add this definition before the
-// Agent is constructed instead of mutating its registry during a turn.
-func NewStructuredOutputTool(name, description, schema string) (ToolDefinition, error) {
-	params, err := parseSchemaForToolParameters(schema)
-	if err != nil {
-		return ToolDefinition{}, fmt.Errorf("parse structured output tool %q schema: %w", name, err)
-	}
-	return ToolDefinition{
-		Name:         name,
-		Description:  description,
-		InputSchema:  params,
-		DisplayGroup: "structured_output",
-		Execute: func(ctx context.Context, _ map[string]interface{}) (string, error) {
-			signal, ok := ctx.Value(structuredOutputSignalContextKey{}).(structuredOutputSignal)
-			if ok && signal.toolName == name {
-				select {
-				case signal.called <- true:
-				default:
-				}
-				if signal.cancel != nil {
-					signal.cancel()
-				}
-			}
-			return "", nil
-		},
-	}, nil
-}
-
-// StructuredOutputResult represents the result of AskWithHistoryStructuredViaTool
-// It can contain either structured output (if tool was called) or text response (if tool was not called)
-type StructuredOutputResult[T any] struct {
-	HasStructuredOutput bool
-	StructuredResult    T
-	TextResponse        string
-	Messages            []llmtypes.MessageContent
-}
-
-// parseSchemaForToolParameters parses a JSON schema string and extracts properties for tool parameters
-func parseSchemaForToolParameters(schemaString string) (map[string]interface{}, error) {
-	var schema map[string]interface{}
-	if err := json.Unmarshal([]byte(schemaString), &schema); err != nil {
-		return nil, fmt.Errorf("failed to parse schema JSON: %w", err)
-	}
-
-	// Extract properties - this becomes the tool parameters
-	properties, ok := schema["properties"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("schema missing 'properties' field or it's not an object")
-	}
-
-	// Build tool parameter schema with type "object"
-	toolParams := map[string]interface{}{
-		"type":       "object",
-		"properties": properties,
-	}
-
-	// Add required fields if present
-	if required, ok := schema["required"].([]interface{}); ok {
-		toolParams["required"] = required
-	}
-
-	return toolParams, nil
-}
-
-// extractStructuredToolCall scans messages for tool calls matching the tool name and extracts structured data
-func extractStructuredToolCall[T any](messages []llmtypes.MessageContent, toolName string) (T, bool, error) {
-	var zero T
-
-	// Scan messages in reverse order to find the last (most recent) tool call
-	for i := len(messages) - 1; i >= 0; i-- {
-		msg := messages[i]
-
-		// Only check AI messages (they contain tool calls)
-		if msg.Role != llmtypes.ChatMessageTypeAI {
-			continue
-		}
-
-		// Check each part for tool calls
-		for _, part := range msg.Parts {
-			if toolCall, ok := part.(llmtypes.ToolCall); ok {
-				if toolCall.FunctionCall != nil && toolCall.FunctionCall.Name == toolName {
-					// Found matching tool call - extract arguments
-					argsJSON := toolCall.FunctionCall.Arguments
-					if argsJSON == "" {
-						return zero, false, fmt.Errorf("tool call '%s' has empty arguments", toolName)
-					}
-
-					// Parse JSON arguments into struct type T
-					var result T
-					if err := json.Unmarshal([]byte(argsJSON), &result); err != nil {
-						return zero, false, fmt.Errorf("failed to parse tool call arguments: %w", err)
-					}
-
-					return result, true, nil
-				}
-			}
-		}
-	}
-
-	return zero, false, nil
+	return askWithHistory(a, ctx, messages)
 }
 
 // GetServerNames returns the list of connected server names
 func (a *Agent) getServerNames() []string {
-	return getClientNames(a.Clients)
+	return getClientNames(a.clients)
 }
 
 // GetConfiguredServerName is retained for legacy chat runtime persistence.
@@ -3659,15 +3043,15 @@ func (a *Agent) getSelectedTools() []string {
 func (a *Agent) setInstructions(systemPrompt string) {
 	a.systemPrompt = systemPrompt
 
-	if a.Logger != nil {
-		a.Logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
+	if a.logger != nil {
+		a.logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
 	}
 	a.hasCustomSystemPrompt = true
 }
 
 // appendBridgeRoutingInstructions appends the bridge-tool-routing block for
 // the calling provider's default preamble, UNLESS the caller supplied its own
-// override via WithBridgeRoutingInstructions (an empty-string override
+// override via withBridgeRoutingInstructions (an empty-string override
 // suppresses the block entirely; a non-empty one replaces both the
 // provider-specific preamble AND the shared bridgeRoutingExplicitInstructions
 // text with the caller's own).
@@ -3698,8 +3082,8 @@ func (a *Agent) addInstructions(additionalPrompt string) {
 	// Avoid duplicating a block already provided by the base prompt or already
 	// recorded as a supplement.
 	if a.systemPrompt != "" && strings.Contains(a.systemPrompt, additionalPrompt) {
-		if a.Logger != nil {
-			a.Logger.Warn("⏭️ AddInstructions: skipped duplicate block already in base instructions",
+		if a.logger != nil {
+			a.logger.Warn("⏭️ AddInstructions: skipped duplicate block already in base instructions",
 				loggerv2.Int("length_chars", len(additionalPrompt)),
 				loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
 				loggerv2.Int("base_prompt_chars", len(a.systemPrompt)),
@@ -3710,8 +3094,8 @@ func (a *Agent) addInstructions(additionalPrompt string) {
 	}
 	for _, existing := range a.appendedSystemPrompts {
 		if existing == additionalPrompt {
-			if a.Logger != nil {
-				a.Logger.Debug("⏭️ AddInstructions: skipped duplicate supplementary block",
+			if a.logger != nil {
+				a.logger.Debug("⏭️ AddInstructions: skipped duplicate supplementary block",
 					loggerv2.Int("length_chars", len(additionalPrompt)),
 					loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)))
 			}
@@ -3723,8 +3107,8 @@ func (a *Agent) addInstructions(additionalPrompt string) {
 	a.appendedSystemPrompts = append(a.appendedSystemPrompts, additionalPrompt)
 	a.hasAppendedPrompts = true
 
-	if a.Logger != nil {
-		a.Logger.Debug("✅ Supplementary system prompt recorded",
+	if a.logger != nil {
+		a.logger.Debug("✅ Supplementary system prompt recorded",
 			loggerv2.Int("length_chars", len(additionalPrompt)),
 			loggerv2.Int("appended_count", len(a.appendedSystemPrompts)),
 			loggerv2.String("block_prefix", systemPromptPreview(additionalPrompt)))
@@ -3808,18 +3192,21 @@ func systemPromptPreview(s string) string {
 // Returns:
 //   - error: An error if registration fails (e.g., empty category).
 func (a *Agent) registerCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category string) error {
-	if a.customTools == nil {
-		a.customTools = make(map[string]CustomTool)
-	}
+	return a.registerDirectTool(name, description, parameters, executionFunc, 0, category)
+}
 
+func (a *Agent) registerDirectTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), timeout time.Duration, category string) error {
 	// Category is required at compile time, but still validate non-empty in case
 	// a caller passes an empty literal.
 	if category == "" {
 		err := fmt.Errorf("tool %s registered with empty category - category is REQUIRED for all tools", name)
-		if a.Logger != nil {
-			a.Logger.Error("❌ [DISCOVERY] Tool registered with empty category", err)
+		if a.logger != nil {
+			a.logger.Error("❌ [DISCOVERY] Tool registered with empty category", err)
 		}
 		return err
+	}
+	if name == readSkillToolName && !a.installingSkillReader {
+		return fmt.Errorf("tool name %q is reserved for attached skill access", readSkillToolName)
 	}
 	toolCategory := category
 
@@ -3831,11 +3218,11 @@ func (a *Agent) registerCustomTool(name string, description string, parameters m
 	if server, exists := a.toolToServer[name]; exists && server != "custom" {
 		return fmt.Errorf("tool name %q is already registered by MCP server %q", name, server)
 	}
-	if existing, exists := a.customTools[name]; exists && existing.Category != toolCategory {
+	if existing, exists := a.lookupDirectTool(name); exists && existing.DisplayGroup != toolCategory {
 		return fmt.Errorf(
 			"tool name %q is already registered in category %q and cannot be registered in category %q",
 			name,
-			existing.Category,
+			existing.DisplayGroup,
 			toolCategory,
 		)
 	}
@@ -3860,56 +3247,50 @@ func (a *Agent) registerCustomTool(name string, description string, parameters m
 		Source:       "direct",
 		DisplayGroup: toolCategory,
 		Executor:     executionFunc,
+		Timeout:      timeout,
 	}); err != nil {
 		return err
-	}
-
-	// Store both definition and execution function with category
-	a.customTools[name] = CustomTool{
-		Definition: tool,
-		Execution:  executionFunc,
-		Category:   toolCategory,
 	}
 
 	// 🔧 CRITICAL FIX: Add custom tools to toolToServer mapping with special "custom" marker
 	// This ensures they're recognized during tool lookup even when NoServers is used
 	if a.toolToServer == nil {
 		a.toolToServer = make(map[string]string)
-		if a.Logger != nil {
-			a.Logger.Debug("🔧 [TOOL_REGISTRATION] Initialized toolToServer map for custom tools")
+		if a.logger != nil {
+			a.logger.Debug("🔧 [TOOL_REGISTRATION] Initialized toolToServer map for custom tools")
 		}
 	}
 	a.toolToServer[name] = "custom"
 
 	// Ensure the tool filter recognises this category for get_api_spec lookups.
-	// Custom tools registered after NewAgent would otherwise be invisible to IsCategoryDirectory.
+	// Custom tools registered after newAgent would otherwise be invisible to IsCategoryDirectory.
 	if a.toolFilter != nil && toolCategory != "" {
 		a.toolFilter.AddCustomCategory(toolCategory)
 	}
 
-	if a.Logger != nil {
-		a.Logger.Debug(fmt.Sprintf("🔧 [TOOL_REGISTRATION] Added custom tool '%s' to toolToServer mapping (category: %s)", name, toolCategory))
+	if a.logger != nil {
+		a.logger.Debug(fmt.Sprintf("🔧 [TOOL_REGISTRATION] Added custom tool '%s' to toolToServer mapping (category: %s)", name, toolCategory))
 	}
 
 	// 🔁 Ensure tool registration is idempotent by name
-	// Some higher-level agents (e.g., structured-output orchestration/decision agents)
+	// Some higher-level orchestration or decision agents
 	// may call RegisterCustomTool with the same name multiple times over the lifetime
 	// of a shared Agent. The LLM provider requires unique function names per request,
 	// so we must avoid accumulating duplicate entries for the same tool name.
 	//
 	// Before appending, strip any existing tool with this name from Tools and filteredTools.
-	beforeCount := len(a.Tools)
-	if len(a.Tools) > 0 {
-		cleanTools := make([]llmtypes.Tool, 0, len(a.Tools))
-		for _, t := range a.Tools {
+	beforeCount := len(a.tools)
+	if len(a.tools) > 0 {
+		cleanTools := make([]llmtypes.Tool, 0, len(a.tools))
+		for _, t := range a.tools {
 			if t.Function == nil || t.Function.Name != name {
 				cleanTools = append(cleanTools, t)
 			}
 		}
-		a.Tools = cleanTools
+		a.tools = cleanTools
 	}
-	if len(a.Tools) != beforeCount && a.Logger != nil {
-		a.Logger.Debug(fmt.Sprintf("[BRIDGE_DEBUG] RegisterCustomTool(%s): cleanup removed %d duplicate(s)", name, beforeCount-len(a.Tools)))
+	if len(a.tools) != beforeCount && a.logger != nil {
+		a.logger.Debug(fmt.Sprintf("[BRIDGE_DEBUG] RegisterCustomTool(%s): cleanup removed %d duplicate(s)", name, beforeCount-len(a.tools)))
 	}
 
 	if len(a.filteredTools) > 0 {
@@ -3922,94 +3303,23 @@ func (a *Agent) registerCustomTool(name string, description string, parameters m
 		a.filteredTools = cleanFiltered
 	}
 
-	// Determine tool category flags for special handling
-	// Structured output and app control tools are always added regardless of mode.
-	// Keep human interaction and agent delegation as distinct categories; historically
-	// both were overloaded onto "human", which made registration bugs hard to spot.
-	isStructuredOutputTool := toolCategory == "structured_output"
-	isAlwaysAvailableAppTool := toolCategory == "human_tools" || toolCategory == "delegation_tools"
-
-	// 🔍 TOOL SEARCH MODE: Handle custom tools differently
-	// Custom tools should be added to allDeferredTools so they can be discovered via search_tools
-	// Pre-discovered tools or special categories should be immediately available
-	if a.UseToolSearchMode {
-		// Check tool filter first - if filtering is active and tool doesn't pass, skip adding to deferred
-		// Special app categories bypass filtering because they are system tools.
-		shouldIncludeInDeferred := isStructuredOutputTool || isAlwaysAvailableAppTool
-		if !shouldIncludeInDeferred && a.toolFilter != nil && !a.toolFilter.IsNoFilteringActive() {
-			// Apply tool filter - use category as package name for custom tools
-			shouldIncludeInDeferred = a.toolFilter.ShouldIncludeTool(toolCategory, name, true, false)
-			if !shouldIncludeInDeferred {
-				if a.Logger != nil {
-					a.Logger.Debug(fmt.Sprintf("🔍 [TOOL_SEARCH] Custom tool '%s' excluded by tool filter (category: %s)", name, toolCategory))
-				}
-				// Tool is filtered out - don't add to deferred tools
-				// But still register the execution function (in case filter changes or for other uses)
-			}
-		} else if !shouldIncludeInDeferred {
-			shouldIncludeInDeferred = true // No filtering active, include by default
-		}
-
-		// Only proceed with Tool Search registration if tool passes filter
-		if shouldIncludeInDeferred {
-			// Check if this tool is in the pre-discovered list
-			isPreDiscovered := false
-			for _, preDiscoveredName := range a.preDiscoveredTools {
-				if preDiscoveredName == name {
-					isPreDiscovered = true
-					break
-				}
-			}
-
-			// Special categories are always immediately available.
-			// Pre-discovered tools are also immediately available
-			if isStructuredOutputTool || isAlwaysAvailableAppTool || isPreDiscovered {
-				// Add to discoveredTools map so it's immediately available
-				if a.discoveredTools == nil {
-					a.discoveredTools = make(map[string]llmtypes.Tool)
-				}
-				a.discoveredTools[name] = tool
-
-				// Also add to allDeferredTools so it can still be found via search
-				a.allDeferredTools = append(a.allDeferredTools, tool)
-
-				// Refresh filteredTools with tool search mode tools (includes discovered tools)
-				a.filteredTools = a.getToolsForToolSearchMode()
-
-				if a.Logger != nil {
-					if isPreDiscovered {
-						a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Pre-discovered custom tool '%s' added to discovered tools (category: %s)", name, toolCategory))
-					} else {
-						a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Special category custom tool '%s' added to discovered tools (category: %s)", name, toolCategory))
-					}
-				}
-			} else {
-				// Regular custom tool in tool search mode: add to deferred tools only
-				// Agent must use search_tools + add_tool to discover it
-				a.allDeferredTools = append(a.allDeferredTools, tool)
-
-				if a.Logger != nil {
-					a.Logger.Info(fmt.Sprintf("🔍 [TOOL_SEARCH] Custom tool '%s' added to deferred tools for discovery (category: %s)", name, toolCategory))
-				}
-			}
-		}
-	} else if a.UseCodeExecutionMode {
+	if a.useCodeExecutionMode {
 		if a.toolFilter.IsSystemCategory(toolCategory) {
 			// System tools (execute_shell_command, workspace tools) stay as direct LLM calls
-			a.Tools = append(a.Tools, tool)
+			a.tools = append(a.tools, tool)
 			a.filteredTools = append(a.filteredTools, tool)
-			if a.Logger != nil {
-				a.Logger.Debug(fmt.Sprintf("🔧 [CODE_EXECUTION] System-category custom tool '%s' added as direct LLM call (category: %s)", name, toolCategory))
+			if a.logger != nil {
+				a.logger.Debug(fmt.Sprintf("🔧 [CODE_EXECUTION] System-category custom tool '%s' added as direct LLM call (category: %s)", name, toolCategory))
 			}
 		} else {
-			// Non-system custom tools go through HTTP API (already in a.customTools)
-			if a.Logger != nil {
-				a.Logger.Debug(fmt.Sprintf("🔧 [CODE_EXECUTION] Custom tool '%s' registered for HTTP API access only (category: %s)", name, toolCategory))
+			// Non-system direct tools go through HTTP API via the canonical registry.
+			if a.logger != nil {
+				a.logger.Debug(fmt.Sprintf("🔧 [CODE_EXECUTION] Custom tool '%s' registered for HTTP API access only (category: %s)", name, toolCategory))
 			}
 		}
 	} else {
 		// Normal mode: Add to the main Tools array so the LLM can see it
-		a.Tools = append(a.Tools, tool)
+		a.tools = append(a.tools, tool)
 
 		// Also add to filteredTools so the tool is available in the current conversation.
 		a.filteredTools = append(a.filteredTools, tool)
@@ -4018,20 +3328,17 @@ func (a *Agent) registerCustomTool(name string, description string, parameters m
 	// Tool schemas are cached independently of authorization, but a registration
 	// may add or replace a definition. Clear the small per-agent schema cache so
 	// the next authorized lookup regenerates from the canonical registration.
-	if a.UseCodeExecutionMode {
+	if a.useCodeExecutionMode {
 		a.openAPISpecCacheMu.Lock()
 		a.openAPISpecCache = make(map[string][]byte)
 		a.openAPISpecCacheMu.Unlock()
 	}
 
 	// Update registry with new custom tool
-	if a.Clients != nil {
-		customToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
-		for toolName, customTool := range a.customTools {
-			customToolExecutors[toolName] = customTool.Execution
-		}
-		if a.Logger != nil {
-			a.Logger.Debug("🔧 [CODE_EXECUTION] Updating registry with custom tools",
+	if a.clients != nil {
+		customToolExecutors := a.directToolExecutors()
+		if a.logger != nil {
+			a.logger.Debug("🔧 [CODE_EXECUTION] Updating registry with custom tools",
 				loggerv2.Int("count", len(customToolExecutors)),
 				loggerv2.String("including", name))
 			// Log all custom tool names for debugging
@@ -4039,28 +3346,28 @@ func (a *Agent) registerCustomTool(name string, description string, parameters m
 			for toolName := range customToolExecutors {
 				toolNames = append(toolNames, toolName)
 			}
-			a.Logger.Debug("🔧 [CODE_EXECUTION] Custom tools in registry", loggerv2.Any("tools", toolNames))
+			a.logger.Debug("🔧 [CODE_EXECUTION] Custom tools in registry", loggerv2.Any("tools", toolNames))
 		}
-		codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
+		codeexec.InitRegistry(a.clients, customToolExecutors, a.toolToServer, a.logger)
 		// Also register session-scoped tools
-		if a.SessionID != "" {
-			codeexec.InitRegistryForSession(a.SessionID, customToolExecutors, a.Logger)
+		if a.sessionID != "" {
+			codeexec.InitRegistryForSession(a.sessionID, customToolExecutors, a.logger)
 		}
-		if a.Logger != nil {
-			a.Logger.Debug("🔧 [CODE_EXECUTION] Registry updated successfully for tool", loggerv2.String("tool", name))
+		if a.logger != nil {
+			a.logger.Debug("🔧 [CODE_EXECUTION] Registry updated successfully for tool", loggerv2.String("tool", name))
 		}
 	} else {
-		if a.Logger != nil {
-			a.Logger.Warn("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil for tool", loggerv2.String("tool", name))
+		if a.logger != nil {
+			a.logger.Warn("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil for tool", loggerv2.String("tool", name))
 		}
 	}
 
 	// Debug logging
-	if a.Logger != nil {
-		a.Logger.Info("🔧 Registered custom tool", loggerv2.String("tool", name), loggerv2.String("category", toolCategory))
-		a.Logger.Info("🔧 Total custom tools registered", loggerv2.Int("count", len(a.customTools)))
-		a.Logger.Info("🔧 Total tools in agent", loggerv2.Int("count", len(a.Tools)))
-		a.Logger.Info("🔧 Total filtered tools", loggerv2.Int("count", len(a.filteredTools)))
+	if a.logger != nil {
+		a.logger.Info("🔧 Registered custom tool", loggerv2.String("tool", name), loggerv2.String("category", toolCategory))
+		a.logger.Info("🔧 Total custom tools registered", loggerv2.Int("count", len(a.directToolSnapshot())))
+		a.logger.Info("🔧 Total tools in agent", loggerv2.Int("count", len(a.tools)))
+		a.logger.Info("🔧 Total filtered tools", loggerv2.Int("count", len(a.filteredTools)))
 	}
 
 	return nil
@@ -4080,8 +3387,8 @@ func (a *Agent) registerCustomTool(name string, description string, parameters m
 //
 // GetCustomToolExecutor returns the current execution function for a custom tool, or nil if not found.
 func (a *Agent) getCustomToolExecutor(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
-	if ct, exists := a.customTools[name]; exists {
-		return ct.Execution
+	if tool, exists := a.lookupDirectTool(name); exists {
+		return tool.Executor
 	}
 	return nil
 }
@@ -4091,35 +3398,17 @@ func (a *Agent) getCustomToolExecutor(name string) func(ctx context.Context, arg
 // Returns:
 //   - error: An error if registration fails (e.g., missing category).
 func (a *Agent) registerCustomToolWithTimeout(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), timeout time.Duration, category string) error {
-	// First register the tool using the standard method
-	err := a.registerCustomTool(name, description, parameters, executionFunc, category)
+	err := a.registerDirectTool(name, description, parameters, executionFunc, timeout, category)
 	if err != nil {
 		return err
 	}
-
-	// Now update the timeout for this tool
-	if customTool, exists := a.customTools[name]; exists {
-		customTool.Timeout = timeout
-		a.customTools[name] = customTool
-		if registry, registryErr := a.canonicalRegistry(); registryErr == nil {
-			_ = registry.register(registeredTool{
-				Name:         name,
-				Definition:   customTool.Definition,
-				Kind:         toolImplementationDirect,
-				Source:       "direct",
-				DisplayGroup: customTool.Category,
-				Executor:     customTool.Execution,
-				Timeout:      timeout,
-			})
-		}
-		if a.Logger != nil {
-			if timeout == 0 {
-				a.Logger.Info("🔧 Custom tool registered with NO timeout (runs indefinitely)", loggerv2.String("tool", name))
-			} else if timeout == -1 {
-				a.Logger.Info("🔧 Custom tool registered with agent default timeout", loggerv2.String("tool", name))
-			} else {
-				a.Logger.Info("🔧 Custom tool registered with custom timeout", loggerv2.String("tool", name), loggerv2.String("timeout", timeout.String()))
-			}
+	if a.logger != nil {
+		if timeout == 0 {
+			a.logger.Info("🔧 Custom tool registered with NO timeout (runs indefinitely)", loggerv2.String("tool", name))
+		} else if timeout == -1 {
+			a.logger.Info("🔧 Custom tool registered with agent default timeout", loggerv2.String("tool", name))
+		} else {
+			a.logger.Info("🔧 Custom tool registered with custom timeout", loggerv2.String("tool", name), loggerv2.String("timeout", timeout.String()))
 		}
 	}
 
@@ -4129,9 +3418,9 @@ func (a *Agent) registerCustomToolWithTimeout(name string, description string, p
 // GetCustomToolCategories returns a list of all unique categories for registered custom tools
 func (a *Agent) getCustomToolCategories() []string {
 	categorySet := make(map[string]bool)
-	for _, tool := range a.customTools {
-		if tool.Category != "" {
-			categorySet[tool.Category] = true
+	for _, tool := range a.directToolSnapshot() {
+		if tool.DisplayGroup != "" {
+			categorySet[tool.DisplayGroup] = true
 		}
 	}
 
@@ -4146,12 +3435,12 @@ func (a *Agent) getCustomToolCategories() []string {
 // This prevents parent/child agents sharing the same SessionID from overwriting
 // each other's virtual tool handlers (e.g., get_api_spec bound to different agent instances).
 // Custom tools continue to use SessionID for sharing, but virtual tools need per-agent scoping
-// because they bind to agent-specific state (customTools, toolFilter).
+// because they bind to agent-specific state (toolRegistry, toolFilter).
 func (a *Agent) virtualToolScopeID() string {
-	if a.SessionID == "" {
+	if a.sessionID == "" {
 		return ""
 	}
-	return a.SessionID + ":vt:" + string(a.TraceID)
+	return a.sessionID + ":vt:" + string(a.traceID)
 }
 
 // SetToolAccess is the single public tool-policy operation. Non-empty names
@@ -4162,8 +3451,8 @@ func (a *Agent) setToolAccess(toolNames []string) {
 	if len(toolNames) == 0 {
 		a.toolAllowList = nil
 		// Also clear from code exec registry (for HTTP-based tool calls in code exec mode)
-		if a.SessionID != "" {
-			codeexec.SetSessionToolAllowList(a.SessionID, nil)
+		if a.sessionID != "" {
+			codeexec.SetSessionToolAllowList(a.sessionID, nil)
 		}
 		return
 	}
@@ -4172,11 +3461,11 @@ func (a *Agent) setToolAccess(toolNames []string) {
 		a.toolAllowList[name] = true
 	}
 	// Also set on code exec registry so HTTP-based tool calls are blocked too
-	if a.SessionID != "" {
-		codeexec.SetSessionToolAllowList(a.SessionID, a.toolAllowList)
+	if a.sessionID != "" {
+		codeexec.SetSessionToolAllowList(a.sessionID, a.toolAllowList)
 	}
-	if a.Logger != nil {
-		a.Logger.Info("🔒 [TOOL_ALLOW_LIST] Set",
+	if a.logger != nil {
+		a.logger.Info("🔒 [TOOL_ALLOW_LIST] Set",
 			loggerv2.Int("allowed_count", len(toolNames)),
 			loggerv2.Any("allowed_tools", toolNames))
 	}
@@ -4185,6 +3474,9 @@ func (a *Agent) setToolAccess(toolNames []string) {
 // isToolAllowed checks if a tool name passes the allow list filter.
 // Returns true if no allow list is set or if the tool is in the list.
 func (a *Agent) isToolAllowed(toolName string) bool {
+	if a.isIntrinsicIdentityTool(toolName) {
+		return true
+	}
 	a.toolAllowListMu.RLock()
 	defer a.toolAllowListMu.RUnlock()
 	if a.toolAllowList == nil {
@@ -4194,6 +3486,9 @@ func (a *Agent) isToolAllowed(toolName string) bool {
 }
 
 func (a *Agent) isToolAllowedForContext(ctx context.Context, toolName string) bool {
+	if a.isIntrinsicIdentityTool(toolName) {
+		return true
+	}
 	if policy, ok := toolPolicyFromContext(ctx); ok {
 		return policy.allows(toolName)
 	}
@@ -4216,19 +3511,19 @@ func (a *Agent) applyToolAllowList(tools []llmtypes.Tool) []llmtypes.Tool {
 			filtered = append(filtered, t)
 			continue
 		}
-		if a.toolAllowList[t.Function.Name] {
+		if a.toolAllowList[t.Function.Name] || a.isIntrinsicIdentityTool(t.Function.Name) {
 			filtered = append(filtered, t)
 		} else {
 			blocked = append(blocked, t.Function.Name)
 		}
 	}
-	if a.Logger != nil {
-		a.Logger.Info("🔒 [TOOL_ALLOW_LIST] Applied",
+	if a.logger != nil {
+		a.logger.Info("🔒 [TOOL_ALLOW_LIST] Applied",
 			loggerv2.Int("total", len(tools)),
 			loggerv2.Int("allowed", len(filtered)),
 			loggerv2.Int("blocked", len(blocked)))
 		if len(blocked) > 0 {
-			a.Logger.Debug("🔒 [TOOL_ALLOW_LIST] Blocked tools", loggerv2.Any("blocked", blocked))
+			a.logger.Debug("🔒 [TOOL_ALLOW_LIST] Blocked tools", loggerv2.Any("blocked", blocked))
 		}
 	}
 	return filtered
@@ -4247,8 +3542,8 @@ func (a *Agent) getGeneratedDir() string {
 
 	// Only create directory if code execution mode is enabled
 	// In simple agent mode, we don't need the generated directory
-	if a.UseCodeExecutionMode {
-		_ = mcpcache.EnsureGeneratedDir(path, a.Logger)
+	if a.useCodeExecutionMode {
+		_ = mcpcache.EnsureGeneratedDir(path, a.logger)
 	}
 
 	return path

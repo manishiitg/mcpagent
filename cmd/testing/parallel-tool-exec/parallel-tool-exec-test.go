@@ -173,11 +173,8 @@ func testParallelToolExecution(log loggerv2.Logger, modelFlag string) error {
 	defer cleanup()
 
 	// Get optional tracers
-	var tracerOptions []mcpagent.AgentOption
-
 	langfuseTracer, _ := testutils.GetTracerWithLogger("langfuse", log)
 	if langfuseTracer != nil && !testutils.IsNoopTracer(langfuseTracer) {
-		tracerOptions = append(tracerOptions, mcpagent.WithTracer(langfuseTracer))
 		log.Info("Langfuse tracer enabled")
 	}
 
@@ -219,17 +216,14 @@ func testParallelToolExecution(log loggerv2.Logger, modelFlag string) error {
 	log.Info("=== Run 1: Parallel tool execution ===")
 
 	parallelTraceID := testutils.GenerateTestTraceID()
-	parallelOptions := append([]mcpagent.AgentOption{
-		mcpagent.WithParallelToolExecution(true),
-	}, tracerOptions...)
-
-	parallelAgent, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, parallelTraceID, log, parallelOptions...)
+	parallelListener := newToolTimingListener()
+	parallelAgent, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, parallelTraceID, log, mcpagent.RuntimeConfig{
+		Tools:         mcpagent.ToolRuntimeConfig{ParallelExecution: true},
+		Observability: mcpagent.ObservabilityRuntimeConfig{Observers: []mcpagent.AgentEventListener{parallelListener}},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create parallel agent: %w", err)
 	}
-
-	parallelListener := newToolTimingListener()
-	mcpagent.ObserveAgent(parallelAgent, parallelListener)
 
 	// Ask a question that should trigger the LLM to call memory tools multiple times
 	// The prompt explicitly asks for multiple operations to encourage parallel tool calls
@@ -244,7 +238,7 @@ Confirm when all 3 are saved.`
 		loggerv2.String("question_preview", question[:80]+"..."))
 
 	parallelStart := time.Now()
-	parallelResponse, err := mcpagent.RunText(ctx, parallelAgent, question)
+	parallelResponse, err := testutils.RunText(ctx, parallelAgent, question)
 	parallelDuration := time.Since(parallelStart)
 
 	if err != nil {
@@ -270,22 +264,18 @@ Confirm when all 3 are saved.`
 	log.Info("=== Run 2: Sequential tool execution (baseline) ===")
 
 	sequentialTraceID := testutils.GenerateTestTraceID()
-	sequentialOptions := append([]mcpagent.AgentOption{
-		// EnableParallelToolExecution defaults to false
-	}, tracerOptions...)
-
-	sequentialAgent, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, sequentialTraceID, log, sequentialOptions...)
+	sequentialListener := newToolTimingListener()
+	sequentialAgent, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, sequentialTraceID, log, mcpagent.RuntimeConfig{
+		Observability: mcpagent.ObservabilityRuntimeConfig{Observers: []mcpagent.AgentEventListener{sequentialListener}},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create sequential agent: %w", err)
 	}
 
-	sequentialListener := newToolTimingListener()
-	mcpagent.ObserveAgent(sequentialAgent, sequentialListener)
-
 	log.Info("Running sequential agent...")
 
 	sequentialStart := time.Now()
-	sequentialResponse, err := mcpagent.RunText(ctx, sequentialAgent, question)
+	sequentialResponse, err := testutils.RunText(ctx, sequentialAgent, question)
 	sequentialDuration := time.Since(sequentialStart)
 
 	if err != nil {

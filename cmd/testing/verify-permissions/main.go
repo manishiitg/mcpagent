@@ -43,7 +43,7 @@ func main() {
 	fmt.Println("Response Received!")
 	if len(resp.Choices) > 0 {
 		fmt.Printf("Content: %s\n\n", resp.Choices[0].Content)
-		
+
 		if resp.Choices[0].GenerationInfo != nil {
 			if denials, ok := resp.Choices[0].GenerationInfo.Additional["permission_denials"]; ok {
 				fmt.Printf("DEFINITIVE PROOF: Bash tool was blocked!\n")

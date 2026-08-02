@@ -6,6 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/mcpagent/agent/convrecord"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -48,23 +53,105 @@ type MCPToolSource struct {
 }
 
 // RuntimeConfig contains infrastructure needed to operate an agent definition.
-//
-// LegacyOptions is a temporary migration bridge for existing runtime knobs. It
-// is applied before the definition, so options cannot override instructions or
-// MCP sources owned by the immutable definition. It will disappear as those
-// knobs move behind Session and internal runtime services.
+// Runtime concerns are grouped by purpose so construction has one explicit
+// value instead of an order-sensitive list of functional options.
 type RuntimeConfig struct {
-	Model                 llmtypes.Model
-	MCPConfigPath         string
-	ResumeHandle          *AgentSessionHandle
-	FolderGuardReadPaths  []string
-	FolderGuardWritePaths []string
-	LegacyOptions         []AgentOption
+	Model         llmtypes.Model
+	MCPConfigPath string
+	ResumeHandle  *AgentSessionHandle
+	Generation    GenerationRuntimeConfig
+	Tools         ToolRuntimeConfig
+	Context       ContextRuntimeConfig
+	Coding        CodingRuntimeConfig
+	MCP           MCPRuntimeConfig
+	Workspace     WorkspaceRuntimeConfig
+	Observability ObservabilityRuntimeConfig
+}
+
+type GenerationRuntimeConfig struct {
+	Provider    llm.Provider
+	LLM         AgentLLMConfiguration
+	Temperature float64
+	ToolChoice  string
+	MaxTurns    int
+	APIKeys     *AgentAPIKeys
+}
+
+type ToolRuntimeConfig struct {
+	SelectedTools     []string
+	SelectedServers   []string
+	CodeExecution     bool
+	ParallelExecution bool
+	Timeout           time.Duration
+	DisableCache      bool
+	DiscoverResources *bool
+	DiscoverPrompts   *bool
+	AdditionalBridge  []string
+}
+
+type ContextRuntimeConfig struct {
+	Offloading                    *bool
+	LargeOutputThreshold          int
+	ToolOutputRetentionPeriod     time.Duration
+	CleanupToolOutputOnSessionEnd bool
+	SummarizationEnabled          bool
+	SummarizeOnTokenThreshold     bool
+	TokenThresholdPercent         float64
+	SummarizeOnFixedThreshold     bool
+	FixedTokenThreshold           int
+	SummaryKeepLastMessages       int
+	SummarizationCooldownTurns    int
+	EditingEnabled                bool
+	EditingThreshold              int
+	EditingTurnThreshold          int
+}
+
+type CodingRuntimeConfig struct {
+	Transport                         llm.CodingAgentTransport
+	ClaudeCodeTransport               string
+	PersistentClaudeCode              bool
+	PersistentCodex                   bool
+	PersistentCursor                  bool
+	PersistentPi                      bool
+	CursorBridgeTools                 bool
+	CodexSandbox                      string
+	CodexNetworkAccess                bool
+	CLISecurityPolicy                 *llmtypes.CLISecurityPolicy
+	BridgeRoutingInstructionsOverride *string
+}
+
+type MCPRuntimeConfig struct {
+	SessionID        string
+	UserID           string
+	RuntimeOverrides mcpclient.RuntimeOverrides
+	APIBaseURL       string
+	APIToken         string
+}
+
+type WorkspaceRuntimeConfig struct {
+	CodingAgentWorkingDir string
+	IsolatedSession       bool
+	ReadPaths             []string
+	WritePaths            []string
+}
+
+type ObservabilityRuntimeConfig struct {
+	Logger                    loggerv2.Logger
+	Tracers                   []observability.Tracer
+	TraceID                   observability.TraceID
+	PromptLogLabel            string
+	ConversationSink          convrecord.Sink
+	Streaming                 bool
+	GenerationStreamingEvents *bool
+	StreamingCallback         func(llmtypes.StreamChunk)
+	Observers                 []AgentEventListener
 }
 
 // NewAgentFromDefinition constructs an Agent from a validated, cloned identity.
-// The returned concrete type still exposes the legacy surface while downstream
-// callers migrate; identity assembly itself is atomic on this path.
+// It is the only public constructor. Identity assembly is atomic: the
+// definition is cloned and validated before any runtime state exists, so a
+// returned Agent is always fully formed. The returned type exposes exactly four
+// methods and no fields, so callers cannot mutate identity after construction.
 func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, runtime RuntimeConfig) (*Agent, error) {
 	if runtime.Model == nil {
 		return nil, fmt.Errorf("runtime model cannot be nil")
@@ -75,34 +162,36 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 		return nil, err
 	}
 
-	options := append([]AgentOption(nil), runtime.LegacyOptions...)
-	options = append(options, WithSystemPrompt(definition.Instructions))
+	options := runtimeAgentOptions(runtime)
+	options = append(options, withSystemPrompt(definition.Instructions))
 	if len(definition.Tools.MCP) > 0 {
 		names := make([]string, 0, len(definition.Tools.MCP))
 		for _, source := range definition.Tools.MCP {
 			names = append(names, source.Name)
 		}
-		options = append(options, WithServerName(strings.Join(names, ",")))
+		options = append(options, withServerName(strings.Join(names, ",")))
 	}
 
-	agent, err := NewAgent(ctx, runtime.Model, runtime.MCPConfigPath, options...)
+	agent, err := newAgent(ctx, runtime.Model, runtime.MCPConfigPath, options...)
 	if err != nil {
 		return nil, err
 	}
 	fail := func(cause error) (*Agent, error) {
-		agent.Close()
+		_ = agent.Close()
 		return nil, cause
 	}
 	if runtime.ResumeHandle != nil && !runtime.ResumeHandle.Empty() {
 		agent.applyAgentSessionHandle(runtime.ResumeHandle)
 	}
 	agent.setFolderGuardPaths(
-		append([]string(nil), runtime.FolderGuardReadPaths...),
-		append([]string(nil), runtime.FolderGuardWritePaths...),
+		append([]string(nil), runtime.Workspace.ReadPaths...),
+		append([]string(nil), runtime.Workspace.WritePaths...),
 	)
 
 	for _, skill := range definition.Skills {
-		agent.attachSkill(skill)
+		if err := agent.attachSkill(skill); err != nil {
+			return fail(fmt.Errorf("attach skill %q: %w", skill.Name, err))
+		}
 	}
 	for _, tool := range definition.Tools.Direct {
 		group := strings.TrimSpace(tool.DisplayGroup)
@@ -120,9 +209,191 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 			return fail(fmt.Errorf("register direct tool %q: %w", tool.Name, err))
 		}
 	}
+	for _, observer := range runtime.Observability.Observers {
+		if observer == nil {
+			return fail(fmt.Errorf("runtime observer cannot be nil"))
+		}
+		agent.addEventListener(observer)
+	}
 	agent.definition = &definition
 
 	return agent, nil
+}
+
+func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
+	options := make([]agentOption, 0, 32)
+	generation := runtime.Generation
+	if generation.Provider != "" {
+		options = append(options, withProvider(generation.Provider))
+	}
+	if generation.LLM.Primary.Provider != "" || generation.LLM.Primary.ModelID != "" || len(generation.LLM.Fallbacks) > 0 {
+		options = append(options, withLLMConfig(generation.LLM))
+	}
+	if generation.Temperature != 0 {
+		options = append(options, withTemperature(generation.Temperature))
+	}
+	if generation.ToolChoice != "" {
+		options = append(options, withToolChoice(generation.ToolChoice))
+	}
+	if generation.MaxTurns != 0 {
+		options = append(options, withMaxTurns(generation.MaxTurns))
+	}
+	if generation.APIKeys != nil {
+		options = append(options, withAPIKeys(generation.APIKeys))
+	}
+
+	tools := runtime.Tools
+	if len(tools.SelectedTools) > 0 {
+		options = append(options, withSelectedTools(tools.SelectedTools))
+	}
+	if len(tools.SelectedServers) > 0 {
+		options = append(options, withSelectedServers(tools.SelectedServers))
+	}
+	if tools.CodeExecution {
+		options = append(options, withCodeExecutionMode(true))
+	}
+	if tools.ParallelExecution {
+		options = append(options, withParallelToolExecution(true))
+	}
+	if tools.Timeout != 0 {
+		options = append(options, withToolTimeout(tools.Timeout))
+	}
+	if tools.DisableCache {
+		options = append(options, withDisableCache(true))
+	}
+	if tools.DiscoverResources != nil {
+		options = append(options, withDiscoverResource(*tools.DiscoverResources))
+	}
+	if tools.DiscoverPrompts != nil {
+		options = append(options, withDiscoverPrompt(*tools.DiscoverPrompts))
+	}
+	if len(tools.AdditionalBridge) > 0 {
+		options = append(options, withAdditionalBridgeTools(tools.AdditionalBridge...))
+	}
+
+	contextConfig := runtime.Context
+	if contextConfig.Offloading != nil {
+		options = append(options, withContextOffloading(*contextConfig.Offloading))
+	}
+	if contextConfig.LargeOutputThreshold > 0 {
+		options = append(options, withLargeOutputThreshold(contextConfig.LargeOutputThreshold))
+	}
+	if contextConfig.ToolOutputRetentionPeriod != 0 {
+		options = append(options, withToolOutputRetentionPeriod(contextConfig.ToolOutputRetentionPeriod))
+	}
+	if contextConfig.CleanupToolOutputOnSessionEnd {
+		options = append(options, withCleanupToolOutputOnSessionEnd(true))
+	}
+	if contextConfig.SummarizationEnabled {
+		options = append(options, withContextSummarization(true))
+	}
+	if contextConfig.SummarizeOnTokenThreshold {
+		options = append(options, withSummarizeOnTokenThreshold(true, contextConfig.TokenThresholdPercent))
+	}
+	if contextConfig.SummarizeOnFixedThreshold {
+		options = append(options, withSummarizeOnFixedTokenThreshold(true, contextConfig.FixedTokenThreshold))
+	}
+	if contextConfig.SummaryKeepLastMessages > 0 {
+		options = append(options, withSummaryKeepLastMessages(contextConfig.SummaryKeepLastMessages))
+	}
+	if contextConfig.SummarizationCooldownTurns > 0 {
+		options = append(options, withSummarizationCooldown(contextConfig.SummarizationCooldownTurns))
+	}
+	if contextConfig.EditingEnabled {
+		options = append(options, withContextEditing(true))
+	}
+	if contextConfig.EditingThreshold > 0 {
+		options = append(options, withContextEditingThreshold(contextConfig.EditingThreshold))
+	}
+	if contextConfig.EditingTurnThreshold > 0 {
+		options = append(options, withContextEditingTurnThreshold(contextConfig.EditingTurnThreshold))
+	}
+
+	coding := runtime.Coding
+	if coding.Transport != "" {
+		options = append(options, withCodingAgentTransport(coding.Transport))
+	}
+	if coding.ClaudeCodeTransport != "" {
+		options = append(options, withClaudeCodeTransport(coding.ClaudeCodeTransport))
+	}
+	if coding.PersistentClaudeCode {
+		options = append(options, withClaudeCodePersistentInteractiveSession(true))
+	}
+	if coding.PersistentCodex {
+		options = append(options, withCodexPersistentInteractiveSession(true))
+	}
+	if coding.PersistentCursor {
+		options = append(options, withCursorPersistentInteractiveSession(true))
+	}
+	if coding.PersistentPi {
+		options = append(options, withPiPersistentInteractiveSession(true))
+	}
+	if coding.CursorBridgeTools {
+		options = append(options, withCursorBridgeToolsMode(true))
+	}
+	if coding.CodexSandbox != "" {
+		options = append(options, withCodexSandbox(coding.CodexSandbox))
+	}
+	if coding.CodexNetworkAccess {
+		options = append(options, withCodexNetworkAccess(true))
+	}
+	if coding.CLISecurityPolicy != nil {
+		options = append(options, withCLISecurityPolicy(*coding.CLISecurityPolicy))
+	}
+	if coding.BridgeRoutingInstructionsOverride != nil {
+		options = append(options, withBridgeRoutingInstructions(*coding.BridgeRoutingInstructionsOverride))
+	}
+
+	mcpConfig := runtime.MCP
+	if mcpConfig.SessionID != "" {
+		options = append(options, withSessionID(mcpConfig.SessionID))
+	}
+	if mcpConfig.UserID != "" {
+		options = append(options, withUserID(mcpConfig.UserID))
+	}
+	if len(mcpConfig.RuntimeOverrides) > 0 {
+		options = append(options, withRuntimeOverrides(mcpConfig.RuntimeOverrides))
+	}
+	if mcpConfig.APIBaseURL != "" || mcpConfig.APIToken != "" {
+		options = append(options, withAPIConfig(mcpConfig.APIBaseURL, mcpConfig.APIToken))
+	}
+
+	workspace := runtime.Workspace
+	if workspace.CodingAgentWorkingDir != "" {
+		options = append(options, withCodingAgentWorkingDir(workspace.CodingAgentWorkingDir))
+	}
+	if workspace.IsolatedSession {
+		options = append(options, withIsolatedSessionWorkspace(true))
+	}
+
+	obs := runtime.Observability
+	if obs.Logger != nil {
+		options = append(options, withLogger(obs.Logger))
+	}
+	for _, tracer := range obs.Tracers {
+		if tracer != nil {
+			options = append(options, withTracer(tracer))
+		}
+	}
+	if obs.TraceID != "" {
+		options = append(options, withTraceID(obs.TraceID))
+	}
+	if obs.PromptLogLabel != "" {
+		options = append(options, withPromptLogLabel(obs.PromptLogLabel))
+	}
+	if obs.ConversationSink != nil {
+		options = append(options, withConversationSink(obs.ConversationSink))
+	}
+	if obs.Streaming {
+		options = append(options, withStreaming(true))
+	}
+	if obs.GenerationStreamingEvents != nil {
+		options = append(options, withGenerationStreamingEvents(*obs.GenerationStreamingEvents))
+	}
+	if obs.StreamingCallback != nil {
+		options = append(options, withStreamingCallback(obs.StreamingCallback))
+	}
+	return options
 }
 
 func cloneAndValidateAgentDefinition(input AgentDefinition) (AgentDefinition, error) {
@@ -174,6 +445,9 @@ func cloneAndValidateAgentDefinition(input AgentDefinition) (AgentDefinition, er
 		}
 		if tool.Execute == nil {
 			return AgentDefinition{}, fmt.Errorf("direct tool %q has no executor", name)
+		}
+		if name == readSkillToolName {
+			return AgentDefinition{}, fmt.Errorf("direct tool name %q is reserved for attached skill access", name)
 		}
 		if _, exists := seenTools[name]; exists {
 			return AgentDefinition{}, fmt.Errorf("duplicate direct tool name %q", name)

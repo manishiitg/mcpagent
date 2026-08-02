@@ -200,7 +200,6 @@ type AgentStartEvent struct {
 	ModelID              string `json:"model_id"`
 	Provider             string `json:"provider"`
 	UseCodeExecutionMode bool   `json:"use_code_execution_mode,omitempty"`
-	UseToolSearchMode    bool   `json:"use_tool_search_mode,omitempty"`
 }
 
 func (e *AgentStartEvent) GetEventType() EventType {
@@ -598,7 +597,6 @@ type TokenUsageEvent struct {
 	// Agent mode information
 	AgentMode            string `json:"agent_mode,omitempty"`
 	UseCodeExecutionMode bool   `json:"use_code_execution_mode,omitempty"`
-	UseToolSearchMode    bool   `json:"use_tool_search_mode,omitempty"`
 	// OpenRouter cache information
 	CacheDiscount   float64 `json:"cache_discount,omitempty"`
 	ReasoningTokens int     `json:"reasoning_tokens,omitempty"`
@@ -735,7 +733,7 @@ func NewAgentEvent(eventData EventData) *AgentEvent {
 }
 
 // NewAgentStartEvent creates a new AgentStartEvent
-func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMode, useToolSearchMode bool) *AgentStartEvent {
+func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMode bool) *AgentStartEvent {
 	return &AgentStartEvent{
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
@@ -744,7 +742,6 @@ func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMod
 		ModelID:              modelID,
 		Provider:             provider,
 		UseCodeExecutionMode: useCodeExecutionMode,
-		UseToolSearchMode:    useToolSearchMode,
 	}
 }
 
@@ -1086,10 +1083,9 @@ func NewTokenUsageEventWithCache(turn int, operation, modelID, provider string, 
 }
 
 // SetAgentMode sets the agent mode information on a TokenUsageEvent
-func (e *TokenUsageEvent) SetAgentMode(agentMode string, useCodeExecutionMode, useToolSearchMode bool) {
+func (e *TokenUsageEvent) SetAgentMode(agentMode string, useCodeExecutionMode bool) {
 	e.AgentMode = agentMode
 	e.UseCodeExecutionMode = useCodeExecutionMode
-	e.UseToolSearchMode = useToolSearchMode
 }
 
 // NewErrorDetailEvent creates a new ErrorDetailEvent
@@ -1886,43 +1882,6 @@ func NewUnifiedCompletionEventWithError(agentType, agentMode, question, errorMsg
 // Note: Orchestrator events have been moved to mcp-agent-builder-go/agent_go/pkg/orchestrator/events/
 // This keeps the mcpagent library independent of application-specific orchestrator functionality.
 
-// StructuredOutputStartEvent represents the start of structured output extraction
-type StructuredOutputStartEvent struct {
-	BaseEventData
-	SchemaName string `json:"schema_name,omitempty"` // Name of the schema being used
-	TargetType string `json:"target_type,omitempty"` // Target Go type name
-}
-
-func (e *StructuredOutputStartEvent) GetEventType() EventType {
-	return StructuredOutputStart
-}
-
-// StructuredOutputEndEvent represents the end of structured output extraction
-type StructuredOutputEndEvent struct {
-	BaseEventData
-	Success      bool   `json:"success"`
-	SchemaName   string `json:"schema_name,omitempty"`
-	TargetType   string `json:"target_type,omitempty"`
-	ParsedOutput string `json:"parsed_output,omitempty"` // JSON string of parsed output
-}
-
-func (e *StructuredOutputEndEvent) GetEventType() EventType {
-	return StructuredOutputEnd
-}
-
-// StructuredOutputErrorEvent represents an error during structured output extraction
-type StructuredOutputErrorEvent struct {
-	BaseEventData
-	Error      string `json:"error"`
-	SchemaName string `json:"schema_name,omitempty"`
-	TargetType string `json:"target_type,omitempty"`
-	RawOutput  string `json:"raw_output,omitempty"` // The raw output that failed to parse
-}
-
-func (e *StructuredOutputErrorEvent) GetEventType() EventType {
-	return StructuredOutputError
-}
-
 // =============================================================================
 // STREAMING EVENTS
 // =============================================================================
@@ -2295,7 +2254,7 @@ type LLMTokenUsageEvent struct {
 	CachedTokens int     `json:"cached_tokens,omitempty"`
 	Cost         float64 `json:"cost,omitempty"`
 	Turn         int     `json:"turn,omitempty"`
-	CallType     string  `json:"call_type,omitempty"` // "generation", "tool_call", "structured_output"
+	CallType     string  `json:"call_type,omitempty"` // "generation" or "tool_call"
 }
 
 func (e *LLMTokenUsageEvent) GetEventType() EventType {

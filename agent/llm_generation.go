@@ -49,7 +49,7 @@ func claudeHTTPRoutingHooksEnabled() bool {
 // hook's ALLOWED set is generated from the SAME source of truth as
 // --allowedTools (claudeBridgeAllowedToolIdentifiers) — the fixed core bridge
 // tools plus additional, whatever a caller registered via
-// WithAdditionalBridgeTools. Previously this was a hardcoded 4-tool literal,
+// withAdditionalBridgeTools. Previously this was a hardcoded 4-tool literal,
 // which silently denied any additional bridge tool once enforcement was on,
 // even though the caller had explicitly registered it.
 func writeClaudeHTTPRoutingHook(additional []string) (string, error) {
@@ -65,7 +65,7 @@ func writeClaudeHTTPRoutingHook(additional []string) (string, error) {
 	}
 
 	// The hook filename is content-addressed by the allowlist it enforces.
-	// Before WithAdditionalBridgeTools was wired into this allowlist, every
+	// Before withAdditionalBridgeTools was wired into this allowlist, every
 	// agent wrote byte-identical content to this fixed path, so a race was
 	// harmless. Now that the content genuinely varies per agent, two
 	// concurrent agents with DIFFERENT registered tools would otherwise
@@ -160,7 +160,7 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 	// Emit retry attempt event with proper model/provider info for UI display
 	retryAttemptEvent := events.NewFallbackAttemptEvent(
 		turn, attempt+1, maxRetries,
-		a.ModelID, string(a.provider), "retry", // Use "retry" phase to distinguish from actual fallbacks
+		a.modelID, string(a.provider), "retry", // Use "retry" phase to distinguish from actual fallbacks
 		false, delay, fmt.Sprintf("%s - retrying original model", errorType),
 	)
 	a.emitTypedEvent(ctx, retryAttemptEvent)
@@ -479,6 +479,7 @@ type streamingManager struct {
 	totalChunks       int
 	sawTerminal       bool
 	suppressEvents    bool
+	callback          func(llmtypes.StreamChunk)
 	startTime         time.Time
 	turn              int // conversation turn for event emission
 	// CLIToolCalls accumulates completed tool call chunks from CLI providers (Claude Code,
@@ -495,7 +496,7 @@ type streamingManager struct {
 
 // startStreaming initializes streaming if enabled and on the first attempt
 func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts *[]llmtypes.CallOption) *streamingManager {
-	if !a.EnableStreaming || attempt != 0 {
+	if !a.enableStreaming || attempt != 0 {
 		return nil
 	}
 
@@ -504,7 +505,8 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 		streamingDone:  make(chan bool, 1),
 		startTime:      time.Now(),
 		turn:           turn,
-		suppressEvents: a.SuppressGenerationStreamingEvents,
+		suppressEvents: a.suppressGenerationStreamingEvents,
+		callback:       streamingCallbackFromContext(ctx, a.streamingCallback),
 	}
 
 	// Per-session/turn raw-stream debug log. Reuses the LOG_AGENT_PROMPTS
@@ -514,9 +516,9 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 	// chunk.Content emitted by the adapter byte-for-byte, so you can answer
 	// "did the model emit X" vs. "did the frontend drop X" without grepping
 	// the in-memory event store.
-	if os.Getenv("LOG_AGENT_PROMPTS") == "true" && strings.TrimSpace(a.SessionID) != "" {
-		sessionDir := agentPromptLogSessionDirName(a.SessionID)
-		dir := agentPromptLogSessionDir(a.SessionID)
+	if os.Getenv("LOG_AGENT_PROMPTS") == "true" && strings.TrimSpace(a.sessionID) != "" {
+		sessionDir := agentPromptLogSessionDirName(a.sessionID)
+		dir := agentPromptLogSessionDir(a.sessionID)
 		if err := os.MkdirAll(dir, 0o750); err == nil {
 			name := fmt.Sprintf("stream_turn-%03d_attempt-%d_%s.txt", turn, attempt, time.Now().UTC().Format("150405"))
 			// Debug-only sink gated by LOG_AGENT_PROMPTS; path is a fixed
@@ -524,7 +526,7 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 			// #nosec G304 -- not user-controlled file inclusion.
 			if f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 				fmt.Fprintf(f, "# session=%s turn=%d attempt=%d provider=%s model=%s start=%s\n",
-					a.SessionID, turn, attempt, a.provider, a.ModelID, time.Now().UTC().Format(time.RFC3339Nano))
+					a.sessionID, turn, attempt, a.provider, a.modelID, time.Now().UTC().Format(time.RFC3339Nano))
 				sm.streamDebugFile = f
 				pruneAgentPromptLogSessions(sessionDir)
 			}
@@ -536,7 +538,7 @@ func (a *Agent) startStreaming(ctx context.Context, attempt int, turn int, opts 
 	if !sm.suppressEvents {
 		a.emitTypedEvent(ctx, &events.StreamingStartEvent{
 			BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-			Model:         a.ModelID,
+			Model:         a.modelID,
 			Provider:      string(a.provider),
 		})
 	}
@@ -576,6 +578,9 @@ func contentChunkIsDelta(chunk llmtypes.StreamChunk) bool {
 }
 
 func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
+	if sm.callback == nil {
+		sm.callback = a.streamingCallback
+	}
 	defer func() {
 		if sm.streamDebugFile != nil {
 			fmt.Fprintf(sm.streamDebugFile, "\n# end %s totalChunks=%d sawTerminal=%t\n",
@@ -608,8 +613,8 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					})
 				}
 
-				if a.StreamingCallback != nil {
-					a.StreamingCallback(chunk)
+				if sm.callback != nil {
+					sm.callback(chunk)
 				}
 			}
 
@@ -633,7 +638,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				// Terminal pane snapshots are NOT generation streaming
 				// events — they're a separate UX channel that the
 				// builder's terminal store consumes. Emit them even
-				// when suppressEvents (set via WithGenerationStreamingEvents(false))
+				// when suppressEvents (set via withGenerationStreamingEvents(false))
 				// disables per-token chat-content streaming. Without
 				// this, the terminal panel goes empty for every tmux
 				// coding-agent call.
@@ -648,8 +653,8 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					Source:     events.StreamingChunkSourceTerminal,
 				})
 
-				if a.StreamingCallback != nil {
-					a.StreamingCallback(chunk)
+				if sm.callback != nil {
+					sm.callback(chunk)
 				}
 			}
 
@@ -664,7 +669,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				chunk.ToolName,
 				events.ToolParams{Arguments: chunk.ToolArgs},
 				sourceLabel,
-				string(a.TraceID), string(a.TraceID),
+				string(a.traceID), string(a.traceID),
 			)
 			toolStartEvent.ToolCallID = chunk.ToolCallID
 			a.emitTypedEvent(ctx, toolStartEvent)
@@ -682,7 +687,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				chunk.ToolDuration, // duration from start to tool_result
 				"",                 // spanID
 				0, 0, 0,            // context usage metrics (not available)
-				a.ModelID,
+				a.modelID,
 			)
 			toolEndEvent.ToolCallID = chunk.ToolCallID
 			a.emitTypedEvent(ctx, toolEndEvent)
@@ -692,8 +697,8 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 
 			// Forward to StreamingCallback so wrappers (e.g. LLMAgentWrapper) can track
 			// completed tool calls for history reconstruction on cancellation.
-			if a.StreamingCallback != nil {
-				a.StreamingCallback(chunk)
+			if sm.callback != nil {
+				sm.callback(chunk)
 			}
 
 		case llmtypes.StreamChunkTypeStatusLine:
@@ -716,12 +721,19 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					CostUSD:                  chunk.StatusLine.CostUSD,
 					Metadata:                 chunk.StatusLine.Metadata,
 				})
-				if a.StreamingCallback != nil {
-					a.StreamingCallback(chunk)
+				if sm.callback != nil {
+					sm.callback(chunk)
 				}
 			}
 		}
 	}
+}
+
+func streamingCallbackFromContext(ctx context.Context, fallback func(llmtypes.StreamChunk)) func(llmtypes.StreamChunk) {
+	if callback, ok := ctx.Value(turnStreamingCallbackContextKey{}).(func(llmtypes.StreamChunk)); ok && callback != nil {
+		return callback
+	}
+	return fallback
 }
 
 // finishStreaming waits for streaming to complete and emits the end event
@@ -887,14 +899,14 @@ func (a *Agent) getEffectiveLLMConfig() AgentLLMConfiguration {
 	var config AgentLLMConfiguration
 
 	// If the new config is populated, use it as base
-	if a.LLMConfig.Primary.ModelID != "" && a.LLMConfig.Primary.Provider != "" {
-		config = a.LLMConfig
+	if a.llmConfig.Primary.ModelID != "" && a.llmConfig.Primary.Provider != "" {
+		config = a.llmConfig
 	} else {
 		// Otherwise, build from legacy fields
 		config = AgentLLMConfiguration{
 			Primary: LLMModel{
 				Provider: string(a.provider),
-				ModelID:  a.ModelID,
+				ModelID:  a.modelID,
 				// Note: API Key not easily accessible from legacy Agent struct without introspection
 				// but executeLLM will handle this by checking Agent.APIKeys if model.APIKey is nil
 			},
@@ -1002,15 +1014,15 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 			// tools connected (tools/list answered) — see BuildBridgeMCPConfig.
 			opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
 		}
-		a.Logger.Info("🌉 [PI_CLI] Configured MCP bridge through .pi/mcp.json with built-in tools disabled")
+		a.logger.Info("🌉 [PI_CLI] Configured MCP bridge through .pi/mcp.json with built-in tools disabled")
 	} else {
 		return nil, fmt.Errorf("Pi CLI requires the MCP bridge: %w", bridgeErr)
 	}
-	if a.PiSessionID != "" {
-		opts = append(opts, llm.WithPiResumeSessionID(a.PiSessionID))
+	if a.piSessionID != "" {
+		opts = append(opts, llm.WithPiResumeSessionID(a.piSessionID))
 	}
-	a.Logger.Info("⏱️ [PI_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
-	a.Logger.Info("🌉 Using Pi CLI in tmux marker mode with MCP bridge and live input support")
+	a.logger.Info("⏱️ [PI_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
+	a.logger.Info("🌉 Using Pi CLI in tmux marker mode with MCP bridge and live input support")
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithPiStructuredTransport(true))
 	}
@@ -1020,8 +1032,8 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly bool) (*llmtypes.ContentResponse, error) {
 	// Thread attached skills through opts so CLI transport adapters can
 	// project SKILL.md folders to disk via ProjectSkills at session
-	// launch. API transports already see the listing in the system
-	// prompt via ensureSystemPrompt — they can ignore this metadata.
+	// launch. API transports use the intrinsic read_skill tool and can ignore
+	// this projection metadata.
 	// Centralized here so every LLM call (chat, launch-only, retries)
 	// carries the same skill set; individual call sites do not need to
 	// re-append it.
@@ -1030,7 +1042,7 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 	}
 
 	// Clone agent-level keys as base (so Azure and Bedrock configs are always available)
-	apiKeys := a.APIKeys.Clone()
+	apiKeys := a.apiKeys.Clone()
 	if apiKeys == nil {
 		apiKeys = &llm.ProviderAPIKeys{}
 	}
@@ -1048,7 +1060,7 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 	}
 
 	// Use model's temperature if available, otherwise fallback to agent's temperature
-	temperature := a.Temperature
+	temperature := a.temperature
 	if model.Temperature != nil {
 		temperature = *model.Temperature
 	}
@@ -1060,12 +1072,12 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		Provider:            modelProvider,
 		ModelID:             model.ModelID,
 		Temperature:         temperature,
-		Logger:              a.Logger,
+		Logger:              a.logger,
 		APIKeys:             apiKeys,
-		Tracers:             a.Tracers,
-		TraceID:             a.TraceID,
+		Tracers:             a.tracers,
+		TraceID:             a.traceID,
 		Context:             ctx,
-		ClaudeCodeTransport: a.ClaudeCodeTransport,
+		ClaudeCodeTransport: a.claudeCodeTransport,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
@@ -1113,7 +1125,7 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 					transport = string(contract.Transport)
 				}
 			}
-			a.Logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Starting %s transport session (%s) for native session %s", model.Provider, transport, continuationHandle.NativeSessionID))
+			a.logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Starting %s transport session (%s) for native session %s", model.Provider, transport, continuationHandle.NativeSessionID))
 			return llm.StartCodingAgentTransportSession(ctx, llmInstance, continuationHandle, opts...)
 		}
 		latestMessage, msgOK := latestHumanMessageTextForProviderContinuation(messages)
@@ -1130,7 +1142,7 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		if sp := strings.TrimSpace(a.outgoingSystemPromptForContext(ctx)); sp != "" {
 			continuationOpts = append(continuationOpts, llmtypes.WithCodingProviderLaunchSystemPrompt(sp))
 		}
-		a.Logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Continuing %s with native session %s", model.Provider, continuationHandle.NativeSessionID))
+		a.logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Continuing %s with native session %s", model.Provider, continuationHandle.NativeSessionID))
 		return llm.ContinueCodingAgentSession(ctx, llmInstance, continuationHandle, latestMessage, continuationOpts...)
 	}
 
@@ -1146,22 +1158,22 @@ func (a *Agent) startCodingAgentTransportSession(ctx context.Context) (*llmtypes
 	if a == nil {
 		return nil, fmt.Errorf("agent is nil")
 	}
-	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.ModelID)
+	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID)
 	if !ok {
-		return nil, fmt.Errorf("agent provider %s/%s is not a coding-agent provider", a.provider, a.ModelID)
+		return nil, fmt.Errorf("agent provider %s/%s is not a coding-agent provider", a.provider, a.modelID)
 	}
 	// A launchable terminal requires an actual tmux pane: refuse when the caller
 	// chose structured (no pane exists) or the provider contract isn't tmux.
 	// Same resolver as every other transport decision so this can't drift.
 	if a.wantsStructuredTransport() || contract.Transport != llm.CodingAgentTransportTmux {
-		return nil, fmt.Errorf("agent provider %s/%s does not expose a launchable terminal transport (%s)", a.provider, a.ModelID, contract.Transport)
+		return nil, fmt.Errorf("agent provider %s/%s does not expose a launchable terminal transport (%s)", a.provider, a.modelID, contract.Transport)
 	}
 	primary := a.getEffectiveLLMConfig().Primary
 	if strings.TrimSpace(primary.Provider) == "" {
 		primary.Provider = string(a.provider)
 	}
 	if strings.TrimSpace(primary.ModelID) == "" {
-		primary.ModelID = a.ModelID
+		primary.ModelID = a.modelID
 	}
 
 	var opts []llmtypes.CallOption
@@ -1222,7 +1234,7 @@ func latestHumanMessageTextForProviderContinuation(messages []llmtypes.MessageCo
 }
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic and tiered fallback
-func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
+func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
 	logger := getLogger(a)
 	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry START - Messages: %d, Options: %d, Turn: %d", len(messages), len(opts), turn))
 
@@ -1303,7 +1315,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// This is important because EmitTypedEvent uses a.ModelID in some places
 			// We revert it later if we fail, or keep it if we succeed and want to stick to it?
 			// The original logic kept it on success.
-			a.ModelID = model.ModelID
+			a.modelID = model.ModelID
 			a.provider = llm.Provider(model.Provider)
 		}
 
@@ -1376,7 +1388,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					// We already did that at the start of the loop.
 					// We should also update LLMConfig.Primary to this model to avoid retrying failed primary next turn?
 					// That's a behavior change. Let's strictly follow the "permanent update" behavior of original code.
-					a.ModelID = model.ModelID
+					a.modelID = model.ModelID
 					a.provider = llm.Provider(model.Provider)
 					// Note: a.LLM is not updated here because we create it on the fly in executeLLM.
 					// If we want to persist it, we'd need to re-initialize a.LLM.

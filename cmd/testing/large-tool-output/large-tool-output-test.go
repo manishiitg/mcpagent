@@ -124,25 +124,17 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 
 	log.Info("✅ LLM initialized", loggerv2.String("model_id", modelID), loggerv2.String("provider", string(llmProvider)))
 
-	// Create agent
-	ag, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, traceID, log)
+	tool := largeOutputTool(log)
+	ag, err := testutils.CreateTestAgent(ctx, &testutils.TestAgentConfig{
+		LLM: model, Provider: llmProvider, ConfigPath: configPath, Tracer: tracer, TraceID: traceID, Logger: log,
+		Definition: mcpagent.AgentDefinition{Tools: mcpagent.ToolSet{Direct: []mcpagent.ToolDefinition{tool}}},
+		Runtime:    mcpagent.RuntimeConfig{Context: mcpagent.ContextRuntimeConfig{LargeOutputThreshold: threshold}},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	// Set lower threshold for testing
-	handler := mcpagent.AgentToolOutput(ag)
-	if handler != nil {
-		handler.SetThreshold(threshold)
-		log.Info("✅ Set large output threshold",
-			loggerv2.Int("threshold", threshold))
-	}
-
-	// Register custom tool that generates large output
-	err = registerLargeOutputTool(ag, log)
-	if err != nil {
-		return fmt.Errorf("failed to register large output tool: %w", err)
-	}
+	log.Info("✅ Set large output threshold", loggerv2.Int("threshold", threshold))
 
 	log.Info("✅ Registered custom tool: generate_large_output")
 
@@ -153,7 +145,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 		loggerv2.String("question", question1))
 
 	startTime := time.Now()
-	response1, err := mcpagent.RunText(ctx, ag, question1)
+	response1, err := testutils.RunText(ctx, ag, question1)
 	duration1 := time.Since(startTime)
 
 	if err != nil {
@@ -172,7 +164,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 		loggerv2.String("question", question2))
 
 	startTime = time.Now()
-	response2, err := mcpagent.RunText(ctx, ag, question2)
+	response2, err := testutils.RunText(ctx, ag, question2)
 	duration2 := time.Since(startTime)
 
 	if err != nil {
@@ -191,7 +183,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 		loggerv2.String("question", question3))
 
 	startTime = time.Now()
-	response3, err := mcpagent.RunText(ctx, ag, question3)
+	response3, err := testutils.RunText(ctx, ag, question3)
 	duration3 := time.Since(startTime)
 
 	if err != nil {
@@ -211,7 +203,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 			loggerv2.String("question", question4))
 
 		startTime = time.Now()
-		response4, err := mcpagent.RunText(ctx, ag, question4)
+		response4, err := testutils.RunText(ctx, ag, question4)
 		duration4 := time.Since(startTime)
 
 		if err != nil {
@@ -230,7 +222,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 			loggerv2.String("question", question5))
 
 		startTime = time.Now()
-		response5, err := mcpagent.RunText(ctx, ag, question5)
+		response5, err := testutils.RunText(ctx, ag, question5)
 		duration5 := time.Since(startTime)
 
 		if err != nil {
@@ -269,8 +261,7 @@ func testLargeToolOutput(log loggerv2.Logger, threshold int, outputType string, 
 	return nil
 }
 
-// registerLargeOutputTool registers a custom tool that generates large output
-func registerLargeOutputTool(agent *mcpagent.Agent, log loggerv2.Logger) error {
+func largeOutputTool(log loggerv2.Logger) mcpagent.ToolDefinition {
 	generateLargeOutput := func(ctx context.Context, args map[string]interface{}) (string, error) {
 		// Get size parameter
 		var size int
@@ -297,11 +288,10 @@ func registerLargeOutputTool(agent *mcpagent.Agent, log loggerv2.Logger) error {
 		return generateLargeText(size)
 	}
 
-	// Register the tool
-	return mcpagent.AddDefinitionTool(agent,
-		"generate_large_output",
-		"Generates large output for testing large tool output handling. Use this tool to test the large output file writing feature.",
-		map[string]interface{}{
+	return mcpagent.ToolDefinition{
+		Name:        "generate_large_output",
+		Description: "Generates large output for testing large tool output handling. Use this tool to test the large output file writing feature.",
+		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"size": map[string]interface{}{
@@ -317,9 +307,9 @@ func registerLargeOutputTool(agent *mcpagent.Agent, log loggerv2.Logger) error {
 			},
 			"required": []string{"size"},
 		},
-		generateLargeOutput,
-		"custom", // Category
-	)
+		Execute:      generateLargeOutput,
+		DisplayGroup: "custom",
+	}
 }
 
 // generateLargeJSON generates a large JSON output

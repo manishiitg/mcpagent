@@ -98,12 +98,8 @@ const (
 	ComprehensiveCache  EventType = "comprehensive_cache"
 	GenericCache        EventType = "cache_event"
 
-	// Structured output events
-	StructuredOutputStart EventType = "structured_output_start"
-	StructuredOutputEnd   EventType = "structured_output_end"
-	StructuredOutputError EventType = "structured_output_error"
-	JSONValidationStart   EventType = "json_validation_start"
-	JSONValidationEnd     EventType = "json_validation_end"
+	JSONValidationStart EventType = "json_validation_start"
+	JSONValidationEnd   EventType = "json_validation_end"
 
 	// Tool execution events
 	ToolExecution          EventType = "tool_execution"
@@ -225,8 +221,7 @@ func (b *BaseEventData) GetBaseEventData() *BaseEventData {
 // Helper function to get component from event type
 func GetComponentFromEventType(eventType EventType) string {
 	switch eventType {
-	case StructuredOutputStart, StructuredOutputEnd, StructuredOutputError,
-		JSONValidationStart, JSONValidationEnd,
+	case JSONValidationStart, JSONValidationEnd,
 		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
 		StepTokenUsage, StepProgressUpdated,
 		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,

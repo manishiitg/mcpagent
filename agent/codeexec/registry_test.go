@@ -153,3 +153,97 @@ func TestCallCustomToolWithSessionKeepsLegacyFallbackWithoutSessionRegistry(t *t
 		t.Fatalf("CallCustomToolWithSession() = %q, want legacy-result", got)
 	}
 }
+
+// The session tool allow list is how a per-turn ToolPolicy reaches the HTTP
+// bridge. Direct tool calls are gated in-process by isToolAllowedForContext,
+// but a code-executing agent can also reach a tool over HTTP, and that path is
+// gated only here. Without these tests the bridge could silently stop enforcing
+// the policy while every other test kept passing.
+func TestCallCustomToolWithSessionBlocksToolOutsideAllowList(t *testing.T) {
+	resetRegistryForTest(t)
+
+	calls := 0
+	InitRegistryForSession("workflow-a", map[string]func(context.Context, map[string]interface{}) (string, error){
+		"execute_shell_command": func(context.Context, map[string]interface{}) (string, error) {
+			calls++
+			return "should-not-run", nil
+		},
+	}, nil)
+	SetSessionToolAllowList("workflow-a", map[string]bool{"read_skill": true})
+
+	_, err := CallCustomToolWithSession(context.Background(), "workflow-a", "execute_shell_command", nil)
+	if err == nil {
+		t.Fatal("CallCustomToolWithSession() error = nil, want allow-list rejection")
+	}
+	if calls != 0 {
+		t.Fatalf("blocked executor ran %d times, want 0", calls)
+	}
+}
+
+func TestCallCustomToolWithSessionPermitsToolInsideAllowList(t *testing.T) {
+	resetRegistryForTest(t)
+
+	InitRegistryForSession("workflow-a", map[string]func(context.Context, map[string]interface{}) (string, error){
+		"execute_shell_command": func(context.Context, map[string]interface{}) (string, error) {
+			return "ran", nil
+		},
+	}, nil)
+	SetSessionToolAllowList("workflow-a", map[string]bool{"execute_shell_command": true})
+
+	got, err := CallCustomToolWithSession(context.Background(), "workflow-a", "execute_shell_command", nil)
+	if err != nil {
+		t.Fatalf("CallCustomToolWithSession() error = %v", err)
+	}
+	if got != "ran" {
+		t.Fatalf("CallCustomToolWithSession() = %q, want ran", got)
+	}
+}
+
+// A nil allow list means "no restriction", not "block everything". Turn.Run
+// passes nil whenever ToolPolicy.AllowedTools is empty, so inverting this would
+// break every unrestricted turn rather than fail closed on one.
+func TestCallCustomToolWithSessionTreatsNilAllowListAsUnrestricted(t *testing.T) {
+	resetRegistryForTest(t)
+
+	InitRegistryForSession("workflow-a", map[string]func(context.Context, map[string]interface{}) (string, error){
+		"execute_shell_command": func(context.Context, map[string]interface{}) (string, error) {
+			return "ran", nil
+		},
+	}, nil)
+	SetSessionToolAllowList("workflow-a", nil)
+
+	got, err := CallCustomToolWithSession(context.Background(), "workflow-a", "execute_shell_command", nil)
+	if err != nil {
+		t.Fatalf("CallCustomToolWithSession() error = %v", err)
+	}
+	if got != "ran" {
+		t.Fatalf("CallCustomToolWithSession() = %q, want ran", got)
+	}
+}
+
+// One session's allow list must not gate another's. Concurrent workflows share
+// one process-wide registry, so a leak here would let a restricted workshop
+// turn silently constrain an unrelated run.
+func TestSessionToolAllowListDoesNotLeakAcrossSessions(t *testing.T) {
+	resetRegistryForTest(t)
+
+	executor := map[string]func(context.Context, map[string]interface{}) (string, error){
+		"execute_shell_command": func(context.Context, map[string]interface{}) (string, error) {
+			return "ran", nil
+		},
+	}
+	InitRegistryForSession("restricted", executor, nil)
+	InitRegistryForSession("unrestricted", executor, nil)
+	SetSessionToolAllowList("restricted", map[string]bool{"read_skill": true})
+
+	if _, err := CallCustomToolWithSession(context.Background(), "restricted", "execute_shell_command", nil); err == nil {
+		t.Fatal("restricted session: error = nil, want allow-list rejection")
+	}
+	got, err := CallCustomToolWithSession(context.Background(), "unrestricted", "execute_shell_command", nil)
+	if err != nil {
+		t.Fatalf("unrestricted session: error = %v", err)
+	}
+	if got != "ran" {
+		t.Fatalf("unrestricted session = %q, want ran", got)
+	}
+}

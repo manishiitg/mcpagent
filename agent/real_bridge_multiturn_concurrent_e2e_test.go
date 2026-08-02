@@ -32,7 +32,7 @@ type multiTurnProviderCase struct {
 	binary        string
 	provider      llm.Provider
 	modelID       string
-	persistentOpt func(bool) AgentOption
+	persistentOpt func(bool) agentOption
 	// strictBridgeOnly mirrors realBridgeProviderCase's field of the same name
 	// (real_bridge_streaming_e2e_test.go): false ONLY for Codex, whose native
 	// functions.exec tool cannot be disabled by any flag — a documented,
@@ -45,10 +45,10 @@ type multiTurnProviderCase struct {
 }
 
 var multiTurnProviderCases = []multiTurnProviderCase{
-	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", WithClaudeCodePersistentInteractiveSession, true},
-	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", WithCodexPersistentInteractiveSession, false},
-	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "cursor-cli", WithCursorPersistentInteractiveSession, true},
-	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.5-flash", WithPiPersistentInteractiveSession, true},
+	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", withClaudeCodePersistentInteractiveSession, true},
+	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", withCodexPersistentInteractiveSession, false},
+	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "auto", withCursorPersistentInteractiveSession, true},
+	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.5-flash", withPiPersistentInteractiveSession, true},
 }
 
 // closePersistentInteractiveSession tears down the provider's persistent tmux
@@ -93,17 +93,17 @@ func buildRealBridgeAgent(ctx context.Context, tc multiTurnProviderCase, tmpBase
 		stopExecutor()
 		return nil, nil, err
 	}
-	opts := []AgentOption{
-		WithProvider(tc.provider),
-		WithAPIConfig(apiURL, apiToken),
-		WithStreaming(true),
-		WithCodingAgentWorkingDir(workDir),
-		WithSessionID(sessionID),
+	opts := []agentOption{
+		withProvider(tc.provider),
+		withAPIConfig(apiURL, apiToken),
+		withStreaming(true),
+		withCodingAgentWorkingDir(workDir),
+		withSessionID(sessionID),
 	}
 	if persistent {
 		opts = append(opts, tc.persistentOpt(true))
 	}
-	agent, err := NewAgent(ctx, llmModel, configPath, opts...)
+	agent, err := newAgent(ctx, llmModel, configPath, opts...)
 	if err != nil {
 		stopExecutor()
 		return nil, nil, err
@@ -115,12 +115,12 @@ func buildRealBridgeAgent(ctx context.Context, tc multiTurnProviderCase, tmpBase
 			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
 		}, "workspace_advanced",
 	); regErr != nil {
-		agent.Close()
+		_ = agent.Close()
 		stopExecutor()
 		return nil, nil, regErr
 	}
 	return agent, func() {
-		agent.Close()
+		_ = agent.Close()
 		stopExecutor()
 		if persistent {
 			closePersistentInteractiveSession(tc, sessionID)
@@ -212,7 +212,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 				t.Fatalf("turn 1: %v", err)
 			}
 			turn1End := len(listener.events)
-			tmux1 := strings.TrimSpace(agent.CodingProviderSessionHandle.TmuxSession)
+			tmux1 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
 			_, t1tools, t1content := captureRealBridge(listener.events[:turn1End])
 			if !strings.Contains(ans1, codeWord) {
 				t.Fatalf("turn 1 answer missing the build id (tool did not run): %q", ans1)
@@ -229,7 +229,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 				t.Fatalf("turn 2: %v", err)
 			}
 			turn2Elapsed := time.Since(turn2Start)
-			tmux2 := strings.TrimSpace(agent.CodingProviderSessionHandle.TmuxSession)
+			tmux2 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
 			_, t2tools, t2content := captureRealBridge(listener.events[turn1End:])
 
 			// Session reused across turns → the cold-turn readiness wait is skipped on

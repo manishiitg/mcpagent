@@ -14,7 +14,7 @@ func TestCLISecurityPolicyUsesTrustedProviderAndCopiesState(t *testing.T) {
 		WorkspaceWritePaths: []string{"Workflow/demo"},
 	}
 	agent := &Agent{}
-	WithCLISecurityPolicy(input)(agent)
+	withCLISecurityPolicy(input)(agent)
 	input.WorkspaceWritePaths[0] = "mutated"
 
 	options := agent.appendCLISecurityPolicyOption(nil, llm.ProviderCodexCLI)

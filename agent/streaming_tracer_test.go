@@ -14,12 +14,12 @@ import (
 func TestAgentCloseClosesStreamingTracersInSessionScopedMode(t *testing.T) {
 	tracer := NewStreamingTracer(observability.NoopTracer{}, 1)
 	agent := &Agent{
-		Logger:    loggerv2.NewDefault(),
-		SessionID: "test-session",
-		Tracers:   []observability.Tracer{tracer},
+		logger:    loggerv2.NewDefault(),
+		sessionID: "test-session",
+		tracers:   []observability.Tracer{tracer},
 	}
 
-	agent.Close()
+	_ = agent.Close()
 
 	ch, unsubscribe := tracer.SubscribeToEvents(context.Background())
 	defer unsubscribe()

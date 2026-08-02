@@ -7,11 +7,18 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+func mustAttachSkill(t *testing.T, agent *Agent, skill *llmtypes.Skill) {
+	t.Helper()
+	if err := agent.attachSkill(skill); err != nil {
+		t.Fatalf("attach skill %q: %v", skill.Name, err)
+	}
+}
+
 func TestAttachSkillIdempotentOnName(t *testing.T) {
 	a := &Agent{}
-	a.attachSkill(&llmtypes.Skill{Name: "alpha", Description: "first"})
-	a.attachSkill(&llmtypes.Skill{Name: "beta", Description: "second"})
-	a.attachSkill(&llmtypes.Skill{Name: "alpha", Description: "replaced"})
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "alpha", Description: "first"})
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "beta", Description: "second"})
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "alpha", Description: "replaced"})
 	got := a.attachedSkillsSnapshot()
 	if len(got) != 2 {
 		t.Fatalf("expected 2 skills, got %d", len(got))
@@ -26,8 +33,8 @@ func TestAttachSkillIdempotentOnName(t *testing.T) {
 
 func TestDetachSkill(t *testing.T) {
 	a := &Agent{}
-	a.attachSkill(&llmtypes.Skill{Name: "alpha"})
-	a.attachSkill(&llmtypes.Skill{Name: "beta"})
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "alpha"})
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "beta"})
 	a.detachSkill("alpha")
 	got := a.attachedSkillsSnapshot()
 	if len(got) != 1 || got[0].Name != "beta" {
@@ -37,7 +44,7 @@ func TestDetachSkill(t *testing.T) {
 
 func TestClearSkills(t *testing.T) {
 	a := &Agent{}
-	a.attachSkill(&llmtypes.Skill{Name: "alpha"})
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "alpha"})
 	a.clearSkills()
 	if len(a.attachedSkillsSnapshot()) != 0 {
 		t.Errorf("expected no skills after ClearSkills")
@@ -91,7 +98,7 @@ func TestRenderSkillListingSkipsNamelessSkills(t *testing.T) {
 // skill visibility (CLI providers would still have files on disk).
 func TestEnsureSystemPromptAppendsAttachedSkills(t *testing.T) {
 	a := &Agent{systemPrompt: "BASE PROMPT"}
-	a.attachSkill(&llmtypes.Skill{Name: "pdf-extract", Description: "Extract PDFs"})
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "pdf-extract", Description: "Extract PDFs"})
 
 	out := ensureSystemPrompt(a, nil)
 	if len(out) == 0 || out[0].Role != llmtypes.ChatMessageTypeSystem {
@@ -145,7 +152,7 @@ func TestEnsureSystemPromptWithoutAttachedSkillsLeavesBaseUntouched(t *testing.T
 // messages reject the request.
 func TestEnsureSystemPromptReplacesExistingSystemMessage(t *testing.T) {
 	a := &Agent{systemPrompt: "NEW BASE"}
-	a.attachSkill(&llmtypes.Skill{Name: "fresh", Description: "fresh skill"})
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "fresh", Description: "fresh skill"})
 
 	stale := []llmtypes.MessageContent{
 		{

@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
 	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -101,7 +100,7 @@ func TestHello(log loggerv2.Logger) error {
 	// Step 4: Send hello message
 	log.Info("--- Step 4: Send Hello Message ---")
 	startTime := time.Now()
-	response, err := mcpagent.RunText(ctx, agent, "Say hello in one short sentence.")
+	response, err := testutils.RunText(ctx, agent, "Say hello in one short sentence.")
 	duration := time.Since(startTime)
 	if err != nil {
 		return fmt.Errorf("agent.Ask failed: %w", err)
@@ -169,12 +168,7 @@ func TestMultiMCP(log loggerv2.Logger) error {
 	tracer, _ := testutils.GetTracerWithLogger("noop", log)
 	traceID := testutils.GenerateTestTraceID()
 
-	var options []mcpagent.AgentOption
-	if provider == llm.ProviderClaudeCode {
-		options = append(options, mcpagent.WithProvider(provider))
-	}
-
-	agent, err := testutils.CreateAgentWithTracer(ctx, model, provider, configPath, tracer, traceID, log, options...)
+	agent, err := testutils.CreateAgentWithTracer(ctx, model, provider, configPath, tracer, traceID, log)
 	if err != nil {
 		return fmt.Errorf("failed to create agent with MCP servers: %w", err)
 	}
@@ -189,7 +183,7 @@ func TestMultiMCP(log loggerv2.Logger) error {
 
 	log.Info("Sending question", loggerv2.String("question", question))
 	startTime := time.Now()
-	response, err := mcpagent.RunText(ctx, agent, question)
+	response, err := testutils.RunText(ctx, agent, question)
 	duration := time.Since(startTime)
 
 	if err != nil {

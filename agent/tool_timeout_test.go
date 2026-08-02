@@ -32,7 +32,7 @@ func TestGetToolExecutionTimeoutHonorsPositiveOverride(t *testing.T) {
 func TestGetToolExecutionTimeoutHonorsAgentOverride(t *testing.T) {
 	t.Setenv("TOOL_EXECUTION_TIMEOUT", "0")
 
-	if got := getToolExecutionTimeout(&Agent{ToolTimeout: 3 * time.Second}); got != 3*time.Second {
+	if got := getToolExecutionTimeout(&Agent{toolTimeout: 3 * time.Second}); got != 3*time.Second {
 		t.Fatalf("getToolExecutionTimeout agent override = %v, want 3s", got)
 	}
 }

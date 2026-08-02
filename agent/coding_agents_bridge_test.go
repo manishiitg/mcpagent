@@ -67,7 +67,7 @@ func TestIsCodingCLIBridgeProviderIncludesPiWhenBridgeMounted(t *testing.T) {
 }
 
 func bridgeTestAgent() *Agent {
-	return &Agent{Logger: loggerv2.NewDefault()}
+	return &Agent{logger: loggerv2.NewDefault()}
 }
 
 func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
@@ -107,8 +107,8 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token-123")
 
 	agent := bridgeTestAgent()
-	agent.SessionID = "sess-abc-123"
-	agent.CodingAgentWorkingDir = "/workspace/social-media"
+	agent.sessionID = "sess-abc-123"
+	agent.codingAgentWorkingDir = "/workspace/social-media"
 
 	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
@@ -142,6 +142,44 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	}
 	if bridge["trust"] != true {
 		t.Fatal("trust should be true")
+	}
+}
+
+func TestAttachedSkillAddsReadSkillToCodingAgentMCPBridge(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	if err := agent.attachSkill(&llmtypes.Skill{
+		Name:    "builder-reference",
+		Content: "transport-neutral instructions",
+		SupportingFiles: []llmtypes.SkillFile{
+			{RelPath: "references/example.md", Content: []byte("example")},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	configJSON, err := agent.buildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("build bridge config: %v", err)
+	}
+	tools := bridgeToolsFromConfig(t, configJSON)
+	readSkill, ok := tools[readSkillToolName]
+	if !ok {
+		t.Fatalf("attached skill did not add %s to MCP bridge; tools=%v", readSkillToolName, mapKeys(tools))
+	}
+	if readSkill.Type != "custom" {
+		t.Fatalf("read_skill bridge type = %q, want custom", readSkill.Type)
+	}
+	var schema map[string]interface{}
+	if err := json.Unmarshal(readSkill.InputSchema, &schema); err != nil {
+		t.Fatalf("decode read_skill schema: %v", err)
+	}
+	properties, _ := schema["properties"].(map[string]interface{})
+	if properties["skill_name"] == nil || properties["path"] == nil {
+		t.Fatalf("read_skill bridge schema is incomplete: %s", readSkill.InputSchema)
 	}
 }
 
@@ -211,7 +249,7 @@ func TestBuildBridgeMCPConfigBridgeURLOverride(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	agent := bridgeTestAgent()
-	agent.SessionID = "s1"
+	agent.sessionID = "s1"
 	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
 		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
@@ -264,8 +302,8 @@ func TestBuildBridgeMCPConfigAPIBaseURLPriority(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "env-token")
 
 	agent := bridgeTestAgent()
-	agent.APIBaseURL = "http://agent-url:7070"
-	agent.APIToken = "agent-token"
+	agent.apiBaseURL = "http://agent-url:7070"
+	agent.apiToken = "agent-token"
 	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
 		t.Fatalf("BuildBridgeMCPConfig() error: %v", err)
@@ -293,8 +331,8 @@ func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	agent := bridgeTestAgent()
-	agent.SessionID = "app-session"
-	agent.EnableStreaming = true
+	agent.sessionID = "app-session"
+	agent.enableStreaming = true
 
 	opts, err := agent.appendCursorCLIIntegrationOptions(nil)
 	if err != nil {
@@ -333,10 +371,10 @@ func TestCursorRunloopChatOptionsCarryBridgeAndWebAutoApproval(t *testing.T) {
 
 	agent := bridgeTestAgent()
 	agent.provider = llm.ProviderCursorCLI
-	agent.ModelID = "cursor-cli"
-	agent.SessionID = "app-session"
-	agent.CursorPersistentInteractiveSession = true
-	agent.CursorBridgeToolsMode = true
+	agent.modelID = "cursor-cli"
+	agent.sessionID = "app-session"
+	agent.cursorPersistentInteractiveSession = true
+	agent.cursorBridgeToolsMode = true
 
 	opts := agent.appendCodingAgentInteractiveOptions(nil)
 	var err error
@@ -398,7 +436,7 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 	t.Setenv("CODING_AGENT_MCP_TOOL_TIMEOUT", "17m")
 
 	agent := bridgeTestAgent()
-	agent.EnableStreaming = true
+	agent.enableStreaming = true
 	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
 	if err != nil {
 		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
@@ -466,7 +504,7 @@ func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
 			}
 
 			tmuxAgent := bridgeTestAgent()
-			tmuxAgent.EnableStreaming = true
+			tmuxAgent.enableStreaming = true
 			opts, err = tt.append(tmuxAgent)
 			if err != nil {
 				t.Fatalf("append tmux options: %v", err)
@@ -476,8 +514,8 @@ func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
 			}
 
 			structuredAgent := bridgeTestAgent()
-			structuredAgent.EnableStreaming = true
-			structuredAgent.CodingAgentTransport = llm.CodingAgentTransportStructured
+			structuredAgent.enableStreaming = true
+			structuredAgent.codingAgentTransport = llm.CodingAgentTransportStructured
 			opts, err = tt.append(structuredAgent)
 			if err != nil {
 				t.Fatalf("append structured options: %v", err)
@@ -517,14 +555,14 @@ func TestAppendCodexCLIIntegrationOptionsSandboxDefault(t *testing.T) {
 
 // TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess proves a caller that
 // also wants native network under the default workspace-write sandbox can opt
-// in via WithCodexNetworkAccess, without needing to also set WithCodexSandbox.
+// in via withCodexNetworkAccess, without needing to also set withCodexSandbox.
 func TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	agent := bridgeTestAgent()
-	agent.CodexNetworkAccess = true
+	agent.codexNetworkAccess = true
 	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
 	if err != nil {
 		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
@@ -542,7 +580,7 @@ func TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess(t *testing.T) {
 // TestAppendCodexCLIIntegrationOptionsSandboxReadOnlyOptIn proves the narrow
 // containment case still works: a caller that deliberately restricts its tool
 // set (e.g. "web_search only, no shell on the bridge") or needs an audit-trail
-// guarantee can opt INTO "read-only" via WithCodexSandbox. This is no longer
+// guarantee can opt INTO "read-only" via withCodexSandbox. This is no longer
 // the default, but it must remain available and correctly wired.
 func TestAppendCodexCLIIntegrationOptionsSandboxReadOnlyOptIn(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
@@ -550,11 +588,11 @@ func TestAppendCodexCLIIntegrationOptionsSandboxReadOnlyOptIn(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	agent := bridgeTestAgent()
-	agent.CodexSandboxMode = "read-only"
+	agent.codexSandboxMode = "read-only"
 	// CodexNetworkAccess is meaningless under read-only (network is
 	// unconditionally off there) — set it anyway to prove it's correctly
 	// ignored rather than producing a bogus config override.
-	agent.CodexNetworkAccess = true
+	agent.codexNetworkAccess = true
 	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
 	if err != nil {
 		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
@@ -568,16 +606,16 @@ func TestAppendCodexCLIIntegrationOptionsSandboxReadOnlyOptIn(t *testing.T) {
 	}
 }
 
-// TestWithCodexSandboxAgentOption proves the AgentOption wires into the field
+// TestWithCodexSandboxAgentOption proves the agentOption wires into the field
 // the appender reads.
 func TestWithCodexSandboxAgentOption(t *testing.T) {
 	a := &Agent{}
-	WithCodexSandbox("workspace-write")(a)
-	if a.CodexSandboxMode != "workspace-write" {
-		t.Fatalf("CodexSandboxMode = %q, want %q", a.CodexSandboxMode, "workspace-write")
+	withCodexSandbox("workspace-write")(a)
+	if a.codexSandboxMode != "workspace-write" {
+		t.Fatalf("CodexSandboxMode = %q, want %q", a.codexSandboxMode, "workspace-write")
 	}
-	WithCodexNetworkAccess(true)(a)
-	if !a.CodexNetworkAccess {
+	withCodexNetworkAccess(true)(a)
+	if !a.codexNetworkAccess {
 		t.Fatal("CodexNetworkAccess = false, want true")
 	}
 }
@@ -600,7 +638,7 @@ func TestAppendPiCLIIntegrationOptionsEnablesMCPBridgeOnlyTools(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	agent := bridgeTestAgent()
-	agent.SessionID = "app-session"
+	agent.sessionID = "app-session"
 
 	opts, err := agent.appendPiCLIIntegrationOptions(nil)
 	if err != nil {

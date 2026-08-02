@@ -103,12 +103,12 @@ func TestMCPBridge(log loggerv2.Logger) error {
 
 // mockAPIServer is a test HTTP server that mimics the per-tool API endpoints
 type mockAPIServer struct {
-	url       string
-	apiToken  string
-	server    *http.Server
-	requests  []requestLog
-	mu        sync.Mutex
-	shutdown  func()
+	url      string
+	apiToken string
+	server   *http.Server
+	requests []requestLog
+	mu       sync.Mutex
+	shutdown func()
 }
 
 func (m *mockAPIServer) getRequests() []requestLog {

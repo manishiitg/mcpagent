@@ -3,8 +3,13 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -268,6 +273,93 @@ func TestPerToolCustomTimeoutIdentifiesLayerAndTool(t *testing.T) {
 	for _, want := range []string{"timed out", "layer=custom_tool_handler", "tool=" + toolName, "session=" + sessionID, "timeout=20ms"} {
 		if !strings.Contains(resp.Error, want) {
 			t.Fatalf("error %q missing %q", resp.Error, want)
+		}
+	}
+}
+
+// Every bridge tool handler must report failures the same way, because two
+// consumers key off that one format: `grep '[TOOL_ERROR]'` in the backend logs,
+// and the frontend's harness-error detector, which requires the `layer=` token.
+//
+// The MCP handler previously logged a bare "Tool execution failed" and built its
+// own error string without `layer=`, so every MCP server tool failure was
+// invisible to both. This pins all three layers together so a fourth handler
+// cannot quietly opt out.
+func TestToolExecutionErrorEnvelopeCoversEveryHandlerLayer(t *testing.T) {
+	// The frontend detector, copied verbatim from
+	// frontend/src/utils/toolCallFormatting.ts (HARNESS_TOOL_ERROR).
+	uiDetector := regexp.MustCompile(`tool execution (?:failed|canceled|timed out): layer=`)
+
+	layers := []string{"mcp_tool_handler", "custom_tool_handler", "virtual_tool_handler"}
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "failed", err: errors.New("boom"), want: "tool execution failed"},
+		{name: "canceled", err: context.Canceled, want: "tool execution canceled"},
+		{name: "timed out", err: context.DeadlineExceeded, want: "tool execution timed out"},
+	}
+
+	for _, layer := range layers {
+		for _, tc := range cases {
+			got := toolExecutionError(layer, "some_tool", "some-session", 20*time.Millisecond, tc.err)
+			if !strings.HasPrefix(got, tc.want) {
+				t.Errorf("layer %s / %s: got %q, want prefix %q", layer, tc.name, got, tc.want)
+			}
+			if !strings.Contains(got, "layer="+layer) {
+				t.Errorf("layer %s / %s: got %q, missing layer attribution", layer, tc.name, got)
+			}
+			if !uiDetector.MatchString(got) {
+				t.Errorf("layer %s / %s: got %q, which the frontend HARNESS_TOOL_ERROR detector does not match", layer, tc.name, got)
+			}
+		}
+	}
+}
+
+// The format test above would still pass if a handler stopped calling
+// toolExecutionError, because it exercises the function directly. This pins the
+// wiring: every bridge execute handler must actually use the shared envelope.
+// That is the property that failed before — HandleMCPExecute built its own
+// error string and was the only handler no test covered.
+func TestEveryExecuteHandlerUsesTheSharedErrorEnvelope(t *testing.T) {
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "handlers.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]bool{
+		"HandleMCPExecute":     false,
+		"HandleCustomExecute":  false,
+		"HandleVirtualExecute": false,
+	}
+
+	for _, declaration := range parsed.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if _, tracked := want[fn.Name.Name]; !tracked {
+			continue
+		}
+		ast.Inspect(fn, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if identifier, ok := call.Fun.(*ast.Ident); ok && identifier.Name == "toolExecutionError" {
+				want[fn.Name.Name] = true
+			}
+			return true
+		})
+	}
+
+	for name, found := range want {
+		if !found {
+			t.Errorf("%s does not call toolExecutionError; its failures will carry no layer= "+
+				"attribution, so neither the [TOOL_ERROR] log grep nor the frontend "+
+				"harness-error detector will see them", name)
 		}
 	}
 }

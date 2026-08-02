@@ -248,9 +248,9 @@ func createCodeExecutionAgent(ctx context.Context, log loggerv2.Logger, tracer o
 		Tracer:     tracer,
 		TraceID:    traceID,
 		Logger:     log,
-		Options: []mcpagent.AgentOption{
-			mcpagent.WithCodeExecutionMode(true),
-			mcpagent.WithAPIConfig(apiURL, apiToken),
+		Runtime: mcpagent.RuntimeConfig{
+			Tools: mcpagent.ToolRuntimeConfig{CodeExecution: true},
+			MCP:   mcpagent.MCPRuntimeConfig{APIBaseURL: apiURL, APIToken: apiToken},
 		},
 	})
 	if err != nil {
@@ -282,7 +282,7 @@ Then describe the available endpoints and what parameters they accept for "react
 
 	// Execute query
 	startTime := time.Now()
-	response, err := mcpagent.RunText(ctx, agent, query)
+	response, err := testutils.RunText(ctx, agent, query)
 	duration := time.Since(startTime)
 
 	if err != nil {

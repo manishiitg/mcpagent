@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
 	testutils "github.com/manishiitg/mcpagent/cmd/testing/testutils"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -97,19 +96,15 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 		loggerv2.Int("server_count", len(mcpServers)))
 
 	// Get optional tracers (Langfuse and/or LangSmith if available)
-	var tracerOptions []mcpagent.AgentOption
-
 	// Try Langfuse
 	langfuseTracer, _ := testutils.GetTracerWithLogger("langfuse", log)
 	if langfuseTracer != nil && !testutils.IsNoopTracer(langfuseTracer) {
-		tracerOptions = append(tracerOptions, mcpagent.WithTracer(langfuseTracer))
 		log.Info("✅ Langfuse tracer enabled")
 	}
 
 	// Try LangSmith
 	langsmithTracer, _ := testutils.GetTracerWithLogger("langsmith", log)
 	if langsmithTracer != nil && !testutils.IsNoopTracer(langsmithTracer) {
-		tracerOptions = append(tracerOptions, mcpagent.WithTracer(langsmithTracer))
 		log.Info("✅ LangSmith tracer enabled")
 	}
 
@@ -153,7 +148,7 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 		loggerv2.String("config_path", configPath))
 
 	// Create agent with MCP servers (pass additional tracer options for multi-tracer support)
-	ag, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, traceID, log, tracerOptions...)
+	ag, err := testutils.CreateAgentWithTracer(ctx, model, llmProvider, configPath, tracer, traceID, log)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
@@ -170,7 +165,7 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 
 	// Run the agent - it should use MCP tools
 	startTime := time.Now()
-	response, err := mcpagent.RunText(ctx, ag, question)
+	response, err := testutils.RunText(ctx, ag, question)
 	duration := time.Since(startTime)
 
 	if err != nil {

@@ -31,10 +31,10 @@ type BrokenPipeHandler struct {
 }
 
 // NewBrokenPipeHandler creates a new broken pipe handler
-func NewBrokenPipeHandler(agent *Agent) *BrokenPipeHandler {
+func newBrokenPipeHandler(agent *Agent) *BrokenPipeHandler {
 	return &BrokenPipeHandler{
 		agent:  agent,
-		logger: agent.Logger,
+		logger: agent.logger,
 	}
 }
 
@@ -75,11 +75,11 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	// the sub-agent's context is NOT derived from the workflow context (e.g., tool
 	// calls dispatched via HTTP from claude-code CLI have independent contexts).
 	registry := mcpclient.GetSessionRegistry()
-	if registry.IsSessionStopped(h.agent.SessionID) {
+	if registry.IsSessionStopped(h.agent.sessionID) {
 		h.logger.Info("🔧 [BROKEN PIPE] Skipping retry — session was stopped (zombie prevention)",
 			loggerv2.String("tool", toolCall.FunctionCall.Name),
 			loggerv2.String("server", serverName),
-			loggerv2.String("session_id", h.agent.SessionID))
+			loggerv2.String("session_id", h.agent.sessionID))
 		return nil, time.Since(startTime), fmt.Errorf("session stopped — broken pipe not retried: %w", originalErr)
 	}
 
@@ -102,7 +102,7 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	// Update the agent's client map with the new connection
 	// This ensures future tool calls use the new connection
 	h.agent.clientsMu.Lock()
-	h.agent.Clients[serverName] = freshClient
+	h.agent.clients[serverName] = freshClient
 	h.agent.clientsMu.Unlock()
 	h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Updated agent's client map with fresh connection for server: %s", serverName),
 		loggerv2.String("server", serverName))
@@ -116,7 +116,7 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 // because CloseAllSessions will close the replacement connection at shutdown.
 func (h *BrokenPipeHandler) recreateViaRegistry(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
 	registry := mcpclient.GetSessionRegistry()
-	connSessionID := registry.ResolveConnectionSessionID(h.agent.SessionID, serverName)
+	connSessionID := registry.ResolveConnectionSessionID(h.agent.sessionID, serverName)
 
 	// Atomically close AND remove the stale entry from the registry.
 	h.logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE] Closing stale registry entry for server: %s (session=%s)", serverName, connSessionID),
@@ -134,15 +134,15 @@ func (h *BrokenPipeHandler) recreateViaRegistry(ctx context.Context, serverName 
 	}
 
 	// Apply runtime overrides (matching connection_session.go:149-158)
-	if h.agent.RuntimeOverrides != nil {
-		if override, hasOverride := h.agent.RuntimeOverrides[serverName]; hasOverride {
+	if h.agent.runtimeOverrides != nil {
+		if override, hasOverride := h.agent.runtimeOverrides[serverName]; hasOverride {
 			serverConfig = serverConfig.ApplyOverride(override)
 		}
 	}
 
 	// Apply per-user OAuth token path (matching connection_session.go:161-168)
-	if h.agent.UserID != "" && serverConfig.OAuth != nil {
-		serverConfig.OAuth.TokenFile = fmt.Sprintf("~/.config/mcpagent/tokens/%s/%s.json", h.agent.UserID, serverName)
+	if h.agent.userID != "" && serverConfig.OAuth != nil {
+		serverConfig.OAuth.TokenFile = fmt.Sprintf("~/.config/mcpagent/tokens/%s/%s.json", h.agent.userID, serverName)
 	}
 
 	// Create a fresh connection tracked by the registry.
@@ -260,10 +260,10 @@ type ErrorRecoveryHandler struct {
 }
 
 // NewErrorRecoveryHandler creates a new error recovery handler
-func NewErrorRecoveryHandler(agent *Agent) *ErrorRecoveryHandler {
+func newErrorRecoveryHandler(agent *Agent) *ErrorRecoveryHandler {
 	return &ErrorRecoveryHandler{
-		brokenPipeHandler: NewBrokenPipeHandler(agent),
-		logger:            agent.Logger,
+		brokenPipeHandler: newBrokenPipeHandler(agent),
+		logger:            agent.logger,
 	}
 }
 

@@ -15,13 +15,13 @@ import (
 )
 
 // buildTmuxBridgeAgentWithOptions stands up a tmux coding-agent on the REAL
-// bridge with caller-supplied extra options (e.g. WithSystemPrompt), isolated to
+// bridge with caller-supplied extra options (e.g. withSystemPrompt), isolated to
 // an empty workspace so an agentic model can't read this test's own files off
 // disk and answer from those instead of the injected prompt/skill. Returns the
 // agent + cleanup. Mirrors the json builder in
 // structured_transport_system_prompt_e2e_test.go but on tmux (no structured
 // option), so system-prompt/skill survival is proven on BOTH transports.
-func buildTmuxBridgeAgentWithOptions(ctx context.Context, tc multiTurnProviderCase, tmpBase string, extra ...AgentOption) (*Agent, func(), error) {
+func buildTmuxBridgeAgentWithOptions(ctx context.Context, tc multiTurnProviderCase, tmpBase string, extra ...agentOption) (*Agent, func(), error) {
 	configPath := filepath.Join(tmpBase, "mcp_servers.json")
 	if err := os.WriteFile(configPath, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
 		return nil, nil, err
@@ -35,14 +35,14 @@ func buildTmuxBridgeAgentWithOptions(ctx context.Context, tc multiTurnProviderCa
 		stopExecutor()
 		return nil, nil, err
 	}
-	opts := append([]AgentOption{
-		WithProvider(tc.provider),
-		WithAPIConfig(apiURL, apiToken),
-		WithStreaming(true),
-		WithIsolatedSessionWorkspace(true),
-		WithSessionID("tmuxcap-" + realBridgeRandHex(4)),
+	opts := append([]agentOption{
+		withProvider(tc.provider),
+		withAPIConfig(apiURL, apiToken),
+		withStreaming(true),
+		withIsolatedSessionWorkspace(true),
+		withSessionID("tmuxcap-" + realBridgeRandHex(4)),
 	}, extra...)
-	agent, err := NewAgent(ctx, llmModel, configPath, opts...)
+	agent, err := newAgent(ctx, llmModel, configPath, opts...)
 	if err != nil {
 		stopExecutor()
 		return nil, nil, err
@@ -60,17 +60,17 @@ func buildTmuxBridgeAgentWithOptions(ctx context.Context, tc multiTurnProviderCa
 			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
 		}, "workspace_advanced",
 	); regErr != nil {
-		agent.Close()
+		_ = agent.Close()
 		stopExecutor()
 		return nil, nil, regErr
 	}
-	return agent, func() { agent.Close(); stopExecutor() }, nil
+	return agent, func() { _ = agent.Close(); stopExecutor() }, nil
 }
 
 // buildTmuxBridgeAgentRealWorkdir is like buildTmuxBridgeAgentWithOptions but
 // runs in a caller-supplied REAL workdir (no isolated workspace), so on-close
 // disk cleanup of projected skills/prompt can be observed against a real path.
-func buildTmuxBridgeAgentRealWorkdir(ctx context.Context, tc multiTurnProviderCase, tmpBase, workDir string, extra ...AgentOption) (*Agent, func(), error) {
+func buildTmuxBridgeAgentRealWorkdir(ctx context.Context, tc multiTurnProviderCase, tmpBase, workDir string, extra ...agentOption) (*Agent, func(), error) {
 	configPath := filepath.Join(tmpBase, "mcp_servers.json")
 	if err := os.WriteFile(configPath, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
 		return nil, nil, err
@@ -84,14 +84,14 @@ func buildTmuxBridgeAgentRealWorkdir(ctx context.Context, tc multiTurnProviderCa
 		stopExecutor()
 		return nil, nil, err
 	}
-	opts := append([]AgentOption{
-		WithProvider(tc.provider),
-		WithAPIConfig(apiURL, apiToken),
-		WithStreaming(true),
-		WithCodingAgentWorkingDir(workDir),
-		WithSessionID("tmuxclean-" + realBridgeRandHex(4)),
+	opts := append([]agentOption{
+		withProvider(tc.provider),
+		withAPIConfig(apiURL, apiToken),
+		withStreaming(true),
+		withCodingAgentWorkingDir(workDir),
+		withSessionID("tmuxclean-" + realBridgeRandHex(4)),
 	}, extra...)
-	agent, err := NewAgent(ctx, llmModel, configPath, opts...)
+	agent, err := newAgent(ctx, llmModel, configPath, opts...)
 	if err != nil {
 		stopExecutor()
 		return nil, nil, err
@@ -103,11 +103,11 @@ func buildTmuxBridgeAgentRealWorkdir(ctx context.Context, tc multiTurnProviderCa
 			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
 		}, "workspace_advanced",
 	); regErr != nil {
-		agent.Close()
+		_ = agent.Close()
 		stopExecutor()
 		return nil, nil, regErr
 	}
-	return agent, func() { agent.Close(); stopExecutor() }, nil
+	return agent, func() { _ = agent.Close(); stopExecutor() }, nil
 }
 
 // TestTmuxProjectedArtifactsRemovedOnCloseRealWorkdir is the live-CLI proof of
@@ -143,12 +143,12 @@ func TestTmuxProjectedArtifactsRemovedOnCloseRealWorkdir(t *testing.T) {
 			canary := "CLEANUP_" + realBridgeRandHex(6)
 
 			agent, cleanup, err := buildTmuxBridgeAgentRealWorkdir(ctx, tc, t.TempDir(), workDir,
-				WithSystemPrompt("Managed session. mlp-session-instructions. Codeword "+canary+"."))
+				withSystemPrompt("Managed session. mlp-session-instructions. Codeword "+canary+"."))
 			if err != nil {
 				t.Fatalf("build agent: %v", err)
 			}
 
-			agent.attachSkill(&llmtypes.Skill{
+			mustAttachSkill(t, agent, &llmtypes.Skill{
 				Name:        "cleanup-canary-skill",
 				Description: "A test skill used to verify on-close disk cleanup.",
 				Content:     "# Cleanup Canary\n\nThe phrase is " + canary + ".",
@@ -179,10 +179,10 @@ func TestTmuxProjectedArtifactsRemovedOnCloseRealWorkdir(t *testing.T) {
 
 // TestTmuxSystemPromptSurvivesNewAgent is the tmux twin of
 // TestStructuredTransportSystemPromptSurvivesNewAgent (the 57b4dd9 regression
-// guard). Until now that class of bug — NewAgent clobbering a caller-supplied
-// WithSystemPrompt with the connection default — was only guarded on the
+// guard). Until now that class of bug — newAgent clobbering a caller-supplied
+// withSystemPrompt with the connection default — was only guarded on the
 // structured/json transport. This proves the custom system prompt survives
-// NewAgent all the way to the model's answer over TMUX too, across all 4
+// newAgent all the way to the model's answer over TMUX too, across all 4
 // providers. The canary word can ONLY appear if the prompt survived, so the
 // assertion is self-validating (no agent review needed, same as the json twin).
 func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
@@ -204,7 +204,7 @@ func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			agent, cleanup, err := buildTmuxBridgeAgentWithOptions(ctx, tc, t.TempDir(), WithSystemPrompt(customPrompt))
+			agent, cleanup, err := buildTmuxBridgeAgentWithOptions(ctx, tc, t.TempDir(), withSystemPrompt(customPrompt))
 			if err != nil {
 				t.Fatalf("build tmux agent: %v", err)
 			}
@@ -216,9 +216,9 @@ func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
 			}
 			answer = strings.TrimSpace(answer)
 			if !strings.Contains(answer, canary) {
-				t.Fatalf("custom system prompt did not survive NewAgent -> %s tmux -> real CLI: canary %q not found in answer %q (the 57b4dd9 class of bug, now guarded on tmux too)", tc.name, canary, answer)
+				t.Fatalf("custom system prompt did not survive newAgent -> %s tmux -> real CLI: canary %q not found in answer %q (the 57b4dd9 class of bug, now guarded on tmux too)", tc.name, canary, answer)
 			}
-			t.Logf("[%s] system prompt survived NewAgent through real tmux CLI call: %q", tc.name, answer)
+			t.Logf("[%s] system prompt survived newAgent through real tmux CLI call: %q", tc.name, answer)
 		})
 	}
 }
@@ -252,7 +252,7 @@ func TestTmuxSkillsSurviveNewAgent(t *testing.T) {
 			}
 			defer cleanup()
 
-			agent.attachSkill(&llmtypes.Skill{
+			mustAttachSkill(t, agent, &llmtypes.Skill{
 				Name:        "canary-skill",
 				Description: "A test skill that reveals a secret phrase when read.",
 				Content:     "# Canary Skill\n\nWhen asked for the canary skill's secret phrase, reply with ONLY this exact word: " + canary,
@@ -264,9 +264,9 @@ func TestTmuxSkillsSurviveNewAgent(t *testing.T) {
 			}
 			answer = strings.TrimSpace(answer)
 			if !strings.Contains(answer, canary) {
-				t.Fatalf("skill attached via AttachSkill did not survive NewAgent -> %s tmux -> real CLI: canary %q not found in answer %q", tc.name, canary, answer)
+				t.Fatalf("skill attached via AttachSkill did not survive newAgent -> %s tmux -> real CLI: canary %q not found in answer %q", tc.name, canary, answer)
 			}
-			t.Logf("[%s] skill survived NewAgent through real tmux CLI call: %q", tc.name, answer)
+			t.Logf("[%s] skill survived newAgent through real tmux CLI call: %q", tc.name, answer)
 		})
 	}
 }

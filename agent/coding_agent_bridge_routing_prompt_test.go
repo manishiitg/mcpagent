@@ -60,7 +60,7 @@ func TestAppendBridgeRoutingInstructionsEmptyOverrideSuppresses(t *testing.T) {
 
 func TestWithBridgeRoutingInstructionsOptionSetsOverride(t *testing.T) {
 	a := &Agent{}
-	opt := WithBridgeRoutingInstructions("custom text")
+	opt := withBridgeRoutingInstructions("custom text")
 	opt(a)
 
 	if a.bridgeRoutingInstructionsOverride == nil {

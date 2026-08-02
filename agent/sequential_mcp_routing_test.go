@@ -15,7 +15,7 @@ import (
 func TestMappedMCPClientDoesNotUseAnotherServersClient(t *testing.T) {
 	eagerClient := new(mcpclient.Client)
 	agent := &Agent{
-		Clients: map[string]mcpclient.ClientInterface{
+		clients: map[string]mcpclient.ClientInterface{
 			"server-a": eagerClient,
 		},
 		toolToServer: map[string]string{
@@ -47,14 +47,14 @@ func TestMappedMCPClientDoesNotUseAnotherServersClient(t *testing.T) {
 func TestPrepareParallelToolExecutionDoesNotUseAnotherServersClientForLazyServer(t *testing.T) {
 	eagerClient := new(mcpclient.Client)
 	agent := &Agent{
-		Clients: map[string]mcpclient.ClientInterface{
+		clients: map[string]mcpclient.ClientInterface{
 			"server-a": eagerClient,
 		},
 		toolToServer: map[string]string{
 			"tool-b": "server-b",
 		},
-		Logger:     loggerv2.NewDefault(),
-		SessionID:  "parallel-routing-regression",
+		logger:     loggerv2.NewDefault(),
+		sessionID:  "parallel-routing-regression",
 		configPath: filepath.Join(t.TempDir(), "missing-mcp-config.json"),
 	}
 

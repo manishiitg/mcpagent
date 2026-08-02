@@ -45,13 +45,13 @@ func TestPiCLIMcpAgentGeminiE2E(t *testing.T) {
 
 	agent := &Agent{
 		provider:                       llm.ProviderPiCLI,
-		ModelID:                        "google/gemini-3.5-flash",
-		SessionID:                      sessionID,
-		CodingAgentWorkingDir:          t.TempDir(),
-		PiPersistentInteractiveSession: false,
-		Logger:                         loggerv2.NewDefault(),
-		APIKeys:                        &llm.ProviderAPIKeys{PiCLI: &apiKey},
-		EnableStreaming:                true,
+		modelID:                        "google/gemini-3.5-flash",
+		sessionID:                      sessionID,
+		codingAgentWorkingDir:          t.TempDir(),
+		piPersistentInteractiveSession: false,
+		logger:                         loggerv2.NewDefault(),
+		apiKeys:                        &llm.ProviderAPIKeys{PiCLI: &apiKey},
+		enableStreaming:                true,
 	}
 
 	model := LLMModel{
@@ -78,7 +78,7 @@ func TestPiCLIMcpAgentGeminiE2E(t *testing.T) {
 	}
 
 	extractCodingAgentSessionIDs(agent, resp)
-	handle := agent.CodingProviderSessionHandle
+	handle := agent.codingProviderSessionHandle
 	if handle.Provider != string(llm.ProviderPiCLI) {
 		t.Fatalf("handle provider = %q, want %q", handle.Provider, llm.ProviderPiCLI)
 	}

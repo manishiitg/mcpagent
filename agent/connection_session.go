@@ -404,11 +404,11 @@ func NewAgentConnectionWithSession(
 // It prefers the session registry (lazy-connect, reuses existing connections) over
 // spawning a fresh process, preserving normal session-registry reuse.
 func (a *Agent) resolveOnDemandMCPClient(ctx context.Context, serverName string, logger loggerv2.Logger) (mcpclient.ClientInterface, error) {
-	if a.SessionID != "" {
+	if a.sessionID != "" {
 		registry := mcpclient.GetSessionRegistry()
-		if serverConfig, hasConfig := registry.GetServerConfig(a.SessionID, serverName); hasConfig {
-			logger.Info(fmt.Sprintf("⚡ [ON-DEMAND] Using session registry lazy connect for server '%s' (session=%s)", serverName, a.SessionID))
-			connSessionID := registry.ResolveConnectionSessionID(a.SessionID, serverName)
+		if serverConfig, hasConfig := registry.GetServerConfig(a.sessionID, serverName); hasConfig {
+			logger.Info(fmt.Sprintf("⚡ [ON-DEMAND] Using session registry lazy connect for server '%s' (session=%s)", serverName, a.sessionID))
+			connSessionID := registry.ResolveConnectionSessionID(a.sessionID, serverName)
 			client, _, err := registry.GetOrCreateConnection(ctx, connSessionID, serverName, serverConfig, logger)
 			if client != nil || err != nil {
 				return client, err

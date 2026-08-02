@@ -162,14 +162,14 @@ func TestSupportsSteeringFalseOnStructuredTransport(t *testing.T) {
 
 		// An explicit structured transport choice flips ANY coding-agent
 		// provider to a one-shot process, so none of them are steerable.
-		{"codex --json", &Agent{provider: llm.ProviderCodexCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}, false},
-		{"cursor --print", &Agent{provider: llm.ProviderCursorCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}, false},
-		{"pi --mode json", &Agent{provider: llm.ProviderPiCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}, false},
-		{"claude -p stream-json", &Agent{provider: llm.ProviderClaudeCode, CodingAgentTransport: llm.CodingAgentTransportStructured}, false},
+		{"codex --json", &Agent{provider: llm.ProviderCodexCLI, codingAgentTransport: llm.CodingAgentTransportStructured}, false},
+		{"cursor --print", &Agent{provider: llm.ProviderCursorCLI, codingAgentTransport: llm.CodingAgentTransportStructured}, false},
+		{"pi --mode json", &Agent{provider: llm.ProviderPiCLI, codingAgentTransport: llm.CodingAgentTransportStructured}, false},
+		{"claude -p stream-json", &Agent{provider: llm.ProviderClaudeCode, codingAgentTransport: llm.CodingAgentTransportStructured}, false},
 
 		// An explicit tmux choice keeps them steerable (same as the control).
-		{"codex explicit tmux", &Agent{provider: llm.ProviderCodexCLI, CodingAgentTransport: llm.CodingAgentTransportTmux}, true},
-		{"claude explicit tmux", &Agent{provider: llm.ProviderClaudeCode, CodingAgentTransport: llm.CodingAgentTransportTmux}, true},
+		{"codex explicit tmux", &Agent{provider: llm.ProviderCodexCLI, codingAgentTransport: llm.CodingAgentTransportTmux}, true},
+		{"claude explicit tmux", &Agent{provider: llm.ProviderClaudeCode, codingAgentTransport: llm.CodingAgentTransportTmux}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestSupportsSteeringFalseOnStructuredTransport(t *testing.T) {
 // TestDeliverQueuesWhenBusyAndNotSteerable, which only covered a non-coding
 // provider.
 func TestDeliverQueuesOnStructuredCodingAgent(t *testing.T) {
-	a := &Agent{provider: llm.ProviderCodexCLI, CodingAgentTransport: llm.CodingAgentTransportStructured}
+	a := &Agent{provider: llm.ProviderCodexCLI, codingAgentTransport: llm.CodingAgentTransportStructured}
 	a.setTurnInFlight(true)
 
 	got, err := a.deliver(context.Background(), "conv-json", "please also add tests", nil)
@@ -211,10 +211,10 @@ func TestEnablePersistentInteractiveForProvider(t *testing.T) {
 		provider llm.Provider
 		get      func(*Agent) bool
 	}{
-		{llm.ProviderClaudeCode, func(a *Agent) bool { return a.ClaudeCodePersistentInteractiveSession }},
-		{llm.ProviderCodexCLI, func(a *Agent) bool { return a.CodexPersistentInteractiveSession }},
-		{llm.ProviderCursorCLI, func(a *Agent) bool { return a.CursorPersistentInteractiveSession }},
-		{llm.ProviderPiCLI, func(a *Agent) bool { return a.PiPersistentInteractiveSession }},
+		{llm.ProviderClaudeCode, func(a *Agent) bool { return a.claudeCodePersistentInteractiveSession }},
+		{llm.ProviderCodexCLI, func(a *Agent) bool { return a.codexPersistentInteractiveSession }},
+		{llm.ProviderCursorCLI, func(a *Agent) bool { return a.cursorPersistentInteractiveSession }},
+		{llm.ProviderPiCLI, func(a *Agent) bool { return a.piPersistentInteractiveSession }},
 	}
 	for _, tc := range cases {
 		a := &Agent{provider: tc.provider}

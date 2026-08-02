@@ -23,8 +23,9 @@ type BridgeToolDef struct {
 }
 
 // bridgeTools is the explicit list of tools exposed through the coding-agent MCP
-// bridge as native MCP tools. All other MCP/custom tools are discovered via
-// get_api_spec and called through HTTP API endpoints.
+// bridge as native MCP tools. Attached skills additionally contribute the
+// intrinsic read_skill tool through additionalBridgeTools. All other
+// MCP/custom tools are discovered via get_api_spec and called through HTTP.
 var bridgeTools = []struct {
 	name     string
 	toolType string // "custom" or "virtual"
@@ -38,7 +39,7 @@ var bridgeTools = []struct {
 // claudeBridgeAllowedToolIdentifiers returns the full "mcp__api-bridge__<name>"
 // identifier for every tool actually exposed through the bridge MCP server —
 // the fixed core set (bridgeTools) plus whatever a caller registered via
-// WithAdditionalBridgeTools — deduped the same way BuildBridgeMCPConfig itself
+// withAdditionalBridgeTools — deduped the same way BuildBridgeMCPConfig itself
 // dedupes them. This is the single source of truth for Claude's tool-name
 // allowlist, used both for --allowedTools and the enforced-mode PreToolUse
 // hook, so an additional bridge tool is never silently unusable in one path
@@ -72,9 +73,9 @@ func claudeBridgeAllowedToolIdentifiers(additional []string) []string {
 // This is used by CLI-native coding agents to access selected tools natively
 // via the bridge.
 //
-// The bridge exposes a small native tool set: execute_shell_command,
-// diff_patch_workspace_file, agent_browser, and get_api_spec. All other MCP
-// tools are discovered via get_api_spec and called through HTTP API endpoints.
+// The bridge exposes a small fixed native tool set plus intrinsic read_skill
+// whenever skills are attached. All other MCP tools are discovered via
+// get_api_spec and called through HTTP API endpoints.
 func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	logger := getLogger(a)
 
@@ -98,12 +99,12 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	}
 
 	// 2. Collect the bridge tools by name — the fixed shared set (bridgeTools)
-	// plus whatever this agent instance registered via WithAdditionalBridgeTools.
+	// plus whatever this agent instance registered via withAdditionalBridgeTools.
 	logger.Debug("BuildBridgeMCPConfig: agent state",
-		loggerv2.Int("tools_count", len(a.Tools)),
-		loggerv2.Int("custom_tools_count", len(a.customTools)),
+		loggerv2.Int("tools_count", len(a.tools)),
+		loggerv2.Int("custom_tools_count", len(a.directToolSnapshot())),
 		loggerv2.Int("additional_bridge_tools_count", len(a.additionalBridgeTools)),
-		loggerv2.Any("use_code_execution_mode", a.UseCodeExecutionMode))
+		loggerv2.Any("use_code_execution_mode", a.useCodeExecutionMode))
 
 	seen := make(map[string]bool, len(bridgeTools)+len(a.additionalBridgeTools))
 	wanted := make([]struct {
@@ -149,12 +150,12 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	// MCP_BRIDGE_API_URL overrides MCP_API_URL for this purpose.
 	apiURL := os.Getenv("MCP_BRIDGE_API_URL")
 	if apiURL == "" {
-		apiURL = a.APIBaseURL
+		apiURL = a.apiBaseURL
 	}
 	if apiURL == "" {
 		apiURL = os.Getenv("MCP_API_URL")
 	}
-	apiToken := a.APIToken
+	apiToken := a.apiToken
 	if apiToken == "" {
 		apiToken = os.Getenv("MCP_API_TOKEN")
 	}
@@ -186,15 +187,15 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 		"MCP_API_TOKEN": apiToken,
 		"MCP_TOOLS":     string(toolsJSON),
 	}
-	if a.SessionID != "" {
-		bridgeEnv["MCP_SESSION_ID"] = a.SessionID
+	if a.sessionID != "" {
+		bridgeEnv["MCP_SESSION_ID"] = a.sessionID
 	}
 	// Coding CLI providers call mcpbridge outside the normal Agent conversation
 	// loop, so their large tool results cannot use ToolOutputHandler directly.
 	// Give the bridge an explicit persistent folder under the agent's real
 	// working directory; this remains stable even when the CLI itself runs in an
 	// isolated temporary cwd.
-	if workingDir := strings.TrimSpace(a.CodingAgentWorkingDir); workingDir != "" {
+	if workingDir := strings.TrimSpace(a.codingAgentWorkingDir); workingDir != "" {
 		bridgeEnv["MCP_TOOL_OUTPUT_DIR"] = filepath.Join(workingDir, DefaultToolOutputFolder)
 	}
 	// Route mcpbridge stderr to a log file for debugging startup/crash issues.
@@ -306,24 +307,25 @@ func defaultBridgeToolDef(name, toolType string, logger loggerv2.Logger) *Bridge
 }
 
 // lookupBridgeTool finds a tool by name from the agent's registered tools.
-// "custom" tools are in a.customTools, "virtual" tools are in a.Tools.
+// Direct tools come from the canonical registry; virtual schemas are generated
+// from the provider-facing projection or their intrinsic definitions.
 func (a *Agent) lookupBridgeTool(name, toolType string, logger loggerv2.Logger) *BridgeToolDef {
 	switch toolType {
 	case "custom":
-		ct, ok := a.customTools[name]
+		tool, ok := a.lookupDirectTool(name)
 		if !ok {
 			return nil
 		}
 		description := ""
 		var parameters interface{}
-		if ct.Definition.Function != nil {
-			description = ct.Definition.Function.Description
-			parameters = ct.Definition.Function.Parameters
+		if tool.Definition.Function != nil {
+			description = tool.Definition.Function.Description
+			parameters = tool.Definition.Function.Parameters
 		}
 		return marshalBridgeToolDef(name, description, parameters, toolType, logger)
 
 	case "virtual":
-		for _, tool := range a.Tools {
+		for _, tool := range a.tools {
 			if tool.Function != nil && tool.Function.Name == name {
 				return marshalBridgeToolDef(name, tool.Function.Description, tool.Function.Parameters, toolType, logger)
 			}

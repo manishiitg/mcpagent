@@ -341,68 +341,6 @@ mcpagent-test test large-tool-output --output-type text --log-file logs/large-to
 
 ---
 
-### `structured-output` - Structured Output Testing
-
-**Folder**: `cmd/testing/structured-output/`  
-**Files**: 
-- `conversion/conversion-test.go` - Model 1: Text Conversion Model test
-- `tool/tool-test.go` - Model 2: Tool-Based Model test
-- `conversion/criteria.md` - Log analysis criteria for Model 1
-- `tool/criteria.md` - Log analysis criteria for Model 2
-- `README.md` - Comprehensive documentation of both models
-**Commands**: 
-- `mcpagent-test test structured-output-conversion` - Test Model 1 (Text Conversion)
-- `mcpagent-test test structured-output-tool` - Test Model 2 (Tool-Based)
-
-Tests the agent's structured output generation capabilities using two different models:
-
-#### Model 1: Text Conversion Model (`structured-output-conversion`)
-- **How it works**: Agent gets text response → Second LLM call converts to JSON → Parse into struct
-- **Methods**: `AskStructured`, `AskWithHistoryStructured`
-- **Pros**: Always works, better for complex schemas, more predictable
-- **Cons**: 2 LLM calls (slower, more expensive)
-
-#### Model 2: Tool-Based Model (`structured-output-tool`)
-- **How it works**: Dynamically registers custom tool → LLM calls tool → Extract from arguments
-- **Methods**: `AskWithHistoryStructuredViaTool`
-- **Pros**: Single LLM call (faster, cheaper), preserves context
-- **Cons**: LLM may not call tool (graceful fallback to text)
-
-**See `structured-output/README.md` for detailed comparison and usage guide.**
-
-#### Test Coverage
-
-**Model 1 (Conversion) Tests:**
-1. Simple Person struct (`AskStructured`)
-2. TodoList with conversation history (`AskWithHistoryStructured`)
-3. Complex Project with nested arrays (`AskStructured`)
-
-**Model 2 (Tool) Tests:**
-1. Simple Person via `submit_person_profile` tool
-2. Complex Order with nested items via `submit_order` tool
-3. Tool not called scenario (graceful fallback)
-
-#### Running
-
-```bash
-# Test Model 1: Text Conversion (uses OpenAI by default)
-mcpagent-test test structured-output-conversion --log-file logs/conversion-test.log
-
-# Test Model 2: Tool-Based (uses OpenAI by default)
-mcpagent-test test structured-output-tool --log-file logs/tool-test.log
-
-# With custom model
-mcpagent-test test structured-output-conversion --model gpt-4o-mini --log-file logs/conversion-test.log
-```
-
-#### Logs
-
-- Default: stdout (no file logging unless `--log-file` is specified)
-- Override with `--log-file` flag
-- **Important**: Always use `--log-file` to avoid cluttering terminal output
-
----
-
 ### `token-tracking` - Token Tracking Testing
 
 **Folder**: `cmd/testing/token-tracking/`  
@@ -522,12 +460,6 @@ mcpagent-test test human-feedback-code-exec --model gpt-4.1 --log-file logs/huma
 This section outlines planned tests to be implemented for comprehensive agent feature coverage.
 
 ### High Priority Tests
-
-#### 3. `structured-output` - Structured Output Testing
-**Status**: ✅ Completed  
-**Feature**: `AskStructured`, `AskWithHistoryStructured`, `AskWithHistoryStructuredViaTool`  
-**What to Test**: JSON schema extraction, structured data conversion, tool-based structured output  
-**Complexity**: Medium
 
 #### 4. `custom-tools` - Custom Tools Registration Testing
 **Status**: 📋 Planned  

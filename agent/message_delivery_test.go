@@ -9,7 +9,7 @@ import (
 )
 
 func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
-	agent := &Agent{provider: llm.ProviderOpenAI, ModelID: "gpt-5"}
+	agent := &Agent{provider: llm.ProviderOpenAI, modelID: "gpt-5"}
 
 	result, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
 		SessionID: "session-1",
@@ -29,7 +29,7 @@ func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
 }
 
 func TestDeliverUserMessageRejectsEmptyMessage(t *testing.T) {
-	agent := &Agent{provider: llm.ProviderOpenAI, ModelID: "gpt-5"}
+	agent := &Agent{provider: llm.ProviderOpenAI, modelID: "gpt-5"}
 	_, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
 		SessionID: "session-1",
 		Message:   " ",

@@ -11,8 +11,6 @@ import (
 const (
 	availableToolsOpenTag  = "<available_tools>"
 	availableToolsCloseTag = "</available_tools>"
-	preDiscoveredOpenTag   = "<pre_discovered_tool_specs>"
-	preDiscoveredCloseTag  = "</pre_discovered_tool_specs>"
 	effectiveToolsMarker   = "\x00mcpagent-effective-tools\x00"
 )
 
@@ -53,18 +51,18 @@ func (a *Agent) outgoingSystemPromptForContext(ctx context.Context) string {
 // reads, and prompt-event/log rendering. This keeps what operators inspect
 // identical to what the model receives.
 func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base string) string {
-	if !a.UseCodeExecutionMode {
+	if !a.useCodeExecutionMode {
 		return strings.ReplaceAll(base, prompt.ToolStructurePlaceholder, "")
 	}
 
 	toolStructure, err := a.buildToolIndexForContext(ctx)
 	if err != nil {
-		if a.Logger != nil {
-			a.Logger.Warn("Failed to build request-time tool manifest", loggerv2.Error(err))
+		if a.logger != nil {
+			a.logger.Warn("Failed to build request-time tool manifest", loggerv2.Error(err))
 		}
 		toolStructure = ""
 	}
-	section := prompt.BuildAvailableToolsSection(toolStructure, a.buildPreDiscoveredToolSpecsForContext(ctx))
+	section := prompt.BuildAvailableToolsSection(toolStructure)
 	return replaceEffectiveToolsSection(base, section)
 }
 
@@ -84,7 +82,6 @@ func replaceEffectiveToolsSection(base, section string) string {
 	}
 
 	working = removeTaggedSections(working, availableToolsOpenTag, availableToolsCloseTag)
-	working = removeTaggedSections(working, preDiscoveredOpenTag, preDiscoveredCloseTag)
 	working = strings.Replace(working, effectiveToolsMarker, section, 1)
 	return strings.TrimSpace(working)
 }

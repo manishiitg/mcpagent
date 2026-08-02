@@ -2,7 +2,6 @@ package claudecodebridge
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -113,20 +112,9 @@ func TestClaudeCodeBridge(log loggerv2.Logger, tracer observability.Tracer, trac
 	defer agent.Close()
 	defer cleanup()
 
-	// Step 4: Register workspace custom tools
-	log.Info("--- Step 4: Register workspace custom tools ---")
-	if err := registerWorkspaceTools(agent, log); err != nil {
-		return err
-	}
-
-	// Step 5: Verify bridge config
-	log.Info("--- Step 5: Verify bridge MCP config ---")
-	if err := verifyBridgeConfig(agent, log); err != nil {
-		return err
-	}
-
-	// Step 6: Send a query through Claude Code
-	log.Info("--- Step 6: Send query via Claude Code (through bridge) ---")
+	// Step 5: Send a query through Claude Code. The bridge-config serializer is
+	// covered by package-level tests; this command verifies the real boundary.
+	log.Info("--- Step 5: Send query via Claude Code (through bridge) ---")
 	if err := testClaudeCodeQuery(ctx, agent, log, traceID); err != nil {
 		return err
 	}
@@ -332,6 +320,11 @@ func createClaudeCodeAgent(ctx context.Context, log loggerv2.Logger, tracer obse
 		return nil, func() {}, fmt.Errorf("failed to set MCP_API_TOKEN: %w", err)
 	}
 
+	directTools, err := workspaceToolDefinitions(log)
+	if err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
 	agent, err := testutils.CreateTestAgent(ctx, &testutils.TestAgentConfig{
 		LLM:        model,
 		Provider:   llm.ProviderClaudeCode,
@@ -339,10 +332,8 @@ func createClaudeCodeAgent(ctx context.Context, log loggerv2.Logger, tracer obse
 		Tracer:     tracer,
 		TraceID:    traceID,
 		Logger:     log,
-		Options: []mcpagent.AgentOption{
-			mcpagent.WithProvider(llm.ProviderClaudeCode),
-			mcpagent.WithCodeExecutionMode(true),
-		},
+		Definition: mcpagent.AgentDefinition{Tools: mcpagent.ToolSet{Direct: directTools}},
+		Runtime:    mcpagent.RuntimeConfig{Tools: mcpagent.ToolRuntimeConfig{CodeExecution: true}},
 	})
 	if err != nil {
 		cleanup()
@@ -356,10 +347,17 @@ func createClaudeCodeAgent(ctx context.Context, log loggerv2.Logger, tracer obse
 	return agent, cleanup, nil
 }
 
-// registerWorkspaceTools registers workspace-like custom tools on the agent
-func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
+type definitionToolCollector struct{ tools []mcpagent.ToolDefinition }
+
+func (c *definitionToolCollector) RegisterCustomTool(name, description string, parameters map[string]interface{}, execute func(context.Context, map[string]interface{}) (string, error), displayGroup string) error {
+	c.tools = append(c.tools, mcpagent.ToolDefinition{Name: name, Description: description, InputSchema: parameters, Execute: execute, DisplayGroup: displayGroup})
+	return nil
+}
+
+func workspaceToolDefinitions(log loggerv2.Logger) ([]mcpagent.ToolDefinition, error) {
+	collector := &definitionToolCollector{}
 	// workspace_read_file — reads files from a test directory
-	err := mcpagent.AddDefinitionTool(agent,
+	err := collector.RegisterCustomTool(
 		"workspace_read_file",
 		"Read a file from the workspace. Returns the file contents as a string.",
 		map[string]interface{}{
@@ -380,12 +378,12 @@ func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 		"workspace_tools",
 	)
 	if err != nil {
-		return fmt.Errorf("failed to register workspace_read_file: %w", err)
+		return nil, fmt.Errorf("failed to register workspace_read_file: %w", err)
 	}
 	log.Info("Registered workspace_read_file")
 
 	// workspace_write_file — writes files
-	err = mcpagent.AddDefinitionTool(agent,
+	err = collector.RegisterCustomTool(
 		"workspace_write_file",
 		"Write content to a file in the workspace.",
 		map[string]interface{}{
@@ -413,12 +411,12 @@ func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 		"workspace_tools",
 	)
 	if err != nil {
-		return fmt.Errorf("failed to register workspace_write_file: %w", err)
+		return nil, fmt.Errorf("failed to register workspace_write_file: %w", err)
 	}
 	log.Info("Registered workspace_write_file")
 
 	// execute_shell_command — runs shell commands
-	err = mcpagent.AddDefinitionTool(agent,
+	err = collector.RegisterCustomTool(
 		"execute_shell_command",
 		"Execute a shell command in the workspace directory.",
 		map[string]interface{}{
@@ -439,12 +437,12 @@ func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 		"workspace_tools",
 	)
 	if err != nil {
-		return fmt.Errorf("failed to register execute_shell_command: %w", err)
+		return nil, fmt.Errorf("failed to register execute_shell_command: %w", err)
 	}
 	log.Info("Registered execute_shell_command")
 
 	// agent_browser — browser automation
-	err = mcpagent.AddDefinitionTool(agent,
+	err = collector.RegisterCustomTool(
 		"agent_browser",
 		"Browse a URL and return page content.",
 		map[string]interface{}{
@@ -465,108 +463,12 @@ func registerWorkspaceTools(agent *mcpagent.Agent, log loggerv2.Logger) error {
 		"browser_tools",
 	)
 	if err != nil {
-		return fmt.Errorf("failed to register agent_browser: %w", err)
+		return nil, fmt.Errorf("failed to register agent_browser: %w", err)
 	}
 	log.Info("Registered agent_browser")
 
 	log.Info("All workspace tools registered", loggerv2.Int("count", 4))
-	return nil
-}
-
-// verifyBridgeConfig checks that BuildBridgeMCPConfig produces valid config with all tools
-func verifyBridgeConfig(agent *mcpagent.Agent, log loggerv2.Logger) error {
-	configJSON, err := mcpagent.BuildAgentBridgeConfig(agent)
-	if err != nil {
-		return fmt.Errorf("BuildBridgeMCPConfig failed: %w", err)
-	}
-
-	log.Info("Bridge config generated", loggerv2.Int("length", len(configJSON)))
-
-	// Parse the config
-	var config map[string]interface{}
-	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
-		return fmt.Errorf("bridge config is not valid JSON: %w", err)
-	}
-
-	// Verify structure
-	mcpServers, ok := config["mcpServers"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("bridge config missing mcpServers")
-	}
-
-	apiBridge, ok := mcpServers["api-bridge"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("bridge config missing api-bridge server")
-	}
-
-	// Verify command
-	command, _ := apiBridge["command"].(string)
-	if command == "" {
-		return fmt.Errorf("bridge config has empty command")
-	}
-	log.Info("Bridge command", loggerv2.String("command", command))
-
-	// Verify env vars
-	envMap, ok := apiBridge["env"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("bridge config missing env")
-	}
-
-	apiURL, _ := envMap["MCP_API_URL"].(string)
-	apiToken, _ := envMap["MCP_API_TOKEN"].(string)
-	toolsJSON, _ := envMap["MCP_TOOLS"].(string)
-
-	if apiURL == "" {
-		return fmt.Errorf("bridge config has empty MCP_API_URL")
-	}
-	if apiToken == "" {
-		return fmt.Errorf("bridge config has empty MCP_API_TOKEN")
-	}
-	if toolsJSON == "" {
-		return fmt.Errorf("bridge config has empty MCP_TOOLS")
-	}
-
-	log.Info("Bridge env vars present",
-		loggerv2.String("api_url", apiURL),
-		loggerv2.String("token_prefix", apiToken[:8]+"..."))
-
-	// Parse and verify tool definitions
-	var toolDefs []map[string]interface{}
-	if err := json.Unmarshal([]byte(toolsJSON), &toolDefs); err != nil {
-		return fmt.Errorf("MCP_TOOLS is not valid JSON: %w", err)
-	}
-
-	log.Info("Tool definitions in bridge config", loggerv2.Int("count", len(toolDefs)))
-
-	// Verify the bridge exposes the expected native tool set
-	toolSet := make(map[string]string, len(toolDefs)) // name -> type
-	for _, td := range toolDefs {
-		name, _ := td["name"].(string)
-		toolType, _ := td["type"].(string)
-		toolSet[name] = toolType
-		log.Info("  Bridge tool", loggerv2.String("name", name), loggerv2.String("type", toolType))
-	}
-
-	expectedTools := map[string]string{
-		"execute_shell_command":     "custom",
-		"diff_patch_workspace_file": "custom",
-		"agent_browser":             "custom",
-		"get_api_spec":              "virtual",
-	}
-	for name, wantType := range expectedTools {
-		gotType, ok := toolSet[name]
-		if !ok {
-			return fmt.Errorf("expected bridge tool %q not found", name)
-		}
-		if gotType != wantType {
-			return fmt.Errorf("bridge tool %q: expected type %q, got %q", name, wantType, gotType)
-		}
-	}
-
-	log.Info("Bridge config verification passed",
-		loggerv2.Int("total_tools", len(toolDefs)))
-
-	return nil
+	return collector.tools, nil
 }
 
 // testClaudeCodeQuery sends a query through the agent and verifies it works
@@ -583,7 +485,7 @@ func testClaudeCodeQuery(ctx context.Context, agent *mcpagent.Agent, log loggerv
 		loggerv2.String("trace_id", string(traceID)))
 
 	startTime := time.Now()
-	response, err := mcpagent.RunText(queryCtx, agent, query)
+	response, err := testutils.RunText(queryCtx, agent, query)
 	duration := time.Since(startTime)
 
 	if err != nil {

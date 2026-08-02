@@ -261,14 +261,13 @@ func testParallelAgentCreation(log loggerv2.Logger) error {
 			log.Info("Creating agent",
 				loggerv2.Int("agent_id", agentID))
 
-			agent, err := mcpagent.NewAgent(
-				ctx,
-				model,
-				configPath,
-				mcpagent.WithLogger(log),
-				mcpagent.WithProvider(llmProvider),
-				mcpagent.WithServerName("sequential-thinking"),
-			)
+			agent, err := mcpagent.NewAgentFromDefinition(ctx, mcpagent.AgentDefinition{
+				Tools: mcpagent.ToolSet{MCP: []mcpagent.MCPToolSource{{Name: "sequential-thinking"}}},
+			}, mcpagent.RuntimeConfig{
+				Model: model, MCPConfigPath: configPath,
+				Generation:    mcpagent.GenerationRuntimeConfig{Provider: llmProvider},
+				Observability: mcpagent.ObservabilityRuntimeConfig{Logger: log},
+			})
 
 			if err != nil {
 				results <- struct {
@@ -281,7 +280,7 @@ func testParallelAgentCreation(log loggerv2.Logger) error {
 
 			log.Info("Agent created successfully",
 				loggerv2.Int("agent_id", agentID),
-				loggerv2.Int("clients_count", len(agent.Clients)))
+				loggerv2.Int("clients_count", mcpagent.ReadAgentDiagnostics(agent).Connections))
 
 			results <- struct {
 				id    int
@@ -314,7 +313,7 @@ func testParallelAgentCreation(log loggerv2.Logger) error {
 		}
 		// Clean up any successful agents
 		for _, a := range agents {
-			a.Close()
+			_ = a.Close()
 		}
 		return fmt.Errorf("failed to create %d/%d agents", len(errors), numAgents)
 	}
@@ -325,7 +324,7 @@ func testParallelAgentCreation(log loggerv2.Logger) error {
 
 	// Verify each agent has its own client (not shared)
 	for i, agent := range agents {
-		clientCount := len(agent.Clients)
+		clientCount := mcpagent.ReadAgentDiagnostics(agent).Connections
 		log.Info("Agent client info",
 			loggerv2.Int("agent_id", i),
 			loggerv2.Int("clients", clientCount))
@@ -338,7 +337,7 @@ func testParallelAgentCreation(log loggerv2.Logger) error {
 
 	// Clean up agents
 	for i, agent := range agents {
-		agent.Close()
+		_ = agent.Close()
 		log.Debug("Agent closed", loggerv2.Int("agent_id", i))
 	}
 

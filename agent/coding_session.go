@@ -239,8 +239,8 @@ func (a *Agent) continueConversation(ctx context.Context, conversationID, messag
 
 	if store != nil {
 		if h, err := store.Load(ctx, conversationID); err != nil {
-			if a.Logger != nil {
-				a.Logger.Warn(fmt.Sprintf("ContinueConversation: load handle failed (starting cold): conversation=%q err=%v", conversationID, err))
+			if a.logger != nil {
+				a.logger.Warn(fmt.Sprintf("ContinueConversation: load handle failed (starting cold): conversation=%q err=%v", conversationID, err))
 			}
 		} else if h != nil && !h.Empty() {
 			a.applyAgentSessionHandle(h)
@@ -250,7 +250,7 @@ func (a *Agent) continueConversation(ctx context.Context, conversationID, messag
 	// The conversation id IS the keep-alive identity: the adapter reuses a live
 	// tmux session keyed by it (fast path), or relaunches + --resumes from the
 	// native session id restored above (fallback).
-	a.SessionID = conversationID
+	a.sessionID = conversationID
 	a.enablePersistentInteractiveForProvider()
 
 	answer, err := a.ask(ctx, message)
@@ -260,8 +260,8 @@ func (a *Agent) continueConversation(ctx context.Context, conversationID, messag
 
 	if store != nil {
 		if h := a.currentAgentSessionHandle(); h != nil {
-			if saveErr := store.Save(ctx, conversationID, h); saveErr != nil && a.Logger != nil {
-				a.Logger.Warn(fmt.Sprintf("ContinueConversation: save handle failed (continuity may be lost): conversation=%q err=%v", conversationID, saveErr))
+			if saveErr := store.Save(ctx, conversationID, h); saveErr != nil && a.logger != nil {
+				a.logger.Warn(fmt.Sprintf("ContinueConversation: save handle failed (continuity may be lost): conversation=%q err=%v", conversationID, saveErr))
 			}
 		}
 	}
@@ -274,13 +274,13 @@ func (a *Agent) continueConversation(ctx context.Context, conversationID, messag
 func (a *Agent) enablePersistentInteractiveForProvider() {
 	switch a.provider {
 	case llm.ProviderClaudeCode:
-		a.ClaudeCodePersistentInteractiveSession = true
+		a.claudeCodePersistentInteractiveSession = true
 	case llm.ProviderCodexCLI:
-		a.CodexPersistentInteractiveSession = true
+		a.codexPersistentInteractiveSession = true
 	case llm.ProviderCursorCLI:
-		a.CursorPersistentInteractiveSession = true
+		a.cursorPersistentInteractiveSession = true
 	case llm.ProviderPiCLI:
-		a.PiPersistentInteractiveSession = true
+		a.piPersistentInteractiveSession = true
 	}
 }
 
@@ -343,14 +343,14 @@ func (a *Agent) usesStructuredTransport() bool {
 	if a.wantsStructuredTransport() {
 		return true
 	}
-	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.ModelID); ok {
+	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
 		return contract.Transport != llm.CodingAgentTransportTmux
 	}
 	return false
 }
 
 // wantsStructuredTransport reports whether the CALLER explicitly asked for the
-// structured transport (WithCodingAgentTransport). It is the single decision
+// structured transport (withCodingAgentTransport). It is the single decision
 // point every transport-dependent site consults — the four provider
 // integrations before appending their own structured call option, the
 // interactive-session-id skip, the terminal-launch guard, and
@@ -368,7 +368,7 @@ func (a *Agent) wantsStructuredTransport() bool {
 	if a == nil {
 		return false
 	}
-	return a.CodingAgentTransport == llm.CodingAgentTransportStructured
+	return a.codingAgentTransport == llm.CodingAgentTransportStructured
 }
 
 // SupportsSteering reports whether the agent's transport accepts live input into
@@ -381,7 +381,7 @@ func (a *Agent) supportsSteering() bool {
 	if a.usesStructuredTransport() {
 		return false
 	}
-	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.ModelID)
+	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID)
 	return ok && contract.SupportsLiveInput
 }
 

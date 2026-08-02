@@ -72,6 +72,7 @@ func NewToolFilter(
 		"human_tools",          // human_feedback, notify_user, etc.
 		"delegation_tools",     // delegate, send_message_to_agent, etc.
 		"workflow",             // plan modification tools (update_regular_step, add_regular_step, etc.)
+		"skill_tools",          // read_skill (intrinsic attached-skill identity)
 	}
 	for _, cat := range systemCats {
 		tf.systemCategories[cat] = true

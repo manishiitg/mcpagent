@@ -29,6 +29,7 @@ import (
 	"github.com/manishiitg/mcpagent/mcpcache"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
+	"github.com/manishiitg/mcpagent/toolerr"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -57,7 +58,7 @@ const (
 // getLogger returns the agent's logger (guaranteed to be non-nil)
 func getLogger(a *Agent) loggerv2.Logger {
 	// Agent logger is guaranteed to be non-nil in the new architecture
-	return a.Logger
+	return a.logger
 }
 
 // mappedMCPClient returns only the client owned by the server mapped to toolName.
@@ -72,7 +73,7 @@ func (a *Agent) mappedMCPClient(toolName string) (mcpclient.ClientInterface, str
 	}
 
 	a.clientsMu.RLock()
-	client := a.Clients[serverName]
+	client := a.clients[serverName]
 	a.clientsMu.RUnlock()
 	return client, serverName, true
 }
@@ -105,8 +106,8 @@ func (a *Agent) annotateUnifiedCompletionEvent(event *events.UnifiedCompletionEv
 		event.Metadata = make(map[string]interface{})
 	}
 	event.Metadata["provider"] = string(a.provider)
-	event.Metadata["model_id"] = a.ModelID
-	if isCodingCLIProvider(a.provider, a.ModelID) {
+	event.Metadata["model_id"] = a.modelID
+	if isCodingCLIProvider(a.provider, a.modelID) {
 		event.Metadata["coding_agent_terminal_format"] = true
 	}
 }
@@ -117,8 +118,7 @@ func isVirtualTool(toolName string) bool {
 	virtualTools := []string{
 		"get_prompt", "get_resource",
 		"search_large_output",
-		"get_api_spec",                                              // Code execution mode tools
-		"search_tools", "add_tool", "remove_tool", "show_all_tools", // Tool search mode tools
+		"get_api_spec", // Code execution mode tool
 	}
 	for _, vt := range virtualTools {
 		if vt == toolName {
@@ -134,8 +134,8 @@ func isVirtualTool(toolName string) bool {
 // A return value <= 0 means no agent-level tool timeout.
 func getToolExecutionTimeout(a *Agent) time.Duration {
 	// First check if agent has a specific timeout configured
-	if a.ToolTimeout > 0 {
-		return a.ToolTimeout
+	if a.toolTimeout > 0 {
+		return a.toolTimeout
 	}
 
 	// Fall back to environment variable
@@ -282,7 +282,7 @@ func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes
 
 func ensureSystemPromptForContext(ctx context.Context, a *Agent, messages []llmtypes.MessageContent) []llmtypes.MessageContent {
 	// Always use the agent's current system prompt — it reflects the latest mode
-	// (code execution, tool search, etc.) which may differ from a stale system
+	// (for example code execution) which may differ from a stale system
 	// message carried over in conversation history from a previous turn.
 	systemPrompt := a.outgoingSystemPromptForContext(ctx)
 
@@ -310,25 +310,25 @@ func ensureSystemPromptForContext(ctx context.Context, a *Agent, messages []llmt
 }
 
 // AskWithHistory runs an interaction using the provided message history (multi-turn conversation).
-func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Use agent's logger if available, otherwise use default
-	v2Logger := a.Logger
+	v2Logger := a.logger
 	v2Logger.Debug("Entered AskWithHistory", loggerv2.Int("message_count", len(messages)))
-	if len(a.Tracers) == 0 {
-		a.Tracers = []observability.Tracer{observability.NoopTracer{}}
+	if len(a.tracers) == 0 {
+		a.tracers = []observability.Tracer{observability.NoopTracer{}}
 	}
-	if a.MaxTurns == 0 {
+	if a.maxTurns == 0 {
 		// Get default from environment variable, fallback to 500
 		if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
 			if maxTurns, err := strconv.Atoi(envVal); err == nil && maxTurns > 0 {
-				a.MaxTurns = maxTurns
+				a.maxTurns = maxTurns
 			} else {
 				// Fallback to 500 if env var is invalid
-				a.MaxTurns = 500
+				a.maxTurns = 500
 			}
 		} else {
 			// Fallback to 500 if env var not set
-			a.MaxTurns = 500
+			a.maxTurns = 500
 		}
 	}
 
@@ -339,7 +339,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Track conversation start time for duration calculation
 	conversationStartTime := time.Now()
 	log.Printf("[LATENCY_DEBUG] AskWithHistory started | messages=%d provider=%s model=%s",
-		len(messages), a.provider, a.ModelID)
+		len(messages), a.provider, a.modelID)
 
 	// ✅ CONTEXT-AWARE HIERARCHY: Initialize based on calling context
 	// This ensures hierarchy reflects the actual calling context
@@ -356,14 +356,14 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	if os.Getenv("LOG_AGENT_PROMPTS") == "true" {
 		// Clear tool call log from previous turns
 		a.toolCallLogMu.Lock()
-		a.ToolCallLog = nil
+		a.toolCallLog = nil
 		a.toolCallLogMu.Unlock()
 
 		promptLog = logFinalPrompts(a, messages)
 		defer func() {
 			a.toolCallLogMu.Lock()
-			toolLog := make([]string, len(a.ToolCallLog))
-			copy(toolLog, a.ToolCallLog)
+			toolLog := make([]string, len(a.toolCallLog))
+			copy(toolLog, a.toolCallLog)
 			a.toolCallLogMu.Unlock()
 			logConversationEnd(promptLog, messages, startMsgCount, toolLog)
 		}()
@@ -372,26 +372,26 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// NEW: Set current query for hierarchy tracking (will be set later when lastUserMessage is extracted)
 
 	// Add cache validation AFTER the agent is fully initialized
-	if len(a.Tracers) > 0 && len(a.Clients) > 0 {
+	if len(a.tracers) > 0 && len(a.clients) > 0 {
 		// Debug: Log what's in the clients map
-		clientKeys := make([]string, 0, len(a.Clients))
-		for k := range a.Clients {
+		clientKeys := make([]string, 0, len(a.clients))
+		for k := range a.clients {
 			clientKeys = append(clientKeys, k)
 		}
 
 		// Get actual server information for better cache events
-		serverNames := make([]string, 0, len(a.Clients))
-		for serverName := range a.Clients {
+		serverNames := make([]string, 0, len(a.clients))
+		for serverName := range a.clients {
 			serverNames = append(serverNames, serverName)
 		}
 
 		// Emit comprehensive cache validation event for all servers
 		serverStatus := make(map[string]mcpcache.ServerCacheStatus)
-		for serverName := range a.Clients {
+		for serverName := range a.clients {
 			serverStatus[serverName] = mcpcache.ServerCacheStatus{
 				ServerName:     serverName,
 				Status:         "validation",
-				ToolsCount:     len(a.Tools),
+				ToolsCount:     len(a.tools),
 				PromptsCount:   0, // Will be populated if available
 				ResourcesCount: 0, // Will be populated if available
 			}
@@ -403,7 +403,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Also emit to tracers for observability (Langfuse, etc.)
 		mcpcache.EmitComprehensiveCacheEvent(
-			a.Tracers,
+			a.tracers,
 			"validation",
 			"conversation_cache_validation",
 			serverNames,
@@ -490,13 +490,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Metadata for conversation tracking (used in events)
 	conversationMetadata := map[string]interface{}{
 		"system_prompt":   effectivePrompt,
-		"tools_count":     len(a.Tools),
-		"agent_mode":      string(a.AgentMode),
-		"model_id":        a.ModelID,
+		"tools_count":     len(a.tools),
+		"agent_mode":      string(a.agentMode),
+		"model_id":        a.modelID,
 		"provider":        string(a.provider),
-		"max_turns":       a.MaxTurns,
-		"temperature":     a.Temperature,
-		"tool_choice":     a.ToolChoice,
+		"max_turns":       a.maxTurns,
+		"temperature":     a.temperature,
+		"tool_choice":     a.toolChoice,
 		"servers":         serverList,
 		"conversation_id": fmt.Sprintf("conv_%d", time.Now().Unix()),
 		"start_time":      conversationStartTime.Format(time.RFC3339),
@@ -506,41 +506,32 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	_ = conversationMetadata
 
 	// Emit conversation start event with correlation (child of agent start)
-	conversationStartEvent := events.NewConversationStartEventWithCorrelation(lastUserMessage, effectivePrompt, len(a.Tools), serverList, traceID, agentStartEventID)
+	conversationStartEvent := events.NewConversationStartEventWithCorrelation(lastUserMessage, effectivePrompt, len(a.tools), serverList, traceID, agentStartEventID)
 	a.emitTypedEvent(ctx, conversationStartEvent)
 
 	// Store conversation start event ID for correlation
 	// conversationStartEventID := conversationStartEvent.EventID
 	// Metadata for processing tracking
 
-	// Reset filtered tools at the start of each conversation to ensure fresh evaluation.
-	// In tool search mode, use getToolsForToolSearchMode() to include discovered tools
-	if a.UseToolSearchMode {
-		a.filteredTools = a.applyToolAllowList(a.getToolsForToolSearchMode())
-		v2Logger.Debug("🔍 Tool search mode: using getToolsForToolSearchMode()",
-			loggerv2.Int("filtered_count", len(a.filteredTools)))
-	} else {
-		a.filteredTools = a.applyToolAllowList(a.Tools) // Start with all tools, apply allow list if set
-		v2Logger.Debug("🔧 Normal/Code execution mode: using a.Tools",
-			loggerv2.Int("tools_count", len(a.Tools)),
-			loggerv2.Int("filtered_count", len(a.filteredTools)))
-		// Log tool names for debugging
-		toolNames := make([]string, 0, len(a.filteredTools))
-		for _, t := range a.filteredTools {
-			if t.Function != nil {
-				toolNames = append(toolNames, t.Function.Name)
-			}
+	// Reset filtered tools at the start of each conversation to apply the current allow list.
+	a.filteredTools = a.applyToolAllowList(a.tools)
+	v2Logger.Debug("🔧 Using registered tools after allow-list filtering",
+		loggerv2.Int("tools_count", len(a.tools)),
+		loggerv2.Int("filtered_count", len(a.filteredTools)))
+	toolNames := make([]string, 0, len(a.filteredTools))
+	for _, t := range a.filteredTools {
+		if t.Function != nil {
+			toolNames = append(toolNames, t.Function.Name)
 		}
-		v2Logger.Debug("🔧 Available tools", loggerv2.Any("tools", toolNames))
 	}
+	v2Logger.Debug("🔧 Available tools", loggerv2.Any("tools", toolNames))
 
-	// filteredTools was set above (tool-search mode or full Tools), so what
-	// was selected during pre-call setup is what the LLM will see.
+	// The filtered set selected during pre-call setup is what the LLM will see.
 
 	// Calculate token count for the system prompt if tool output handler is available
 	var tokenCount int
-	if a.ModelID != "" && a.shouldUseWrapperTokenCounting() {
-		tokenCount = a.toolOutputHandler.CountTokensForModel(effectivePrompt, a.ModelID)
+	if a.modelID != "" && a.shouldUseWrapperTokenCounting() {
+		tokenCount = a.toolOutputHandler.CountTokensForModel(effectivePrompt, a.modelID)
 	}
 	systemPromptEvent := events.NewSystemPromptEventWithTokens(effectivePrompt, 0, tokenCount)
 	a.emitTypedEvent(ctx, systemPromptEvent)
@@ -550,7 +541,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	var lastResponse string
 	for turn := 0; ; turn++ {
-		if a.MaxTurns > 0 && turn >= a.MaxTurns {
+		if a.maxTurns > 0 && turn >= a.maxTurns {
 			break
 		}
 
@@ -592,7 +583,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		llmMessages := messages
 
 		// Check if context editing should be applied (compact stale tool responses)
-		if a.EnableContextEditing {
+		if a.enableContextEditing {
 			// Log messages BEFORE compaction for verification
 			beforeMessageCount := len(llmMessages)
 			toolResponseCountBefore := 0
@@ -653,7 +644,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Check if token-based summarization should be triggered
 		// Support both percentage-based and fixed token thresholds (OR logic)
-		if a.EnableContextSummarization && (a.SummarizeOnTokenThreshold || a.SummarizeOnFixedTokenThreshold) {
+		if a.enableContextSummarization && (a.summarizeOnTokenThreshold || a.summarizeOnFixedTokenThreshold) {
 			// Use actual context window usage from previous LLM calls (actual tokens from LLM responses)
 			// This represents the actual tokens currently in the context window from previous calls
 			// Context window is based on INPUT tokens only, not output tokens
@@ -664,15 +655,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// Get model metadata for detailed logging
 			var modelContextWindow int
 			var thresholdTokens int
-			modelID := a.ModelID
-			if modelID == "" && a.LLM != nil {
-				modelID = a.LLM.GetModelID()
+			modelID := a.modelID
+			if modelID == "" && a.llmModel != nil {
+				modelID = a.llmModel.GetModelID()
 			}
-			if a.LLM != nil {
-				if metadata, err := a.LLM.GetModelMetadata(modelID); err == nil && metadata != nil {
+			if a.llmModel != nil {
+				if metadata, err := a.llmModel.GetModelMetadata(modelID); err == nil && metadata != nil {
 					modelContextWindow = metadata.ContextWindow
-					if a.SummarizeOnTokenThreshold {
-						thresholdTokens = int(float64(metadata.ContextWindow) * a.TokenThresholdPercent)
+					if a.summarizeOnTokenThreshold {
+						thresholdTokens = int(float64(metadata.ContextWindow) * a.tokenThresholdPercent)
 					}
 				}
 			}
@@ -686,21 +677,21 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				loggerv2.Int("cumulative_input_tokens", a.cumulativePromptTokens),
 				loggerv2.Int("current_input_tokens", currentInputTokens),
 				loggerv2.Int("model_context_window", modelContextWindow),
-				loggerv2.Any("summarize_on_token_threshold", a.SummarizeOnTokenThreshold),
-				loggerv2.Any("token_threshold_percent", a.TokenThresholdPercent),
+				loggerv2.Any("summarize_on_token_threshold", a.summarizeOnTokenThreshold),
+				loggerv2.Any("token_threshold_percent", a.tokenThresholdPercent),
 				loggerv2.Int("percentage_threshold_tokens", thresholdTokens),
-				loggerv2.Any("summarize_on_fixed_token_threshold", a.SummarizeOnFixedTokenThreshold),
-				loggerv2.Int("fixed_token_threshold", a.FixedTokenThreshold),
+				loggerv2.Any("summarize_on_fixed_token_threshold", a.summarizeOnFixedTokenThreshold),
+				loggerv2.Int("fixed_token_threshold", a.fixedTokenThreshold),
 				loggerv2.Any("usage_percent", usagePercent))
 
-			shouldSummarize, err := ShouldSummarizeOnTokenThreshold(a, currentInputTokens)
+			shouldSummarize, err := shouldSummarizeOnTokenThreshold(a, currentInputTokens)
 			if err != nil {
 				v2Logger.Warn("Failed to check token threshold for summarization, skipping",
 					loggerv2.Error(err),
 					loggerv2.Int("current_input_tokens", currentInputTokens))
 			} else if shouldSummarize {
 				// Check cooldown period to prevent repeated summarization
-				cooldownTurns := GetSummarizationCooldownTurns(a)
+				cooldownTurns := getSummarizationCooldownTurns(a)
 				turnsSinceLastSummarization := turn - a.lastSummarizationTurn
 				inCooldown := a.lastSummarizationTurn >= 0 && turnsSinceLastSummarization < cooldownTurns
 
@@ -721,14 +712,14 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						loggerv2.Int("current_turn", turn),
 						loggerv2.Int("current_input_tokens", currentInputTokens),
 						loggerv2.Int("model_context_window", modelContextWindow),
-						loggerv2.Any("summarize_on_token_threshold", a.SummarizeOnTokenThreshold),
-						loggerv2.Any("token_threshold_percent", a.TokenThresholdPercent),
+						loggerv2.Any("summarize_on_token_threshold", a.summarizeOnTokenThreshold),
+						loggerv2.Any("token_threshold_percent", a.tokenThresholdPercent),
 						loggerv2.Int("percentage_threshold_tokens", thresholdTokens),
-						loggerv2.Any("summarize_on_fixed_token_threshold", a.SummarizeOnFixedTokenThreshold),
-						loggerv2.Int("fixed_token_threshold", a.FixedTokenThreshold),
+						loggerv2.Any("summarize_on_fixed_token_threshold", a.summarizeOnFixedTokenThreshold),
+						loggerv2.Int("fixed_token_threshold", a.fixedTokenThreshold),
 						loggerv2.Any("usage_percent", usagePercent))
 
-					keepLastMessages := GetSummaryKeepLastMessages(a)
+					keepLastMessages := getSummaryKeepLastMessages(a)
 					originalMessageCount := len(messages) // Capture before overwriting
 					summarizedMessages, err := rebuildMessagesWithSummary(a, ctx, llmMessages, keepLastMessages)
 					if err != nil {
@@ -775,8 +766,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			turn+1, time.Since(conversationStartTime).Milliseconds(), len(llmMessages), len(a.filteredTools))
 
 		opts := []llmtypes.CallOption{}
-		if !llm.IsO3O4Model(a.ModelID) {
-			opts = append(opts, llmtypes.WithTemperature(a.Temperature))
+		if !llm.IsO3O4Model(a.modelID) {
+			opts = append(opts, llmtypes.WithTemperature(a.temperature))
 		}
 		if a.provider == "codex-cli" {
 			opts = append(opts, codexcli.WithDisableShellTool())
@@ -789,7 +780,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// Tools are already normalized during conversion in ToolsAsLLM() and cache loading
 			// No need for extra normalization here since langchaingo bug is fixed
 			opts = append(opts, llmtypes.WithTools(a.filteredTools))
-			if toolChoiceOpt := ConvertToolChoice(a.ToolChoice); toolChoiceOpt != nil {
+			if toolChoiceOpt := ConvertToolChoice(a.toolChoice); toolChoiceOpt != nil {
 				opts = append(opts, llmtypes.WithToolChoice(toolChoiceOpt))
 			}
 		}
@@ -837,8 +828,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Use GenerateContentWithRetry for robust fallback handling
 		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Sending to LLM API | provider=%s model=%s",
-			turn+1, time.Since(conversationStartTime).Milliseconds(), a.provider, a.ModelID)
-		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
+			turn+1, time.Since(conversationStartTime).Milliseconds(), a.provider, a.modelID)
+		resp, usage, genErr := generateContentWithRetry(a, ctx, llmMessages, opts, turn)
 		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | LLM API responded | llm_duration=%dms err=%v",
 			turn+1, time.Since(conversationStartTime).Milliseconds(), time.Since(llmStartTime).Milliseconds(), genErr)
 
@@ -855,7 +846,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 			v2Logger.Info("🔧 [TOKEN_USAGE] LLM call token usage",
 				loggerv2.Int("turn", turn+1),
-				loggerv2.String("model", a.ModelID),
+				loggerv2.String("model", a.modelID),
 				loggerv2.Int("input_tokens", usage.InputTokens),
 				loggerv2.Int("output_tokens", usage.OutputTokens),
 				loggerv2.Int("total_tokens", usage.TotalTokens),
@@ -871,7 +862,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				TotalTokens:      usage.TotalTokens,
 			}, resp)
 
-			// No-op unless a caller opted in via WithConversationSink. Builds
+			// No-op unless a caller opted in via withConversationSink. Builds
 			// its own history-plus-this-reply copy rather than reading
 			// `messages` directly: at this point in the control flow the
 			// assistant's reply has NOT yet been appended to `messages` on
@@ -918,7 +909,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					loggerv2.Int("turn", turn+1))
 
 				// Try fallback models by calling GenerateContentWithRetry again with fallback
-				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
+				fallbackResp, fallbackUsage, fallbackErr := generateContentWithRetry(a, ctx, llmMessages, opts, turn)
 
 				if fallbackErr == nil && fallbackResp != nil && len(fallbackResp.Choices) > 0 &&
 					fallbackResp.Choices[0].Content != "" {
@@ -960,7 +951,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// may still be alive (observable as state=completed). Suppress user-visible
 				// error events and let the orchestrator decide based on final session state.
 				if !isTmuxLossContinuationError(genErr) {
-					llmErrorEvent := events.NewLLMGenerationErrorEvent(turn+1, a.ModelID, genErr.Error(), time.Since(llmStartTime))
+					llmErrorEvent := events.NewLLMGenerationErrorEvent(turn+1, a.modelID, genErr.Error(), time.Since(llmStartTime))
 					a.emitTypedEvent(ctx, llmErrorEvent)
 
 					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, genErr.Error(), turn+1, "conversation_error", time.Since(conversationStartTime))
@@ -1027,12 +1018,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// 2. For each tool call, execute and append the tool result as a new message
 			// Use parallel execution when enabled and there are multiple tool calls
 			toolDispatchMode := "sequential"
-			if a.EnableParallelToolExecution && len(choice.ToolCalls) > 1 {
+			if a.enableParallelToolExecution && len(choice.ToolCalls) > 1 {
 				toolDispatchMode = "parallel"
 			}
 			v2Logger.Info(fmt.Sprintf("⏱️  TOOL DISPATCH START - Time: %s, Count: %d, Mode: %s, Turn: %d",
 				time.Now().Format(time.RFC3339), len(choice.ToolCalls), toolDispatchMode, turn+1))
-			if a.EnableParallelToolExecution && len(choice.ToolCalls) > 1 {
+			if a.enableParallelToolExecution && len(choice.ToolCalls) > 1 {
 				var parallelErr error
 				messages, parallelErr = executeToolCallsParallel(ctx, a, choice.ToolCalls, messages, turn, traceID, conversationStartTime, lastUserMessage, loopDetector, agentCtx)
 				if parallelErr != nil {
@@ -1098,6 +1089,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					feedbackMessage := generateEmptyToolNameFeedback(tc.FunctionCall.Arguments)
 
 					// Emit tool call error event for observability (after tool start event)
+					v2Logger.Error(toolerr.Marker+" empty tool name", nil,
+						loggerv2.String("layer", "agent_tool_loop"),
+						loggerv2.String("session_id", a.sessionID))
 					toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", "empty tool name", "", time.Since(conversationStartTime))
 					toolNameErrorEvent.ToolCallID = tc.ID
 					a.emitTypedEvent(ctx, toolNameErrorEvent)
@@ -1122,6 +1116,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					feedbackMessage := generateToolArgsParsingFeedback(tc.FunctionCall.Name, tc.FunctionCall.Arguments, err)
 
 					// Emit tool call error event for observability
+					v2Logger.Error(toolerr.Marker+" tool args parse failed", err,
+						loggerv2.String("layer", "agent_tool_loop"),
+						loggerv2.String("tool", tc.FunctionCall.Name),
+						loggerv2.String("session_id", a.sessionID))
 					toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
 					toolArgsParsingErrorEvent.ToolCallID = tc.ID
 					a.emitTypedEvent(ctx, toolArgsParsingErrorEvent)
@@ -1135,19 +1133,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					continue
 				}
 
-				// 🔧 FIX: Check custom tools FIRST before MCP client lookup
-				// Custom tools don't need MCP clients, so check them early
-				isCustomTool := false
-				if a.customTools != nil {
-					if _, exists := a.customTools[tc.FunctionCall.Name]; exists {
-						isCustomTool = true
-						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' identified as custom tool (customTools map has %d tools)", tc.FunctionCall.Name, len(a.customTools)))
-					} else {
-						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not found in customTools (map has %d tools)", tc.FunctionCall.Name, len(a.customTools)))
-					}
-				} else {
-					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] customTools map is nil for tool '%s'", tc.FunctionCall.Name))
-				}
+				// Direct tools do not need MCP clients. Resolve them from the same
+				// canonical record later used for timeout and execution.
+				directTool, isCustomTool := a.lookupDirectTool(tc.FunctionCall.Name)
+				v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' direct=%v (canonical registry has %d direct tools)", tc.FunctionCall.Name, isCustomTool, len(a.directToolSnapshot())))
 
 				// Check if it's a virtual tool
 				isVirtual := isVirtualTool(tc.FunctionCall.Name)
@@ -1162,9 +1151,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					if mapped, ok := a.toolToServer[tc.FunctionCall.Name]; ok {
 						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' mapped to server '%s' in toolToServer", tc.FunctionCall.Name, mapped))
 						if mapped == "custom" {
-							// Custom tool - no client needed
-							v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' is a custom tool (mapped to 'custom'), skipping client lookup", tc.FunctionCall.Name))
-							isCustomTool = true // Ensure it's marked as custom
+							// Compatibility projection only. Direct-tool identity comes
+							// from the canonical registry above.
+							v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' has the custom routing marker; canonical direct=%v", tc.FunctionCall.Name, isCustomTool))
 						} else {
 							client, mappedServerName, hasMappedServer = a.mappedMCPClient(tc.FunctionCall.Name)
 							if client != nil {
@@ -1189,15 +1178,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// servers already have active clients.
 					if !hasMappedServer || mappedServerName == "" {
 						// Calculate counts for logging
-						customToolsCount := 0
-						if a.customTools != nil {
-							customToolsCount = len(a.customTools)
-						}
+						customToolsCount := len(a.directToolSnapshot())
 						toolToServerCount := 0
 						if a.toolToServer != nil {
 							toolToServerCount = len(a.toolToServer)
 						}
-						v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not mapped to any server. isCustomTool=%v, isVirtual=%v, customTools has %d tools, toolToServer has %d entries",
+						v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not mapped to any server. isCustomTool=%v, isVirtual=%v, canonical registry has %d direct tools, toolToServer has %d entries",
 							tc.FunctionCall.Name, isCustomTool, isVirtual, customToolsCount, toolToServerCount))
 						v2Logger.Warn(fmt.Sprintf("[AGENT DEBUG] AskWithHistory Turn %d: Tool '%s' not mapped to any server. Providing feedback to LLM.", turn+1, tc.FunctionCall.Name))
 
@@ -1205,6 +1191,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- search_large_output (read/search/query operations for offloaded files)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
 
 						// Emit tool call error event for observability
+						v2Logger.Error(toolerr.Marker+" tool not found", nil,
+							loggerv2.String("layer", "agent_tool_loop"),
+							loggerv2.String("tool", tc.FunctionCall.Name),
+							loggerv2.String("session_id", a.sessionID))
 						toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
 						toolNotFoundEvent.ToolCallID = tc.ID
 						a.emitTypedEvent(ctx, toolNotFoundEvent)
@@ -1233,10 +1223,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Without this, every call to this server would create a duplicate connection
 					// (e.g. many duplicate subprocesses for a single workflow).
 					a.clientsMu.Lock()
-					if a.Clients == nil {
-						a.Clients = make(map[string]mcpclient.ClientInterface)
+					if a.clients == nil {
+						a.clients = make(map[string]mcpclient.ClientInterface)
 					}
-					a.Clients[mappedServerName] = onDemandClient
+					a.clients[mappedServerName] = onDemandClient
 					a.clientsMu.Unlock()
 
 					// Use the on-demand client
@@ -1265,19 +1255,19 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				toolTimeout := getToolExecutionTimeout(a)
 				hasNoTimeout := toolTimeout <= 0
 				if isCustomTool {
-					if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists && customTool.Timeout != -1 {
-						if customTool.Timeout == 0 {
+					if directTool.Timeout != -1 {
+						if directTool.Timeout == 0 {
 							// No timeout - tool runs indefinitely
 							hasNoTimeout = true
 							v2Logger.Debug("🔧 [TOOL_TIMEOUT] Custom tool has NO timeout (runs indefinitely)",
 								loggerv2.String("tool_name", tc.FunctionCall.Name))
-						} else if customTool.Timeout > 0 {
+						} else if directTool.Timeout > 0 {
 							// Custom per-tool timeout
 							hasNoTimeout = false
-							toolTimeout = customTool.Timeout
+							toolTimeout = directTool.Timeout
 							v2Logger.Debug("🔧 [TOOL_TIMEOUT] Custom tool has per-tool timeout",
 								loggerv2.String("tool_name", tc.FunctionCall.Name),
-								loggerv2.String("timeout", customTool.Timeout.String()))
+								loggerv2.String("timeout", directTool.Timeout.String()))
 						}
 					}
 				}
@@ -1319,7 +1309,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					loggerv2.String("timeout", timeoutStr))
 
 				// Add cache hit event during tool execution to show cached connection usage
-				if len(a.Tracers) > 0 && serverName != "" && serverName != "virtual-tools" {
+				if len(a.tracers) > 0 && serverName != "" && serverName != "virtual-tools" {
 					// Emit connection cache hit event to show we're using cached MCP server connection
 					// Note: We do NOT cache tool execution results - only server connections
 					connectionCacheHitEvent := events.NewCacheHitEvent(serverName, fmt.Sprintf("unified_%s", serverName), "unified_cache", 1, time.Duration(0))
@@ -1384,51 +1374,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							IsError: false,
 							Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
 						}
-
-						// If this was add_tool in tool search mode, refresh the tools list
-						// to include newly discovered tools
-						if a.UseToolSearchMode && tc.FunctionCall.Name == "add_tool" {
-							a.filteredTools = a.getToolsForToolSearchMode()
-							v2Logger.Debug("🔍 [TOOL_SEARCH] Tools refreshed after add_tool",
-								loggerv2.Int("discovered_count", a.getDiscoveredToolCount()),
-								loggerv2.Int("total_available", len(a.filteredTools)))
-						}
 					}
-				} else if a.customTools != nil {
-					// Check if this is a custom tool
-					if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists {
-						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_EXECUTION] Executing custom tool '%s' (category: %s)", tc.FunctionCall.Name, customTool.Category))
-						// Handle custom tool execution using the stored execution function
-						resultText, toolErr := customTool.Execution(toolCtx, args)
+				} else if isCustomTool {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_EXECUTION] Executing custom tool '%s' (category: %s)", tc.FunctionCall.Name, directTool.DisplayGroup))
+					resultText, toolErr := directTool.Executor(toolCtx, args)
 
-						if toolErr != nil {
-							v2Logger.Error(fmt.Sprintf("🔧 [TOOL_EXECUTION] Custom tool '%s' execution failed: %v", tc.FunctionCall.Name, toolErr), toolErr)
-							result = &mcp.CallToolResult{
-								IsError: true,
-								Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}},
-							}
-						} else {
-							v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_EXECUTION] Custom tool '%s' executed successfully (result length: %d chars)", tc.FunctionCall.Name, len(resultText)))
-							result = &mcp.CallToolResult{
-								IsError: false,
-								Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
-							}
-						}
+					if toolErr != nil {
+						v2Logger.Error(fmt.Sprintf("🔧 [TOOL_EXECUTION] Custom tool '%s' execution failed: %v", tc.FunctionCall.Name, toolErr), toolErr)
+						result = &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}}}
 					} else {
-						// Handle regular MCP tool execution
-						v2Logger.Debug("🔧 [TOOL_CALL] About to call MCP tool via client (from customTools fallback)",
-							loggerv2.String("tool_name", actualToolName),
-							loggerv2.String("server_name", serverName),
-							loggerv2.String("timeout", toolTimeout.String()))
-						callStart := time.Now()
-						result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, actualToolName, args, v2Logger, serverName)
-						callDuration := time.Since(callStart)
-						v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed (from customTools fallback)",
-							loggerv2.String("tool_name", tc.FunctionCall.Name),
-							loggerv2.String("server_name", serverName),
-							loggerv2.String("duration", callDuration.String()),
-							loggerv2.Any("ctx_done", toolCtx.Err() != nil),
-							loggerv2.Any("has_error", toolErr != nil))
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_EXECUTION] Custom tool '%s' executed successfully (result length: %d chars)", tc.FunctionCall.Name, len(resultText)))
+						result = &mcp.CallToolResult{IsError: false, Content: []mcp.Content{&mcp.TextContent{Text: resultText}}}
 					}
 				} else {
 					// Handle regular MCP tool execution
@@ -1486,7 +1442,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						loggerv2.String("duration", duration.String()))
 
 					// 🔧 ENHANCED ERROR RECOVERY HANDLING
-					errorRecoveryHandler := NewErrorRecoveryHandler(a)
+					errorRecoveryHandler := newErrorRecoveryHandler(a)
 
 					// Attempt error recovery for recoverable errors
 					recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
@@ -1508,6 +1464,19 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							toolErr = recoveredErr
 							duration = recoveredDuration
 						}
+
+						// The event is the live view; this is the durable one. Events are
+						// pruned by retention and a child terminal's are not even
+						// fetched until someone opens it, so without this line an
+						// API-provider tool failure leaves no trace in the backend log.
+						// Same marker as the bridge handlers so one grep covers every
+						// provider.
+						v2Logger.Error(toolerr.Marker+" tool failed", toolErr,
+							loggerv2.String("layer", "agent_tool_loop"),
+							loggerv2.String("tool", tc.FunctionCall.Name),
+							loggerv2.String("server", serverName),
+							loggerv2.String("session_id", a.sessionID),
+							loggerv2.String("duration", duration.String()))
 
 						// Emit tool call error event using typed event data
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
@@ -1564,7 +1533,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						v2Logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE DETECTED IN RESULT] Turn %d, Tool: %s, Server: %s, IsError: %v - Attempting immediate connection recreation", turn+1, tc.FunctionCall.Name, serverName, result.IsError))
 
 						// Create error recovery handler
-						errorRecoveryHandler := NewErrorRecoveryHandler(a)
+						errorRecoveryHandler := newErrorRecoveryHandler(a)
 
 						// Create a fake error for the recovery handler
 						fakeErr := fmt.Errorf("broken pipe detected in result: %s", resultText)
@@ -1586,9 +1555,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					}
 
 					// Context offloading: Check if tool output should be offloaded to filesystem
-					if a.EnableContextOffloading && a.shouldUseWrapperTokenCounting() {
+					if a.enableContextOffloading && a.shouldUseWrapperTokenCounting() {
 						// Check if output exceeds threshold for context offloading
-						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
+						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.modelID) {
 
 							// Emit context offloading detection event
 							detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
@@ -1621,8 +1590,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Safety check: Apply max token limit truncation regardless of context offloading setting
 					// This prevents API errors from prompts exceeding model context limits
-					if a.shouldUseWrapperTokenCounting() && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
-						truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.ModelID, tc.FunctionCall.Name)
+					if a.shouldUseWrapperTokenCounting() && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.modelID) {
+						truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.modelID, tc.FunctionCall.Name)
 						if wasTruncated {
 							v2Logger.Warn("Tool output exceeded max token limit, truncated",
 								loggerv2.String("tool", tc.FunctionCall.Name),
@@ -1669,6 +1638,21 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					}
 				}
 
+				// Reported success is not evidence of success. Bridge and shell
+				// results routinely carry a failure in the payload while the
+				// transport reports OK, which is how 34 failures in one day
+				// rendered as green checks. Sniff the content and mark it.
+				if signal, suspicious := toolerr.Suspicious(resultText); suspicious {
+					v2Logger.Error(toolerr.SuspectMarker+" tool reported success but the result reads like a failure", nil,
+						loggerv2.String("layer", "agent_tool_loop"),
+						loggerv2.String("tool", tc.FunctionCall.Name),
+						loggerv2.String("server", serverName),
+						loggerv2.String("session_id", a.sessionID),
+						loggerv2.String("signal", signal),
+						loggerv2.String("duration", duration.String()),
+						loggerv2.String("result", toolerr.TruncateForLog(resultText)))
+				}
+
 				// Tool execution completed - emit tool call end event
 				// Only emit ToolCallEndEvent if result is not an error (errors should emit ToolCallErrorEvent)
 				if result == nil || !result.IsError {
@@ -1680,12 +1664,20 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					a.tokenTrackingMutex.RUnlock()
 
 					// Emit tool call end event using typed event data (consolidated - contains all tool information)
-					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
+					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.modelID)
 					toolEndEvent.ToolCallID = tc.ID
 					a.emitTypedEvent(ctx, toolEndEvent)
 				} else if result.IsError {
 					// Result contains an error - emit tool call error event
 					// This handles the case where tool execution succeeded but the tool returned an error result
+					v2Logger.Error(toolerr.Marker+" tool returned an error result", nil,
+						loggerv2.String("layer", "agent_tool_loop"),
+						loggerv2.String("tool", tc.FunctionCall.Name),
+						loggerv2.String("server", serverName),
+						loggerv2.String("session_id", a.sessionID),
+						loggerv2.String("duration", duration.String()),
+						loggerv2.String("result", toolerr.TruncateForLog(resultText)))
+
 					toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration)
 					toolErrorEvent.ToolCallID = tc.ID
 					a.emitTypedEvent(ctx, toolErrorEvent)
@@ -1799,7 +1791,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// Emit unified completion event for simple agent
 			unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
 				"simple",                          // agentType
-				string(a.AgentMode),               // agentMode
+				string(a.agentMode),               // agentMode
 				lastUserMessage,                   // question
 				choice.Content,                    // finalResult
 				"completed",                       // status
@@ -1818,10 +1810,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Max turns reached - give agent one final chance to provide a proper answer
 	v2Logger.Debug("Max turns reached, giving agent final chance to provide answer",
-		loggerv2.Int("max_turns", a.MaxTurns))
+		loggerv2.Int("max_turns", a.maxTurns))
 
 	// Emit max turns reached event
-	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.MaxTurns, a.MaxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far. If your task is not complete, please provide a summary of what you have accomplished so far and what is missing.", string(a.AgentMode), time.Since(conversationStartTime))
+	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.maxTurns, a.maxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far. If your task is not complete, please provide a summary of what you have accomplished so far and what is missing.", string(a.agentMode), time.Since(conversationStartTime))
 	a.emitTypedEvent(ctx, maxTurnsEvent)
 
 	// Note: Context summarization is now only triggered based on token usage percentage,
@@ -1841,7 +1833,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	messages = append(messages, finalUserMessage)
 
 	// Emit user message event for the final request
-	finalUserMessageEvent := events.NewUserMessageEvent(a.MaxTurns+1, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", "user")
+	finalUserMessageEvent := events.NewUserMessageEvent(a.maxTurns+1, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", "user")
 	a.emitTypedEvent(ctx, finalUserMessageEvent)
 
 	// Make one final LLM call to get the final answer
@@ -1849,12 +1841,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	var err error
 
 	finalOpts := []llmtypes.CallOption{}
-	if !llm.IsO3O4Model(a.ModelID) {
-		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
+	if !llm.IsO3O4Model(a.modelID) {
+		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.temperature))
 	}
 	finalOpts = a.appendCodingAgentInteractiveOptions(finalOpts)
 
-	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1)
+	finalResp, finalUsage, err := generateContentWithRetry(a, ctx, messages, finalOpts, a.maxTurns+1)
 
 	// Log finalUsage for debugging
 	v2Logger.Info(fmt.Sprintf("🔍 [FINAL LLM CALL DEBUG] finalUsage from GenerateContentWithRetry:"))
@@ -1903,7 +1895,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			PromptTokens:     finalUsage.InputTokens,
 			CompletionTokens: finalUsage.OutputTokens,
 			TotalTokens:      finalUsage.TotalTokens,
-		}, finalResp, a.MaxTurns+1)
+		}, finalResp, a.maxTurns+1)
 	} else {
 		choicesCount := 0
 		if finalResp != nil {
@@ -1923,7 +1915,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			},
 			Question: lastUserMessage,
 			Error:    "max turns reached and final attempt failed",
-			Turn:     a.MaxTurns + 1,
+			Turn:     a.maxTurns + 1,
 			Context:  "conversation",
 			Duration: time.Since(conversationStartTime),
 		}
@@ -1938,12 +1930,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// Note: This was a successful completion, so we emit a completion event instead of error
 			unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
 				"react",                           // agentType
-				string(a.AgentMode),               // agentMode
+				string(a.agentMode),               // agentMode
 				lastUserMessage,                   // question
 				lastResponse,                      // finalResult
 				"completed",                       // status
 				time.Since(conversationStartTime), // duration
-				a.MaxTurns+1,                      // turns (+1 for the final turn)
+				a.maxTurns+1,                      // turns (+1 for the final turn)
 			)
 			a.annotateUnifiedCompletionEvent(unifiedCompletionEvent)
 			a.emitTypedEvent(ctx, unifiedCompletionEvent)
@@ -1963,20 +1955,20 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			return lastResponse, messages, nil
 		}
 		v2Logger.Warn("Exiting with no final answer after max turns",
-			loggerv2.Int("max_turns", a.MaxTurns))
+			loggerv2.Int("max_turns", a.maxTurns))
 
 		// 🎯 FIX: End the trace for max turns error - replaced with event emission
-		maxTurnsErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("max turns (%d) reached without final answer", a.MaxTurns), a.MaxTurns+1, "max_turns_exceeded", time.Since(conversationStartTime))
+		maxTurnsErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("max turns (%d) reached without final answer", a.maxTurns), a.maxTurns+1, "max_turns_exceeded", time.Since(conversationStartTime))
 		a.emitTypedEvent(ctx, maxTurnsErrorEvent)
 
-		return "", messages, fmt.Errorf("max turns (%d) reached without final answer", a.MaxTurns)
+		return "", messages, fmt.Errorf("max turns (%d) reached without final answer", a.maxTurns)
 	}
 
 	if finalResp == nil || finalResp.Choices == nil || len(finalResp.Choices) == 0 {
 		v2Logger.Warn("Final call returned no response choices")
 
 		// 🎯 FIX: End the trace for final call error - replaced with event emission
-		finalCallErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "final call returned no response choices", a.MaxTurns+1, "no_final_choices", time.Since(conversationStartTime))
+		finalCallErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "final call returned no response choices", a.maxTurns+1, "no_final_choices", time.Since(conversationStartTime))
 		a.emitTypedEvent(ctx, finalCallErrorEvent)
 
 		return "", messages, fmt.Errorf("final call returned no response choices")
@@ -1995,12 +1987,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Emit unified completion event
 	unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
 		"simple",                          // agentType
-		string(a.AgentMode),               // agentMode
+		string(a.agentMode),               // agentMode
 		lastUserMessage,                   // question
 		finalChoice.Content,               // finalResult
 		"completed",                       // status
 		time.Since(conversationStartTime), // duration
-		a.MaxTurns+1,                      // turns (+1 for the final turn)
+		a.maxTurns+1,                      // turns (+1 for the final turn)
 	)
 	a.annotateUnifiedCompletionEvent(unifiedCompletionEvent)
 	a.emitTypedEvent(ctx, unifiedCompletionEvent)
@@ -2173,7 +2165,7 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInf
 	seq := nextPromptLogCounter()
 
 	// Compute dir + baseName synchronously so the caller can pass them to the end logger
-	sessionDir := agentPromptLogSessionDirName(a.SessionID)
+	sessionDir := agentPromptLogSessionDirName(a.sessionID)
 	dir := filepath.Join(agentPromptLogRoot(), sessionDir)
 
 	ts := time.Now()
@@ -2184,7 +2176,7 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInf
 		s = strings.ToLower(s)
 		return s
 	}
-	agentMode := a.PromptLogLabel
+	agentMode := a.promptLogLabel
 	if agentMode == "" {
 		agentMode = "agent"
 		if idx := strings.Index(systemPrompt, "\n"); idx > 0 && strings.HasPrefix(systemPrompt, "# ") {
@@ -2197,7 +2189,7 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInf
 			agentMode = header
 		}
 	}
-	if a.UseCodeExecutionMode {
+	if a.useCodeExecutionMode {
 		agentMode += "_code-exec"
 	}
 
@@ -2206,7 +2198,7 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInf
 		ts.Format("15-04-05"),
 		sanitize(agentMode),
 		sanitize(string(a.provider)),
-		sanitize(a.ModelID),
+		sanitize(a.modelID),
 	)
 
 	info := &promptLogInfo{Dir: dir, BaseName: baseName, Seq: seq}
@@ -2220,9 +2212,9 @@ func logFinalPrompts(a *Agent, messages []llmtypes.MessageContent) *promptLogInf
 		var md strings.Builder
 		md.WriteString(fmt.Sprintf("# Prompt #%d\n\n", seq))
 		md.WriteString(fmt.Sprintf("- **Timestamp**: %s\n", ts.Format(time.RFC3339)))
-		md.WriteString(fmt.Sprintf("- **Session**: %s\n", a.SessionID))
+		md.WriteString(fmt.Sprintf("- **Session**: %s\n", a.sessionID))
 		md.WriteString(fmt.Sprintf("- **Provider**: %s\n", a.provider))
-		md.WriteString(fmt.Sprintf("- **Model**: %s\n", a.ModelID))
+		md.WriteString(fmt.Sprintf("- **Model**: %s\n", a.modelID))
 		md.WriteString(fmt.Sprintf("- **Messages**: %d\n\n", len(messages)))
 		md.WriteString("---\n\n## System Prompt\n\n")
 		md.WriteString(systemPrompt)

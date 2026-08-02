@@ -9,7 +9,7 @@ A production-ready Go library for building tool-using, code-executing agents acr
 
 - Build one agent runtime instead of separate code paths for MCP tools, code execution, and provider switching
 - Mix API-native models and CLI-native coding agents like Claude Code, Codex, Cursor, and Pi
-- Add production features such as summarization, large-output offloading, structured output, parallel tools, tracing, and caching
+- Add production features such as summarization, large-output offloading, parallel tools, tracing, and caching
 - Reuse the same runtime from Go applications and from the Node.js SDK
 
 ## 🎯 What is MCPAgent?
@@ -17,27 +17,25 @@ A production-ready Go library for building tool-using, code-executing agents acr
 MCPAgent is a general-purpose Go agent runtime. It gives you one agent abstraction that can:
 
 - **Use MCP tools** across multiple servers and protocols (HTTP, SSE, stdio)
-- **Run in multiple execution modes** with `SimpleAgent`, tool search, and code execution
+- **Run in multiple execution modes** with direct tool use and code execution
 - **Connect to coding-agent CLIs** such as Claude Code, Codex, Cursor, and Pi
 - **Route across model ecosystems** including OpenAI, Anthropic, OpenRouter, Bedrock, Vertex, Azure, MiniMax, and open-model gateways
 - **Execute tools efficiently** with optional parallel tool calls, caching, and dynamic tool discovery
 - **Stay productive in long sessions** with context summarization and large-output offloading
-- **Return structured results** using fixed conversion or tool-based structured output
 - **Support production workflows** with observability, custom tools, session reuse, and a Node.js SDK
 
-If you only need MCP, the library does that well. If you need a broader agent runtime that can mix MCP, code execution, provider routing, coding agents, and structured workflows, that is the larger value of the project.
+If you only need MCP, the library does that well. If you need a broader agent runtime that can mix MCP, code execution, provider routing, coding agents, and workflow orchestration, that is the larger value of the project.
 
 ## ✅ Start Here
 
-If you are evaluating the project for the first time, these are the best first examples:
+If you are evaluating the project for the first time, the Quick Start below is
+the smallest working MCP-backed agent. From there, the `agent` package tests are
+the maintained reference for real usage — they exercise construction, turns,
+tool routing, and coding-agent transports against the current API.
 
-- **[basic/](examples/basic/)** - Smallest working MCP-backed agent example
-- **[workflow_model_routing/](examples/workflow_model_routing/)** - Compare Kimi, MiniMax M2.7, and GLM-5.1 on the same MCP-backed workflow task
-- **[basic_claude_code/](examples/basic_claude_code/)** - Coding-agent CLI flow through the MCP bridge
-- **[multi-turn/](examples/multi-turn/)** - Conversation history and cumulative token tracking
-- **[nodejs-sdk/](examples/nodejs-sdk/)** - JavaScript/TypeScript SDK examples over gRPC
-
-If you want a broader multi-tool demo, use **[multi-mcp-server/](examples/multi-mcp-server/)** after the basics.
+The standalone `examples/` tree was removed: each example pinned its own module
+and kept compatibility APIs public purely to stay compiling. Executable
+behaviour now lives in tests that run in CI and cannot silently rot.
 
 ## 🚀 Quick Start
 
@@ -86,43 +84,84 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	agent, err := mcpagent.NewAgent(
-		ctx,
-		llmModel,
-		"mcp_servers.json",
-		mcpagent.WithMode(mcpagent.SimpleAgent),
+	agent, err := mcpagent.NewAgentFromDefinition(ctx,
+		mcpagent.AgentDefinition{
+			Instructions: "You are a helpful assistant.",
+			Tools: mcpagent.ToolSet{
+				MCP: []mcpagent.MCPToolSource{{Name: "context7"}},
+			},
+		},
+		mcpagent.RuntimeConfig{
+			Model:         llmModel,
+			MCPConfigPath: "mcp_servers.json",
+		},
 	)
 	if err != nil {
 		panic(err)
 	}
+	defer agent.Close()
 
-	response, err := agent.Ask(ctx, "What tools are available?")
+	result, err := agent.Run(ctx, mcpagent.Turn{
+		Input: "What tools are available?",
+	})
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println(response)
+	fmt.Println(result.Text)
+	fmt.Printf("tokens: %d\n", result.Usage.TotalTokens)
 }
 ```
 
-See [examples/](examples/) for complete working examples:
+### The shape of the API
 
-- **[basic/](examples/basic/)** - Basic agent setup with single MCP server
-- **[workflow_model_routing/](examples/workflow_model_routing/)** - Run the same MCP-backed prompt against Kimi, MiniMax M2.7, or GLM-5.1
-- **[basic_claude_code/](examples/basic_claude_code/)** - Basic Claude Code setup using the MCP bridge layer (defaults to `claude-haiku-4-5`)
-- **[basic_codex_cli/](examples/basic_codex_cli/)** - Basic Codex CLI setup using the MCP bridge layer (defaults to `gpt-5.3-codex-spark`)
-- **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with history
-- **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers
-- **[structured_output/](examples/structured_output/)** - Structured output examples
-  - **[fixed/](examples/structured_output/fixed/)** - Fixed conversion model (2 LLM calls)
-  - **[tool/](examples/structured_output/tool/)** - Tool-based model (1 LLM call)
-- **[custom_tools/](examples/custom_tools/)** - Register and use custom tools
-- **[code_execution/](examples/code_execution/)** - Code execution mode examples
-  - **[simple/](examples/code_execution/simple/)** - Basic code execution (no folder guards)
-  - **[multi-mcp-server/](examples/code_execution/multi-mcp-server/)** - Code execution with tool filtering
-  - **[custom_tools/](examples/code_execution/custom_tools/)** - Custom tools in code execution mode
-- **[tool_search/](examples/tool_search/)** - Tool search mode for dynamic tool discovery
-- **[nodejs-sdk/](examples/nodejs-sdk/)** - Node.js SDK examples (see below)
+`NewAgentFromDefinition` is the only public constructor, and it takes exactly
+two values:
+
+- **`AgentDefinition`** — the agent's identity: `Instructions`, `Skills`, and
+  `Tools`. These are cloned and validated at construction and never change
+  afterwards.
+- **`RuntimeConfig`** — the infrastructure that operates it: `Model`,
+  `MCPConfigPath`, plus grouped `Generation`, `Tools`, `Context`, `Coding`,
+  `MCP`, `Workspace`, and `Observability` settings.
+
+Per-request concerns belong to the turn, not the agent. `Turn` carries `Input`,
+optional `History`, a `ToolPolicy`, and an optional `StreamingCallback`; `Result`
+returns `Text`, `History`, a resumable `Handle`, and structured `Usage`.
+
+`*Agent` has exactly four methods — `Run`, `Start`, `Definition`, and `Close` —
+and no exported fields. There are no `With*` option functions; anything that was
+once an option is now a named field on `RuntimeConfig`.
+
+### Multi-turn conversations
+
+`Run` is the single-turn convenience path. When history must persist across
+turns, open a session — it owns history, continuation, steering, and events:
+
+```go
+session, err := agent.Start(ctx)
+if err != nil {
+	panic(err)
+}
+defer session.Close()
+
+first, err := session.Run(ctx, mcpagent.Turn{Input: "List the available tools."})
+if err != nil {
+	panic(err)
+}
+
+// History carries forward automatically; no need to thread it yourself.
+second, err := session.Run(ctx, mcpagent.Turn{Input: "Now use the first one."})
+if err != nil {
+	panic(err)
+}
+
+fmt.Println(first.Text, second.Text)
+```
+
+`Run` calls on one session are serialized. Use separate sessions for
+concurrency. `session.Snapshot()` returns a handle you can later pass as
+`RuntimeConfig.ResumeHandle` to continue a conversation in a new process.
 
 ## 🟢 Node.js SDK
 
@@ -227,59 +266,27 @@ Benefits:
 
 ### SDK Examples
 
-See [examples/nodejs-sdk/](examples/nodejs-sdk/) for complete examples:
-
-- **[basic.ts](examples/nodejs-sdk/src/basic.ts)** - Basic agent setup and queries
-- **[custom-tools.ts](examples/nodejs-sdk/src/custom-tools.ts)** - Register and use custom tools
-- **[multi-turn.ts](examples/nodejs-sdk/src/multi-turn.ts)** - Multi-turn conversations
-
-For full SDK documentation, see [sdk-node/README.md](sdk-node/README.md).
+For SDK usage and complete examples, see [sdk-node/README.md](sdk-node/README.md).
 
 ## 📚 Core Features
 
 ### 1. **Standard Tool-Use Agent**
 
-The default mode where the LLM invokes tools directly through native tool calling:
+The default mode where the LLM invokes tools directly through native tool calling. Nothing needs to be enabled — it is what you get from a definition with no code-execution flag:
 
 ```go
-agent, err := mcpagent.NewAgent(
-    ctx,
-    llmModel,
-    "config.json",
-    mcpagent.WithMode(mcpagent.SimpleAgent),
+agent, err := mcpagent.NewAgentFromDefinition(ctx,
+    mcpagent.AgentDefinition{
+        Instructions: "You are a helpful assistant.",
+        Tools: mcpagent.ToolSet{
+            MCP: []mcpagent.MCPToolSource{{Name: "context7"}},
+        },
+    },
+    mcpagent.RuntimeConfig{Model: llmModel, MCPConfigPath: "config.json"},
 )
 ```
 
-### 2. **Tool Search Mode**
-
-Enable dynamic tool discovery for large tool catalogs. The LLM starts with only `search_tools` and discovers tools on-demand:
-
-```go
-agent, err := mcpagent.NewAgent(
-    ctx,
-    llmModel,
-    "config.json",
-    mcpagent.WithToolSearchMode(true),
-    // Optional: pre-discover frequently used tools
-    mcpagent.WithPreDiscoveredTools([]string{"get_weather", "send_message"}),
-)
-```
-
-**How it works:**
-1. LLM sees only `search_tools` initially
-2. LLM calls `search_tools(query: "weather")` to find relevant tools
-3. Discovered tools (`get_weather`, `weather_forecast`) become available
-4. LLM can now use discovered tools
-
-**Features:**
-- Regex pattern matching for flexible search
-- Fuzzy search fallback when no exact matches found
-- Pre-discovered tools option for frequently used tools
-- Works with any LLM provider
-
-See [docs/tool_search_mode.md](docs/tool_search_mode.md) for details.
-
-### 3. **Code Execution Mode**
+### 2. **Code Execution Mode**
 
 Execute code in **any language** (Python, bash, curl, Go, etc.) instead of JSON tool calls. The LLM discovers MCP tool endpoints via an OpenAPI spec and writes code that makes HTTP requests:
 
@@ -307,20 +314,27 @@ go server.ListenAndServe()
 defer server.Shutdown(ctx)
 
 // Create agent with code execution mode
-agent, err := mcpagent.NewAgent(
-    ctx,
-    llmModel,
-    "config.json",
-    mcpagent.WithCodeExecutionMode(true),
-    mcpagent.WithAPIConfig("http://127.0.0.1:8000", apiToken),
+agent, err := mcpagent.NewAgentFromDefinition(ctx,
+    definition,
+    mcpagent.RuntimeConfig{
+        Model:         llmModel,
+        MCPConfigPath: "config.json",
+        Tools:         mcpagent.ToolRuntimeConfig{CodeExecution: true},
+        MCP: mcpagent.MCPRuntimeConfig{
+            APIBaseURL: "http://127.0.0.1:8000",
+            APIToken:   apiToken,
+        },
+    },
 )
 ```
 
-The LLM calls `get_api_spec(server_name)` to discover per-tool HTTP endpoints, then uses `execute_shell_command` to write and run code that calls those endpoints. Custom tools (workspace tools, shell execution) remain as direct tool calls.
+The LLM calls `get_api_spec(tool_name)` to discover per-tool HTTP endpoints, then uses `execute_shell_command` to write and run code that calls those endpoints. Custom tools (workspace tools, shell execution) remain as direct tool calls.
 
-**Note**: Code execution mode requires an HTTP server with bearer token auth running (configurable via `WithAPIConfig()`).
+`tool_name` accepts a single name or an array, and is the only required argument — the tool name is the address. `server_name` is optional and used solely to disambiguate a real MCP server; built-in tools resolve by name alone.
 
-### 4. **Context Offloading**
+**Note**: Code execution mode requires an HTTP server with bearer token auth running (configured via `RuntimeConfig.MCP.APIBaseURL` and `APIToken`).
+
+### 3. **Context Offloading**
 
 Context offloading is a context engineering strategy that automatically saves large tool outputs to the filesystem instead of keeping them in the LLM's context window. This implements the **"offload context"** pattern, one of three primary context engineering approaches used in production agents like [Manus](https://rlancemartin.github.io/2025/10/15/manus/).
 
@@ -336,10 +350,17 @@ As agents execute tasks, tool call results accumulate in the context window. Res
 **How It Works:**
 
 ```go
-agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "config.json",
-    mcpagent.WithContextOffloading(true),
-    mcpagent.WithLargeOutputThreshold(10000), // tokens (default)
+offloading := true
+
+agent, err := mcpagent.NewAgentFromDefinition(ctx, definition,
+    mcpagent.RuntimeConfig{
+        Model:         llmModel,
+        MCPConfigPath: "config.json",
+        Context: mcpagent.ContextRuntimeConfig{
+            Offloading:           &offloading,
+            LargeOutputThreshold: 10000, // tokens (default)
+        },
+    },
 )
 ```
 
@@ -424,31 +445,33 @@ Future (Context Reduction):
 
 This enhancement would complete the "Reduce Context" strategy from [Manus's context engineering approach](https://rlancemartin.github.io/2025/10/15/manus/), working alongside context offloading to maintain optimal context window usage.
 
-See the [Context Offloading example](examples/offload_context/) for a complete demonstration.
+Context offloading is exercised end-to-end by the `search_large_output` tests in
+the `agent` package.
 
-See the [Context Offloading example](examples/offload_context/) for a complete demonstration.
-
-### 5. **Context Summarization**
+### 4. **Context Summarization**
 
 Automatically summarize conversation history when token usage exceeds a threshold to maintain long-running conversations:
 
 ```go
-agent, err := mcpagent.NewAgent(
-    ctx,
-    llmModel,
-    "config.json",
-    // Enable context summarization
-    mcpagent.WithContextSummarization(true),
-    // Trigger when token usage reaches 70% of context window
-    mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
-    // Keep last 8 messages intact
-    mcpagent.WithSummaryKeepLastMessages(8),
+agent, err := mcpagent.NewAgentFromDefinition(ctx, definition,
+    mcpagent.RuntimeConfig{
+        Model:         llmModel,
+        MCPConfigPath: "config.json",
+        Context: mcpagent.ContextRuntimeConfig{
+            SummarizationEnabled: true,
+            // Trigger when token usage reaches 70% of the context window
+            SummarizeOnTokenThreshold: true,
+            TokenThresholdPercent:     0.7,
+            // Keep the last 8 messages intact
+            SummaryKeepLastMessages: 8,
+        },
+    },
 )
 ```
 
 The agent monitors token usage and automatically replaces older messages with a concise LLM-generated summary when the threshold is reached, while preserving recent messages and tool call integrity. This enables "infinite" conversation depth within fixed context windows.
 
-### 6. **MCP Server Caching**
+### 5. **MCP Server Caching**
 
 Intelligent caching reduces connection times by 60-85%:
 
@@ -459,46 +482,7 @@ Intelligent caching reduces connection times by 60-85%:
 // MCP_CACHE_TTL_MINUTES=10080 (7 days)
 ```
 
-### 7. **Structured Output**
-
-Get structured data from LLM responses in two ways:
-
-**Fixed Conversion Model** (2 LLM calls - reliable):
-```go
-type Person struct {
-    Name  string `json:"name"`
-    Age   int    `json:"age"`
-    Email string `json:"email"`
-}
-
-person, err := mcpagent.AskStructured(
-    agent,
-    ctx,
-    "Create a person profile for John Doe, age 30, email john@example.com",
-    Person{},
-    schemaString,
-)
-```
-
-**Tool-Based Model** (1 LLM call - faster):
-```go
-result, err := mcpagent.AskWithHistoryStructuredViaTool[Order](
-    agent,
-    ctx,
-    messages,
-    "submit_order",
-    "Submit an order with items",
-    orderSchema,
-)
-if result.HasStructuredOutput {
-    order := result.StructuredResult
-    // Use structured order data
-}
-```
-
-See [examples/structured_output/](examples/structured_output/) for complete examples.
-
-### 8. **Custom Tools**
+### 6. **Custom Tools**
 
 Register your own tools that work alongside MCP server tools. Custom tools work in both standard mode and code execution mode:
 
@@ -518,14 +502,19 @@ params := map[string]interface{}{
     "required": []string{"operation", "a", "b"},
 }
 
-// Register the tool
-err := agent.RegisterCustomTool(
-    "calculator",
-    "Performs mathematical operations",
-    params,
-    calculatorFunction,
-    "utility", // category (required)
-)
+// Declare the tool as part of the agent's identity
+definition := mcpagent.AgentDefinition{
+    Instructions: "You are a helpful assistant.",
+    Tools: mcpagent.ToolSet{
+        Direct: []mcpagent.ToolDefinition{{
+            Name:         "calculator",
+            Description:  "Performs mathematical operations",
+            InputSchema:  params,
+            Execute:      calculatorFunction,
+            DisplayGroup: "utility", // optional presentation metadata
+        }},
+    },
+}
 
 // Tool execution function
 func calculatorFunction(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -553,29 +542,38 @@ func calculatorFunction(ctx context.Context, args map[string]interface{}) (strin
 // 2. MCP server tools are accessed via HTTP API endpoints (discovered via get_api_spec)
 // 3. Custom tools can also be accessed via /api/custom/execute endpoint
 
-// Register custom tool (same API)
-err := agent.RegisterCustomTool(
-    "get_weather",
-    "Gets weather data for a location",
-    weatherParams,
-    weatherFunction,
-    "data", // category
-)
+// Declared exactly the same way — there is no separate code-execution API
+definition := mcpagent.AgentDefinition{
+    Tools: mcpagent.ToolSet{
+        Direct: []mcpagent.ToolDefinition{{
+            Name:        "get_weather",
+            Description: "Gets weather data for a location",
+            InputSchema: weatherParams,
+            Execute:     weatherFunction,
+        }},
+    },
+}
 
 // LLM can call custom tools directly as tool calls,
 // or use get_api_spec to discover HTTP endpoints for MCP tools
 ```
 
-See [examples/custom_tools/](examples/custom_tools/) for standard mode examples and [examples/code_execution/custom_tools/](examples/code_execution/custom_tools/) for code execution mode examples.
+Custom tools behave the same in standard and code-execution mode: they are
+registered on the `AgentDefinition` and are addressed by their globally unique
+tool name. In code-execution mode they are additionally reachable over the HTTP
+API described above.
 
-### 9. **Parallel Tool Execution**
+### 7. **Parallel Tool Execution**
 
 When the LLM returns multiple tool calls in a single response, they can be executed concurrently using goroutines (fork-join pattern) instead of sequentially:
 
 ```go
-agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "config.json",
-    mcpagent.WithParallelToolExecution(true),
+agent, err := mcpagent.NewAgentFromDefinition(ctx, definition,
+    mcpagent.RuntimeConfig{
+        Model:         llmModel,
+        MCPConfigPath: "config.json",
+        Tools:         mcpagent.ToolRuntimeConfig{ParallelExecution: true},
+    },
 )
 ```
 
@@ -587,7 +585,7 @@ agent, err := mcpagent.NewAgent(
 
 **Observability:** `ToolCallStartEvent` includes an `IsParallel` field (`true` when the tool call is part of a parallel batch, `false` for sequential execution) so event listeners and tracers can distinguish between parallel and sequential tool calls.
 
-### 10. **Observability**
+### 8. **Observability**
 
 Built-in tracing with Langfuse support:
 
@@ -596,13 +594,16 @@ tracer, err := observability.NewLangfuseTracerWithLogger(logger)
 if err != nil {
     return err
 }
-agent, err := mcpagent.NewAgent(
-    ctx,
-    llmModel,
-    "config.json",
-    mcpagent.WithTracer(tracer),
-    mcpagent.WithTraceID("trace-id"),
-    mcpagent.WithLogger(logger),
+agent, err := mcpagent.NewAgentFromDefinition(ctx, definition,
+    mcpagent.RuntimeConfig{
+        Model:         llmModel,
+        MCPConfigPath: "config.json",
+        Observability: mcpagent.ObservabilityRuntimeConfig{
+            Tracers: []observability.Tracer{tracer},
+            TraceID: "trace-id",
+            Logger:  logger,
+        },
+    },
 )
 ```
 
@@ -612,7 +613,6 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 
 - **[OAuth Authentication](docs/oauth.md)** - OAuth 2.0 authentication for MCP servers
 - **[Code Execution Agent](docs/code_execution_agent.md)** - Execute code in any language via OpenAPI spec
-- **[Tool Search Mode](docs/tool_search_mode.md)** - Dynamic tool discovery for large tool catalogs
 - **[Tool-Use Agent](docs/tool_use_agent.md)** - Standard tool calling mode
 - **[Context Summarization](docs/context_summarization.md)** - Automatic history summarization
 - **[Context Offloading](docs/large_output_handling.md)** - Offload large tool outputs to filesystem (offload context pattern)
@@ -626,85 +626,24 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 - **[Parallel Tool Execution](docs/parallel_tool_execution.md)** - Concurrent tool call execution
 - **[Token Tracking](docs/token-usage-tracking.md)** - Usage monitoring
 
-## 📝 Examples
+## 📝 Reference Usage
 
-Complete working examples are available in the [examples/](examples/) directory:
+The standalone `examples/` tree has been removed. Each example was its own Go
+module, and keeping them compiling required holding constructors and option
+functions public long after the library itself had stopped needing them — the
+demonstrations were dictating the API surface.
 
-### Basic Examples
-- **[basic/](examples/basic/)** - Simple agent setup with a single MCP server
-- **[multi-turn/](examples/multi-turn/)** - Multi-turn conversations with conversation history
-- **[context_summarization/](examples/context_summarization/)** - Automatic context summarization
+Maintained usage now lives in the `agent` package tests, which run in CI against
+the current public API:
 
-### Coding Agent Examples
-- **[basic_claude_code/](examples/basic_claude_code/)** - Claude Code provider with bridge-backed MCP access
-  - Uses `ProviderClaudeCode` with the `mcpbridge` flow
-  - Starts a local executor API automatically for bridge-backed tool access
-  - Defaults to the faster `claude-haiku-4-5` model
-- **[basic_codex_cli/](examples/basic_codex_cli/)** - Codex CLI provider with bridge-backed MCP access
-  - Uses `ProviderCodexCLI` with the `mcpbridge` flow
-  - Starts a local executor API automatically for bridge-backed tool access
-  - Defaults to the faster `gpt-5.3-codex-spark` model
+- agent construction through `NewAgentFromDefinition` and `AgentDefinition`
+- multi-turn conversations, history, and context summarization
+- custom tool registration and tool filtering
+- code-execution mode, including `get_api_spec` resolution and the HTTP tool API
+- coding-agent providers (Claude Code, Codex CLI) over the MCP bridge
+- context offloading via `search_large_output`
 
-### Advanced Examples
-- **[multi-mcp-server/](examples/multi-mcp-server/)** - Connect to multiple MCP servers simultaneously
-
-### Structured Output Examples
-- **[structured_output/fixed/](examples/structured_output/fixed/)** - Fixed conversion model for structured output
-  - Uses `AskStructured()` method
-  - 2 LLM calls (text response + JSON conversion)
-  - More reliable, works with complex schemas
-  
-- **[structured_output/tool/](examples/structured_output/tool/)** - Tool-based model for structured output
-  - Uses `AskWithHistoryStructuredViaTool()` method
-  - 1 LLM call (tool call during conversation)
-  - Faster and more cost-effective
-
-### Custom Tools Example
-- **[custom_tools/](examples/custom_tools/)** - Register and use custom tools
-  - Register multiple custom tools with different categories
-  - Tools work alongside MCP server tools
-  - Examples: calculator, text formatter, weather simulator, text counter
-
-- **[offload_context/](examples/offload_context/)** - Context offloading example
-  - Demonstrates automatic offloading of large tool outputs to filesystem
-  - Shows how tool results are stored externally and accessed on-demand
-  - Uses `search_large_output` read/search/query operations for efficient data exploration
-  - Example: Search operations that produce large results, automatically offloaded and accessed incrementally
-
-### Tool Search Example
-- **[tool_search/](examples/tool_search/)** - Tool search mode for dynamic tool discovery
-  - LLM starts with only `search_tools` virtual tool
-  - Demonstrates searching for tools using regex patterns
-  - Shows how discovered tools become available dynamically
-  - Uses Vertex AI with Gemini 3 Flash
-  - Example: Search for documentation tools and use them to get library information
-
-### Code Execution Examples
-- **[code_execution/simple/](examples/code_execution/simple/)** - Basic code execution mode
-  - LLM discovers MCP tools via OpenAPI spec (`get_api_spec`)
-  - Writes and executes code in any language (Python, bash, curl, etc.)
-  - Bearer token auth secures API endpoints
-  - Per-tool HTTP endpoints for MCP tool access
-  - No folder guards (simplest example)
-  - HTTP server with auth required
-
-- **[code_execution/multi-mcp-server/](examples/code_execution/multi-mcp-server/)** - Code execution with tool filtering
-  - Demonstrates tool filtering in code execution mode
-  - Uses `WithSelectedTools()` and `WithSelectedServers()` to filter available tools
-  - Example: Selective tool access across multiple MCP servers
-
-- **[code_execution/custom_tools/](examples/code_execution/custom_tools/)** - Custom tools in code execution mode
-  - Register custom tools that work in code execution mode
-  - Custom tools exposed as direct LLM tool calls
-  - MCP tools accessed via HTTP API with bearer auth
-  - Example: Weather tool accessible alongside MCP tools
-
-Examples include:
-- Complete working code
-- MCP server configuration
-- Setup instructions in code, local files, or companion docs
-
-Some example directories include dedicated `README.md` files, while others are intentionally lightweight and are meant to be read directly from the example source.
+For the Node.js SDK, see [sdk-node/README.md](sdk-node/README.md).
 
 ## 🔧 Configuration
 
@@ -727,51 +666,82 @@ Create a JSON file with your MCP servers:
 }
 ```
 
-### Agent Options
+### Runtime Configuration
 
-The agent supports extensive configuration via functional options:
+Runtime settings are named fields on `RuntimeConfig`, grouped by purpose. There
+are no functional options — the grouping is what replaced them, so configuration
+is one explicit value rather than an order-sensitive list:
 
 ```go
-agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "config.json",
-    // Observability (optional)
-    mcpagent.WithTracer(tracer),
-    mcpagent.WithTraceID(traceID),
-    mcpagent.WithLogger(logger),
-    
-    // Agent mode
-    mcpagent.WithMode(mcpagent.SimpleAgent),
-    
-    // Conversation settings
-    mcpagent.WithMaxTurns(30),
-    mcpagent.WithTemperature(0.7),
-    mcpagent.WithToolChoice("auto"),
-    
-    // Code execution
-    mcpagent.WithCodeExecutionMode(true),
+offloading := true
 
-    // Tool search mode (dynamic tool discovery)
-    mcpagent.WithToolSearchMode(true),
-    mcpagent.WithPreDiscoveredTools([]string{"tool1", "tool2"}),
+agent, err := mcpagent.NewAgentFromDefinition(ctx, definition,
+    mcpagent.RuntimeConfig{
+        Model:         llmModel,
+        MCPConfigPath: "config.json",
 
-    // Parallel tool execution (concurrent goroutines for multiple tool calls)
-    mcpagent.WithParallelToolExecution(true),
+        Generation: mcpagent.GenerationRuntimeConfig{
+            MaxTurns:    30,
+            Temperature: 0.7,
+            ToolChoice:  "auto",
+        },
 
-    // Context offloading (offload large tool outputs to filesystem)
-    mcpagent.WithContextOffloading(true),
-    mcpagent.WithLargeOutputThreshold(10000),
+        Tools: mcpagent.ToolRuntimeConfig{
+            CodeExecution:     true,
+            ParallelExecution: true,
+            SelectedTools:     []string{"tool1", "tool2"},
+            SelectedServers:   []string{"server1", "server2"},
+        },
 
-    // Context summarization
-    mcpagent.WithContextSummarization(true),
-    mcpagent.WithSummarizeOnTokenThreshold(true, 0.7),
-    
-    // Tool selection
-    mcpagent.WithSelectedTools([]string{"server1:tool1", "server2:*"}),
-    mcpagent.WithSelectedServers([]string{"server1", "server2"}),
+        Context: mcpagent.ContextRuntimeConfig{
+            Offloading:                &offloading,
+            LargeOutputThreshold:      10000,
+            SummarizationEnabled:      true,
+            SummarizeOnTokenThreshold: true,
+            TokenThresholdPercent:     0.7,
+        },
+
+        Observability: mcpagent.ObservabilityRuntimeConfig{
+            Tracers: []observability.Tracer{tracer},
+            TraceID: traceID,
+            Logger:  logger,
+        },
+    },
 )
+```
 
-// Custom tools are registered after agent creation
-// agent.RegisterCustomTool(name, description, params, execFunc, category)
+Custom tools are part of the definition, not registered afterwards — an agent's
+tools are fixed once it exists:
+
+```go
+definition := mcpagent.AgentDefinition{
+    Instructions: "You are a helpful assistant.",
+    Tools: mcpagent.ToolSet{
+        Direct: []mcpagent.ToolDefinition{{
+            Name:        "calculate",
+            Description: "Evaluate a arithmetic expression",
+            InputSchema: map[string]interface{}{
+                "type": "object",
+                "properties": map[string]interface{}{
+                    "expression": map[string]interface{}{"type": "string"},
+                },
+                "required": []string{"expression"},
+            },
+            Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
+                return evaluate(args["expression"].(string))
+            },
+        }},
+        MCP: []mcpagent.MCPToolSource{{Name: "context7"}},
+    },
+}
+```
+
+Tools are addressed by their globally unique `Name`. `DisplayGroup` is optional
+presentation metadata only — it takes no part in addressing or authorization.
+
+To narrow which tools a single request may use without rebuilding the agent, set
+`Turn.ToolPolicy.AllowedTools`. An empty slice means every tool in the definition
+is allowed.
 
 // Folder guard paths are set on the created agent instance
 agent.SetFolderGuardPaths(allowedRead, allowedWrite)
@@ -799,7 +769,9 @@ See [cmd/testing/README.md](cmd/testing/README.md) for details.
 ```
 mcpagent/
 ├── agent/              # Core agent implementation
-│   ├── agent.go       # Main Agent struct and NewAgent()
+│   ├── agent.go       # Core Agent struct and runtime
+│   ├── definition.go  # AgentDefinition, RuntimeConfig, NewAgentFromDefinition()
+│   ├── turn_session.go # Turn/Result, Session, and the four Agent methods
 │   ├── conversation.go # Conversation loop and tool execution
 │   ├── connection_session.go # Session-scoped MCP connection management
 │   └── ...
@@ -836,7 +808,6 @@ mcpagent/
 │   └── README.md      # SDK documentation
 ├── proto/             # Protocol Buffer definitions
 │   └── agent.proto    # gRPC service definitions
-├── examples/          # Example applications
 └── docs/              # Documentation
 ```
 

@@ -30,9 +30,9 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			name: "claude code persistent chat",
 			agent: &Agent{
 				provider:                               llm.ProviderClaudeCode,
-				SessionID:                              " chat-session-1 ",
-				ClaudeCodePersistentInteractiveSession: true,
-				CodingAgentWorkingDir:                  " /tmp/user-chat ",
+				sessionID:                              " chat-session-1 ",
+				claudeCodePersistentInteractiveSession: true,
+				codingAgentWorkingDir:                  " /tmp/user-chat ",
 			},
 			wantSessionKey:  claudecode.MetadataKeyInteractiveSessionID,
 			wantPersistKey:  claudecode.MetadataKeyPersistentInteractive,
@@ -45,9 +45,9 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			name: "codex persistent chat",
 			agent: &Agent{
 				provider:                          llm.ProviderCodexCLI,
-				SessionID:                         "chat-session-2",
-				CodexPersistentInteractiveSession: true,
-				CodingAgentWorkingDir:             "/tmp/codex-chat",
+				sessionID:                         "chat-session-2",
+				codexPersistentInteractiveSession: true,
+				codingAgentWorkingDir:             "/tmp/codex-chat",
 			},
 			wantSessionKey:  codexcli.MetadataKeyInteractiveSessionID,
 			wantPersistKey:  codexcli.MetadataKeyPersistentInteractive,
@@ -60,9 +60,9 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			name: "cursor persistent chat",
 			agent: &Agent{
 				provider:                           llm.ProviderCursorCLI,
-				SessionID:                          "chat-session-4",
-				CursorPersistentInteractiveSession: true,
-				CodingAgentWorkingDir:              "/tmp/cursor-chat",
+				sessionID:                          "chat-session-4",
+				cursorPersistentInteractiveSession: true,
+				codingAgentWorkingDir:              "/tmp/cursor-chat",
 			},
 			wantSessionKey:  cursorcli.MetadataKeyInteractiveSessionID,
 			wantPersistKey:  cursorcli.MetadataKeyPersistentInteractive,
@@ -75,8 +75,8 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			name: "codex workflow uses bounded interactive lifecycle",
 			agent: &Agent{
 				provider:                          llm.ProviderCodexCLI,
-				SessionID:                         "workflow-session",
-				CodexPersistentInteractiveSession: false,
+				sessionID:                         "workflow-session",
+				codexPersistentInteractiveSession: false,
 			},
 			wantSessionKey:  codexcli.MetadataKeyInteractiveSessionID,
 			wantPersistKey:  codexcli.MetadataKeyPersistentInteractive,
@@ -87,9 +87,9 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			name: "pi persistent chat",
 			agent: &Agent{
 				provider:                       llm.ProviderPiCLI,
-				SessionID:                      "chat-session-6",
-				PiPersistentInteractiveSession: true,
-				CodingAgentWorkingDir:          "/tmp/pi-chat",
+				sessionID:                      "chat-session-6",
+				piPersistentInteractiveSession: true,
+				codingAgentWorkingDir:          "/tmp/pi-chat",
 			},
 			wantSessionKey:  picli.MetadataKeyInteractiveSessionID,
 			wantPersistKey:  picli.MetadataKeyPersistentInteractive,
@@ -102,7 +102,7 @@ func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 			name: "missing owner session produces no coding-agent metadata",
 			agent: &Agent{
 				provider:                          llm.ProviderCodexCLI,
-				CodexPersistentInteractiveSession: true,
+				codexPersistentInteractiveSession: true,
 			},
 		},
 	}
@@ -161,9 +161,9 @@ func TestAppendCodingAgentWorkingDirOptionCleansInactiveGeneratedArtifacts(t *te
 
 	agent := &Agent{
 		provider:                           llm.ProviderCursorCLI,
-		SessionID:                          "cursor-session",
-		CursorPersistentInteractiveSession: true,
-		CodingAgentWorkingDir:              workDir,
+		sessionID:                          "cursor-session",
+		cursorPersistentInteractiveSession: true,
+		codingAgentWorkingDir:              workDir,
 	}
 	_ = metadataFromCallOptions(agent.appendCodingAgentWorkingDirOptionForProvider(nil, llm.ProviderCursorCLI, "cursor-cli"))
 
@@ -198,9 +198,9 @@ func TestAppendCodingAgentWorkingDirOptionRemovesInactiveProviderDirsInWorkflow(
 
 	agent := &Agent{
 		provider:              llm.ProviderCursorCLI,
-		ModelID:               "cursor-cli",
-		SessionID:             "cursor-session",
-		CodingAgentWorkingDir: workDir,
+		modelID:               "cursor-cli",
+		sessionID:             "cursor-session",
+		codingAgentWorkingDir: workDir,
 	}
 	_ = metadataFromCallOptions(agent.appendCodingAgentWorkingDirOptionForProvider(nil, llm.ProviderCursorCLI, "cursor-cli"))
 
@@ -285,7 +285,7 @@ func TestCodingAgentIntegrationAppenderCoverage(t *testing.T) {
 func TestAnnotateUnifiedCompletionEventMarksCodingAgentTerminalFormat(t *testing.T) {
 	agent := &Agent{
 		provider: llm.ProviderCodexCLI,
-		ModelID:  "gpt-5.3-codex-spark",
+		modelID:  "gpt-5.3-codex-spark",
 	}
 	event := events.NewUnifiedCompletionEvent("simple", "simple", "question", "answer", "completed", time.Second, 1)
 
@@ -304,9 +304,9 @@ func TestAnnotateUnifiedCompletionEventMarksCodingAgentTerminalFormat(t *testing
 
 func TestWithClaudeCodeTransport(t *testing.T) {
 	agent := &Agent{}
-	WithClaudeCodeTransport(llm.ClaudeCodeTransportTmux)(agent)
-	if agent.ClaudeCodeTransport != llm.ClaudeCodeTransportTmux {
-		t.Fatalf("ClaudeCodeTransport = %q, want %q", agent.ClaudeCodeTransport, llm.ClaudeCodeTransportTmux)
+	withClaudeCodeTransport(llm.ClaudeCodeTransportTmux)(agent)
+	if agent.claudeCodeTransport != llm.ClaudeCodeTransportTmux {
+		t.Fatalf("ClaudeCodeTransport = %q, want %q", agent.claudeCodeTransport, llm.ClaudeCodeTransportTmux)
 	}
 }
 
@@ -319,9 +319,9 @@ func TestWithClaudeCodeTransport(t *testing.T) {
 func TestCursorBridgeToolsModeDoesNotForceAskMode(t *testing.T) {
 	agent := &Agent{
 		provider:                           llm.ProviderCursorCLI,
-		SessionID:                          "chat-session-bridge",
-		CursorPersistentInteractiveSession: true,
-		CursorBridgeToolsMode:              true,
+		sessionID:                          "chat-session-bridge",
+		cursorPersistentInteractiveSession: true,
+		cursorBridgeToolsMode:              true,
 	}
 
 	got := metadataFromCallOptions(agent.appendCodingAgentInteractiveOptions(nil))

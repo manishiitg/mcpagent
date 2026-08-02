@@ -1,10 +1,22 @@
 package mcpagent
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"path"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+)
+
+const (
+	readSkillToolName        = "read_skill"
+	readSkillToolCategory    = "skill_tools"
+	readSkillToolDescription = "Read an attached skill or one of its bundled supporting files. Call with skill_name and omit path to read the skill instructions and list its files; pass a listed relative path to read that reference, script, or asset. This tool is intrinsic to the agent's attached identity and works on every transport."
 )
 
 // Skills are Anthropic-format SKILL.md bundles attached to an Agent. The
@@ -17,17 +29,185 @@ import (
 // AttachSkill registers a skill on the agent. Idempotent on Name:
 // attaching a skill whose Name already exists replaces the prior entry.
 // The skill becomes visible to transports through AttachedSkills.
-func (a *Agent) attachSkill(skill *llmtypes.Skill) {
+func (a *Agent) attachSkill(skill *llmtypes.Skill) error {
 	if a == nil || skill == nil || skill.Name == "" {
-		return
+		return nil
+	}
+	if err := a.ensureSkillReaderTool(); err != nil {
+		return err
 	}
 	for i, existing := range a.attachedSkills {
 		if existing != nil && existing.Name == skill.Name {
 			a.attachedSkills[i] = skill
-			return
+			return nil
 		}
 	}
 	a.attachedSkills = append(a.attachedSkills, skill)
+	return nil
+}
+
+func (a *Agent) ensureSkillReaderTool() error {
+	if a == nil || a.skillReaderInstalled {
+		return nil
+	}
+	if existing, exists := a.lookupDirectTool(readSkillToolName); exists {
+		return fmt.Errorf("tool name %q is reserved for attached skill access (existing category %q)", readSkillToolName, existing.DisplayGroup)
+	}
+
+	params := map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]interface{}{
+			"skill_name": map[string]interface{}{
+				"type":        "string",
+				"description": "Exact name from the Available Skills listing.",
+			},
+			"path": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional relative path listed by the skill, for example references/api.md or scripts/check.py. Omit it (or use SKILL.md) for the main instructions and file list.",
+			},
+		},
+		"required": []string{"skill_name"},
+	}
+
+	a.installingSkillReader = true
+	err := a.registerCustomTool(
+		readSkillToolName,
+		readSkillToolDescription,
+		params,
+		func(_ context.Context, args map[string]interface{}) (string, error) {
+			return a.readAttachedSkill(args)
+		},
+		readSkillToolCategory,
+	)
+	a.installingSkillReader = false
+	if err != nil {
+		return fmt.Errorf("register intrinsic %s tool: %w", readSkillToolName, err)
+	}
+	a.skillReaderInstalled = true
+	// Coding-agent CLIs only receive native tools through the shared MCP
+	// bridge. Projected files remain a useful CLI optimization, but the same
+	// read_skill contract must be callable even when projection is unavailable.
+	foundBridgeTool := false
+	for _, name := range a.additionalBridgeTools {
+		if name == readSkillToolName {
+			foundBridgeTool = true
+			break
+		}
+	}
+	if !foundBridgeTool {
+		a.additionalBridgeTools = append(a.additionalBridgeTools, readSkillToolName)
+	}
+	return nil
+}
+
+type attachedSkillReadResult struct {
+	SkillName      string   `json:"skill_name"`
+	Path           string   `json:"path"`
+	Description    string   `json:"description,omitempty"`
+	Content        string   `json:"content"`
+	Encoding       string   `json:"encoding"`
+	AvailableFiles []string `json:"available_files,omitempty"`
+}
+
+func (a *Agent) readAttachedSkill(args map[string]interface{}) (string, error) {
+	name, _ := args["skill_name"].(string)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("skill_name is required")
+	}
+
+	var selected *llmtypes.Skill
+	availableSkills := make([]string, 0, len(a.attachedSkills))
+	for _, skill := range a.attachedSkillsSnapshot() {
+		if skill == nil || strings.TrimSpace(skill.Name) == "" {
+			continue
+		}
+		availableSkills = append(availableSkills, skill.Name)
+		if skill.Name == name {
+			selected = skill
+		}
+	}
+	sort.Strings(availableSkills)
+	if selected == nil {
+		return "", fmt.Errorf("attached skill %q not found; available skills: %s", name, strings.Join(availableSkills, ", "))
+	}
+
+	rawPath, _ := args["path"].(string)
+	requestedPath, err := normalizeAttachedSkillPath(rawPath)
+	if err != nil {
+		return "", err
+	}
+	availableFiles := attachedSkillFileNames(selected)
+
+	result := attachedSkillReadResult{
+		SkillName:      selected.Name,
+		Path:           requestedPath,
+		Encoding:       "utf-8",
+		AvailableFiles: availableFiles,
+	}
+	if requestedPath == "SKILL.md" {
+		result.Description = strings.TrimSpace(selected.Description)
+		result.Content = selected.Content
+	} else {
+		var content []byte
+		found := false
+		for _, file := range selected.SupportingFiles {
+			if file.RelPath == requestedPath {
+				content = file.Content
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", fmt.Errorf("file %q is not bundled with attached skill %q; available files: %s", requestedPath, name, strings.Join(availableFiles, ", "))
+		}
+		if utf8.Valid(content) {
+			result.Content = string(content)
+		} else {
+			result.Content = base64.StdEncoding.EncodeToString(content)
+			result.Encoding = "base64"
+		}
+	}
+
+	encoded, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode attached skill %q: %w", name, err)
+	}
+	return string(encoded), nil
+}
+
+func normalizeAttachedSkillPath(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "SKILL.md" {
+		return "SKILL.md", nil
+	}
+	if strings.ContainsRune(raw, '\x00') || path.IsAbs(raw) {
+		return "", fmt.Errorf("skill path must be a safe relative path: %q", raw)
+	}
+	clean := path.Clean(strings.ReplaceAll(raw, "\\", "/"))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("skill path must stay inside the attached skill: %q", raw)
+	}
+	return clean, nil
+}
+
+func attachedSkillFileNames(skill *llmtypes.Skill) []string {
+	files := []string{"SKILL.md"}
+	if skill == nil {
+		return files
+	}
+	for _, file := range skill.SupportingFiles {
+		if rel := strings.TrimSpace(file.RelPath); rel != "" {
+			files = append(files, rel)
+		}
+	}
+	sort.Strings(files[1:])
+	return files
+}
+
+func (a *Agent) isIntrinsicIdentityTool(name string) bool {
+	return a != nil && name == readSkillToolName && len(a.attachedSkills) > 0
 }
 
 // AttachedSkills returns the current list of skills attached to this
@@ -67,10 +247,10 @@ func (a *Agent) clearSkills() {
 	a.attachedSkills = nil
 }
 
-// SkillProjector is the contract a transport adapter implements when it
-// wants to project skills to the provider's working directory at session
-// launch. Adapters that only need the system-prompt listing (the API
-// transports) do not implement this interface.
+// SkillProjector is the optional optimization a coding transport implements
+// when it wants native on-disk skill folders. Every transport already has the
+// same content contract through read_skill; API transports therefore do not
+// need to implement this interface.
 //
 // ProjectSkills must be idempotent: it is called both at launch and at
 // resume, and the content is typically identical between calls.
@@ -89,12 +269,11 @@ type SkillProjector interface {
 // disclosure pattern Anthropic skills use: every skill's name +
 // description is included up front (~50-100 tokens each) and the model
 // reads the full SKILL.md body only when it decides the skill is
-// relevant.
+// relevant through read_skill.
 //
 // On CLI transports the SKILL.md files are also projected to disk
 // (.claude/skills/, .agents/skills/) by the adapter. The listing is
-// redundant there but harmless — and acts as defense-in-depth if
-// projection ever fails.
+// redundant there but useful for native provider UX.
 //
 // Returns an empty string when no skills are attached.
 func renderSkillListing(skills []*llmtypes.Skill) string {
@@ -104,7 +283,7 @@ func renderSkillListing(skills []*llmtypes.Skill) string {
 	var b strings.Builder
 	b.WriteString("## Available Skills\n\n")
 	b.WriteString("The following skills are attached to this session. Each skill extends your capabilities with specialized instructions and (optionally) supporting files. ")
-	b.WriteString("When a skill is relevant to what the user is asking, read the full SKILL.md body before acting on it.\n\n")
+	b.WriteString("When a skill is relevant, call `read_skill` with its exact name before acting. Omit `path` for the main instructions and bundled-file list, then call it again with a listed relative path when needed. Coding-agent CLIs may also expose the same bundle as native on-disk skills; `read_skill` is the transport-neutral contract.\n\n")
 	for _, s := range skills {
 		if s == nil || s.Name == "" {
 			continue

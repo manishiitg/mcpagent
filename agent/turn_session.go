@@ -13,6 +13,7 @@ import (
 )
 
 type turnPolicyContextKey struct{}
+type turnStreamingCallbackContextKey struct{}
 
 // ToolPolicy is the authorization view for one turn. An empty AllowedTools
 // slice means every tool in the immutable definition is allowed.
@@ -23,9 +24,10 @@ type ToolPolicy struct {
 // Turn contains the user input, optional prior history, and runtime policy for
 // one model turn. Runtime policy is deliberately not part of AgentDefinition.
 type Turn struct {
-	Input      string
-	History    []llmtypes.MessageContent
-	ToolPolicy ToolPolicy
+	Input             string
+	History           []llmtypes.MessageContent
+	ToolPolicy        ToolPolicy
+	StreamingCallback func(llmtypes.StreamChunk)
 }
 
 // Usage is the structured accounting returned with every completed turn.
@@ -74,7 +76,6 @@ type AgentDefinitionView struct {
 	Skills           []string
 	SkillDefinitions []*llmtypes.Skill
 	Tools            []ToolDefinitionView
-	Observers        []AgentEventListener
 }
 
 // Session owns history, continuation, steering, and event access. Run calls on
@@ -122,9 +123,6 @@ func (a *Agent) Definition() AgentDefinitionView {
 		}
 	}
 	view := AgentDefinitionView{Instructions: instructions}
-	a.mu.RLock()
-	view.Observers = append(view.Observers, a.listeners...)
-	a.mu.RUnlock()
 	for _, skill := range a.attachedSkills {
 		if skill != nil && skill.Name != "" {
 			view.Skills = append(view.Skills, skill.Name)
@@ -166,6 +164,9 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 		return Result{}, err
 	}
 	ctx = context.WithValue(ctx, turnPolicyContextKey{}, policy)
+	if turn.StreamingCallback != nil {
+		ctx = context.WithValue(ctx, turnStreamingCallbackContextKey{}, turn.StreamingCallback)
+	}
 
 	if len(history) == 0 && len(turn.History) > 0 {
 		history = append([]llmtypes.MessageContent(nil), turn.History...)
@@ -181,8 +182,11 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 	}
 
 	allowed := policy.allowedMap()
-	if s.agent.SessionID != "" {
-		codeexec.SetSessionToolAllowList(s.agent.SessionID, allowed)
+	if allowed != nil && s.agent.isIntrinsicIdentityTool(readSkillToolName) {
+		allowed[readSkillToolName] = true
+	}
+	if s.agent.sessionID != "" {
+		codeexec.SetSessionToolAllowList(s.agent.sessionID, allowed)
 	}
 
 	var text string
@@ -234,7 +238,7 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 	}
 	s.stateMu.Unlock()
 	delivery, err := s.agent.deliverUserMessage(ctx, UserMessageDeliveryRequest{
-		SessionID: s.agent.SessionID,
+		SessionID: s.agent.sessionID,
 		Message:   input,
 		Intent:    UserMessageDeliveryIntentAuto,
 	})
