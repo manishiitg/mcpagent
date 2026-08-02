@@ -173,14 +173,15 @@ func executeToolCallsParallel(
 				loggerv2.String("tool", tc.FunctionCall.Name),
 				loggerv2.String("server", plan.serverName),
 				loggerv2.String("session_id", a.sessionID),
-				loggerv2.String("duration", res.duration.String()))
+				loggerv2.String("duration", res.duration.String()),
+				loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 
 			// Tool execution error — emit error event
 			toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, res.toolErr.Error(), plan.serverName, res.duration)
 			toolErrorEvent.ToolCallID = tc.ID
 			a.emitTypedEvent(ctx, toolErrorEvent)
 		} else if res.result == nil || !res.result.IsError {
-			if signal, suspicious := toolerr.Suspicious(res.resultText); suspicious {
+			if signal, suspicious := toolerr.SuspiciousForTool(tc.FunctionCall.Name, res.resultText); suspicious {
 				v2Logger.Error(toolerr.SuspectMarker+" tool reported success but the result reads like a failure", nil,
 					loggerv2.String("layer", "agent_tool_loop_parallel"),
 					loggerv2.String("tool", tc.FunctionCall.Name),
@@ -188,7 +189,8 @@ func executeToolCallsParallel(
 					loggerv2.String("session_id", a.sessionID),
 					loggerv2.String("signal", signal),
 					loggerv2.String("duration", res.duration.String()),
-					loggerv2.String("result", toolerr.TruncateForLog(res.resultText)))
+					loggerv2.String("result", toolerr.TruncateForLog(res.resultText)),
+					loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 			}
 			// Success — emit tool call end event
 			_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.getTokenUsageWithPricing()
@@ -207,7 +209,8 @@ func executeToolCallsParallel(
 				loggerv2.String("server", plan.serverName),
 				loggerv2.String("session_id", a.sessionID),
 				loggerv2.String("duration", res.duration.String()),
-				loggerv2.String("result", toolerr.TruncateForLog(res.resultText)))
+				loggerv2.String("result", toolerr.TruncateForLog(res.resultText)),
+				loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 
 			// Tool returned error in result
 			toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, res.resultText, plan.serverName, res.duration)
@@ -313,7 +316,8 @@ func prepareToolExecution(
 		v2Logger.Error(toolerr.Marker+" tool args parse failed", err,
 			loggerv2.String("layer", "agent_tool_loop_parallel"),
 			loggerv2.String("tool", tc.FunctionCall.Name),
-			loggerv2.String("session_id", a.sessionID))
+			loggerv2.String("session_id", a.sessionID),
+			loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 		toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
 		toolArgsParsingErrorEvent.ToolCallID = tc.ID
 		a.emitTypedEvent(ctx, toolArgsParsingErrorEvent)
@@ -352,7 +356,8 @@ func prepareToolExecution(
 			v2Logger.Error(toolerr.Marker+" tool not found", nil,
 				loggerv2.String("layer", "agent_tool_loop_parallel"),
 				loggerv2.String("tool", tc.FunctionCall.Name),
-				loggerv2.String("session_id", a.sessionID))
+				loggerv2.String("session_id", a.sessionID),
+				loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 			toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
 			toolNotFoundEvent.ToolCallID = tc.ID
 			a.emitTypedEvent(ctx, toolNotFoundEvent)

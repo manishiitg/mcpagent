@@ -3,6 +3,7 @@ package mcpagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpcache/openapi"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // handleGetAPISpec handles the get_api_spec virtual tool.
@@ -96,7 +98,7 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	}
 
 	if len(unknown) > 0 || len(notAllowed) > 0 {
-		return "", fmt.Errorf("tools_unavailable: unknown=%v not_allowed=%v", unknown, notAllowed)
+		return "", a.unavailableToolsError(registry, serverName, unknown, notAllowed)
 	}
 
 	a.openAPISpecCacheMu.RLock()
@@ -123,6 +125,164 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	spec := strings.Join(sections, "\n")
 	a.cacheSpec(cacheKey, []byte(spec))
 	return spec, nil
+}
+
+// unavailableToolsError explains why a get_api_spec request could not be
+// answered. The distinction it draws is the whole point: a name that resolves
+// nowhere reads identically whether the model invented it or whether the server
+// that owns it never came up, and the old wording asserted the first
+// unconditionally. On 2026-08-01 a run asked google_sheets for five correct
+// tool names while that server was failing to connect, was told
+// "unknown=[batch_update get_sheet_formulas ...]", concluded its names were
+// wrong, and spent the next call guessing new ones. No sequence of names could
+// have worked, so the error has to say so.
+//
+// requestedServer is the model-supplied server_name. It never affects routing —
+// only whether this message can name the failing server outright.
+func (a *Agent) unavailableToolsError(registry *canonicalToolRegistry, requestedServer string, unknown, notAllowed []string) error {
+	if len(unknown) == 0 {
+		// Permission denials are already attributed correctly; leave them byte-identical.
+		return fmt.Errorf("tools_unavailable: unknown=%v not_allowed=%v", unknown, notAllowed)
+	}
+
+	missing := a.serversMissingTools(registry)
+	blamed := a.blameMissingServer(registry, requestedServer, missing)
+
+	var b strings.Builder
+	if len(blamed) > 0 {
+		fmt.Fprintf(&b, "tools_unavailable: server_unavailable=%v requested=%v not_allowed=%v: ", blamed, unknown, notAllowed)
+		fmt.Fprintf(&b, "MCP server(s) %v are configured for this agent but currently have zero registered tools, so %s. ",
+			blamed, a.missingServerCause(blamed))
+		b.WriteString("The requested tool names are most likely correct — retrying with different or guessed tool names will NOT help. ")
+		b.WriteString("Treat this as a server outage: report it and continue without those tools.")
+		return errors.New(b.String())
+	}
+
+	fmt.Fprintf(&b, "tools_unavailable: unknown=%v not_allowed=%v: ", unknown, notAllowed)
+	b.WriteString("these names are not registered by any currently connected server. ")
+	b.WriteString("Use the exact tool names from the tool index in your system prompt — do not guess variants. ")
+	if len(missing) > 0 {
+		fmt.Fprintf(&b, "Note: MCP server(s) %v are configured but currently have zero registered tools (failed to start or connect); "+
+			"if a requested tool belongs to one of them, no tool name will work.", missing)
+	} else {
+		b.WriteString("An MCP server that fails to start produces this same symptom, " +
+			"so a tool you expected to exist may be missing for reasons unrelated to its name.")
+	}
+	return errors.New(b.String())
+}
+
+// blameMissingServer decides whether a server outage can be named as the cause
+// rather than merely mentioned. Two cases are certain enough to assert:
+// the model named a server that is configured yet holds no tools, or no MCP
+// server registered a single tool, in which case no MCP name could resolve.
+// Everything else stays a note, because a hallucinated name and a down server
+// are genuinely indistinguishable once other servers are serving tools.
+func (a *Agent) blameMissingServer(registry *canonicalToolRegistry, requestedServer string, missing []string) []string {
+	if len(missing) == 0 {
+		return nil
+	}
+	if requested := normalizeServerKey(requestedServer); requested != "" {
+		for _, name := range missing {
+			if normalizeServerKey(name) == requested {
+				return []string{name}
+			}
+		}
+	}
+	if !registryHasMCPTools(registry) {
+		return missing
+	}
+	return nil
+}
+
+// missingServerCause distinguishes "never connected" from "connected and
+// advertised nothing". Both are server-availability problems, but naming the
+// wrong one sends a human debugging in the wrong direction.
+func (a *Agent) missingServerCause(missing []string) string {
+	for _, name := range missing {
+		if !a.hasMCPClient(name) {
+			return "they failed to start or failed to connect"
+		}
+	}
+	return "they connected but advertised no tools"
+}
+
+// serversMissingTools returns the MCP servers this agent was configured to use
+// that own zero tools in the canonical registry. Connection results are not
+// usable for this: a server that fails to connect is dropped from both
+// a.clients and a.servers, so only the configured request still remembers it.
+func (a *Agent) serversMissingTools(registry *canonicalToolRegistry) []string {
+	withTools := make(map[string]struct{})
+	for _, tool := range registry.snapshot() {
+		if tool.Kind != toolImplementationMCP || tool.Source == "" {
+			continue
+		}
+		withTools[normalizeServerKey(tool.Source)] = struct{}{}
+	}
+
+	var missing []string
+	for _, name := range a.configuredMCPServers() {
+		if _, ok := withTools[normalizeServerKey(name)]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// configuredMCPServers lists the MCP servers this agent asked for, as spelled by
+// the caller. serverName holds the constructor's comma-separated request and
+// selectedServers holds an explicit restriction; neither is rewritten by the
+// connection result, which is what makes a failed server still visible here.
+// "all" is deliberately not expanded — resolving it means re-reading the config
+// from an error path, and asserting an outage from a stale read is worse than
+// staying quiet.
+func (a *Agent) configuredMCPServers() []string {
+	var names []string
+	seen := make(map[string]struct{})
+	add := func(raw string) {
+		name := strings.TrimSpace(raw)
+		if name == "" || name == "all" || name == mcpclient.NoServers {
+			return
+		}
+		key := normalizeServerKey(name)
+		if _, duplicate := seen[key]; duplicate {
+			return
+		}
+		seen[key] = struct{}{}
+		names = append(names, name)
+	}
+	for _, name := range strings.Split(a.serverName, ",") {
+		add(name)
+	}
+	for _, name := range a.selectedServers {
+		add(name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (a *Agent) hasMCPClient(serverName string) bool {
+	key := normalizeServerKey(serverName)
+	for name := range a.clients {
+		if normalizeServerKey(name) == key {
+			return true
+		}
+	}
+	return false
+}
+
+func registryHasMCPTools(registry *canonicalToolRegistry) bool {
+	for _, tool := range registry.snapshot() {
+		if tool.Kind == toolImplementationMCP {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeServerKey collapses the spellings the same server travels under:
+// config uses hyphens, HTTP routes and the tool index use underscores.
+func normalizeServerKey(serverName string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(serverName), "-", "_"))
 }
 
 // serverIsAvailable checks if a server passes the tool filter.

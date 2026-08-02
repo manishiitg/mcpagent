@@ -1,6 +1,10 @@
 package toolerr
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 // The payloads below are real, taken from incidents in docs/bugs. Each was
 // returned by a tool that reported success, and each was invisible until
@@ -106,5 +110,85 @@ func TestTruncateToolResultForLogBoundsPayload(t *testing.T) {
 	}
 	if short := TruncateForLog("small"); short != "small" {
 		t.Fatalf("short result was altered: %q", short)
+	}
+}
+
+// Suppression must be scoped to the heuristic only. These tools return problem
+// text as their normal payload — 70 of 173 live suspect hits came from them and
+// none was a real failure — but a genuine error still surfaces under Marker.
+func TestSuspiciousForToolSuppressesProblemReportingTools(t *testing.T) {
+	problemText := `{"findings":[{"title":"urls.md not found","detail":"permission denied"}]}`
+
+	for _, tool := range []string{
+		"read_skill", "get_pulse_finding_backlog", "get_pulse_module_state",
+		"get_pulse_review_result", "query_workflow_db",
+	} {
+		if signal, suspicious := SuspiciousForTool(tool, problemText); suspicious {
+			t.Errorf("SuspiciousForTool(%q, ...) = true (signal %q), want suppressed", tool, signal)
+		}
+	}
+
+	// Everything else keeps the broad behaviour.
+	for _, tool := range []string{"execute_shell_command", "agent_browser", "diff_patch_workspace_file", ""} {
+		if _, suspicious := SuspiciousForTool(tool, problemText); !suspicious {
+			t.Errorf("SuspiciousForTool(%q, ...) = false, want flagged", tool)
+		}
+	}
+}
+
+// The masked failure that motivated the whole detector, captured verbatim from
+// a live run: a tool failure re-wrapped as shell stdout under exit_code 0.
+func TestSuspiciousForToolCatchesHarnessEnvelopeWrappedInShellSuccess(t *testing.T) {
+	live := `{"stdout":"ERROR: tool execution failed: layer=custom_tool_handler tool=get_pulse_review_result session=schedule-cron--46a9b350: sql: no rows in result set","stderr":"","exit_code":0,"execution_time_ms":25}`
+	signal, suspicious := SuspiciousForTool("execute_shell_command", live)
+	if !suspicious {
+		t.Fatal("live masked failure was not flagged")
+	}
+	if signal != "tool execution failed:" {
+		t.Fatalf("signal = %q, want the harness envelope to win over weaker phrases", signal)
+	}
+}
+
+// The production case: a diff_patch denial whose args were logged head-first,
+// so the long `diff` consumed the whole budget and `filepath` — the only field
+// that explained the failure — never appeared.
+func TestTruncateArgsForLogKeepsShortFieldsBesideLongOnes(t *testing.T) {
+	longDiff := "--- /dev/null\n+++ b/x\n" + strings.Repeat("+padding line\n", 400)
+	args := map[string]string{
+		"diff":     longDiff,
+		"filepath": "Workflow/social-media/builder/improve.html",
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := TruncateArgsForLog(string(encoded))
+
+	if !strings.Contains(got, "Workflow/social-media/builder/improve.html") {
+		t.Fatalf("filepath was lost to truncation; got:\n%s", got)
+	}
+	if !strings.Contains(got, "diff=") {
+		t.Fatalf("diff key missing; got:\n%s", got)
+	}
+	if len(got) > argTotalBudget+128 {
+		t.Fatalf("output length %d exceeds the budget", len(got))
+	}
+
+	// Head-first truncation is what this replaces: it drops filepath entirely.
+	if strings.Contains(TruncateForLog(string(encoded)), "improve.html") {
+		t.Fatal("plain truncation kept filepath; the regression this guards would be untestable")
+	}
+}
+
+func TestTruncateArgsForLogHandlesNonObjectInput(t *testing.T) {
+	for _, in := range []string{"", "   ", "not json at all", `["a","b"]`, `{`} {
+		got := TruncateArgsForLog(in)
+		if len(got) > 400+len("...(truncated)") {
+			t.Fatalf("TruncateArgsForLog(%q) = %d bytes, want bounded", in, len(got))
+		}
+	}
+	if got := TruncateArgsForLog(`{"a":1,"b":true,"c":null}`); !strings.Contains(got, "a=1") || !strings.Contains(got, "b=true") {
+		t.Fatalf("non-string values not rendered: %s", got)
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
@@ -452,7 +451,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			loggerv2.String("server", req.Server),
 			loggerv2.String("session_id", req.SessionID),
 			loggerv2.String("duration", time.Since(mcpToolStartTime).String()),
-			loggerv2.String("args", truncateForLog(string(argsJSON), 400)))
+			loggerv2.String("args", toolerr.TruncateArgsForLog(string(argsJSON))))
 		errorText := toolExecutionError("mcp_tool_handler", req.Tool, req.SessionID, toolTimeout, err)
 		if req.SessionID != "" {
 			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), errorText, mcpToolStartTime)
@@ -523,13 +522,14 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	// The transport says OK; the payload may not. This is the exact class that
 	// produced 34 green-checked failures in a day — a shell denial or harness
 	// envelope carried as content under exit_code 0. Over-matching is intended.
-	if signal, suspicious := toolerr.Suspicious(resultStr); suspicious {
+	if signal, suspicious := toolerr.SuspiciousForTool(req.Tool, resultStr); suspicious {
 		h.logger.Error(toolerr.SuspectMarker+" mcp tool reported success but the result reads like a failure", nil,
 			loggerv2.String("layer", "mcp_tool_handler"),
 			loggerv2.String("tool", req.Tool),
 			loggerv2.String("server", req.Server),
 			loggerv2.String("session_id", req.SessionID),
 			loggerv2.String("signal", signal),
+			loggerv2.String("args", toolerr.TruncateArgsForLog(string(argsJSON))),
 			loggerv2.String("result", toolerr.TruncateForLog(resultStr)))
 	}
 
@@ -620,7 +620,7 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 			loggerv2.String("tool", req.Tool),
 			loggerv2.String("session_id", req.SessionID),
 			loggerv2.String("duration", toolDuration.String()),
-			loggerv2.String("args", truncateForLog(string(argsJSON), 400)))
+			loggerv2.String("args", toolerr.TruncateArgsForLog(string(argsJSON))))
 		errorText := toolExecutionError("custom_tool_handler", req.Tool, req.SessionID, toolTimeout, err)
 		if req.SessionID != "" {
 			toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), errorText, toolStartedAt)
@@ -636,12 +636,13 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		loggerv2.String("tool", req.Tool),
 		loggerv2.Int("result_length", len(result)))
 
-	if signal, suspicious := toolerr.Suspicious(result); suspicious {
+	if signal, suspicious := toolerr.SuspiciousForTool(req.Tool, result); suspicious {
 		h.logger.Error(toolerr.SuspectMarker+" custom tool reported success but the result reads like a failure", nil,
 			loggerv2.String("layer", "custom_tool_handler"),
 			loggerv2.String("tool", req.Tool),
 			loggerv2.String("session_id", req.SessionID),
 			loggerv2.String("signal", signal),
+			loggerv2.String("args", toolerr.TruncateArgsForLog(string(argsJSON))),
 			loggerv2.String("result", toolerr.TruncateForLog(result)))
 	}
 
@@ -718,7 +719,7 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 			loggerv2.String("layer", "virtual_tool_handler"),
 			loggerv2.String("tool", req.Tool),
 			loggerv2.String("session_id", req.SessionID),
-			loggerv2.String("args", truncateForLog(string(argsForLog), 400)))
+			loggerv2.String("args", toolerr.TruncateArgsForLog(string(argsForLog))))
 		errorText := toolExecutionError("virtual_tool_handler", req.Tool, req.SessionID, toolTimeout, err)
 		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 			Success: false,
@@ -743,10 +744,3 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 // enormous — a prompt, a file body, a SQL result. Logging them whole turns one
 // failure into an unreadable log; logging none of them means the line says a
 // tool failed without saying what was asked of it.
-func truncateForLog(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	return s[:max] + fmt.Sprintf("…(+%d bytes)", len(s)-max)
-}

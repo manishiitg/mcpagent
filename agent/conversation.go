@@ -1119,7 +1119,8 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					v2Logger.Error(toolerr.Marker+" tool args parse failed", err,
 						loggerv2.String("layer", "agent_tool_loop"),
 						loggerv2.String("tool", tc.FunctionCall.Name),
-						loggerv2.String("session_id", a.sessionID))
+						loggerv2.String("session_id", a.sessionID),
+						loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 					toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
 					toolArgsParsingErrorEvent.ToolCallID = tc.ID
 					a.emitTypedEvent(ctx, toolArgsParsingErrorEvent)
@@ -1194,7 +1195,8 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						v2Logger.Error(toolerr.Marker+" tool not found", nil,
 							loggerv2.String("layer", "agent_tool_loop"),
 							loggerv2.String("tool", tc.FunctionCall.Name),
-							loggerv2.String("session_id", a.sessionID))
+							loggerv2.String("session_id", a.sessionID),
+							loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 						toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
 						toolNotFoundEvent.ToolCallID = tc.ID
 						a.emitTypedEvent(ctx, toolNotFoundEvent)
@@ -1476,7 +1478,8 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							loggerv2.String("tool", tc.FunctionCall.Name),
 							loggerv2.String("server", serverName),
 							loggerv2.String("session_id", a.sessionID),
-							loggerv2.String("duration", duration.String()))
+							loggerv2.String("duration", duration.String()),
+							loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 
 						// Emit tool call error event using typed event data
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
@@ -1642,7 +1645,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// results routinely carry a failure in the payload while the
 				// transport reports OK, which is how 34 failures in one day
 				// rendered as green checks. Sniff the content and mark it.
-				if signal, suspicious := toolerr.Suspicious(resultText); suspicious {
+				if signal, suspicious := toolerr.SuspiciousForTool(tc.FunctionCall.Name, resultText); suspicious {
 					v2Logger.Error(toolerr.SuspectMarker+" tool reported success but the result reads like a failure", nil,
 						loggerv2.String("layer", "agent_tool_loop"),
 						loggerv2.String("tool", tc.FunctionCall.Name),
@@ -1650,7 +1653,8 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						loggerv2.String("session_id", a.sessionID),
 						loggerv2.String("signal", signal),
 						loggerv2.String("duration", duration.String()),
-						loggerv2.String("result", toolerr.TruncateForLog(resultText)))
+						loggerv2.String("result", toolerr.TruncateForLog(resultText)),
+						loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 				}
 
 				// Tool execution completed - emit tool call end event
@@ -1676,7 +1680,8 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						loggerv2.String("server", serverName),
 						loggerv2.String("session_id", a.sessionID),
 						loggerv2.String("duration", duration.String()),
-						loggerv2.String("result", toolerr.TruncateForLog(resultText)))
+						loggerv2.String("result", toolerr.TruncateForLog(resultText)),
+						loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 
 					toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration)
 					toolErrorEvent.ToolCallID = tc.ID
