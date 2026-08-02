@@ -513,6 +513,16 @@ func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
 				t.Fatalf("tmux transcript metadata = %#v, want true", got)
 			}
 
+			callbackAgent := bridgeTestAgent()
+			callbackAgent.streamingCallback = func(llmtypes.StreamChunk) {}
+			opts, err = tt.append(callbackAgent)
+			if err != nil {
+				t.Fatalf("append callback options: %v", err)
+			}
+			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != true {
+				t.Fatalf("streaming callback transcript metadata = %#v, want true", got)
+			}
+
 			structuredAgent := bridgeTestAgent()
 			structuredAgent.enableStreaming = true
 			structuredAgent.codingAgentTransport = llm.CodingAgentTransportStructured

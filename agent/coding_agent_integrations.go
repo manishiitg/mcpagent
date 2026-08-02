@@ -101,7 +101,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// is auto-enabled above purely for tool-call observability and does NOT
 	// imply this). Only worth the tailing cost when a caller actually
 	// registered a StreamingCallback to consume the content.
-	if a.StreamingCallback != nil {
+	if a.streamingCallback != nil {
 		opts = append(opts, llm.WithClaudeStreamTranscript(true))
 	}
 	return opts, nil
@@ -207,7 +207,7 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	}
 	// See appendClaudeCodeIntegrationOptions' matching comment: content
 	// streaming needs this separate, explicit opt-in beyond EnableStreaming.
-	if a.StreamingCallback != nil {
+	if a.streamingCallback != nil {
 		opts = append(opts, llm.WithCodexStreamTranscript(true))
 	}
 	return opts, nil
