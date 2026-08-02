@@ -132,6 +132,7 @@ func NewAgentConnectionWithSession(
 				servers = append(servers, trimmed)
 			}
 		}
+		servers = canonicalizeRequestedServers(config, servers)
 		logger.Info("Using specific servers", loggerv2.Any("servers", servers))
 	}
 
@@ -163,7 +164,7 @@ func NewAgentConnectionWithSession(
 			}
 			// Apply runtime overrides if provided for this server
 			if runtimeOverrides != nil {
-				if override, hasOverride := runtimeOverrides[srvName]; hasOverride {
+				if override, hasOverride := runtimeOverrideForServer(runtimeOverrides, srvName); hasOverride {
 					serverConfig = serverConfig.ApplyOverride(override)
 					logger.Info("Applied runtime overrides to server config",
 						loggerv2.String("server", srvName),
@@ -398,6 +399,42 @@ func NewAgentConnectionWithSession(
 		loggerv2.String("duration", connectionDuration.String()))
 
 	return clients, toolToServer, allTools, connectedServers, prompts, resources, systemPrompt, nil
+}
+
+// canonicalizeRequestedServers resolves sanitized aliases to their configured
+// server names and removes duplicates before any connection goroutines start.
+// Unknown names are retained so the existing per-server lookup can report and
+// skip them without changing connection error semantics.
+func canonicalizeRequestedServers(config *mcpclient.MCPConfig, requested []string) []string {
+	canonical := make([]string, 0, len(requested))
+	seen := make(map[string]struct{}, len(requested))
+	for _, requestedName := range requested {
+		resolvedName := requestedName
+		if name, _, err := config.ResolveServer(requestedName); err == nil {
+			resolvedName = name
+		}
+		if _, exists := seen[resolvedName]; exists {
+			continue
+		}
+		seen[resolvedName] = struct{}{}
+		canonical = append(canonical, resolvedName)
+	}
+	return canonical
+}
+
+func runtimeOverrideForServer(overrides mcpclient.RuntimeOverrides, canonicalName string) (mcpclient.RuntimeConfigOverride, bool) {
+	if override, exists := overrides[canonicalName]; exists {
+		return override, true
+	}
+	if strings.Contains(canonicalName, "-") {
+		override, exists := overrides[strings.ReplaceAll(canonicalName, "-", "_")]
+		return override, exists
+	}
+	if strings.Contains(canonicalName, "_") {
+		override, exists := overrides[strings.ReplaceAll(canonicalName, "_", "-")]
+		return override, exists
+	}
+	return mcpclient.RuntimeConfigOverride{}, false
 }
 
 // resolveOnDemandMCPClient returns the MCP client for an on-demand server connection.

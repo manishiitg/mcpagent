@@ -369,26 +369,36 @@ func LoadMergedConfig(configPath string, logger loggerv2.Logger) (*MCPConfig, er
 	return mergedConfig, nil
 }
 
-// GetServer returns the configuration for a specific server. After an exact
-// match miss the lookup retries with hyphen↔underscore swaps so callers that
-// received a sanitized name (e.g. "google_sheets" via the bridge URL) still
-// find the canonical config entry (e.g. "google-sheets"). This matches the
-// per-tool handler's existing desanitize-first behavior.
-func (c *MCPConfig) GetServer(name string) (MCPServerConfig, error) {
+// ResolveServer returns both the canonical configured name and configuration
+// for a server. After an exact match miss the lookup retries with
+// hyphen↔underscore swaps so callers that received a sanitized name (e.g.
+// "google_sheets" via the bridge URL) still find the canonical config entry
+// (e.g. "google-sheets"). Returning the configured name lets connection
+// callers deduplicate aliases before starting subprocesses.
+func (c *MCPConfig) ResolveServer(name string) (string, MCPServerConfig, error) {
 	if server, exists := c.MCPServers[name]; exists {
-		return server, nil
+		return name, server, nil
 	}
 	if strings.Contains(name, "_") {
-		if server, ok := c.MCPServers[strings.ReplaceAll(name, "_", "-")]; ok {
-			return server, nil
+		canonicalName := strings.ReplaceAll(name, "_", "-")
+		if server, ok := c.MCPServers[canonicalName]; ok {
+			return canonicalName, server, nil
 		}
 	}
 	if strings.Contains(name, "-") {
-		if server, ok := c.MCPServers[strings.ReplaceAll(name, "-", "_")]; ok {
-			return server, nil
+		canonicalName := strings.ReplaceAll(name, "-", "_")
+		if server, ok := c.MCPServers[canonicalName]; ok {
+			return canonicalName, server, nil
 		}
 	}
-	return MCPServerConfig{}, fmt.Errorf("server '%s' not found in configuration", name)
+	return "", MCPServerConfig{}, fmt.Errorf("server '%s' not found in configuration", name)
+}
+
+// GetServer returns the configuration for a specific server while preserving
+// the legacy configuration-only API.
+func (c *MCPConfig) GetServer(name string) (MCPServerConfig, error) {
+	_, server, err := c.ResolveServer(name)
+	return server, err
 }
 
 // ListServers returns all configured server names
