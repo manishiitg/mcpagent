@@ -45,20 +45,25 @@ func TestAttachedSkillAutomaticallyRegistersTransportNeutralReader(t *testing.T)
 	if executor == nil {
 		t.Fatal("read_skill executor is missing")
 	}
-	read := func(args map[string]interface{}) attachedSkillReadResult {
+	read := func(request map[string]interface{}) attachedSkillReadResult {
 		t.Helper()
-		raw, err := executor(context.Background(), args)
+		raw, err := executor(context.Background(), map[string]interface{}{
+			"skills": []interface{}{request},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		var got attachedSkillReadResult
+		var got attachedSkillBatchReadResult
 		if err := json.Unmarshal([]byte(raw), &got); err != nil {
 			t.Fatalf("decode read_skill result: %v\n%s", err, raw)
 		}
-		return got
+		if len(got.Results) != 1 || got.Results[0].Error != "" {
+			t.Fatalf("single read result = %#v", got.Results)
+		}
+		return got.Results[0]
 	}
 
-	main := read(map[string]interface{}{"skill_name": "workflow-reference"})
+	main := read(map[string]interface{}{"name": "workflow-reference"})
 	if main.Path != "SKILL.md" || main.Content != "main skill instructions" || main.Encoding != "utf-8" {
 		t.Fatalf("main skill result = %#v", main)
 	}
@@ -66,12 +71,12 @@ func TestAttachedSkillAutomaticallyRegistersTransportNeutralReader(t *testing.T)
 		t.Fatalf("available files = %v", main.AvailableFiles)
 	}
 
-	reference := read(map[string]interface{}{"skill_name": "workflow-reference", "path": "references/stores.md"})
+	reference := read(map[string]interface{}{"name": "workflow-reference", "path": "references/stores.md"})
 	if reference.Content != "store contract" || reference.Encoding != "utf-8" {
 		t.Fatalf("reference result = %#v", reference)
 	}
 
-	binary := read(map[string]interface{}{"skill_name": "workflow-reference", "path": "assets/pixel.bin"})
+	binary := read(map[string]interface{}{"name": "workflow-reference", "path": "assets/pixel.bin"})
 	if binary.Encoding != "base64" || binary.Content != base64.StdEncoding.EncodeToString([]byte{0xff, 0x00, 0x81}) {
 		t.Fatalf("binary result = %#v", binary)
 	}
@@ -84,15 +89,113 @@ func TestAttachedSkillReaderRejectsTraversalAndUnknownResources(t *testing.T) {
 	}
 	executor := agent.getCustomToolExecutor(readSkillToolName)
 
+	for _, request := range []map[string]interface{}{
+		{"name": "safe", "path": "../secret"},
+		{"name": "safe", "path": "/etc/passwd"},
+		{"name": "safe", "path": "references/missing.md"},
+		{"name": "missing"},
+	} {
+		raw, err := executor(context.Background(), map[string]interface{}{"skills": []interface{}{request}})
+		if err != nil {
+			t.Fatalf("item failure should not fail the batch: %v", err)
+		}
+		var got attachedSkillBatchReadResult
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Results) != 1 || got.Results[0].Error == "" {
+			t.Fatalf("read_skill did not report item error: request=%#v result=%#v", request, got.Results)
+		}
+	}
+}
+
+func TestAttachedSkillReaderReadsBatchInOrderWithPartialFailures(t *testing.T) {
+	agent := &Agent{}
+	for _, skill := range []*llmtypes.Skill{
+		{Name: "first", Description: "first description", Content: "first body"},
+		{Name: "second", Content: "second body", SupportingFiles: []llmtypes.SkillFile{
+			{RelPath: "references/detail.md", Content: []byte("second detail")},
+		}},
+	} {
+		if err := agent.attachSkill(skill); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executor := agent.getCustomToolExecutor(readSkillToolName)
+	raw, err := executor(context.Background(), map[string]interface{}{
+		"skills": []interface{}{
+			map[string]interface{}{"name": "second", "path": "references/detail.md"},
+			map[string]interface{}{"name": "missing"},
+			map[string]interface{}{"name": "first"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("batch read returned a whole-call error: %v", err)
+	}
+	var got attachedSkillBatchReadResult
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode batch result: %v\n%s", err, raw)
+	}
+	if len(got.Results) != 3 {
+		t.Fatalf("batch result count = %d, want 3: %#v", len(got.Results), got.Results)
+	}
+	if got.Results[0].SkillName != "second" || got.Results[0].Path != "references/detail.md" || got.Results[0].Content != "second detail" || got.Results[0].Error != "" {
+		t.Fatalf("first batch result = %#v", got.Results[0])
+	}
+	if got.Results[1].SkillName != "missing" || !strings.Contains(got.Results[1].Error, `attached skill "missing" not found`) {
+		t.Fatalf("partial failure = %#v", got.Results[1])
+	}
+	if got.Results[2].SkillName != "first" || got.Results[2].Content != "first body" || got.Results[2].Description != "first description" {
+		t.Fatalf("last batch result = %#v", got.Results[2])
+	}
+}
+
+func TestAttachedSkillReaderRejectsInvalidBatchArguments(t *testing.T) {
+	agent := &Agent{}
+	if err := agent.attachSkill(&llmtypes.Skill{Name: "safe", Content: "body"}); err != nil {
+		t.Fatal(err)
+	}
+	executor := agent.getCustomToolExecutor(readSkillToolName)
+	tooMany := make([]interface{}, maxReadSkillBatchSize+1)
+	for i := range tooMany {
+		tooMany[i] = map[string]interface{}{"name": "safe"}
+	}
 	for _, args := range []map[string]interface{}{
-		{"skill_name": "safe", "path": "../secret"},
-		{"skill_name": "safe", "path": "/etc/passwd"},
-		{"skill_name": "safe", "path": "references/missing.md"},
-		{"skill_name": "missing"},
+		{},
+		{"skills": []interface{}{}},
+		{"skills": []interface{}{"safe"}},
+		{"skills": []interface{}{map[string]interface{}{"name": ""}}},
+		{"skills": []interface{}{map[string]interface{}{"name": 42}}},
+		{"skills": []interface{}{map[string]interface{}{"name": "safe", "path": 42}}},
+		{"skills": []interface{}{map[string]interface{}{"name": "safe", "unknown": true}}},
+		{"skills": tooMany},
+		{"skill_name": "safe"},
 	} {
 		if _, err := executor(context.Background(), args); err == nil {
-			t.Fatalf("read_skill accepted invalid arguments: %#v", args)
+			t.Fatalf("read_skill accepted invalid batch arguments: %#v", args)
 		}
+	}
+}
+
+func TestAttachedSkillReaderDoesNotTruncateLargeBatchContent(t *testing.T) {
+	agent := &Agent{}
+	large := strings.Repeat("complete skill instructions\n", 20_000)
+	if err := agent.attachSkill(&llmtypes.Skill{Name: "large", Content: large}); err != nil {
+		t.Fatal(err)
+	}
+	executor := agent.getCustomToolExecutor(readSkillToolName)
+	raw, err := executor(context.Background(), map[string]interface{}{
+		"skills": []map[string]interface{}{{"name": "large"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got attachedSkillBatchReadResult
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode large batch result: %v", err)
+	}
+	if len(got.Results) != 1 || got.Results[0].Content != large {
+		t.Fatalf("large skill content was altered or truncated: got %d bytes, want %d", len(got.Results[0].Content), len(large))
 	}
 }
 

@@ -178,8 +178,17 @@ func TestAttachedSkillAddsReadSkillToCodingAgentMCPBridge(t *testing.T) {
 		t.Fatalf("decode read_skill schema: %v", err)
 	}
 	properties, _ := schema["properties"].(map[string]interface{})
-	if properties["skill_name"] == nil || properties["path"] == nil {
+	if len(properties) != 1 || properties["skills"] == nil {
 		t.Fatalf("read_skill bridge schema is incomplete: %s", readSkill.InputSchema)
+	}
+	skillsSchema, _ := properties["skills"].(map[string]interface{})
+	if skillsSchema["maxItems"] != float64(maxReadSkillBatchSize) {
+		t.Fatalf("read_skill batch maxItems = %#v, want %d", skillsSchema["maxItems"], maxReadSkillBatchSize)
+	}
+	items, _ := skillsSchema["items"].(map[string]interface{})
+	itemProperties, _ := items["properties"].(map[string]interface{})
+	if itemProperties["name"] == nil || itemProperties["path"] == nil {
+		t.Fatalf("read_skill batch item schema is incomplete: %s", readSkill.InputSchema)
 	}
 }
 

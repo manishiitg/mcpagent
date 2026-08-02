@@ -16,7 +16,8 @@ import (
 const (
 	readSkillToolName        = "read_skill"
 	readSkillToolCategory    = "skill_tools"
-	readSkillToolDescription = "Read an attached skill or one of its bundled supporting files. Call with skill_name and omit path to read the skill instructions and list its files; pass a listed relative path to read that reference, script, or asset. This tool is intrinsic to the agent's attached identity and works on every transport."
+	readSkillToolDescription = "Read one or more attached skills or bundled supporting files. Call with a skills array of 1-5 objects; each object requires name and may include path. Results preserve request order and report errors per item. This tool is intrinsic to the agent's attached identity and works on every transport."
+	maxReadSkillBatchSize    = 5
 )
 
 // Skills are Anthropic-format SKILL.md bundles attached to an Agent. The
@@ -58,16 +59,29 @@ func (a *Agent) ensureSkillReaderTool() error {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]interface{}{
-			"skill_name": map[string]interface{}{
-				"type":        "string",
-				"description": "Exact name from the Available Skills listing.",
-			},
-			"path": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional relative path listed by the skill, for example references/api.md or scripts/check.py. Omit it (or use SKILL.md) for the main instructions and file list.",
+			"skills": map[string]interface{}{
+				"type":        "array",
+				"description": "One to five attached skill reads, in requested order. Use a one-item array for a single read.",
+				"minItems":    1,
+				"maxItems":    maxReadSkillBatchSize,
+				"items": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]interface{}{
+						"name": map[string]interface{}{
+							"type":        "string",
+							"description": "Exact name from the Available Skills listing.",
+						},
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "Optional bundled relative path, for example references/api.md or scripts/check.py. Omit it (or use SKILL.md) for the main instructions and file list.",
+						},
+					},
+					"required": []string{"name"},
+				},
 			},
 		},
-		"required": []string{"skill_name"},
+		"required": []string{"skills"},
 	}
 
 	a.installingSkillReader = true
@@ -108,14 +122,93 @@ type attachedSkillReadResult struct {
 	Content        string   `json:"content"`
 	Encoding       string   `json:"encoding"`
 	AvailableFiles []string `json:"available_files,omitempty"`
+	Error          string   `json:"error,omitempty"`
+}
+
+type attachedSkillBatchReadResult struct {
+	Results []attachedSkillReadResult `json:"results"`
+}
+
+type attachedSkillReadRequest struct {
+	SkillName string
+	Path      string
 }
 
 func (a *Agent) readAttachedSkill(args map[string]interface{}) (string, error) {
-	name, _ := args["skill_name"].(string)
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", fmt.Errorf("skill_name is required")
+	requests, err := parseAttachedSkillBatch(args["skills"])
+	if err != nil {
+		return "", err
 	}
+	batch := attachedSkillBatchReadResult{Results: make([]attachedSkillReadResult, 0, len(requests))}
+	for _, request := range requests {
+		result, readErr := a.readOneAttachedSkill(request.SkillName, request.Path)
+		if readErr != nil {
+			requestedPath := strings.TrimSpace(request.Path)
+			if requestedPath == "" {
+				requestedPath = "SKILL.md"
+			}
+			batch.Results = append(batch.Results, attachedSkillReadResult{
+				SkillName: request.SkillName,
+				Path:      requestedPath,
+				Error:     readErr.Error(),
+			})
+			continue
+		}
+		batch.Results = append(batch.Results, result)
+	}
+	encoded, err := json.MarshalIndent(batch, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode attached skill batch: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func parseAttachedSkillBatch(raw interface{}) ([]attachedSkillReadRequest, error) {
+	var values []interface{}
+	switch typed := raw.(type) {
+	case []interface{}:
+		values = typed
+	case []map[string]interface{}:
+		values = make([]interface{}, len(typed))
+		for i, value := range typed {
+			values[i] = value
+		}
+	default:
+		return nil, fmt.Errorf("skills is required and must be an array of skill read objects")
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("skills must contain at least one skill name")
+	}
+	if len(values) > maxReadSkillBatchSize {
+		return nil, fmt.Errorf("skills accepts at most %d names", maxReadSkillBatchSize)
+	}
+	requests := make([]attachedSkillReadRequest, 0, len(values))
+	for i, value := range values {
+		item, ok := value.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("skills[%d] must be an object with name and optional path", i)
+		}
+		for key := range item {
+			if key != "name" && key != "path" {
+				return nil, fmt.Errorf("skills[%d] contains unsupported field %q", i, key)
+			}
+		}
+		name, ok := item["name"].(string)
+		name = strings.TrimSpace(name)
+		if !ok || name == "" {
+			return nil, fmt.Errorf("skills[%d].name must be a non-empty string", i)
+		}
+		rawPath, pathOK := item["path"]
+		pathValue, stringPath := rawPath.(string)
+		if pathOK && !stringPath {
+			return nil, fmt.Errorf("skills[%d].path must be a string", i)
+		}
+		requests = append(requests, attachedSkillReadRequest{SkillName: name, Path: pathValue})
+	}
+	return requests, nil
+}
+
+func (a *Agent) readOneAttachedSkill(name, rawPath string) (attachedSkillReadResult, error) {
 
 	var selected *llmtypes.Skill
 	availableSkills := make([]string, 0, len(a.attachedSkills))
@@ -130,13 +223,12 @@ func (a *Agent) readAttachedSkill(args map[string]interface{}) (string, error) {
 	}
 	sort.Strings(availableSkills)
 	if selected == nil {
-		return "", fmt.Errorf("attached skill %q not found; available skills: %s", name, strings.Join(availableSkills, ", "))
+		return attachedSkillReadResult{}, fmt.Errorf("attached skill %q not found; available skills: %s", name, strings.Join(availableSkills, ", "))
 	}
 
-	rawPath, _ := args["path"].(string)
 	requestedPath, err := normalizeAttachedSkillPath(rawPath)
 	if err != nil {
-		return "", err
+		return attachedSkillReadResult{}, err
 	}
 	availableFiles := attachedSkillFileNames(selected)
 
@@ -160,7 +252,7 @@ func (a *Agent) readAttachedSkill(args map[string]interface{}) (string, error) {
 			}
 		}
 		if !found {
-			return "", fmt.Errorf("file %q is not bundled with attached skill %q; available files: %s", requestedPath, name, strings.Join(availableFiles, ", "))
+			return attachedSkillReadResult{}, fmt.Errorf("file %q is not bundled with attached skill %q; available files: %s", requestedPath, name, strings.Join(availableFiles, ", "))
 		}
 		if utf8.Valid(content) {
 			result.Content = string(content)
@@ -170,11 +262,7 @@ func (a *Agent) readAttachedSkill(args map[string]interface{}) (string, error) {
 		}
 	}
 
-	encoded, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("encode attached skill %q: %w", name, err)
-	}
-	return string(encoded), nil
+	return result, nil
 }
 
 func normalizeAttachedSkillPath(raw string) (string, error) {
@@ -283,7 +371,7 @@ func renderSkillListing(skills []*llmtypes.Skill) string {
 	var b strings.Builder
 	b.WriteString("## Available Skills\n\n")
 	b.WriteString("The following skills are attached to this session. Each skill extends your capabilities with specialized instructions and (optionally) supporting files. ")
-	b.WriteString("When a skill is relevant, call `read_skill` with its exact name before acting. Omit `path` for the main instructions and bundled-file list, then call it again with a listed relative path when needed. Coding-agent CLIs may also expose the same bundle as native on-disk skills; `read_skill` is the transport-neutral contract.\n\n")
+	b.WriteString("When skills are relevant, call `read_skill` with a `skills` array before acting, using one object per read: `read_skill(skills=[{\"name\":\"exact-name\"}])`. Add `\"path\":\"references/file.md\"` to an item for a bundled file, and batch up to five related reads in one call. Coding-agent CLIs may also expose the same bundle as native on-disk skills; `read_skill` is the transport-neutral contract.\n\n")
 	for _, s := range skills {
 		if s == nil || s.Name == "" {
 			continue
