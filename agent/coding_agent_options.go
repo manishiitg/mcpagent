@@ -265,6 +265,12 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithCursorStreamTranscript(true))
 	}
+	// See appendClaudeCodeIntegrationOptions' matching comment (coding_agent_
+	// integrations.go): content streaming needs this separate, explicit
+	// opt-in beyond EnableStreaming.
+	if a.StreamingCallback != nil {
+		opts = append(opts, llm.WithCursorStreamTranscript(true))
+	}
 	return opts, nil
 }
 
