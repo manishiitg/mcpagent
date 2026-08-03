@@ -57,6 +57,50 @@ func TestSuspiciousToolResultCatchesRealMaskedFailures(t *testing.T) {
 	}
 }
 
+func TestCanonicalFailureUnwrapsHighConfidenceNestedFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+	}{
+		{name: "nested error prefix", text: `{"content":[{"type":"text","text":"{\"stdout\":\"ERROR: invalid API token\",\"stderr\":\"\",\"exit_code\":0}"}]}`},
+		{name: "nonzero shell exit", text: `{"content":[{"text":"{\"stdout\":\"\",\"stderr\":\"bad query\",\"exit_code\":14}"}]}`},
+		{name: "permission denial", text: `{"stdout":"","stderr":"sh: file: Operation not permitted","exit_code":0}`},
+		{name: "HTTP status", text: `{"result":"{\"status_code\":403,\"error\":\"forbidden\"}"}`},
+		{name: "explicit failure", text: `{"success":false,"error":"tool not available"}`},
+		{name: "MCP isError", text: `{"content":[{"text":"denied"}],"isError":true}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if signal, failed := CanonicalFailure(tt.text); !failed {
+				t.Fatalf("CanonicalFailure(%q) = (%q, false), want failure", tt.text, signal)
+			}
+		})
+	}
+}
+
+func TestCanonicalFailureDoesNotPromoteDiscussionOrDomainData(t *testing.T) {
+	tests := []string{
+		`The review discusses ERROR: invalid API token from an older run.`,
+		`{"result":{"findings":[{"status":"failed","detail":"historical record"}]}}`,
+		`{"stdout":"the string permission denied appears in a report","stderr":"","exit_code":0}`,
+		`{"success":true,"result":"all checks passed"}`,
+	}
+	for _, text := range tests {
+		if signal, failed := CanonicalFailure(text); failed {
+			t.Errorf("CanonicalFailure(%q) = (%q, true), want success", text, signal)
+		}
+	}
+}
+
+func TestCanonicalFailureForToolSuppressesProblemReportingPayloads(t *testing.T) {
+	if signal, failed := CanonicalFailureForTool("query_workflow_db", `[{"status":"failed"}]`); failed {
+		t.Fatalf("query result classified as failure: %q", signal)
+	}
+	if _, failed := CanonicalFailureForTool("execute_shell_command", `{"exit_code":14,"stderr":"denied"}`); !failed {
+		t.Fatal("shell failure was suppressed")
+	}
+}
+
 // Over-matching is the accepted trade, but a few things must stay quiet or the
 // marker becomes noise that nobody greps.
 func TestSuspiciousToolResultStaysQuietOnOrdinarySuccess(t *testing.T) {

@@ -36,12 +36,15 @@ func ReadAgentDiagnostics(agent *Agent) AgentDiagnostics {
 	}
 	prompt, completion, total, cache, reasoning, calls, cacheCalls,
 		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextUsage := agent.getTokenUsageWithPricing()
+	cacheRead, cacheWrite := agent.getCacheTokenBreakdown()
 	diagnostics := AgentDiagnostics{
 		Usage: Usage{
 			PromptTokens:         prompt,
 			CompletionTokens:     completion,
 			TotalTokens:          total,
 			CacheTokens:          cache,
+			CacheReadTokens:      cacheRead,
+			CacheWriteTokens:     cacheWrite,
 			ReasoningTokens:      reasoning,
 			LLMCalls:             calls,
 			CacheEnabledLLMCalls: cacheCalls,
@@ -76,6 +79,7 @@ type AgentRuntimeInfo struct {
 	LLMConfig            LLMModel
 	ConfiguredServerName string
 	SelectedTools        []string
+	EffectiveModelID     string
 }
 
 func ReadAgentRuntimeInfo(agent *Agent) AgentRuntimeInfo {
@@ -87,6 +91,7 @@ func ReadAgentRuntimeInfo(agent *Agent) AgentRuntimeInfo {
 		LLMConfig:            agent.getLLMModelConfig(),
 		ConfiguredServerName: agent.getConfiguredServerName(),
 		SelectedTools:        agent.getSelectedTools(),
+		EffectiveModelID:     agent.getEffectiveModelID(),
 	}
 }
 

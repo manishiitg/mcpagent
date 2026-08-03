@@ -169,6 +169,19 @@ func TestCLIToolCallChunksSkipsIncomplete(t *testing.T) {
 	}
 }
 
+func TestCLIToolResultIsErrorUsesCanonicalNestedStatus(t *testing.T) {
+	failure := `{"content":[{"text":"{\"stdout\":\"ERROR: invalid API token\",\"stderr\":\"\",\"exit_code\":0}"}]}`
+	if !cliToolResultIsError("execute_shell_command", failure) {
+		t.Fatal("nested CLI tool failure was not classified as an error")
+	}
+	if cliToolResultIsError("execute_shell_command", `The report discusses ERROR: invalid API token from last week.`) {
+		t.Fatal("error discussion was misclassified as a tool failure")
+	}
+	if cliToolResultIsError("query_workflow_db", `[{"status":"failed","detail":"historical finding"}]`) {
+		t.Fatal("workflow DB domain row was misclassified as a tool failure")
+	}
+}
+
 func TestCLIToolCallChunksAttachedToResponse(t *testing.T) {
 	chunks := []llmtypes.StreamChunk{
 		{

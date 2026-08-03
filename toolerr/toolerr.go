@@ -8,7 +8,10 @@ package toolerr
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -35,6 +38,184 @@ const (
 	Marker        = "[TOOL_ERROR]"
 	SuspectMarker = "[TOOL_ERROR_SUSPECT]"
 )
+
+var httpFailurePrefix = regexp.MustCompile(`(?i)^HTTP(?:/\S+)?\s+([45][0-9]{2})(?:\s|$)`)
+
+// CanonicalFailure recognizes only payload signals strong enough to change the
+// runtime result from success to error. Suspicious is intentionally broad for
+// logging; this function is deliberately narrower because it controls retries,
+// terminal state, timing counters, and the IsError value sent back to the LLM.
+//
+// Bridge results are often JSON nested inside MCP content/text strings, so the
+// classifier unwraps those envelopes recursively. Plain prose that merely
+// mentions an error remains successful.
+func CanonicalFailure(resultText string) (string, bool) {
+	return canonicalFailureValue(strings.TrimSpace(resultText), "", 0)
+}
+
+// CanonicalFailureForTool suppresses payload promotion for tools whose normal
+// job is to return arbitrary problem records or documentation. Their genuine
+// executor failures already carry err/IsError; inspecting domain rows such as
+// {"status":"failed"} would confuse data with transport state.
+func CanonicalFailureForTool(toolName, resultText string) (string, bool) {
+	if problemReportingTools[strings.TrimSpace(toolName)] {
+		return "", false
+	}
+	return CanonicalFailure(resultText)
+}
+
+func canonicalFailureValue(value interface{}, field string, depth int) (string, bool) {
+	if depth > 12 || value == nil {
+		return "", false
+	}
+	switch typed := value.(type) {
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return "", false
+		}
+		if decoded, ok := decodeJSONValue(trimmed); ok {
+			if signal, failed := canonicalFailureValue(decoded, field, depth+1); failed {
+				return signal, true
+			}
+		}
+		lowered := strings.ToLower(trimmed)
+		if strings.HasPrefix(lowered, "error: tool execution failed:") ||
+			strings.HasPrefix(lowered, "tool execution failed:") ||
+			strings.HasPrefix(lowered, "tool execution canceled:") ||
+			strings.HasPrefix(lowered, "tool execution timed out:") {
+			return "tool execution failure envelope", true
+		}
+		if strings.HasPrefix(lowered, "error:") {
+			return "error-prefixed result", true
+		}
+		if match := httpFailurePrefix.FindStringSubmatch(trimmed); len(match) == 2 {
+			return "http_status=" + match[1], true
+		}
+		if field == "stderr" && (strings.Contains(lowered, "permission denied") ||
+			strings.Contains(lowered, "operation not permitted") ||
+			strings.Contains(lowered, "authorization denied") ||
+			strings.Contains(lowered, "access denied")) {
+			return "permission denial in stderr", true
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if signal, failed := canonicalFailureValue(item, field, depth+1); failed {
+				return signal, true
+			}
+		}
+	case map[string]interface{}:
+		if explicitBoolean(typed, "success") == boolFalse ||
+			explicitBoolean(typed, "ok") == boolFalse {
+			return "success=false", true
+		}
+		if explicitBoolean(typed, "is_error") == boolTrue ||
+			explicitBoolean(typed, "iserror") == boolTrue {
+			return "is_error=true", true
+		}
+		if status, ok := stringFieldFold(typed, "status"); ok {
+			switch strings.ToLower(strings.TrimSpace(status)) {
+			case "error", "failed", "failure", "denied", "unauthorized", "forbidden":
+				return "status=" + strings.ToLower(strings.TrimSpace(status)), true
+			}
+		}
+		for _, key := range []string{"exit_code", "exitcode"} {
+			if raw, ok := valueFieldFold(typed, key); ok {
+				if code, valid := numericCode(raw); valid && code != 0 {
+					return fmt.Sprintf("%s=%d", key, code), true
+				}
+			}
+		}
+		for _, key := range []string{"status_code", "statuscode", "http_status", "httpstatus"} {
+			if raw, ok := valueFieldFold(typed, key); ok {
+				if code, valid := numericCode(raw); valid && code >= 400 {
+					return fmt.Sprintf("http_status=%d", code), true
+				}
+			}
+		}
+
+		// Recurse through known transport-envelope fields, not arbitrary domain
+		// data. A tool may legitimately return a record whose own status is
+		// "failed"; inspecting every nested value would turn that discussion into
+		// a tool failure.
+		for _, key := range []string{"content", "text", "result", "stdout", "stderr", "error"} {
+			if nested, ok := valueFieldFold(typed, key); ok {
+				if signal, failed := canonicalFailureValue(nested, strings.ToLower(key), depth+1); failed {
+					return signal, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func decodeJSONValue(text string) (interface{}, bool) {
+	if text == "" || !strings.ContainsAny(text[:1], `{[\"`) {
+		return nil, false
+	}
+	var decoded interface{}
+	if err := json.Unmarshal([]byte(text), &decoded); err != nil {
+		return nil, false
+	}
+	return decoded, true
+}
+
+type boolState uint8
+
+const (
+	boolMissing boolState = iota
+	boolFalse
+	boolTrue
+)
+
+func explicitBoolean(values map[string]interface{}, key string) boolState {
+	raw, ok := valueFieldFold(values, key)
+	if !ok {
+		return boolMissing
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return boolMissing
+	}
+	if value {
+		return boolTrue
+	}
+	return boolFalse
+}
+
+func valueFieldFold(values map[string]interface{}, key string) (interface{}, bool) {
+	for name, value := range values {
+		normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"))
+		if normalized == key || strings.ReplaceAll(normalized, "_", "") == strings.ReplaceAll(key, "_", "") {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func stringFieldFold(values map[string]interface{}, key string) (string, bool) {
+	raw, ok := valueFieldFold(values, key)
+	if !ok {
+		return "", false
+	}
+	value, ok := raw.(string)
+	return value, ok
+}
+
+func numericCode(value interface{}) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed), typed == float64(int64(typed))
+	case json.Number:
+		parsed, err := typed.Int64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
 
 // toolResultErrorSignals are matched case-insensitively against a successful
 // tool result. Ordered roughly by how strongly each implies a real failure, and

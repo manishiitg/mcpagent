@@ -17,6 +17,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"github.com/manishiitg/mcpagent/toolerr"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmerrors"
@@ -679,18 +680,32 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			if sourceLabel == "" {
 				sourceLabel = "cli"
 			}
-			toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(
-				sm.turn,
-				chunk.ToolName,
-				chunk.ToolResult,   // tool execution result from CLI
-				sourceLabel,        // serverName
-				chunk.ToolDuration, // duration from start to tool_result
-				"",                 // spanID
-				0, 0, 0,            // context usage metrics (not available)
-				a.modelID,
-			)
-			toolEndEvent.ToolCallID = chunk.ToolCallID
-			a.emitTypedEvent(ctx, toolEndEvent)
+			if signal, failed := toolerr.CanonicalFailureForTool(chunk.ToolName, chunk.ToolResult); failed {
+				if v2Logger := getLogger(a); v2Logger != nil {
+					v2Logger.Error(toolerr.Marker+" CLI tool payload failure", nil,
+						loggerv2.String("layer", "cli_stream_adapter"),
+						loggerv2.String("tool", chunk.ToolName),
+						loggerv2.String("session_id", a.sessionID),
+						loggerv2.String("signal", signal),
+						loggerv2.String("result", toolerr.TruncateForLog(chunk.ToolResult)))
+				}
+				toolErrorEvent := events.NewToolCallErrorEvent(sm.turn, chunk.ToolName, chunk.ToolResult, sourceLabel, chunk.ToolDuration)
+				toolErrorEvent.ToolCallID = chunk.ToolCallID
+				a.emitTypedEvent(ctx, toolErrorEvent)
+			} else {
+				toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(
+					sm.turn,
+					chunk.ToolName,
+					chunk.ToolResult,   // tool execution result from CLI
+					sourceLabel,        // serverName
+					chunk.ToolDuration, // duration from start to tool_result
+					"",                 // spanID
+					0, 0, 0,            // context usage metrics (not available)
+					a.modelID,
+				)
+				toolEndEvent.ToolCallID = chunk.ToolCallID
+				a.emitTypedEvent(ctx, toolEndEvent)
+			}
 
 			// Accumulate for conversation history reconstruction (all CLI providers).
 			sm.CLIToolCalls = append(sm.CLIToolCalls, chunk)

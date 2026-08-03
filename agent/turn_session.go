@@ -36,6 +36,8 @@ type Usage struct {
 	CompletionTokens     int
 	TotalTokens          int
 	CacheTokens          int
+	CacheReadTokens      int
+	CacheWriteTokens     int
 	ReasoningTokens      int
 	LLMCalls             int
 	CacheEnabledLLMCalls int

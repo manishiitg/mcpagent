@@ -1184,6 +1184,9 @@ type Agent struct {
 	cumulativeCompletionTokens int          // Cumulative completion/output tokens
 	cumulativeTotalTokens      int          // Cumulative total tokens
 	cumulativeCacheTokens      int          // Cumulative cache tokens (sum of all cache-related tokens)
+	cumulativeCacheReadTokens  int          // Cumulative tokens served from prompt cache
+	cumulativeCacheWriteTokens int          // Cumulative tokens written to prompt cache
+	lastEffectiveModelID       string       // Immutable provider-resolved model used for the latest priced turn
 	cumulativeReasoningTokens  int          // Cumulative reasoning tokens (for models like o3)
 	cumulativeCacheDiscount    float64      // Sum of cache discounts (for averaging)
 	llmCallCount               int          // Number of LLM calls made
@@ -2127,6 +2130,11 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 			reasoningTokens = extractedReasoning
 		}
 	}
+	cacheReadTokens, cacheWriteTokens := cacheTokenBreakdown(resp)
+	if cacheReadTokens == 0 && cacheWriteTokens == 0 {
+		cacheReadTokens = cacheTokens
+	}
+	totalCacheTokens := cacheReadTokens + cacheWriteTokens
 
 	// Extract cache discount (only available in GenerationInfo)
 	var cacheDiscount float64
@@ -2145,21 +2153,24 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	a.cumulativePromptTokens += usageMetrics.PromptTokens
 	a.cumulativeCompletionTokens += usageMetrics.CompletionTokens
 	a.cumulativeTotalTokens += usageMetrics.TotalTokens
-	a.cumulativeCacheTokens += cacheTokens
+	a.cumulativeCacheTokens += totalCacheTokens
+	a.cumulativeCacheReadTokens += cacheReadTokens
+	a.cumulativeCacheWriteTokens += cacheWriteTokens
 	a.cumulativeReasoningTokens += reasoningTokens
 	a.cumulativeCacheDiscount += cacheDiscount
 	a.llmCallCount++
 
-	if cacheTokens > 0 {
+	if totalCacheTokens > 0 {
 		a.cacheEnabledCallCount++
 	}
 
 	// Calculate and accumulate pricing
 	// Get model metadata to calculate costs (fetch once and cache context window)
-	modelID := a.modelID
+	modelID := effectiveModelIDFromResponse(resp, a.modelID)
 	if modelID == "" {
 		modelID = a.llmModel.GetModelID()
 	}
+	a.lastEffectiveModelID = modelID
 
 	// Calculate costs for this turn
 	var inputCost, outputCost, reasoningCost, cacheCost float64
@@ -2173,7 +2184,7 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 
 			// Calculate input cost (excluding cached tokens which are charged separately)
 			// Input tokens = total prompt tokens - cached tokens (cached tokens are charged separately at a different rate)
-			inputTokens := usageMetrics.PromptTokens - cacheTokens
+			inputTokens := usageMetrics.PromptTokens - totalCacheTokens
 			if inputTokens < 0 {
 				// Safety check: cache tokens should not exceed prompt tokens
 				// This could indicate a data inconsistency, but we'll clamp to 0 to prevent negative costs
@@ -2201,8 +2212,11 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 			}
 
 			// Calculate cache cost (cached tokens are charged at a different rate)
-			if cacheTokens > 0 && metadata.CachedInputCostPer1MTokens > 0 {
-				cacheCost = calculateCostFromTokens(cacheTokens, metadata.CachedInputCostPer1MTokens)
+			if cacheReadTokens > 0 && metadata.CachedInputCostPer1MTokens > 0 {
+				cacheCost += calculateCostFromTokens(cacheReadTokens, metadata.CachedInputCostPer1MTokens)
+			}
+			if cacheWriteTokens > 0 && metadata.CachedInputCostWritePer1MTokens > 0 {
+				cacheCost += calculateCostFromTokens(cacheWriteTokens, metadata.CachedInputCostWritePer1MTokens)
 			}
 		}
 	}
@@ -2261,6 +2275,28 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 		loggerv2.Int("cache_tokens", cacheTokens),
 		loggerv2.Int("reasoning_tokens", reasoningTokens),
 		loggerv2.Int("cumulative_total", a.cumulativeTotalTokens))
+}
+
+func cacheTokenBreakdown(resp *llmtypes.ContentResponse) (readTokens, writeTokens int) {
+	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].GenerationInfo == nil {
+		return 0, 0
+	}
+	additional := resp.Choices[0].GenerationInfo.Additional
+	readTokens = generationInfoIntValue(additional["cache_read_input_tokens"])
+	writeTokens = generationInfoIntValue(additional["cache_creation_input_tokens"])
+	return readTokens, writeTokens
+}
+
+func effectiveModelIDFromResponse(resp *llmtypes.ContentResponse, fallback string) string {
+	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		additional := resp.Choices[0].GenerationInfo.Additional
+		for _, key := range []string{"cost_model_id", "claude_code_model", "codex_effective_model", "codex_model", "cursor_model", "pi_model"} {
+			if value, ok := additional[key].(string); ok && strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 // EndLLMGeneration marks the completion of an LLM generation call.
@@ -2463,6 +2499,18 @@ func (a *Agent) getTokenUsage() (promptTokens, completionTokens, totalTokens, ca
 	llmCallCount = a.llmCallCount
 	cacheEnabledCallCount = a.cacheEnabledCallCount
 	return
+}
+
+func (a *Agent) getCacheTokenBreakdown() (readTokens, writeTokens int) {
+	a.tokenTrackingMutex.RLock()
+	defer a.tokenTrackingMutex.RUnlock()
+	return a.cumulativeCacheReadTokens, a.cumulativeCacheWriteTokens
+}
+
+func (a *Agent) getEffectiveModelID() string {
+	a.tokenTrackingMutex.RLock()
+	defer a.tokenTrackingMutex.RUnlock()
+	return a.lastEffectiveModelID
 }
 
 // GetTokenUsageWithPricing returns the current cumulative token usage metrics with pricing and context usage

@@ -562,6 +562,9 @@ func executeToolCall(
 	var resultText string
 	if mcpResult != nil {
 		resultText = mcpclient.ToolResultAsString(mcpResult)
+		if _, failed := toolerr.CanonicalFailureForTool(tc.FunctionCall.Name, resultText); failed && !mcpResult.IsError {
+			mcpResult.IsError = true
+		}
 
 		if resultText == "" && !mcpResult.IsError {
 			resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)

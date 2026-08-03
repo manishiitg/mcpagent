@@ -527,6 +527,48 @@ func TestStreamingManagerChunkRoutingMatrixProductionConfig(t *testing.T) {
 	}
 }
 
+func TestStreamingManagerPromotesNestedCLIToolFailureToErrorEvent(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		sessionID: "session-cli-nested-tool-error",
+		listeners: []AgentEventListener{listener},
+	}
+	sm := &streamingManager{
+		streamChan:    make(chan llmtypes.StreamChunk, 1),
+		streamingDone: make(chan bool, 1),
+		startTime:     time.Now(),
+	}
+	go sm.processChunks(context.Background(), agent)
+	sm.streamChan <- llmtypes.StreamChunk{
+		Type:         llmtypes.StreamChunkTypeToolCallEnd,
+		ToolName:     "execute_shell_command",
+		ToolCallID:   "nested-failure-1",
+		ToolResult:   `{"content":[{"text":"{\"stdout\":\"\",\"stderr\":\"authorization denied\",\"exit_code\":14}"}]}`,
+		ToolDuration: 25 * time.Millisecond,
+	}
+	close(sm.streamChan)
+	<-sm.streamingDone
+
+	var errorCount, endCount int
+	for _, event := range listener.events {
+		switch data := event.Data.(type) {
+		case *events.ToolCallErrorEvent:
+			errorCount++
+			if data.ToolCallID != "nested-failure-1" {
+				t.Fatalf("error event tool call ID = %q", data.ToolCallID)
+			}
+		case *events.ToolCallEndEvent:
+			endCount++
+		}
+	}
+	if errorCount != 1 || endCount != 0 {
+		t.Fatalf("error events=%d end events=%d, want 1/0", errorCount, endCount)
+	}
+	if len(sm.CLIToolCalls) != 1 {
+		t.Fatalf("CLI tool history length=%d, want 1", len(sm.CLIToolCalls))
+	}
+}
+
 func TestStreamingManagerDrainsAfterContextCancel(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{

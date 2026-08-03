@@ -1504,6 +1504,16 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Get the tool result as string (without prefix)
 					resultText = mcpclient.ToolResultAsString(result)
+					if signal, failed := toolerr.CanonicalFailureForTool(tc.FunctionCall.Name, resultText); failed && !result.IsError {
+						result.IsError = true
+						v2Logger.Error(toolerr.Marker+" canonical payload failure", nil,
+							loggerv2.String("layer", "agent_tool_loop"),
+							loggerv2.String("tool", tc.FunctionCall.Name),
+							loggerv2.String("server", serverName),
+							loggerv2.String("session_id", a.sessionID),
+							loggerv2.String("signal", signal),
+							loggerv2.String("result", toolerr.TruncateForLog(resultText)))
+					}
 
 					// 🔧 DEBUG: Log tool response
 					resultPreview := resultText
@@ -1629,7 +1639,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					"result":      resultText,
 					"duration":    duration,
 					"turn":        turn + 1,
-					"success":     toolErr == nil,
+					"success":     toolErr == nil && (result == nil || !result.IsError),
 					"timeout":     getToolExecutionTimeout(a).String(),
 				}
 				if toolErr != nil {
@@ -1645,16 +1655,18 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// results routinely carry a failure in the payload while the
 				// transport reports OK, which is how 34 failures in one day
 				// rendered as green checks. Sniff the content and mark it.
-				if signal, suspicious := toolerr.SuspiciousForTool(tc.FunctionCall.Name, resultText); suspicious {
-					v2Logger.Error(toolerr.SuspectMarker+" tool reported success but the result reads like a failure", nil,
-						loggerv2.String("layer", "agent_tool_loop"),
-						loggerv2.String("tool", tc.FunctionCall.Name),
-						loggerv2.String("server", serverName),
-						loggerv2.String("session_id", a.sessionID),
-						loggerv2.String("signal", signal),
-						loggerv2.String("duration", duration.String()),
-						loggerv2.String("result", toolerr.TruncateForLog(resultText)),
-						loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
+				if result == nil || !result.IsError {
+					if signal, suspicious := toolerr.SuspiciousForTool(tc.FunctionCall.Name, resultText); suspicious {
+						v2Logger.Error(toolerr.SuspectMarker+" tool reported success but the result reads like a failure", nil,
+							loggerv2.String("layer", "agent_tool_loop"),
+							loggerv2.String("tool", tc.FunctionCall.Name),
+							loggerv2.String("server", serverName),
+							loggerv2.String("session_id", a.sessionID),
+							loggerv2.String("signal", signal),
+							loggerv2.String("duration", duration.String()),
+							loggerv2.String("result", toolerr.TruncateForLog(resultText)),
+							loggerv2.String("args", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
+					}
 				}
 
 				// Tool execution completed - emit tool call end event
@@ -1752,6 +1764,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 									ToolCallID: c.ToolCallID,
 									Name:       c.ToolName,
 									Content:    c.ToolResult,
+									IsError:    cliToolResultIsError(c.ToolName, c.ToolResult),
 								}},
 							})
 						}
@@ -2015,6 +2028,11 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	}
 
 	return finalChoice.Content, messages, nil
+}
+
+func cliToolResultIsError(toolName, result string) bool {
+	_, failed := toolerr.CanonicalFailureForTool(toolName, result)
+	return failed
 }
 
 // promptLogCounter is a global counter for ordering prompt log files within a session.
