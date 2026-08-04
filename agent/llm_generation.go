@@ -697,24 +697,29 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			if sourceLabel == "" {
 				sourceLabel = "cli"
 			}
-			if signal, failed := toolerr.CanonicalFailureForTool(chunk.ToolName, chunk.ToolResult); failed {
-				// The structured call identity (this call's own start event) is
-				// authoritative and tried first. The envelope regex is a
-				// last-resort fallback, deliberately narrow, only for calls with
-				// no recorded start (e.g. a cumulative/legacy event) — see
-				// toolerr.ToolNameFromResult. A marker must never go out
-				// unattributed: 35 of 90 sampled markers did on 2026-08-04,
-				// which is what made this failure class expensive to even count.
-				toolName := chunk.ToolName
-				if toolName == "" && chunk.ToolCallID != "" {
-					toolName = sm.toolNameByCallID[chunk.ToolCallID]
-				}
-				if toolName == "" {
-					toolName, _ = toolerr.ToolNameFromResult(chunk.ToolResult)
-				}
-				if toolName == "" {
-					toolName = "unknown"
-				}
+			// Resolve identity before classification. CanonicalFailureForTool has
+			// deliberate per-tool suppression for tools whose normal payload can
+			// contain records such as {"status":"failed"}. Classifying with the
+			// empty end-chunk name and recovering it only for logging would turn
+			// legitimate domain data into a false ToolCallError event.
+			//
+			// The structured call identity (this call's own start event) is
+			// authoritative and tried first. The envelope regex is a last-resort
+			// fallback for calls with no recorded start. A marker must never go out
+			// unattributed, so an unprovable name becomes explicit "unknown".
+			toolName := chunk.ToolName
+			if toolName == "" && chunk.ToolCallID != "" {
+				toolName = sm.toolNameByCallID[chunk.ToolCallID]
+			}
+			if toolName == "" {
+				toolName, _ = toolerr.ToolNameFromResult(chunk.ToolResult)
+			}
+			if toolName == "" {
+				toolName = "unknown"
+			}
+			chunk.ToolName = toolName
+
+			if signal, failed := toolerr.CanonicalFailureForTool(toolName, chunk.ToolResult); failed {
 				if v2Logger := getLogger(a); v2Logger != nil {
 					v2Logger.Error(toolerr.Marker+" CLI tool payload failure", nil,
 						loggerv2.String("layer", "cli_stream_adapter"),
@@ -729,7 +734,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			} else {
 				toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(
 					sm.turn,
-					chunk.ToolName,
+					toolName,
 					chunk.ToolResult,   // tool execution result from CLI
 					sourceLabel,        // serverName
 					chunk.ToolDuration, // duration from start to tool_result

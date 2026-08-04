@@ -1042,13 +1042,13 @@ func TestStreamingManagerRecoversToolNameForUnattributedErrorEvent(t *testing.T)
 		{
 			name: "recovers the name from this call's own start event",
 			chunks: []llmtypes.StreamChunk{
-				{Type: llmtypes.StreamChunkTypeToolCallStart, ToolName: "record_pulse_worklist", ToolCallID: "call-1"},
+				{Type: llmtypes.StreamChunkTypeToolCallStart, ToolName: "diff_patch_workspace_file", ToolCallID: "call-1"},
 				{
 					Type: llmtypes.StreamChunkTypeToolCallEnd, ToolName: "", ToolCallID: "call-1",
 					ToolResult: `{"stdout":"ERROR: tool execution failed: decisions[0] contains unknown field","exit_code":0}`,
 				},
 			},
-			wantTool:   "record_pulse_worklist",
+			wantTool:   "diff_patch_workspace_file",
 			wantReason: "structured call identity (start event) must win when available",
 		},
 		{
@@ -1118,5 +1118,45 @@ func TestStreamingManagerRecoversToolNameForUnattributedErrorEvent(t *testing.T)
 				t.Fatalf("tool name = %q, want %q (%s)", got, tt.wantTool, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestStreamingManagerRecoversToolNameBeforeFailureClassification(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{sessionID: "session-tool-name-classification", listeners: []AgentEventListener{listener}}
+	sm := &streamingManager{
+		streamChan:    make(chan llmtypes.StreamChunk, 2),
+		streamingDone: make(chan bool, 1),
+		startTime:     time.Now(),
+	}
+	go sm.processChunks(context.Background(), agent)
+	sm.streamChan <- llmtypes.StreamChunk{
+		Type:       llmtypes.StreamChunkTypeToolCallStart,
+		ToolName:   "query_workflow_db",
+		ToolCallID: "call-domain-record",
+	}
+	sm.streamChan <- llmtypes.StreamChunk{
+		Type:       llmtypes.StreamChunkTypeToolCallEnd,
+		ToolName:   "",
+		ToolCallID: "call-domain-record",
+		ToolResult: `{"status":"failed","detail":"this is a stored workflow record, not an executor failure"}`,
+	}
+	close(sm.streamChan)
+	<-sm.streamingDone
+
+	var endName string
+	for _, event := range listener.events {
+		switch data := event.Data.(type) {
+		case *events.ToolCallErrorEvent:
+			t.Fatalf("legitimate query_workflow_db domain data was promoted to an error after name loss: %#v", data)
+		case *events.ToolCallEndEvent:
+			endName = data.ToolName
+		}
+	}
+	if endName != "query_workflow_db" {
+		t.Fatalf("ToolCallEnd name = %q, want recovered query_workflow_db", endName)
+	}
+	if len(sm.CLIToolCalls) != 1 || sm.CLIToolCalls[0].ToolName != "query_workflow_db" {
+		t.Fatalf("CLI history did not retain the recovered name: %#v", sm.CLIToolCalls)
 	}
 }

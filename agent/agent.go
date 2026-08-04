@@ -2182,13 +2182,18 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 				a.modelContextWindow = metadata.ContextWindow
 			}
 
-			// Calculate input cost (excluding cached tokens which are charged separately)
-			// Input tokens = total prompt tokens - cached tokens (cached tokens are charged separately at a different rate)
-			inputTokens := usageMetrics.PromptTokens - totalCacheTokens
-			if inputTokens < 0 {
-				// Safety check: cache tokens should not exceed prompt tokens
-				// This could indicate a data inconsistency, but we'll clamp to 0 to prevent negative costs
-				inputTokens = 0
+			// Coding providers expose prompt usage in two valid shapes: Claude
+			// normalizes it to total input (fresh + cache), while Codex, Cursor,
+			// and Pi can expose fresh input separately from cache buckets. Only
+			// subtract cache when the adapter explicitly marks prompt as
+			// inclusive, otherwise the same cache tokens would be subtracted a
+			// second time and fresh-input cost would be understated.
+			inputTokens := usageMetrics.PromptTokens
+			if promptTokensIncludeCache(resp) {
+				inputTokens -= totalCacheTokens
+				if inputTokens < 0 {
+					inputTokens = 0
+				}
 			}
 			if inputTokens > 0 {
 				inputCost = calculateCostFromTokens(inputTokens, metadata.InputCostPer1MTokens)
@@ -2287,6 +2292,19 @@ func cacheTokenBreakdown(resp *llmtypes.ContentResponse) (readTokens, writeToken
 	return readTokens, writeTokens
 }
 
+func promptTokensIncludeCache(resp *llmtypes.ContentResponse) bool {
+	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].GenerationInfo == nil {
+		return true
+	}
+	value, marked := resp.Choices[0].GenerationInfo.Additional["prompt_tokens_include_cache"].(bool)
+	if !marked {
+		// Preserve the established API-provider convention: prompt usage
+		// includes cached input unless an adapter explicitly says otherwise.
+		return true
+	}
+	return value
+}
+
 func effectiveModelIDFromResponse(resp *llmtypes.ContentResponse, fallback string) string {
 	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
 		additional := resp.Choices[0].GenerationInfo.Additional
@@ -2352,6 +2370,25 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 	if fixedThresholdPercent > 0 {
 		llmEndEvent.Metadata["fixed_threshold_percent"] = fixedThresholdPercent
 		llmEndEvent.Metadata["fixed_threshold_tokens"] = a.fixedTokenThreshold
+	}
+
+	// accumulateTokenUsage computes a per-turn token estimate from the active
+	// model's metadata even when the provider adapter does not attach one to
+	// GenerationInfo.Additional. The immutable cost ledger consumes the
+	// per-call LLMGenerationEnd event and deliberately ignores the later
+	// cumulative TokenUsage event, so omitting this value made those calls look
+	// unpriced despite the runtime having already priced them. Preserve a
+	// provider/adapter supplied estimate below; this is only the canonical
+	// runtime fallback.
+	a.tokenTrackingMutex.RLock()
+	turnCost := a.lastTurnCost
+	effectiveModelID := a.lastEffectiveModelID
+	a.tokenTrackingMutex.RUnlock()
+	if turnCost > 0 {
+		llmEndEvent.Metadata["cost_usd_estimated"] = turnCost
+		if effectiveModelID != "" {
+			llmEndEvent.Metadata["cost_model_id"] = effectiveModelID
+		}
 	}
 
 	// Propagate provider-specific metadata from GenerationInfo.Additional
