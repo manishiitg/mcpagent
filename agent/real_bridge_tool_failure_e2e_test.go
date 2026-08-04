@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
+	"github.com/manishiitg/mcpagent/agent/codeexec/shellfixture"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/internal/agentreview"
 	"github.com/manishiitg/mcpagent/llm"
@@ -100,7 +101,7 @@ func TestRealBridgeStreamingToolFailureRecovery(t *testing.T) {
 					if atomic.AddInt32(&calls, 1) == 1 {
 						return "", fmt.Errorf("TRANSIENT_TOOL_FAILURE: the tool backend was briefly unavailable; retry the same command")
 					}
-					return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
+					return shellfixture.ExecuteShellCommand(ctx, args, shellEnv)
 				})
 			defer cleanup()
 

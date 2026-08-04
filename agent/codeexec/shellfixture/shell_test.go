@@ -1,4 +1,4 @@
-package codeexec
+package shellfixture
 
 import (
 	"context"

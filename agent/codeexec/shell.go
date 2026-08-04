@@ -1,18 +1,10 @@
 package codeexec
 
-import (
-	"bytes"
-	"context"
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-)
-
-// maxOutputBytes is the maximum size of stdout/stderr captured from shell commands (100KB).
-const maxOutputBytes = 100 * 1024
+// The execute_shell_command schema and description below are production: the
+// coding-agent bridge falls back to them when a host has not registered its own
+// (see agent/coding_agents_bridge.go). The executor that used to sit here was
+// only ever called by mcpagent's e2e tests and now lives in
+// agent/codeexec/shellfixture.
 
 // ShellCommandParams is the JSON-schema for execute_shell_command.
 var ShellCommandParams = map[string]interface{}{
@@ -32,99 +24,3 @@ var ShellCommandParams = map[string]interface{}{
 
 // ShellCommandDescription is the tool description for execute_shell_command.
 const ShellCommandDescription = "Execute a shell command and return stdout, stderr, and exit code. Use this to run code, call HTTP endpoints with curl, or perform any shell operation."
-
-// ExecuteShellCommand runs a shell command via sh -c and returns
-// a formatted string with exit_code, stdout, and stderr.
-// env specifies the environment for the child process. If nil, a minimal safe
-// environment is used instead of inheriting the parent process environment.
-// Callers should pass BuildSafeEnvironment() plus any required env vars when
-// the command needs bridge or workflow-specific values.
-// stdout and stderr are each capped at maxOutputBytes.
-func ExecuteShellCommand(ctx context.Context, args map[string]interface{}, env []string) (string, error) {
-	command, ok := args["command"].(string)
-	if !ok {
-		return "", fmt.Errorf("command must be a string")
-	}
-
-	workingDirectory, err := shellWorkingDirectory(args)
-	if err != nil {
-		return "", err
-	}
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", command) //nolint:gosec // G204: intentional — this tool's purpose is to execute user-provided commands
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if workingDirectory != "" {
-		cmd.Dir = workingDirectory
-	}
-
-	if env != nil {
-		cmd.Env = env
-	} else {
-		cmd.Env = BuildSafeEnvironment()
-	}
-
-	err = cmd.Run()
-
-	exitCode := 0
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return "", fmt.Errorf("failed to execute command: %w", err)
-		}
-	}
-
-	stdoutStr := truncateOutput(stdout.Bytes(), maxOutputBytes)
-	stderrStr := truncateOutput(stderr.Bytes(), maxOutputBytes)
-
-	return fmt.Sprintf("exit_code: %d\nstdout:\n%s\nstderr:\n%s", exitCode, stdoutStr, stderrStr), nil
-}
-
-// BuildSafeEnvironment creates a minimal environment for shell commands.
-// It intentionally excludes the parent process environment so API keys and
-// process-level secrets are not inherited by accident.
-func BuildSafeEnvironment() []string {
-	return []string{
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"HOME=/tmp",
-		"USER=agent",
-		"SHELL=/bin/sh",
-		"LANG=C.UTF-8",
-		"LC_ALL=C.UTF-8",
-	}
-}
-
-func shellWorkingDirectory(args map[string]interface{}) (string, error) {
-	raw, ok := args["working_directory"]
-	if !ok || raw == nil {
-		return "", nil
-	}
-	dir, ok := raw.(string)
-	if !ok {
-		return "", fmt.Errorf("working_directory must be a string")
-	}
-	dir = strings.TrimSpace(dir)
-	if dir == "" {
-		return "", nil
-	}
-	cleaned := filepath.Clean(dir)
-	info, err := os.Stat(cleaned)
-	if err != nil {
-		return "", fmt.Errorf("working_directory %q is not accessible: %w", dir, err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("working_directory %q is not a directory", dir)
-	}
-	return cleaned, nil
-}
-
-// truncateOutput truncates output to maxBytes and appends a truncation notice.
-func truncateOutput(data []byte, maxBytes int) string {
-	if len(data) <= maxBytes {
-		return string(data)
-	}
-	return string(data[:maxBytes]) + "\n... [truncated, output exceeded 100KB limit]"
-}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
+	"github.com/manishiitg/mcpagent/agent/codeexec/shellfixture"
 	"github.com/manishiitg/mcpagent/internal/agentreview"
 	"github.com/manishiitg/mcpagent/llm"
 )
@@ -52,7 +53,7 @@ func buildStructuredBridgeAgent(ctx context.Context, tc structuredTransportProvi
 	if regErr := agent.registerCustomTool(
 		"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
+			return shellfixture.ExecuteShellCommand(ctx, args, shellEnv)
 		}, "workspace_advanced",
 	); regErr != nil {
 		_ = agent.Close()

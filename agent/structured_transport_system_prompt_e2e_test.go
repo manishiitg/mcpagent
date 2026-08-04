@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
+	"github.com/manishiitg/mcpagent/agent/codeexec/shellfixture"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -177,7 +178,7 @@ func TestStructuredTransportSkillsSurviveNewAgent(t *testing.T) {
 			if regErr := agent.registerCustomTool(
 				"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 				func(ctx context.Context, args map[string]interface{}) (string, error) {
-					return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
+					return shellfixture.ExecuteShellCommand(ctx, args, shellEnv)
 				}, "workspace_advanced",
 			); regErr != nil {
 				t.Fatalf("RegisterCustomTool: %v", regErr)

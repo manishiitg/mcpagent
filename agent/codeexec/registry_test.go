@@ -3,6 +3,7 @@ package codeexec
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -286,5 +287,55 @@ func TestVirtualFallbackDoesNotCrossSessions(t *testing.T) {
 
 	if _, err := CallCustomToolWithSession(context.Background(), "workflow-a", "get_api_spec", nil); err == nil {
 		t.Fatal("session workflow-a borrowed workflow-b's virtual tool")
+	}
+}
+
+// A denial must not name a cause the registry cannot know. The old wording blamed
+// "the current workshop mode" — a condition the model believes it can change — so
+// a Pulse Fixer denied update_schedule concluded its session was in the wrong mode
+// and abandoned the edit instead of proceeding without the tool.
+func TestToolNotAllowedErrorDoesNotInventACause(t *testing.T) {
+	err := toolNotAllowedError("update_schedule", map[string]bool{
+		"query_workflow_db":  true,
+		"update_step_config": true,
+	})
+	msg := err.Error()
+
+	for _, forbidden := range []string{"workshop mode", "workshop"} {
+		if strings.Contains(strings.ToLower(msg), forbidden) {
+			t.Errorf("denial names %q, a cause this registry cannot establish: %s", forbidden, msg)
+		}
+	}
+	if !strings.Contains(msg, "update_schedule") {
+		t.Errorf("denial does not name the tool: %s", msg)
+	}
+	if !strings.Contains(msg, "NOT") {
+		t.Errorf("denial does not tell the agent retrying is futile: %s", msg)
+	}
+	// The allowed surface is what makes the correction actionable.
+	if !strings.Contains(msg, "query_workflow_db") || !strings.Contains(msg, "update_step_config") {
+		t.Errorf("denial does not name what is available instead: %s", msg)
+	}
+}
+
+func TestToolNotAllowedErrorCapsTheAllowedList(t *testing.T) {
+	allowed := make(map[string]bool, allowedToolNamesInError*2)
+	for i := 0; i < allowedToolNamesInError*2; i++ {
+		allowed[fmt.Sprintf("tool_%03d", i)] = true
+	}
+	msg := toolNotAllowedError("missing_tool", allowed).Error()
+	if !strings.Contains(msg, fmt.Sprintf("%d of %d", allowedToolNamesInError, allowedToolNamesInError*2)) {
+		t.Errorf("oversized allow list not summarised: %s", msg)
+	}
+	if strings.Count(msg, "tool_0") != allowedToolNamesInError {
+		t.Errorf("listed %d names, want %d: %s", strings.Count(msg, "tool_0"), allowedToolNamesInError, msg)
+	}
+}
+
+// An empty allow list is a distinct condition and must read as one.
+func TestToolNotAllowedErrorHandlesAnEmptySurface(t *testing.T) {
+	msg := toolNotAllowedError("anything", nil).Error()
+	if !strings.Contains(msg, "no tools allowed at all") {
+		t.Errorf("empty surface not reported: %s", msg)
 	}
 }

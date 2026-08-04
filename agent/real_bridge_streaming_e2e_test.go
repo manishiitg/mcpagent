@@ -17,6 +17,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
+	"github.com/manishiitg/mcpagent/agent/codeexec/shellfixture"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/mcpagent/internal/agentreview"
@@ -378,7 +379,7 @@ func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		codeexec.ShellCommandDescription,
 		codeexec.ShellCommandParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			return codeexec.ExecuteShellCommand(ctx, args, shellEnv)
+			return shellfixture.ExecuteShellCommand(ctx, args, shellEnv)
 		},
 		"workspace_advanced",
 	); err != nil {

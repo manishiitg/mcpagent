@@ -3,10 +3,12 @@ package codeexec
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -702,6 +704,57 @@ func SetSessionToolAllowList(sessionID string, allowList map[string]bool) {
 	}
 }
 
+// allowedToolNamesInError caps how many allowed names a single rejection lists.
+// Enough for the model to pick a real alternative, small enough that a denial
+// cannot dominate the turn.
+const allowedToolNamesInError = 30
+
+// toolNotAllowedError explains a session allow-list denial without inventing a
+// cause for it.
+//
+// The old text was "tool %q is not available in the current workshop mode". This
+// registry has no concept of workshop mode: the list it consults is a generic
+// per-session tool-access policy written by Agent.setToolAccess and by
+// turn_session.go from the turn policy. Naming a mode asserted something the code
+// cannot know, and worse, named a condition the model believes it can change — so
+// a denial read as "retry after switching modes" rather than "this agent was not
+// given this tool".
+//
+// It cost a real run. On 2026-08-04 a Pulse Fixer stage was denied update_schedule,
+// which its bounded surface (pulseFixerStageToolAgentAllowedToolNames) omits on
+// purpose. It concluded "The Pulse Fixer session is not Workshop mode", verified
+// workflow.json was unchanged, and abandoned the edit. The mode was never the
+// reason, so no action it could take would have worked.
+//
+// This mirrors Agent.unavailableToolsError: say what is true, say plainly that
+// retrying will not help, and name the surface that is actually available.
+func toolNotAllowedError(toolName string, allowed map[string]bool) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "tool_not_allowed: %q is not in this session's allowed tool set. ", toolName)
+	b.WriteString("This is a fixed grant for this agent, not a transient failure or a mode you can switch: ")
+	b.WriteString("retrying, renaming, or changing settings will NOT make it callable. ")
+	b.WriteString("Do the task without it, or report it as outside this agent's scope. ")
+
+	names := make([]string, 0, len(allowed))
+	for name, ok := range allowed {
+		if ok {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		b.WriteString("This session has no tools allowed at all.")
+		return errors.New(b.String())
+	}
+	sort.Strings(names)
+	if len(names) > allowedToolNamesInError {
+		fmt.Fprintf(&b, "Allowed here (%d of %d): %s, ...", allowedToolNamesInError, len(names),
+			strings.Join(names[:allowedToolNamesInError], ", "))
+	} else {
+		fmt.Fprintf(&b, "Allowed here: %s", strings.Join(names, ", "))
+	}
+	return errors.New(b.String())
+}
+
 // CallCustomToolWithSession calls a custom tool with session scoping.
 // Once a session registry exists it is authoritative: a missing tool must fail
 // instead of borrowing the most recently registered global executor, which may
@@ -717,9 +770,11 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 	if sessionID != "" {
 		registry.allowListMu.RLock()
 		blocked := false
+		var allowed map[string]bool
 		if registry.sessionToolAllowLists != nil {
 			if allowList, exists := registry.sessionToolAllowLists[sessionID]; exists && !allowList[toolName] {
 				blocked = true
+				allowed = allowList
 			}
 		}
 		registry.allowListMu.RUnlock()
@@ -729,7 +784,7 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 					loggerv2.String("session_id", sessionID),
 					loggerv2.String("tool", toolName))
 			}
-			return "", fmt.Errorf("tool %q is not available in the current workshop mode", toolName)
+			return "", toolNotAllowedError(toolName, allowed)
 		}
 	}
 
