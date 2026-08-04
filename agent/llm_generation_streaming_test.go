@@ -1024,3 +1024,99 @@ func TestStreamingManagerPropagatesDeltaMarker(t *testing.T) {
 		t.Fatalf("unexpected reassembled message: %q", msg)
 	}
 }
+
+// PLAT-024: 35 of 90 sampled "[TOOL_ERROR] CLI tool payload failure" markers
+// carried tool="" on 2026-08-04 — the CLI stream occasionally loses the tool
+// name between its ToolCallStart and ToolCallEnd chunks, and the marker
+// logged whatever chunk.ToolName held at End time with no fallback. This is
+// table-driven per PLAT-024's acceptance: a stable name when one can be
+// proven (via the call's own start event, then a narrow envelope pattern),
+// and an explicit "unknown" — never a silent blank — when neither can.
+func TestStreamingManagerRecoversToolNameForUnattributedErrorEvent(t *testing.T) {
+	tests := []struct {
+		name       string
+		chunks     []llmtypes.StreamChunk
+		wantTool   string
+		wantReason string
+	}{
+		{
+			name: "recovers the name from this call's own start event",
+			chunks: []llmtypes.StreamChunk{
+				{Type: llmtypes.StreamChunkTypeToolCallStart, ToolName: "record_pulse_worklist", ToolCallID: "call-1"},
+				{
+					Type: llmtypes.StreamChunkTypeToolCallEnd, ToolName: "", ToolCallID: "call-1",
+					ToolResult: `{"stdout":"ERROR: tool execution failed: decisions[0] contains unknown field","exit_code":0}`,
+				},
+			},
+			wantTool:   "record_pulse_worklist",
+			wantReason: "structured call identity (start event) must win when available",
+		},
+		{
+			name: "falls back to the narrow envelope pattern with no start event on record",
+			chunks: []llmtypes.StreamChunk{
+				{
+					Type: llmtypes.StreamChunkTypeToolCallEnd, ToolName: "", ToolCallID: "call-2",
+					ToolResult: `{"stdout":"ERROR: tool execution failed: layer=custom_tool_handler tool=record_pulse_result session=abc: reason","exit_code":0}`,
+				},
+			},
+			wantTool:   "record_pulse_result",
+			wantReason: "envelope fallback only, since no start event was ever recorded for call-2",
+		},
+		{
+			name: "emits unknown rather than blank when neither source can prove a name",
+			chunks: []llmtypes.StreamChunk{
+				{
+					Type: llmtypes.StreamChunkTypeToolCallEnd, ToolName: "", ToolCallID: "call-3",
+					ToolResult: `{"stdout":"","stderr":"authorization denied","exit_code":14}`,
+				},
+			},
+			wantTool:   "unknown",
+			wantReason: "no start event, no matching envelope phrase — must not go out blank",
+		},
+		{
+			name: "the transport wrapper's own name wins over a nested tool name in its result",
+			chunks: []llmtypes.StreamChunk{
+				{Type: llmtypes.StreamChunkTypeToolCallStart, ToolName: "execute_shell_command", ToolCallID: "call-4"},
+				{
+					Type: llmtypes.StreamChunkTypeToolCallEnd, ToolName: "execute_shell_command", ToolCallID: "call-4",
+					ToolResult: `{"stdout":"ERROR: tool execution failed: layer=custom_tool_handler tool=record_pulse_impact session=abc","exit_code":0}`,
+				},
+			},
+			wantTool:   "execute_shell_command",
+			wantReason: "chunk.ToolName was non-empty; the nested tool name must not hijack attribution",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listener := &recordingAgentEventListener{}
+			agent := &Agent{sessionID: "session-tool-name-recovery", listeners: []AgentEventListener{listener}}
+			sm := &streamingManager{
+				streamChan:    make(chan llmtypes.StreamChunk, len(tt.chunks)),
+				streamingDone: make(chan bool, 1),
+				startTime:     time.Now(),
+			}
+			go sm.processChunks(context.Background(), agent)
+			for _, chunk := range tt.chunks {
+				sm.streamChan <- chunk
+			}
+			close(sm.streamChan)
+			<-sm.streamingDone
+
+			var got string
+			var found bool
+			for _, event := range listener.events {
+				if data, ok := event.Data.(*events.ToolCallErrorEvent); ok {
+					got = data.ToolName
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("no ToolCallErrorEvent emitted")
+			}
+			if got != tt.wantTool {
+				t.Fatalf("tool name = %q, want %q (%s)", got, tt.wantTool, tt.wantReason)
+			}
+		})
+	}
+}

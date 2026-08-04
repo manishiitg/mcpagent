@@ -236,3 +236,51 @@ func TestTruncateArgsForLogHandlesNonObjectInput(t *testing.T) {
 		t.Fatalf("non-string values not rendered: %s", got)
 	}
 }
+
+func TestToolNameFromResult(t *testing.T) {
+	cases := []struct {
+		name      string
+		result    string
+		wantTool  string
+		wantFound bool
+	}{
+		{
+			name:      "the exact harness phrase observed across the 2026-08-04 scan",
+			result:    `{"stdout":"ERROR: tool execution failed: layer=custom_tool_handler tool=record_pulse_worklist session=schedule-cron--8b09fba0_1785794415383828000: decisions[0] contains unknown field"}`,
+			wantTool:  "record_pulse_worklist",
+			wantFound: true,
+		},
+		{
+			name:      "virtual_tool_handler layer, same phrase shape",
+			result:    `{"stdout":"ERROR: tool execution failed: layer=virtual_tool_handler tool=get_api_spec session=msgseq-iteration-0"}`,
+			wantTool:  "get_api_spec",
+			wantFound: true,
+		},
+		{
+			name:      "ordinary output that merely contains the word tool must not match",
+			result:    `{"stdout":"the workflow tool ran and produced 3 findings", "exit_code": 0}`,
+			wantFound: false,
+		},
+		{
+			name:      "an unrelated tool= assignment outside the harness phrase must not match",
+			result:    `{"stdout":"config: tool=legacy_probe deprecated, ignoring"}`,
+			wantFound: false,
+		},
+		{
+			name:      "empty result",
+			result:    "",
+			wantFound: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, found := ToolNameFromResult(tc.result)
+			if found != tc.wantFound {
+				t.Fatalf("found = %v, want %v (got %q)", found, tc.wantFound, got)
+			}
+			if found && got != tc.wantTool {
+				t.Fatalf("tool = %q, want %q", got, tc.wantTool)
+			}
+		})
+	}
+}

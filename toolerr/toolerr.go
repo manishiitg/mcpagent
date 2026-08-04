@@ -64,6 +64,38 @@ func CanonicalFailureForTool(toolName, resultText string) (string, bool) {
 	return CanonicalFailure(resultText)
 }
 
+// toolNameFromEnvelope matches the one harness-generated error shape observed
+// across every unattributed [TOOL_ERROR] marker in the 2026-08-04 scan:
+// "... tool execution failed: layer=custom_tool_handler tool=record_pulse_worklist
+// session=...". It is deliberately this narrow, not a generic "tool=" scanner,
+// because a broader pattern risks matching an unrelated tool name mentioned
+// inside a nested envelope and misattributing the marker to it — the transport
+// wrapper's own name (what actually failed to relay the call) must win unless
+// this exact, unambiguous harness phrase is present.
+var toolNameFromEnvelope = regexp.MustCompile(`tool execution failed: layer=\S+ tool=(\S+)`)
+
+// ToolNameFromResult recovers the tool name from a result payload when the
+// stream chunk carrying it arrived with an empty name.
+//
+// This is the last-resort fallback, tried only after the structured
+// ToolCallID correlation (matching this end event back to its start event)
+// has already failed. On 2026-08-04, 35 of 90 sampled
+// "[TOOL_ERROR] CLI tool payload failure" markers carried tool="" — the name
+// was only recoverable by regexing the same nested envelope this function
+// reads. Making that regex a shared, tested function (instead of leaving each
+// caller to write its own ad hoc extraction, or a human to do it by hand while
+// reading logs) is the actual fix; the alternative is the marker staying
+// attributable in principle but not in practice.
+func ToolNameFromResult(resultText string) (string, bool) {
+	if m := toolNameFromEnvelope.FindStringSubmatch(resultText); len(m) == 2 {
+		name := strings.Trim(m[1], `"'`)
+		if name != "" {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 func canonicalFailureValue(value interface{}, field string, depth int) (string, bool) {
 	if depth > 12 || value == nil {
 		return "", false

@@ -487,6 +487,12 @@ type streamingManager struct {
 	// Claude Code, Codex CLI). Used by AskWithHistory to reconstruct conversation history
 	// with tool calls that ran inside the CLI subprocess.
 	CLIToolCalls []llmtypes.StreamChunk
+	// toolNameByCallID records the name each ToolCallStart chunk carried, so a
+	// ToolCallEnd chunk that arrives with an empty ToolName (the CLI stream
+	// occasionally loses it between start and end) can recover it from its own
+	// start event instead of logging a blank, unattributable [TOOL_ERROR]
+	// marker. Scoped to one streaming call's lifetime, matching sm itself.
+	toolNameByCallID map[string]string
 	// streamDebugFile is an optional per-turn append-only log of every
 	// chunk.Content emitted by the adapter. Off by default; toggled on by
 	// MCP_AGENT_STREAM_DEBUG=1. Useful when you need to verify "did the
@@ -675,21 +681,49 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			toolStartEvent.ToolCallID = chunk.ToolCallID
 			a.emitTypedEvent(ctx, toolStartEvent)
 
+			// Recorded so a same-call ToolCallEnd that arrives with an empty
+			// ToolName (the CLI stream occasionally loses it between start and
+			// end) can recover the name this start event already carried,
+			// rather than logging an unattributable [TOOL_ERROR] marker.
+			if chunk.ToolCallID != "" && chunk.ToolName != "" {
+				if sm.toolNameByCallID == nil {
+					sm.toolNameByCallID = make(map[string]string)
+				}
+				sm.toolNameByCallID[chunk.ToolCallID] = chunk.ToolName
+			}
+
 		case llmtypes.StreamChunkTypeToolCallEnd:
 			sourceLabel := string(a.provider)
 			if sourceLabel == "" {
 				sourceLabel = "cli"
 			}
 			if signal, failed := toolerr.CanonicalFailureForTool(chunk.ToolName, chunk.ToolResult); failed {
+				// The structured call identity (this call's own start event) is
+				// authoritative and tried first. The envelope regex is a
+				// last-resort fallback, deliberately narrow, only for calls with
+				// no recorded start (e.g. a cumulative/legacy event) — see
+				// toolerr.ToolNameFromResult. A marker must never go out
+				// unattributed: 35 of 90 sampled markers did on 2026-08-04,
+				// which is what made this failure class expensive to even count.
+				toolName := chunk.ToolName
+				if toolName == "" && chunk.ToolCallID != "" {
+					toolName = sm.toolNameByCallID[chunk.ToolCallID]
+				}
+				if toolName == "" {
+					toolName, _ = toolerr.ToolNameFromResult(chunk.ToolResult)
+				}
+				if toolName == "" {
+					toolName = "unknown"
+				}
 				if v2Logger := getLogger(a); v2Logger != nil {
 					v2Logger.Error(toolerr.Marker+" CLI tool payload failure", nil,
 						loggerv2.String("layer", "cli_stream_adapter"),
-						loggerv2.String("tool", chunk.ToolName),
+						loggerv2.String("tool", toolName),
 						loggerv2.String("session_id", a.sessionID),
 						loggerv2.String("signal", signal),
 						loggerv2.String("result", toolerr.TruncateForLog(chunk.ToolResult)))
 				}
-				toolErrorEvent := events.NewToolCallErrorEvent(sm.turn, chunk.ToolName, chunk.ToolResult, sourceLabel, chunk.ToolDuration)
+				toolErrorEvent := events.NewToolCallErrorEvent(sm.turn, toolName, chunk.ToolResult, sourceLabel, chunk.ToolDuration)
 				toolErrorEvent.ToolCallID = chunk.ToolCallID
 				a.emitTypedEvent(ctx, toolErrorEvent)
 			} else {
