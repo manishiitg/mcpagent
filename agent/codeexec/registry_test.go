@@ -298,7 +298,7 @@ func TestToolNotAllowedErrorDoesNotInventACause(t *testing.T) {
 	err := toolNotAllowedError("update_schedule", map[string]bool{
 		"query_workflow_db":  true,
 		"update_step_config": true,
-	})
+	}, true)
 	msg := err.Error()
 
 	for _, forbidden := range []string{"workshop mode", "workshop"} {
@@ -323,7 +323,7 @@ func TestToolNotAllowedErrorCapsTheAllowedList(t *testing.T) {
 	for i := 0; i < allowedToolNamesInError*2; i++ {
 		allowed[fmt.Sprintf("tool_%03d", i)] = true
 	}
-	msg := toolNotAllowedError("missing_tool", allowed).Error()
+	msg := toolNotAllowedError("missing_tool", allowed, true).Error()
 	if !strings.Contains(msg, fmt.Sprintf("%d of %d", allowedToolNamesInError, allowedToolNamesInError*2)) {
 		t.Errorf("oversized allow list not summarised: %s", msg)
 	}
@@ -334,8 +334,39 @@ func TestToolNotAllowedErrorCapsTheAllowedList(t *testing.T) {
 
 // An empty allow list is a distinct condition and must read as one.
 func TestToolNotAllowedErrorHandlesAnEmptySurface(t *testing.T) {
-	msg := toolNotAllowedError("anything", nil).Error()
+	msg := toolNotAllowedError("anything", nil, true).Error()
 	if !strings.Contains(msg, "no tools allowed at all") {
 		t.Errorf("empty surface not reported: %s", msg)
+	}
+}
+
+// A name that exists nowhere must not read as a permissions problem. After the
+// Pulse surface was consolidated from eight tools to four on 2026-08-03, a Gate
+// session invented six names derived from a removed tool and retried each one,
+// because "not allowed" invites trying a variant.
+func TestUnknownToolNameReadsAsGoneNotWithheld(t *testing.T) {
+	msg := toolNotAllowedError("mark_pulse_final_command_result", map[string]bool{
+		"record_pulse_result": true,
+	}, false).Error()
+
+	if !strings.HasPrefix(msg, "tool_not_found:") {
+		t.Errorf("unknown name not distinguished from a denial: %s", msg)
+	}
+	if !strings.Contains(msg, "Guessing a variant of this name will NOT work") {
+		t.Errorf("message does not close off the variant-guessing loop: %s", msg)
+	}
+	if !strings.Contains(msg, "record_pulse_result") {
+		t.Errorf("message does not name the surface that does exist: %s", msg)
+	}
+}
+
+// A registered-but-withheld tool keeps the permissions wording.
+func TestRegisteredToolStillReadsAsADenial(t *testing.T) {
+	msg := toolNotAllowedError("update_schedule", map[string]bool{"query_workflow_db": true}, true).Error()
+	if !strings.HasPrefix(msg, "tool_not_allowed:") {
+		t.Errorf("withheld tool lost its denial wording: %s", msg)
+	}
+	if strings.Contains(msg, "does not exist") {
+		t.Errorf("withheld tool wrongly reported as missing: %s", msg)
 	}
 }

@@ -728,12 +728,61 @@ const allowedToolNamesInError = 30
 //
 // This mirrors Agent.unavailableToolsError: say what is true, say plainly that
 // retrying will not help, and name the surface that is actually available.
-func toolNotAllowedError(toolName string, allowed map[string]bool) error {
+// toolNameExists reports whether any registry partition knows this name at all,
+// for this session or globally. It is the difference between "withheld" and
+// "gone", which the allow-list check cannot see on its own because it runs
+// before name resolution.
+func (r *ToolRegistry) toolNameExists(sessionID, toolName string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if _, ok := r.customTools[toolName]; ok {
+		return true
+	}
+	if _, ok := r.virtualTools[toolName]; ok {
+		return true
+	}
+	if _, ok := r.toolToServer[toolName]; ok {
+		return true
+	}
+	if sessionID != "" {
+		if tools, ok := r.sessionCustomTools[sessionID]; ok {
+			if _, ok := tools[toolName]; ok {
+				return true
+			}
+		}
+		if tools, ok := r.sessionVirtualTools[sessionID]; ok {
+			if _, ok := tools[toolName]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// toolNotAllowedError explains an allow-list denial without inventing a cause.
+//
+// exists separates the two cases the allow-list check collapses. A tool that was
+// removed and a tool that is merely withheld produced identical text, so an agent
+// reaching for a retired name read "not allowed" as "wrong permissions" and tried
+// a variant instead of stopping. On 2026-08-04, the night after the Pulse surface
+// was consolidated from eight tools to four, one Pulse Gate session invented six
+// names in a row — mark_final_command, mark_pulse_command, pulse_command_state,
+// record_pulse_command, set_pulse_command_state, update_final_command_state —
+// none of which exist anywhere in the codebase, all clearly reconstructed from
+// the removed mark_pulse_final_command_result.
+func toolNotAllowedError(toolName string, allowed map[string]bool, exists bool) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "tool_not_allowed: %q is not in this session's allowed tool set. ", toolName)
-	b.WriteString("This is a fixed grant for this agent, not a transient failure or a mode you can switch: ")
-	b.WriteString("retrying, renaming, or changing settings will NOT make it callable. ")
-	b.WriteString("Do the task without it, or report it as outside this agent's scope. ")
+	if !exists {
+		fmt.Fprintf(&b, "tool_not_found: no tool named %q is registered for this session, under any name partition. ", toolName)
+		b.WriteString("It does not exist — it was never registered, or it was removed or renamed. ")
+		b.WriteString("Guessing a variant of this name will NOT work; every variant fails the same way. ")
+		b.WriteString("Use a name from the list below, or do the task without it. ")
+	} else {
+		fmt.Fprintf(&b, "tool_not_allowed: %q is registered but is not in this session's allowed tool set. ", toolName)
+		b.WriteString("This is a fixed grant for this agent, not a transient failure or a mode you can switch: ")
+		b.WriteString("retrying, renaming, or changing settings will NOT make it callable. ")
+		b.WriteString("Do the task without it, or report it as outside this agent's scope. ")
+	}
 
 	names := make([]string, 0, len(allowed))
 	for name, ok := range allowed {
@@ -784,7 +833,7 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 					loggerv2.String("session_id", sessionID),
 					loggerv2.String("tool", toolName))
 			}
-			return "", toolNotAllowedError(toolName, allowed)
+			return "", toolNotAllowedError(toolName, allowed, registry.toolNameExists(sessionID, toolName))
 		}
 	}
 
