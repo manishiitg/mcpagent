@@ -109,7 +109,12 @@ func TestAttachedSkillReaderRejectsTraversalAndUnknownResources(t *testing.T) {
 	}
 }
 
-func TestAttachedSkillReaderReadsBatchInOrderWithPartialFailures(t *testing.T) {
+// One read per call. Batching three reference docs returned 67,971 characters,
+// which the coding CLI truncated against its result cap and spilled to a file
+// outside every workspace root — leaving the agent ordered to read something the
+// folder guard forbids. A missing skill must still be reported inside the result
+// rather than as a whole-call error, so the agent can see which read failed.
+func TestAttachedSkillReaderReadsOneSkillAndReportsMissingInResult(t *testing.T) {
 	agent := &Agent{}
 	for _, skill := range []*llmtypes.Skill{
 		{Name: "first", Description: "first description", Content: "first body"},
@@ -122,31 +127,62 @@ func TestAttachedSkillReaderReadsBatchInOrderWithPartialFailures(t *testing.T) {
 		}
 	}
 	executor := agent.getCustomToolExecutor(readSkillToolName)
+
 	raw, err := executor(context.Background(), map[string]interface{}{
 		"skills": []interface{}{
 			map[string]interface{}{"name": "second", "path": "references/detail.md"},
-			map[string]interface{}{"name": "missing"},
-			map[string]interface{}{"name": "first"},
 		},
 	})
 	if err != nil {
-		t.Fatalf("batch read returned a whole-call error: %v", err)
+		t.Fatalf("single read returned a whole-call error: %v", err)
 	}
 	var got attachedSkillBatchReadResult
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
-		t.Fatalf("decode batch result: %v\n%s", err, raw)
+		t.Fatalf("decode result: %v\n%s", err, raw)
 	}
-	if len(got.Results) != 3 {
-		t.Fatalf("batch result count = %d, want 3: %#v", len(got.Results), got.Results)
+	if len(got.Results) != 1 {
+		t.Fatalf("result count = %d, want 1: %#v", len(got.Results), got.Results)
 	}
 	if got.Results[0].SkillName != "second" || got.Results[0].Path != "references/detail.md" || got.Results[0].Content != "second detail" || got.Results[0].Error != "" {
-		t.Fatalf("first batch result = %#v", got.Results[0])
+		t.Fatalf("result = %#v", got.Results[0])
 	}
-	if got.Results[1].SkillName != "missing" || !strings.Contains(got.Results[1].Error, `attached skill "missing" not found`) {
-		t.Fatalf("partial failure = %#v", got.Results[1])
+
+	// A miss is data, not a tool failure.
+	raw, err = executor(context.Background(), map[string]interface{}{
+		"skills": []interface{}{map[string]interface{}{"name": "missing"}},
+	})
+	if err != nil {
+		t.Fatalf("missing skill returned a whole-call error: %v", err)
 	}
-	if got.Results[2].SkillName != "first" || got.Results[2].Content != "first body" || got.Results[2].Description != "first description" {
-		t.Fatalf("last batch result = %#v", got.Results[2])
+	got = attachedSkillBatchReadResult{}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode result: %v\n%s", err, raw)
+	}
+	if len(got.Results) != 1 || !strings.Contains(got.Results[0].Error, `attached skill "missing" not found`) {
+		t.Fatalf("missing skill result = %#v", got.Results)
+	}
+}
+
+// Asking for more than one must fail loudly, and the error must name the
+// recovery — an agent told only "at most 1" may silently drop the files it
+// still needs instead of asking for them in the next call.
+func TestAttachedSkillReaderRejectsBatchedReads(t *testing.T) {
+	agent := &Agent{}
+	if err := agent.attachSkill(&llmtypes.Skill{Name: "first", Content: "first body"}); err != nil {
+		t.Fatal(err)
+	}
+	executor := agent.getCustomToolExecutor(readSkillToolName)
+	_, err := executor(context.Background(), map[string]interface{}{
+		"skills": []interface{}{
+			map[string]interface{}{"name": "first"},
+			map[string]interface{}{"name": "first"},
+		},
+	})
+	if err == nil {
+		t.Fatal("batched read was accepted; one read per call is the bound that prevents an oversized result")
+	}
+	if !strings.Contains(err.Error(), "Call read_skill again") {
+		t.Fatalf("error does not name the recovery: %v", err)
 	}
 }
 

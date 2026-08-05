@@ -16,8 +16,21 @@ import (
 const (
 	readSkillToolName        = "read_skill"
 	readSkillToolCategory    = "skill_tools"
-	readSkillToolDescription = "Read one or more attached skills or bundled supporting files. Call with a skills array of 1-5 objects; each object requires name and may include path. Results preserve request order and report errors per item. This tool is intrinsic to the agent's attached identity and works on every transport."
-	maxReadSkillBatchSize    = 5
+	readSkillToolDescription = "Read ONE attached skill or bundled supporting file. Call with a skills array holding exactly one object; it requires name and may include path. To read several files, make several calls — reference docs are large and combining them in one result exceeds the consumer's per-result token limit, which truncates the result and spills it to a file the agent cannot open. This tool is intrinsic to the agent's attached identity and works on every transport."
+
+	// maxReadSkillBatchSize is 1 deliberately. Batched reads were the direct
+	// cause of an unrecoverable failure: three reference docs in one call
+	// returned 67,971 characters, the coding CLI truncated it against its
+	// 25,000-token result cap, wrote the full copy under its own project
+	// directory, and told the agent to read that path — which the workspace
+	// folder guard forbids. The agent had no legal way to comply and spent the
+	// rest of the session guessing.
+	//
+	// A count cannot bound a payload: five small files are fine and two large
+	// ones are not. One file per call is the bound that holds, because every
+	// reference doc except post-run-monitor.md fits a single result with room
+	// to spare. Raising this again reintroduces the failure.
+	maxReadSkillBatchSize = 1
 )
 
 // Skills are Anthropic-format SKILL.md bundles attached to an Agent. The
@@ -61,7 +74,7 @@ func (a *Agent) ensureSkillReaderTool() error {
 		"properties": map[string]interface{}{
 			"skills": map[string]interface{}{
 				"type":        "array",
-				"description": "One to five attached skill reads, in requested order. Use a one-item array for a single read.",
+				"description": "Exactly one attached skill read. To read several files, make several calls — combining reference docs in one result exceeds the consumer's per-result token limit.",
 				"minItems":    1,
 				"maxItems":    maxReadSkillBatchSize,
 				"items": map[string]interface{}{
@@ -180,7 +193,12 @@ func parseAttachedSkillBatch(raw interface{}) ([]attachedSkillReadRequest, error
 		return nil, fmt.Errorf("skills must contain at least one skill name")
 	}
 	if len(values) > maxReadSkillBatchSize {
-		return nil, fmt.Errorf("skills accepts at most %d names", maxReadSkillBatchSize)
+		// Name the recovery, not just the rule. An agent told only "at most 1"
+		// may drop the other files it needs instead of asking for them next.
+		return nil, fmt.Errorf(
+			"skills accepts %d read per call, got %d — reference docs are too large to combine in one result. Call read_skill again for each remaining file, applying each before the next",
+			maxReadSkillBatchSize, len(values),
+		)
 	}
 	requests := make([]attachedSkillReadRequest, 0, len(values))
 	for i, value := range values {
@@ -371,7 +389,7 @@ func renderSkillListing(skills []*llmtypes.Skill) string {
 	var b strings.Builder
 	b.WriteString("## Available Skills\n\n")
 	b.WriteString("The following skills are attached to this session. Each skill extends your capabilities with specialized instructions and (optionally) supporting files. ")
-	b.WriteString("When skills are relevant, call `read_skill` with a `skills` array before acting, using one object per read: `read_skill(skills=[{\"name\":\"exact-name\"}])`. Add `\"path\":\"references/file.md\"` to an item for a bundled file, and batch up to five related reads in one call. Coding-agent CLIs may also expose the same bundle as native on-disk skills; `read_skill` is the transport-neutral contract.\n\n")
+	b.WriteString("When skills are relevant, call `read_skill` with a `skills` array before acting, using one object per read: `read_skill(skills=[{\"name\":\"exact-name\"}])`. Add `\"path\":\"references/file.md\"` to an item for a bundled file. Read ONE file per call — reference docs are large, and combining them in a single result exceeds the per-result token limit and loses the content. When a task needs several, call `read_skill` again after applying each one. Coding-agent CLIs may also expose the same bundle as native on-disk skills; `read_skill` is the transport-neutral contract.\n\n")
 	for _, s := range skills {
 		if s == nil || s.Name == "" {
 			continue
