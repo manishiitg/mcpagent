@@ -39,12 +39,18 @@ func GetCodeExecutionInstructions(workspacePath string) string {
 - ` + "`" + `$VAR_GROUP_NAME` + "`" + ` — current group (may be empty string when no group is active). The only var where an empty/absent value is acceptable.
 - Accessing missing vars must fail loudly. In bash use ` + "`" + `"${VAR_PAN:?missing}"` + "`" + ` or ` + "`" + `set -u` + "`" + `; in python use ` + "`" + `os.environ['VAR_PAN']` + "`" + ` (not ` + "`" + `.get()` + "`" + ` with a default).
 
-**Example — calling an MCP tool:**
-MCP tools are reachable at ` + "`" + `$MCP_MCP/{server}/{tool}` + "`" + ` via authenticated HTTP POST. Any shell tool works — curl, jq, node, python, whatever fits the task. Code execution is shell-first; Python is optional.
+**Calling a custom tool (workflow, database, human-input, and other app tools):**
+Custom tools are reachable at ` + "`" + `$MCP_CUSTOM/{tool}` + "`" + `. The labels under ` + "`" + `custom_tools.groups` + "`" + ` are display-only groups, never MCP server names and never URL path segments.
 ` + "```" + `bash
 payload='{"arg1":"value1"}'
-curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_MCP/{server_name}/{tool_name}"
+curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/{tool_name}"
 # Response envelope: {"success": true|false, "result": ..., "error": "..."}
+` + "```" + `
+
+**Calling a real MCP-server tool:**
+Only keys listed under ` + "`" + `mcp_servers` + "`" + ` are valid server path segments. Their tools are reachable at ` + "`" + `$MCP_MCP/{server}/{tool}` + "`" + `.
+` + "```" + `bash
+curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_MCP/{server_name}/{tool_name}"
 ` + "```" + `
 ` + "`$MCP_AUTH`" + ` is already the complete ` + "`Authorization: Bearer ...`" + ` header. Never prepend another header or Bearer prefix. ` + "`--json`" + ` already selects POST and Content-Type, so do not add ` + "`-X POST`" + `, another Content-Type header, or ` + "`--data`" + `. Keep the call unpiped so curl's nonzero HTTP-failure status reaches ` + "`execute_shell_command`" + `.
 If you need retries, backoff, or structured logging, write a small helper in the language of your choice. For reusable helpers saved to main.py, see the main.py authoring rules below (when in learn-code mode).`
@@ -57,10 +63,10 @@ func BuildAvailableToolsSection(toolStructureJSON string) string {
 	if toolStructureJSON == "" {
 		inventory = "Tool inventory is unavailable. Do not guess tool names; report that discovery is unavailable.\n"
 	} else {
-		inventory = "The following MCP servers and their tools are accessible via HTTP API.\n" +
+		inventory = "The following custom tools and real MCP servers are accessible via HTTP API.\n" +
 			"Call get_api_spec(tool_name=\"...\") to get the full API spec for specific tools.\n\n" +
 			"```json\n" + toolStructureJSON + "\n```\n\n" +
-			"Domain tools (MCP and custom) are called via HTTP API. System tools (execute_shell_command, agent_browser) are called directly — see your provider's tool list for exact names.\n"
+			"Keys under custom_tools.groups are display-only labels and use $MCP_CUSTOM/{tool}; they are not MCP servers. Only keys under mcp_servers use $MCP_MCP/{server}/{tool}. System tools (execute_shell_command, agent_browser) are called directly — see your provider's tool list for exact names.\n"
 	}
 
 	return "<available_tools>\n" +

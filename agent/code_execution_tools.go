@@ -340,10 +340,25 @@ func (a *Agent) buildToolIndex() (string, error) {
 
 func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
 	type ServerInfo struct {
-		Tools []string `json:"tools"`
+		Endpoint string   `json:"endpoint"`
+		Tools    []string `json:"tools"`
+	}
+	type CustomToolsInfo struct {
+		Endpoint string                `json:"endpoint"`
+		Groups   map[string]ServerInfo `json:"groups"`
+	}
+	type ToolIndex struct {
+		CustomTools CustomToolsInfo       `json:"custom_tools"`
+		MCPServers  map[string]ServerInfo `json:"mcp_servers"`
 	}
 
-	index := make(map[string]ServerInfo)
+	index := ToolIndex{
+		CustomTools: CustomToolsInfo{
+			Endpoint: "$MCP_CUSTOM/{tool}",
+			Groups:   make(map[string]ServerInfo),
+		},
+		MCPServers: make(map[string]ServerInfo),
+	}
 
 	registry, err := a.canonicalRegistry()
 	if err != nil {
@@ -398,7 +413,10 @@ func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
 			tools = append(tools, toolName)
 		}
 		sort.Strings(tools)
-		index[serverName] = ServerInfo{Tools: tools}
+		index.MCPServers[serverName] = ServerInfo{
+			Endpoint: "$MCP_MCP/" + serverName + "/{tool}",
+			Tools:    tools,
+		}
 	}
 
 	// Add direct tools grouped by optional display metadata.
@@ -415,7 +433,10 @@ func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
 	}
 	for category, tools := range customToolsByCategory {
 		sort.Strings(tools)
-		index[category] = ServerInfo{Tools: tools}
+		index.CustomTools.Groups[category] = ServerInfo{
+			Endpoint: "$MCP_CUSTOM/{tool}",
+			Tools:    tools,
+		}
 	}
 
 	jsonData, err := json.MarshalIndent(index, "", "  ")
@@ -425,11 +446,15 @@ func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
 
 	if a.logger != nil {
 		totalTools := 0
-		for _, pkg := range index {
+		for _, pkg := range index.MCPServers {
+			totalTools += len(pkg.Tools)
+		}
+		for _, pkg := range index.CustomTools.Groups {
 			totalTools += len(pkg.Tools)
 		}
 		a.logger.Info("Built tool index",
-			loggerv2.Int("servers", len(index)),
+			loggerv2.Int("mcp_servers", len(index.MCPServers)),
+			loggerv2.Int("custom_groups", len(index.CustomTools.Groups)),
 			loggerv2.Int("total_tools", totalTools))
 	}
 
