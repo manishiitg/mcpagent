@@ -103,6 +103,8 @@ github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260727083858-e22a7e82fd38
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260727083858-e22a7e82fd38/go.mod h1:PRWPB4E2sH34IxW6aEbRm2v1V1kyxHLemHZVzX/DRWU=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260727121715-19b58a972fc5 h1:UxZXWHBexVZpD44vGuQZl/Ou9TmxDVlnUG8oJFL3hUo=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260727121715-19b58a972fc5/go.mod h1:PRWPB4E2sH34IxW6aEbRm2v1V1kyxHLemHZVzX/DRWU=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260808175449-19c4fada45d2 h1:BRZxiMW59RTqr0kKx8K/EwpI8AKP61omIuvBzSn3Mq0=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260808175449-19c4fada45d2/go.mod h1:PRWPB4E2sH34IxW6aEbRm2v1V1kyxHLemHZVzX/DRWU=
 github.com/mark3labs/mcp-go v0.45.0 h1:s0S8qR/9fWaQ3pHxz7pm1uQ0DrswoSnRIxKIjbiQtkc=
 github.com/mark3labs/mcp-go v0.45.0/go.mod h1:YnJfOL382MIWDx1kMY+2zsRHU/q78dBg9aFb8W6Thdw=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
