@@ -468,33 +468,37 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 	}
 }
 
-func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
+func TestCodingCLIStreamingDefaultsToStructuredTranscript(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	tests := []struct {
-		name        string
-		metadataKey string
-		append      func(*Agent) ([]llmtypes.CallOption, error)
+		name            string
+		metadataKey     string
+		tmuxMetadataKey string
+		append          func(*Agent) ([]llmtypes.CallOption, error)
 	}{
 		{
-			name:        "claude",
-			metadataKey: claudecode.MetadataKeyStreamTranscript,
+			name:            "claude",
+			metadataKey:     claudecode.MetadataKeyStreamTranscript,
+			tmuxMetadataKey: claudecode.MetadataKeyStreamTmuxScreen,
 			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
 				return agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
 			},
 		},
 		{
-			name:        "codex",
-			metadataKey: codexcli.MetadataKeyStreamTranscript,
+			name:            "codex",
+			metadataKey:     codexcli.MetadataKeyStreamTranscript,
+			tmuxMetadataKey: codexcli.MetadataKeyStreamTmuxScreen,
 			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
 				return agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
 			},
 		},
 		{
-			name:        "cursor",
-			metadataKey: cursorcli.MetadataKeyStreamTranscript,
+			name:            "cursor",
+			metadataKey:     cursorcli.MetadataKeyStreamTranscript,
+			tmuxMetadataKey: cursorcli.MetadataKeyStreamTmuxScreen,
 			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
 				return agent.appendCursorCLIIntegrationOptions(nil)
 			},
@@ -519,7 +523,10 @@ func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
 				t.Fatalf("append tmux options: %v", err)
 			}
 			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != true {
-				t.Fatalf("tmux transcript metadata = %#v, want true", got)
+				t.Fatalf("streaming transcript metadata = %#v, want true", got)
+			}
+			if got := metadataFromCallOptions(opts)[tt.tmuxMetadataKey]; got != false {
+				t.Fatalf("streaming tmux-screen metadata = %#v, want false", got)
 			}
 
 			callbackAgent := bridgeTestAgent()
@@ -530,6 +537,9 @@ func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
 			}
 			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != true {
 				t.Fatalf("streaming callback transcript metadata = %#v, want true", got)
+			}
+			if got := metadataFromCallOptions(opts)[tt.tmuxMetadataKey]; got != false {
+				t.Fatalf("streaming callback tmux-screen metadata = %#v, want false", got)
 			}
 
 			structuredAgent := bridgeTestAgent()
@@ -570,6 +580,117 @@ func TestAppendCodexCLIIntegrationOptionsSandboxDefault(t *testing.T) {
 	if _, ok := got[codexcli.MetadataKeyConfigOverrides]; ok {
 		t.Fatalf("default sandbox must not set network-access config overrides unless CodexNetworkAccess is also set: %#v", got[codexcli.MetadataKeyConfigOverrides])
 	}
+}
+
+func TestHybridCodingProviderAutoOptions(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	t.Run("Claude Code", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		opts, err := agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if got[claudecode.MetadataKeyTools] != "default" {
+			t.Fatalf("tools = %#v, want default", got[claudecode.MetadataKeyTools])
+		}
+		if got["claude_code_permission_mode"] != "auto" {
+			t.Fatalf("permission mode = %#v, want auto", got["claude_code_permission_mode"])
+		}
+		if _, dangerous := got[claudecode.MetadataKeyDangerouslySkipPermissions]; dangerous {
+			t.Fatalf("provider_auto must not skip Claude permissions: %#v", got)
+		}
+	})
+
+	t.Run("Cursor", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		opts, err := agent.appendCursorCLIIntegrationOptions(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if got["cursor_auto_review"] != true {
+			t.Fatalf("auto review = %#v, want true", got["cursor_auto_review"])
+		}
+		if got[cursorcli.MetadataKeyDenyBuiltinTools] != nil || got[cursorcli.MetadataKeyForce] != nil {
+			t.Fatalf("hybrid provider_auto must not deny builtins or force Cursor: %#v", got)
+		}
+	})
+
+	t.Run("Codex", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if _, disabled := got[codexcli.MetadataKeyDisableShellTool]; disabled {
+			t.Fatalf("hybrid must retain Codex native shell: %#v", got)
+		}
+		if got[codexcli.MetadataKeyApprovalPolicy] != "untrusted" {
+			t.Fatalf("approval policy = %#v, want untrusted", got[codexcli.MetadataKeyApprovalPolicy])
+		}
+		overrides, _ := got[codexcli.MetadataKeyConfigOverrides].([]string)
+		if !strings.Contains(strings.Join(overrides, "\n"), `approvals_reviewer="auto_review"`) {
+			t.Fatalf("config overrides = %#v, want auto reviewer", overrides)
+		}
+	})
+}
+
+func TestHybridCodingApproveAllOptions(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	t.Run("Claude Code", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
+		opts, err := agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if got[claudecode.MetadataKeyDangerouslySkipPermissions] != true {
+			t.Fatalf("approve_all must bypass Claude approvals: %#v", got)
+		}
+	})
+
+	t.Run("Cursor", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
+		opts, err := agent.appendCursorCLIIntegrationOptions(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := metadataFromCallOptions(opts)[cursorcli.MetadataKeyForce]; got != true {
+			t.Fatalf("approve_all Cursor force = %#v, want true", got)
+		}
+	})
+
+	t.Run("Codex", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
+		opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if got[codexcli.MetadataKeyApprovalPolicy] != "never" {
+			t.Fatalf("approve_all Codex policy = %#v, want never", got)
+		}
+		if _, reviewer := got[codexcli.MetadataKeyConfigOverrides]; reviewer {
+			t.Fatalf("approve_all must not configure Codex auto-review: %#v", got)
+		}
+	})
 }
 
 // TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess proves a caller that

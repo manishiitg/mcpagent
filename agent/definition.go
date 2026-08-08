@@ -107,17 +107,26 @@ type ContextRuntimeConfig struct {
 }
 
 type CodingRuntimeConfig struct {
-	Transport                         llm.CodingAgentTransport
-	ClaudeCodeTransport               string
-	PersistentClaudeCode              bool
-	PersistentCodex                   bool
-	PersistentCursor                  bool
-	PersistentPi                      bool
-	CursorBridgeTools                 bool
+	Transport            llm.CodingAgentTransport
+	ClaudeCodeTransport  string
+	PersistentClaudeCode bool
+	PersistentCodex      bool
+	PersistentCursor     bool
+	PersistentPi         bool
+	CursorBridgeTools    bool
+	// AgentToolsMode selects whether coding-provider native tools are available:
+	// mcp_only (default) or hybrid.
+	AgentToolsMode string
+	// ApprovalsMode controls the provider-native approval posture when native
+	// tools are enabled: provider_auto (default) or approve_all.
+	ApprovalsMode                     string
 	CodexSandbox                      string
 	CodexNetworkAccess                bool
 	CLISecurityPolicy                 *llmtypes.CLISecurityPolicy
 	BridgeRoutingInstructionsOverride *string
+	// SecretEnvironment is injected only into the native coding-agent child
+	// process for the current turn. It must contain only SECRET_* entries.
+	SecretEnvironment map[string]string
 }
 
 type MCPRuntimeConfig struct {
@@ -331,6 +340,12 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	if coding.CursorBridgeTools {
 		options = append(options, withCursorBridgeToolsMode(true))
 	}
+	if coding.AgentToolsMode != "" {
+		options = append(options, withCodingAgentToolsMode(coding.AgentToolsMode))
+	}
+	if coding.ApprovalsMode != "" {
+		options = append(options, withCodingAgentApprovalsMode(coding.ApprovalsMode))
+	}
 	if coding.CodexSandbox != "" {
 		options = append(options, withCodexSandbox(coding.CodexSandbox))
 	}
@@ -342,6 +357,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if coding.BridgeRoutingInstructionsOverride != nil {
 		options = append(options, withBridgeRoutingInstructions(*coding.BridgeRoutingInstructionsOverride))
+	}
+	if len(coding.SecretEnvironment) > 0 {
+		options = append(options, withCodingAgentSecretEnvironment(coding.SecretEnvironment))
 	}
 
 	mcpConfig := runtime.MCP

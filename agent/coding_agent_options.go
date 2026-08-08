@@ -250,11 +250,16 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 		// cursor's first bridge call fails and it falls back to its Shell tool.
 		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
 	}
-	// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
-	// that denies cursor's built-in Shell/Read/Edit/Write/etc. tools at the
-	// hook layer, forcing the agent to route tool calls through the MCP
-	// bridge we just configured.
-	opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
+	if !a.nativeCodingToolsEnabled() {
+		// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
+		// that denies Cursor's built-in Shell/Read/Edit/Write/etc. tools at the
+		// hook layer, forcing the agent to route tool calls through the bridge.
+		opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
+	} else if a.approveAllCodingTools() {
+		opts = append(opts, llm.WithCursorForce())
+	} else {
+		opts = append(opts, llm.WithCursorAutoReview())
+	}
 	if a.logger != nil {
 		a.logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
 		a.logger.Info("⏱️ [CURSOR_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
@@ -264,12 +269,14 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 		opts = append(opts, llm.WithCursorStructuredTransport(true))
 	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithCursorStreamTranscript(true))
+		opts = append(opts, llm.WithCursorStreamTmuxScreen(false))
 	}
 	// See appendClaudeCodeIntegrationOptions' matching comment (coding_agent_
 	// integrations.go): content streaming needs this separate, explicit
 	// opt-in beyond EnableStreaming.
 	if a.streamingCallback != nil {
 		opts = append(opts, llm.WithCursorStreamTranscript(true))
+		opts = append(opts, llm.WithCursorStreamTmuxScreen(false))
 	}
 	return opts, nil
 }

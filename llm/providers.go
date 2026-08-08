@@ -273,6 +273,22 @@ func WithCursorForce() llmtypes.CallOption {
 	return llmproviders.WithCursorForce()
 }
 
+// WithCursorAutoReview enables Cursor's Smart Auto approval classifier.
+func WithCursorAutoReview() llmtypes.CallOption {
+	return func(opts *llmtypes.CallOptions) {
+		if opts.Metadata == nil {
+			opts.Metadata = &llmtypes.Metadata{}
+		}
+		if opts.Metadata.Custom == nil {
+			opts.Metadata.Custom = make(map[string]interface{})
+		}
+		// Keep the metadata key here rather than requiring mcpagent's own module
+		// to immediately pin the newest provider module. The Cursor adapter owns
+		// the flag interpretation; its public contract is this stable key.
+		opts.Metadata.Custom["cursor_auto_review"] = true
+	}
+}
+
 // WithCursorApproveMCPs enables Cursor Agent CLI's --approve-mcps flag, which
 // auto-accepts the "approve this MCP server?" TUI consent dialog so bridge
 // tool calls do not stall waiting for human approval. Only useful alongside
@@ -586,6 +602,21 @@ func WithDangerouslySkipPermissions() CallOption {
 	return llmproviders.WithDangerouslySkipPermissions()
 }
 
+// WithClaudeCodePermissionMode sets Claude Code's native permission policy.
+// The metadata key is written locally so mcpagent can adopt this provider
+// capability without forcing all downstream module versions to move in lockstep.
+func WithClaudeCodePermissionMode(mode string) CallOption {
+	return func(opts *llmtypes.CallOptions) {
+		if opts.Metadata == nil {
+			opts.Metadata = &llmtypes.Metadata{}
+		}
+		if opts.Metadata.Custom == nil {
+			opts.Metadata.Custom = make(map[string]interface{})
+		}
+		opts.Metadata.Custom["claude_code_permission_mode"] = mode
+	}
+}
+
 // WithClaudeCodeSettings sets the --settings flag for the Claude Code CLI.
 // It accepts either a JSON string or a file path.
 func WithClaudeCodeSettings(settings string) CallOption {
@@ -690,6 +721,24 @@ func WithClaudeStreamTranscript(enabled bool) CallOption {
 // WithCursorStreamTranscript is WithCodexStreamTranscript for Cursor CLI.
 func WithCursorStreamTranscript(enabled bool) CallOption {
 	return llmproviders.WithCursorStreamTranscript(enabled)
+}
+
+// WithClaudeStreamTmuxScreen controls whether Claude Code's raw tmux-pane
+// snapshots are included in the general stream. Product chat should normally
+// disable this and consume WithClaudeStreamTranscript instead; an explicit
+// terminal surface can obtain its pane independently.
+func WithClaudeStreamTmuxScreen(enabled bool) CallOption {
+	return llmproviders.WithClaudeStreamTmuxScreen(enabled)
+}
+
+// WithCodexStreamTmuxScreen is WithClaudeStreamTmuxScreen for Codex CLI.
+func WithCodexStreamTmuxScreen(enabled bool) CallOption {
+	return llmproviders.WithCodexStreamTmuxScreen(enabled)
+}
+
+// WithCursorStreamTmuxScreen is WithClaudeStreamTmuxScreen for Cursor CLI.
+func WithCursorStreamTmuxScreen(enabled bool) CallOption {
+	return llmproviders.WithCursorStreamTmuxScreen(enabled)
 }
 
 // WithCodexReasoningEffort sets the model_reasoning_effort for the Codex CLI.

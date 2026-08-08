@@ -120,3 +120,39 @@ func TestRuntimePricingDoesNotSubtractSeparateCacheTwice(t *testing.T) {
 		t.Fatalf("cost_usd_estimated = %.9f, want %.9f", got, want)
 	}
 }
+
+func TestCumulativeUsageRetainsEstimatedProviderMarker(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		sessionID: "estimated-usage-test",
+		modelID:   "cursor-auto",
+		llmModel:  pricedEventTestModel{},
+		logger:    loggerv2.NewNoop(),
+		listeners: []AgentEventListener{listener},
+	}
+	prompt, completion := 10, 5
+	resp := &llmtypes.ContentResponse{Choices: []*llmtypes.ContentChoice{{
+		GenerationInfo: &llmtypes.GenerationInfo{
+			PromptTokens:     &prompt,
+			CompletionTokens: &completion,
+			Additional:       map[string]interface{}{"token_usage_estimated": true},
+		},
+	}}}
+
+	agent.endLLMGeneration(context.Background(), "done", 1, 0, time.Second, events.UsageMetrics{
+		PromptTokens: prompt, CompletionTokens: completion, TotalTokens: prompt + completion,
+	}, resp)
+	agent.emitTotalTokenUsageEvent(context.Background(), time.Second)
+
+	for _, event := range listener.events {
+		total, ok := event.Data.(*events.TokenUsageEvent)
+		if !ok || total.Context != "conversation_total" {
+			continue
+		}
+		if got, _ := total.GenerationInfo["token_usage_estimated"].(bool); !got {
+			t.Fatalf("cumulative token_usage_estimated = %#v, want true", total.GenerationInfo["token_usage_estimated"])
+		}
+		return
+	}
+	t.Fatal("conversation_total token event was not emitted")
+}

@@ -58,6 +58,18 @@ func withLogger(logger loggerv2.Logger) agentOption {
 	}
 }
 
+func withCodingAgentSecretEnvironment(environment map[string]string) agentOption {
+	copy := make(map[string]string, len(environment))
+	for key, value := range environment {
+		if strings.HasPrefix(key, "SECRET_") && value != "" {
+			copy[key] = value
+		}
+	}
+	return func(a *Agent) {
+		a.codingAgentSecretEnvironment = copy
+	}
+}
+
 // withTracer adds an observability tracer to the agent.
 //
 // The provided tracer will be wrapped in a StreamingTracer to support real-time
@@ -235,6 +247,23 @@ func withPiPersistentInteractiveSession(enabled bool) agentOption {
 func withCursorBridgeToolsMode(enabled bool) agentOption {
 	return func(a *Agent) {
 		a.cursorBridgeToolsMode = enabled
+	}
+}
+
+// withCodingAgentToolsMode chooses the relationship between a coding CLI's
+// native tools and the MCP bridge. Empty preserves the safe mcp_only default.
+func withCodingAgentToolsMode(mode string) agentOption {
+	return func(a *Agent) {
+		a.codingAgentToolsMode = strings.ToLower(strings.TrimSpace(mode))
+	}
+}
+
+// withCodingAgentApprovalsMode chooses how a hybrid/native coding agent
+// handles its native approval prompts. Provider-specific launchers translate
+// this into their real CLI flags.
+func withCodingAgentApprovalsMode(mode string) agentOption {
+	return func(a *Agent) {
+		a.codingAgentApprovalsMode = strings.ToLower(strings.TrimSpace(mode))
 	}
 }
 
@@ -937,6 +966,17 @@ type Agent struct {
 	// chat). Cursor runs in default agent mode regardless of this flag.
 	cursorBridgeToolsMode bool
 
+	// codingAgentToolsMode is mcp_only unless an owning product explicitly opts
+	// into hybrid/native_only. This default keeps all existing AgentWorks and
+	// workflow callers bridge-contained.
+	codingAgentToolsMode string
+	// codingAgentSecretEnvironment is copied into each provider call option and
+	// is never included in instructions, history, or observability payloads.
+	codingAgentSecretEnvironment map[string]string
+	// codingAgentApprovalsMode is interpreted only when native tools are
+	// enabled. Empty maps to provider_auto.
+	codingAgentApprovalsMode string
+
 	// CodingAgentTransport is THE explicit transport choice for coding-agent
 	// CLI providers: llm.CodingAgentTransportTmux or
 	// llm.CodingAgentTransportStructured. Empty means "use the provider
@@ -1180,18 +1220,19 @@ type Agent struct {
 	apiKeys *AgentAPIKeys
 
 	// Cumulative token tracking for entire conversation
-	cumulativePromptTokens     int          // Cumulative prompt/input tokens
-	cumulativeCompletionTokens int          // Cumulative completion/output tokens
-	cumulativeTotalTokens      int          // Cumulative total tokens
-	cumulativeCacheTokens      int          // Cumulative cache tokens (sum of all cache-related tokens)
-	cumulativeCacheReadTokens  int          // Cumulative tokens served from prompt cache
-	cumulativeCacheWriteTokens int          // Cumulative tokens written to prompt cache
-	lastEffectiveModelID       string       // Immutable provider-resolved model used for the latest priced turn
-	cumulativeReasoningTokens  int          // Cumulative reasoning tokens (for models like o3)
-	cumulativeCacheDiscount    float64      // Sum of cache discounts (for averaging)
-	llmCallCount               int          // Number of LLM calls made
-	cacheEnabledCallCount      int          // Number of calls with cache tokens > 0
-	tokenTrackingMutex         sync.RWMutex // Mutex for thread-safe token accumulation
+	cumulativePromptTokens        int          // Cumulative prompt/input tokens
+	cumulativeCompletionTokens    int          // Cumulative completion/output tokens
+	cumulativeTotalTokens         int          // Cumulative total tokens
+	cumulativeCacheTokens         int          // Cumulative cache tokens (sum of all cache-related tokens)
+	cumulativeCacheReadTokens     int          // Cumulative tokens served from prompt cache
+	cumulativeCacheWriteTokens    int          // Cumulative tokens written to prompt cache
+	lastEffectiveModelID          string       // Immutable provider-resolved model used for the latest priced turn
+	cumulativeReasoningTokens     int          // Cumulative reasoning tokens (for models like o3)
+	cumulativeCacheDiscount       float64      // Sum of cache discounts (for averaging)
+	cumulativeTokenUsageEstimated bool         // True when any accumulated turn lacks provider tokenizer telemetry
+	llmCallCount                  int          // Number of LLM calls made
+	cacheEnabledCallCount         int          // Number of calls with cache tokens > 0
+	tokenTrackingMutex            sync.RWMutex // Mutex for thread-safe token accumulation
 
 	// Cumulative pricing tracking for entire conversation
 	cumulativeInputCost     float64 // Cumulative cost for input tokens (in USD)
@@ -2158,6 +2199,14 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	a.cumulativeCacheWriteTokens += cacheWriteTokens
 	a.cumulativeReasoningTokens += reasoningTokens
 	a.cumulativeCacheDiscount += cacheDiscount
+	// CLI adapters that cannot expose tokenizer telemetry publish this explicit
+	// marker. The cumulative summary must retain it; otherwise a later
+	// conversation_total event makes an estimated per-turn value appear exact.
+	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		if estimated, _ := resp.Choices[0].GenerationInfo.Additional["token_usage_estimated"].(bool); estimated {
+			a.cumulativeTokenUsageEstimated = true
+		}
+	}
 	a.llmCallCount++
 
 	if totalCacheTokens > 0 {
@@ -2430,6 +2479,7 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	generationInfo["cumulative_total_tokens"] = a.cumulativeTotalTokens
 	generationInfo["cumulative_cache_tokens"] = a.cumulativeCacheTokens
 	generationInfo["cumulative_reasoning_tokens"] = a.cumulativeReasoningTokens
+	generationInfo["token_usage_estimated"] = a.cumulativeTokenUsageEstimated
 	generationInfo["llm_call_count"] = a.llmCallCount
 	generationInfo["cache_enabled_call_count"] = a.cacheEnabledCallCount
 	// Also expose cache reads under the raw Anthropic-style key the

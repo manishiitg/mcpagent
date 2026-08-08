@@ -600,6 +600,21 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 
 	for chunk := range sm.streamChan {
 		switch chunk.Type {
+		case llmtypes.StreamChunkTypeReasoning:
+			if chunk.Content != "" {
+				sm.totalChunks++
+				if !sm.suppressEvents {
+					a.emitTypedEvent(ctx, &events.ConversationThinkingEvent{
+						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+						Thinking:      chunk.Content,
+						Turn:          sm.turn,
+					})
+				}
+				if sm.callback != nil {
+					sm.callback(chunk)
+				}
+			}
+
 		case llmtypes.StreamChunkTypeContent:
 			if chunk.Content != "" {
 				sm.contentChunkIndex++
@@ -1084,6 +1099,9 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 }
 
 func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly bool) (*llmtypes.ContentResponse, error) {
+	if len(a.codingAgentSecretEnvironment) > 0 {
+		opts = append(opts, llmtypes.WithCodingAgentSecretEnvironment(a.codingAgentSecretEnvironment))
+	}
 	// Thread attached skills through opts so CLI transport adapters can
 	// project SKILL.md folders to disk via ProjectSkills at session
 	// launch. API transports use the intrinsic read_skill tool and can ignore
