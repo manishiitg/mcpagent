@@ -61,7 +61,12 @@ func withLogger(logger loggerv2.Logger) agentOption {
 func withCodingAgentSecretEnvironment(environment map[string]string) agentOption {
 	copy := make(map[string]string, len(environment))
 	for key, value := range environment {
-		if strings.HasPrefix(key, "SECRET_") && value != "" {
+		// llmtypes owns this policy. This layer used to keep its own list, and
+		// admitted only SECRET_* while the application was also passing the MCP
+		// routes -- so the routes were dropped here and the provider below
+		// faithfully passed on an already-filtered environment. Nothing errored;
+		// the child just never saw MCP_CUSTOM. Do not reintroduce a local list.
+		if llmtypes.IsScopedCodingAgentEnvironmentKey(key) && value != "" {
 			copy[key] = value
 		}
 	}

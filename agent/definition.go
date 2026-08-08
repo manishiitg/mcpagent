@@ -125,7 +125,12 @@ type CodingRuntimeConfig struct {
 	CLISecurityPolicy                 *llmtypes.CLISecurityPolicy
 	BridgeRoutingInstructionsOverride *string
 	// SecretEnvironment is injected only into the native coding-agent child
-	// process for the current turn. It must contain only SECRET_* entries.
+	// process for the current turn. Admission is decided by
+	// llmtypes.IsScopedCodingAgentEnvironmentKey, which is the single owner of
+	// that policy: SECRET_* values, VAR_* workflow variables, and — when an
+	// application explicitly enables native API transport — its scoped MCP API
+	// routes. This layer must not filter by its own list; doing so is what
+	// dropped the MCP routes before the child ever saw them.
 	SecretEnvironment map[string]string
 }
 
