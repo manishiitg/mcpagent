@@ -33,6 +33,7 @@ const (
 	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
 	ProviderElevenLabs        = llmproviders.ProviderElevenLabs
 	ProviderDeepgram          = llmproviders.ProviderDeepgram
+	ProviderOllama            = llmproviders.ProviderOllama
 )
 
 const (
