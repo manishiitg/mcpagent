@@ -1121,6 +1121,10 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 
 	modelProvider := llm.Provider(model.Provider)
 	opts = a.appendCodingAgentInteractiveOptionsForProvider(opts, modelProvider, model.ModelID)
+	continuationHandle, hasContinuationHandle := a.codingProviderContinuationHandleForModel(modelProvider, model.ModelID)
+	if launchOnly && !hasContinuationHandle {
+		return nil, fmt.Errorf("cannot launch coding-agent continuation transport: native session handle is missing")
+	}
 
 	llmInstance, err := llm.InitializeLLM(llm.Config{
 		Provider:            modelProvider,
@@ -1171,7 +1175,7 @@ func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []
 		}
 	}
 
-	if continuationHandle, ok := a.codingProviderContinuationHandleForModel(modelProvider, model.ModelID); ok {
+	if hasContinuationHandle {
 		if launchOnly {
 			transport := strings.TrimSpace(continuationHandle.Transport)
 			if transport == "" {

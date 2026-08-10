@@ -120,3 +120,46 @@ func TestRuntimePricingDoesNotSubtractSeparateCacheTwice(t *testing.T) {
 		t.Fatalf("cost_usd_estimated = %.9f, want %.9f", got, want)
 	}
 }
+
+func TestCodingCLIAggregateUsageDoesNotPretendToBeContextPercentage(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		sessionID:          "coding-cli-context-test",
+		modelID:            "gpt-5.6",
+		modelContextWindow: 200_000,
+		logger:             loggerv2.NewNoop(),
+		listeners:          []AgentEventListener{listener},
+	}
+	prompt := 643_364
+	resp := &llmtypes.ContentResponse{Choices: []*llmtypes.ContentChoice{{
+		GenerationInfo: &llmtypes.GenerationInfo{Additional: map[string]interface{}{
+			"context_window_usage_known": false,
+		}},
+	}}}
+
+	agent.endLLMGeneration(context.Background(), "done", 1, 0, time.Second, events.UsageMetrics{
+		PromptTokens: prompt,
+		TotalTokens:  prompt,
+	}, resp)
+
+	if agent.contextWindowUsageKnown {
+		t.Fatal("aggregate coding-CLI usage must not be treated as a context snapshot")
+	}
+	if agent.currentContextWindowUsage != 0 {
+		t.Fatalf("currentContextWindowUsage = %d, want 0 when unknown", agent.currentContextWindowUsage)
+	}
+	for _, event := range listener.events {
+		completed, ok := event.Data.(*events.LLMGenerationEndEvent)
+		if !ok {
+			continue
+		}
+		if got := completed.Metadata["context_usage_percent"]; got != float64(0) {
+			t.Fatalf("context_usage_percent = %#v, want 0", got)
+		}
+		if _, found := completed.Metadata["model_context_window"]; found {
+			t.Fatal("unknown context usage must not publish a model-context percentage denominator")
+		}
+		return
+	}
+	t.Fatal("LLMGenerationEnd event was not emitted")
+}

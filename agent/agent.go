@@ -1209,7 +1209,11 @@ type Agent struct {
 	// all conversation phases (never reset) for accurate pricing and overall usage reporting.
 	// Context window is based on input tokens only, not output tokens.
 	currentContextWindowUsage int
-	modelContextWindow        int // Cached model context window size (0 = not cached yet)
+	// contextWindowUsageKnown is false when a coding CLI reports aggregate
+	// per-turn usage rather than a snapshot of the prompt currently resident in
+	// its context window. In that case a percentage would be fabricated.
+	contextWindowUsageKnown bool
+	modelContextWindow      int // Cached model context window size (0 = not cached yet)
 
 	// LLM Configuration
 	llmConfig AgentLLMConfiguration
@@ -2261,14 +2265,16 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	// per-call cost, not the running total.
 	a.lastTurnCost = turnCost
 
-	// Update context window usage (current input tokens in conversation)
-	// Set currentContextWindowUsage to the actual prompt tokens from this LLM call.
-	// This represents the actual tokens currently in the context window (the messages sent to LLM).
-	// Note: currentContextWindowUsage represents the actual tokens currently in the
-	// context window (reset after summarization), while cumulativePromptTokens is
-	// truly cumulative across all conversation phases (never reset) for pricing/reporting.
-	// Context window is based on input tokens only, not output tokens
-	a.currentContextWindowUsage = usageMetrics.PromptTokens
+	// Update context-window telemetry only when the provider confirms that the
+	// number is a current-prompt snapshot. Coding CLIs can instead return all
+	// model calls made during one agent turn; dividing that aggregate by a model
+	// window produced the permanently saturated 100% UI indicator.
+	a.contextWindowUsageKnown = contextWindowUsageIsKnown(resp)
+	if a.contextWindowUsageKnown {
+		a.currentContextWindowUsage = usageMetrics.PromptTokens
+	} else {
+		a.currentContextWindowUsage = 0
+	}
 
 	// Token usage is tracked via events - log at debug level for per-turn, but also log cumulative
 	logger := getLogger(a)
@@ -2303,6 +2309,17 @@ func promptTokensIncludeCache(resp *llmtypes.ContentResponse) bool {
 		return true
 	}
 	return value
+}
+
+// contextWindowUsageIsKnown distinguishes a provider's current-context
+// snapshot from aggregate accounting used for cost tracking. The marker is
+// opt-out so regular API providers retain their established behaviour.
+func contextWindowUsageIsKnown(resp *llmtypes.ContentResponse) bool {
+	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].GenerationInfo == nil {
+		return true
+	}
+	known, marked := resp.Choices[0].GenerationInfo.Additional["context_window_usage_known"].(bool)
+	return !marked || known
 }
 
 func effectiveModelIDFromResponse(resp *llmtypes.ContentResponse, fallback string) string {
@@ -2347,11 +2364,11 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 	var fixedThresholdPercent float64
 	a.tokenTrackingMutex.RLock()
 	currentUsage := a.currentContextWindowUsage
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
 	}
 	// Calculate fixed threshold percentage if enabled
-	if a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
+	if a.contextWindowUsageKnown && a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
 		fixedThresholdPercent = (float64(currentUsage) / float64(a.fixedTokenThreshold)) * 100.0
 	}
 	a.tokenTrackingMutex.RUnlock()
@@ -2364,7 +2381,7 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 		llmEndEvent.Metadata = make(map[string]interface{})
 	}
 	llmEndEvent.Metadata["context_usage_percent"] = contextUsagePercent
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		llmEndEvent.Metadata["model_context_window"] = a.modelContextWindow
 	}
 	if fixedThresholdPercent > 0 {
@@ -2415,11 +2432,11 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	var contextUsagePercent float64
 	var fixedThresholdPercent float64
 	currentUsage := a.currentContextWindowUsage
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
 	}
 	// Calculate fixed threshold percentage if enabled
-	if a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
+	if a.contextWindowUsageKnown && a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
 		fixedThresholdPercent = (float64(currentUsage) / float64(a.fixedTokenThreshold)) * 100.0
 	}
 
@@ -2449,10 +2466,22 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	generationInfo["cumulative_cache_cost"] = a.cumulativeCacheCost
 	generationInfo["cumulative_total_cost"] = a.cumulativeTotalCost
 
-	// Add context window usage information
-	generationInfo["current_context_window_usage"] = currentUsage
-	generationInfo["model_context_window"] = a.modelContextWindow
-	generationInfo["context_usage_percent"] = contextUsagePercent
+	// Add context window usage information.
+	//
+	// Only when it is actually known. Coding-CLI transcripts report aggregate
+	// activity over a turn, not a current-context snapshot, so
+	// contextWindowUsageKnown is false for them. Publishing the pair anyway sent
+	// usage=0 alongside a real window size, which a consumer renders as
+	// "0/200,000" — indistinguishable from a genuinely empty context, and the
+	// most misleading of the three possible readings. Omit instead, and state
+	// the reason explicitly so a consumer can render "unknown" rather than
+	// having to infer it from absent keys.
+	generationInfo["context_window_usage_known"] = a.contextWindowUsageKnown
+	if a.contextWindowUsageKnown {
+		generationInfo["current_context_window_usage"] = currentUsage
+		generationInfo["model_context_window"] = a.modelContextWindow
+		generationInfo["context_usage_percent"] = contextUsagePercent
+	}
 	if fixedThresholdPercent > 0 {
 		generationInfo["fixed_threshold_percent"] = fixedThresholdPercent
 		generationInfo["fixed_threshold_tokens"] = a.fixedTokenThreshold
@@ -2480,9 +2509,14 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	totalTokenEvent.ReasoningCost = a.cumulativeReasoningCost
 	totalTokenEvent.CacheCost = a.cumulativeCacheCost
 	totalTokenEvent.TotalCost = a.cumulativeTotalCost
-	totalTokenEvent.ContextWindowUsage = a.currentContextWindowUsage
-	totalTokenEvent.ModelContextWindow = a.modelContextWindow
-	totalTokenEvent.ContextUsagePercent = contextUsagePercent
+	// Same reasoning as the generationInfo block above: leave the typed fields at
+	// zero when usage is unknown rather than pairing a zero usage with a real
+	// window size, which reads as an empty context instead of an unmeasured one.
+	if a.contextWindowUsageKnown {
+		totalTokenEvent.ContextWindowUsage = a.currentContextWindowUsage
+		totalTokenEvent.ModelContextWindow = a.modelContextWindow
+		totalTokenEvent.ContextUsagePercent = contextUsagePercent
+	}
 
 	// Set agent mode information
 	totalTokenEvent.SetAgentMode(string(a.agentMode), a.useCodeExecutionMode)
@@ -2512,7 +2546,7 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	}
 
 	// Log context window usage
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		logger.Info("📊 [CONTEXT_WINDOW] Context usage",
 			loggerv2.Int("current_usage_tokens", a.currentContextWindowUsage),
 			loggerv2.Int("context_window_tokens", a.modelContextWindow),
@@ -2577,7 +2611,7 @@ func (a *Agent) getTokenUsageWithPricing() (
 	totalCost = a.cumulativeTotalCost
 
 	// Calculate context window usage percentage
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		contextUsagePercent = (float64(a.currentContextWindowUsage) / float64(a.modelContextWindow)) * 100.0
 	}
 
