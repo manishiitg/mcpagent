@@ -636,7 +636,34 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		loggerv2.String("tool", req.Tool),
 		loggerv2.Int("result_length", len(result)))
 
-	if signal, suspicious := toolerr.SuspiciousForTool(req.Tool, result); suspicious {
+	// This handler is the one path that never applied the canonical check —
+	// agent/conversation.go, agent/parallel_tool_execution.go, and
+	// agent/llm_generation.go all call CanonicalFailureForTool where they call
+	// SuspiciousForTool; this file only ever called the latter. Every custom/
+	// bridge tool a workflow step runs (execute_shell_command chief among them)
+	// goes through here, so Success was unconditionally true regardless of
+	// payload content unless the Go call itself errored — a shell command
+	// returning a real nonzero exit_code was reported exactly the same as a
+	// clean one. Measured live: 868 SuspiciousForTool hits from this layer alone
+	// in 8 hours, none of them able to change what the caller saw.
+	//
+	// CanonicalFailureForTool already carries the same per-tool suppression
+	// (problemReportingTools) that keeps content-bearing tools like read_skill
+	// and query_workflow_db from being misclassified, so nothing further is
+	// needed here to stay safe for those.
+	success := true
+	errorText := ""
+	if signal, failed := toolerr.CanonicalFailureForTool(req.Tool, result); failed {
+		success = false
+		errorText = fmt.Sprintf("tool execution failed: %s", signal)
+		h.logger.Error(toolerr.Marker+" custom tool payload failure", nil,
+			loggerv2.String("layer", "custom_tool_handler"),
+			loggerv2.String("tool", req.Tool),
+			loggerv2.String("session_id", req.SessionID),
+			loggerv2.String("signal", signal),
+			loggerv2.String("args", toolerr.TruncateArgsForLog(string(argsJSON))),
+			loggerv2.String("result", toolerr.TruncateForLog(result)))
+	} else if signal, suspicious := toolerr.SuspiciousForTool(req.Tool, result); suspicious {
 		h.logger.Error(toolerr.SuspectMarker+" custom tool reported success but the result reads like a failure", nil,
 			loggerv2.String("layer", "custom_tool_handler"),
 			loggerv2.String("tool", req.Tool),
@@ -651,11 +678,11 @@ func (h *ExecutorHandlers) HandleCustomExecute(w http.ResponseWriter, r *http.Re
 		toolcalllog.RecordEnd(req.SessionID, toolCallID, req.Tool, string(argsJSON), result, toolStartedAt)
 	}
 
-	// Return success response
 	_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
-		Success: true,
+		Success: success,
 		Result:  result,
 		Data:    customToolResponseData(result),
+		Error:   errorText,
 	})
 }
 
