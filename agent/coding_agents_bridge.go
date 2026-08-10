@@ -112,6 +112,17 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 		toolType string
 	}, 0, len(bridgeTools)+len(a.additionalBridgeTools))
 	for _, want := range bridgeTools {
+		// Only the hardcoded core list is subject to the owning profile's tool
+		// policy. Virtual tools (get_api_spec) are the discovery door and must
+		// always survive, and withAdditionalBridgeTools below is an explicit
+		// per-agent opt-in that has already made its own decision — neither ever
+		// passed through the registration predicate, so asking it about them
+		// would return false and strip discovery and skills.
+		if want.toolType == "custom" && a.bridgeToolAdmit != nil && !a.bridgeToolAdmit(want.name) {
+			logger.Debug("Core bridge tool excluded by profile tool policy",
+				loggerv2.String("tool", want.name))
+			continue
+		}
 		seen[want.name] = true
 		wanted = append(wanted, want)
 	}

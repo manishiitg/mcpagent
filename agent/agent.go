@@ -263,6 +263,14 @@ func withCodingAgentToolsMode(mode string) agentOption {
 	}
 }
 
+// withBridgeToolAdmit restricts which CORE bridge tools this agent advertises.
+// Nil (the default) advertises all of them, unchanged.
+func withBridgeToolAdmit(admit func(name string) bool) agentOption {
+	return func(a *Agent) {
+		a.bridgeToolAdmit = admit
+	}
+}
+
 // withCodingAgentApprovalsMode chooses how a hybrid/native coding agent
 // handles its native approval prompts. Provider-specific launchers translate
 // this into their real CLI flags.
@@ -975,6 +983,16 @@ type Agent struct {
 	// into hybrid/native_only. This default keeps all existing AgentWorks and
 	// workflow callers bridge-contained.
 	codingAgentToolsMode string
+	// bridgeToolAdmit decides whether one of the hardcoded CORE bridge tools
+	// (bridgeTools) may be advertised to the coding CLI. Nil admits everything,
+	// which is the behavior every caller had before this existed.
+	//
+	// It guards advertisement, not execution. defaultBridgeToolDef synthesizes a
+	// definition for a core tool the agent never registered, so a profile that
+	// removed one still had it advertised — the CLI then called a tool the
+	// session refuses, and reported the product as broken rather than using its
+	// own native equivalent.
+	bridgeToolAdmit func(name string) bool
 	// codingAgentSecretEnvironment is copied into each provider call option and
 	// is never included in instructions, history, or observability payloads.
 	codingAgentSecretEnvironment map[string]string

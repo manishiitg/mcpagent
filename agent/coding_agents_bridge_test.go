@@ -1,8 +1,10 @@
 package mcpagent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -97,6 +99,79 @@ func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
 	} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("bridge routing prompt should not advertise sub-agent tools as native bridge tools: found %q\n%s", unwanted, prompt)
+		}
+	}
+}
+
+// A profile that removes a core bridge tool must not have it advertised anyway.
+// defaultBridgeToolDef synthesizes a definition for an unregistered core tool,
+// so before bridgeToolAdmit the CLI was handed execute_shell_command — whose
+// description tells it to use it for HTTP calls — and every call then failed
+// with "not registered for session".
+func TestBuildBridgeMCPConfigOmitsCoreToolsTheProfileExcluded(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token-123")
+
+	names := func(t *testing.T, configJSON string) []string {
+		t.Helper()
+		var config map[string]interface{}
+		if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		servers := config["mcpServers"].(map[string]interface{})
+		bridge := servers["api-bridge"].(map[string]interface{})
+		env := bridge["env"].(map[string]interface{})
+		var defs []struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal([]byte(env["MCP_TOOLS"].(string)), &defs); err != nil {
+			t.Fatalf("invalid MCP_TOOLS: %v", err)
+		}
+		out := make([]string, 0, len(defs))
+		for _, d := range defs {
+			out = append(out, d.Name)
+		}
+		return out
+	}
+
+	// Baseline: no predicate means no change for every existing caller.
+	base := bridgeTestAgent()
+	baseJSON, err := base.buildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("buildBridgeMCPConfig() error: %v", err)
+	}
+	baseNames := names(t, baseJSON)
+	if !slices.Contains(baseNames, "execute_shell_command") {
+		t.Fatalf("nil predicate must advertise the core tools unchanged, got %v", baseNames)
+	}
+
+	// A hybrid profile whose allowlist keeps agent_browser but not the shell or
+	// the diff tool -- the CLI supplies its own for those.
+	allowed := map[string]bool{"agent_browser": true}
+	gated := bridgeTestAgent()
+	gated.bridgeToolAdmit = func(name string) bool { return allowed[name] }
+	gated.additionalBridgeTools = []string{"product_extra_tool"}
+	if err := gated.registerDirectTool("product_extra_tool", "An explicitly added bridge tool.", map[string]interface{}{"type": "object"},
+		func(context.Context, map[string]interface{}) (string, error) { return "", nil }, 0, "skills"); err != nil {
+		t.Fatalf("register product_extra_tool: %v", err)
+	}
+	gatedJSON, err := gated.buildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("buildBridgeMCPConfig() error: %v", err)
+	}
+	gatedNames := names(t, gatedJSON)
+
+	for _, excluded := range []string{"execute_shell_command", "diff_patch_workspace_file"} {
+		if slices.Contains(gatedNames, excluded) {
+			t.Fatalf("excluded core tool %q was still advertised: %v", excluded, gatedNames)
+		}
+	}
+	// The discovery door and an explicitly-added tool never went through the
+	// registration predicate, so the filter must not consult it for them.
+	for _, kept := range []string{"get_api_spec", "product_extra_tool"} {
+		if !slices.Contains(gatedNames, kept) {
+			t.Fatalf("%q must survive the profile filter, got %v", kept, gatedNames)
 		}
 	}
 }

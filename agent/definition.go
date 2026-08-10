@@ -119,7 +119,13 @@ type CodingRuntimeConfig struct {
 	AgentToolsMode string
 	// ApprovalsMode controls the provider-native approval posture when native
 	// tools are enabled: provider_auto (default) or approve_all.
-	ApprovalsMode                     string
+	ApprovalsMode string
+	// BridgeToolAdmit filters the hardcoded core bridge tools this session
+	// advertises (execute_shell_command, diff_patch_workspace_file,
+	// agent_browser). Nil advertises all of them. Pass the same predicate that
+	// decides tool registration so the catalog cannot offer a tool the session
+	// will refuse.
+	BridgeToolAdmit                   func(name string) bool
 	CodexSandbox                      string
 	CodexNetworkAccess                bool
 	CLISecurityPolicy                 *llmtypes.CLISecurityPolicy
@@ -350,6 +356,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if coding.ApprovalsMode != "" {
 		options = append(options, withCodingAgentApprovalsMode(coding.ApprovalsMode))
+	}
+	if coding.BridgeToolAdmit != nil {
+		options = append(options, withBridgeToolAdmit(coding.BridgeToolAdmit))
 	}
 	if coding.CodexSandbox != "" {
 		options = append(options, withCodexSandbox(coding.CodexSandbox))
