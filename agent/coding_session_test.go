@@ -176,7 +176,13 @@ func TestSupportsSteeringFalseOnStructuredTransport(t *testing.T) {
 			if got := tc.agent.supportsSteering(); got != tc.want {
 				t.Fatalf("SupportsSteering()=%v; want %v", got, tc.want)
 			}
+			if got := AgentSupportsSteering(tc.agent); got != tc.want {
+				t.Fatalf("exported AgentSupportsSteering()=%v; want %v (must match the unexported method it wraps)", got, tc.want)
+			}
 		})
+	}
+	if AgentSupportsSteering(nil) {
+		t.Fatal("AgentSupportsSteering(nil) = true; want false — supportsSteering itself panics on a nil receiver")
 	}
 }
 
