@@ -87,6 +87,7 @@ func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 		"InvokeAgentVirtualTool",
 		"IsBrokenPipeError",
 		"ListSessions",
+		"LookupSession",
 		"MarkSessionsStopped",
 		"NewAgentConnectionWithSession",
 		"NewAgentFromDefinition",

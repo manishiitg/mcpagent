@@ -354,7 +354,7 @@ func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T
 		t.Fatalf("Cursor MCP config metadata = %#v, want api-bridge config", got[cursorcli.MetadataKeyMCPConfig])
 	}
 	tools := bridgeToolsFromConfig(t, mcpConfig)
-	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec"} {
+	for _, name := range []string{"execute_shell_command", "agent_browser", "get_api_spec"} {
 		if _, ok := tools[name]; !ok {
 			t.Fatalf("Cursor MCP config missing core bridge tool %q; tools=%v", name, mapKeys(tools))
 		}
@@ -407,7 +407,7 @@ func TestCursorRunloopChatOptionsCarryBridgeAndWebAutoApproval(t *testing.T) {
 		t.Fatalf("Cursor MCP config metadata = %#v, want api-bridge config", got[cursorcli.MetadataKeyMCPConfig])
 	}
 	tools := bridgeToolsFromConfig(t, mcpConfig)
-	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec"} {
+	for _, name := range []string{"execute_shell_command", "agent_browser", "get_api_spec"} {
 		if _, ok := tools[name]; !ok {
 			t.Fatalf("Cursor MCP config missing core bridge tool %q; tools=%v", name, mapKeys(tools))
 		}
@@ -670,7 +670,7 @@ func TestAppendPiCLIIntegrationOptionsEnablesMCPBridgeOnlyTools(t *testing.T) {
 		t.Fatalf("Pi MCP config metadata = %#v, want api-bridge config", got[picli.MetadataKeyMCPConfig])
 	}
 	tools := bridgeToolsFromConfig(t, mcpConfig)
-	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file", "agent_browser", "get_api_spec"} {
+	for _, name := range []string{"execute_shell_command", "agent_browser", "get_api_spec"} {
 		if _, ok := tools[name]; !ok {
 			t.Fatalf("Pi MCP config missing core bridge tool %q; tools=%v", name, mapKeys(tools))
 		}
@@ -700,7 +700,6 @@ func TestAppendPiCLIIntegrationOptionsRequiresMCPBridge(t *testing.T) {
 func TestBridgeToolsList(t *testing.T) {
 	expected := map[string]string{
 		"execute_shell_command":     "custom",
-		"diff_patch_workspace_file": "custom",
 		"agent_browser":             "custom",
 		"get_api_spec":              "virtual",
 	}

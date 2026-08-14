@@ -2,11 +2,14 @@ package mcpagent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -190,7 +193,48 @@ func (a *Agent) directToolSnapshot() []registeredTool {
 func (a *Agent) directToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 	for _, tool := range a.directToolSnapshot() {
-		executors[tool.Name] = tool.Executor
+		executor := tool.Executor
+		if a.directToolExecutionEvents {
+			executor = a.observedDirectToolExecutor(tool.Name, executor)
+		}
+		executors[tool.Name] = executor
 	}
 	return executors
+}
+
+// observedDirectToolExecutor is the execution-side half of the tool-call
+// contract. It runs inside the bridge registry, so it observes a call only
+// when the host handler truly runs and always has the actual result/error.
+func (a *Agent) observedDirectToolExecutor(name string, executor ToolExecutor) ToolExecutor {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// A wrapped Run already receives the CLI transcript's canonical tool
+		// intent/result pair. Bridge receipts are the missing source only for a
+		// retained turn delivered directly to the provider between Runs. Emitting
+		// both sources during an active Run would render every ordinary tool twice.
+		if a.isTurnInFlight() {
+			return executor(ctx, args)
+		}
+		arguments, err := json.Marshal(args)
+		if err != nil {
+			arguments = []byte(`{"_serialization_error":"could not encode tool arguments"}`)
+		}
+		callID := "direct-" + uuid.NewString()
+		start := events.NewToolCallStartEvent(0, name, events.ToolParams{Arguments: string(arguments)}, "direct_execution", "")
+		start.ToolCallID = callID
+		a.emitTypedEvent(ctx, start)
+
+		started := time.Now()
+		result, callErr := executor(ctx, args)
+		duration := time.Since(started)
+		if callErr != nil {
+			failure := events.NewToolCallErrorEvent(0, name, callErr.Error(), "direct_execution", duration)
+			failure.ToolCallID = callID
+			a.emitTypedEvent(ctx, failure)
+			return result, callErr
+		}
+		end := events.NewToolCallEndEvent(0, name, result, "direct_execution", duration, "")
+		end.ToolCallID = callID
+		a.emitTypedEvent(ctx, end)
+		return result, nil
+	}
 }

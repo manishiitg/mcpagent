@@ -520,7 +520,7 @@ func withConversationSink(sink convrecord.Sink) agentOption {
 // agent instance — callable directly by name, without the get_api_spec +
 // execute_shell_command+curl discovery route. Scoped to this agent only; it
 // does NOT touch the shared package-level bridgeTools list (execute_shell_command,
-// diff_patch_workspace_file, agent_browser, get_api_spec), which stays fixed
+// agent_browser, get_api_spec), which stays fixed
 // across every consumer of this module.
 //
 // Use this for a small, app-specific, known-in-advance tool set (e.g. an
@@ -681,6 +681,16 @@ func withGenerationStreamingEvents(enabled bool) agentOption {
 func withStreamingCallback(callback func(chunk llmtypes.StreamChunk)) agentOption {
 	return func(a *Agent) {
 		a.streamingCallback = callback
+	}
+}
+
+// withDirectToolExecutionEvents asks the direct-tool bridge executor to emit
+// canonical ToolCallStart/End/Error events when it actually runs a handler.
+// This is distinct from coding-CLI transcript events, which describe what the
+// CLI says it called and may not include the bridge result.
+func withDirectToolExecutionEvents(enabled bool) agentOption {
+	return func(a *Agent) {
+		a.directToolExecutionEvents = enabled
 	}
 }
 
@@ -1053,7 +1063,7 @@ type Agent struct {
 
 	// additionalBridgeTools are custom tool names exposed as NATIVE MCP bridge
 	// tools for THIS agent instance only, on top of the small fixed set in
-	// bridgeTools (execute_shell_command, diff_patch_workspace_file,
+	// bridgeTools (execute_shell_command,
 	// agent_browser, get_api_spec). Set via withAdditionalBridgeTools —
 	// callers must NOT edit the shared package-level bridgeTools var to add
 	// their own tools, since that list is global across every consumer of
@@ -1084,6 +1094,11 @@ type Agent struct {
 	// Listeners for typed events
 	listeners []AgentEventListener
 	mu        sync.RWMutex
+
+	// directToolExecutionEvents is opt-in because a coding CLI may separately
+	// stream its own intent events. Consumers that need authoritative bridge
+	// receipts can select these events by server_name="direct_execution".
+	directToolExecutionEvents bool
 
 	// Pre-filtered tool set used for the outgoing LLM call. Updated by
 	// request-scoped allow-list filters and otherwise mirrors the registered tools.
@@ -1933,7 +1948,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use the declared execute_shell_command bridge tool. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.useCodeExecutionMode {
@@ -1982,7 +1997,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// The system prompt is the soft lever; --mode ask is the hard lever we
 	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
+		ag.appendBridgeRoutingInstructions("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.useCodeExecutionMode {
@@ -3059,6 +3074,11 @@ func getClientNames(clients map[string]mcpclient.ClientInterface) []string {
 // It iterates through all active MCP client connections and closes them.
 // This method should be called when the agent is no longer needed to prevent resource leaks.
 func (a *Agent) Close() error {
+	// Invalidate a durable Session only when it still belongs to this exact
+	// Agent. A newer immutable Agent may already have replaced it under the same
+	// conversation ID, and closing the old Agent must not remove that session.
+	closeTurnSessionForAgent(a)
+
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
 	a.closeStreamingTracers()

@@ -18,7 +18,6 @@ func TestClaudeBridgeAllowedToolIdentifiersIncludesAdditional(t *testing.T) {
 
 	want := []string{
 		"mcp__api-bridge__execute_shell_command",
-		"mcp__api-bridge__diff_patch_workspace_file",
 		"mcp__api-bridge__agent_browser",
 		"mcp__api-bridge__get_api_spec",
 		"mcp__api-bridge__my_custom_tool",

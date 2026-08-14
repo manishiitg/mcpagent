@@ -129,6 +129,9 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 	contract, isCodingAgent := llm.GetCodingAgentProviderContract(provider, a.modelID)
 	if isCodingAgent {
 		result.Transport = contract.Transport
+		if a.usesStructuredTransport() {
+			result.Transport = llm.CodingAgentTransportStructured
+		}
 	}
 
 	// Transport-aware, not just contract-aware: the same provider is steerable on

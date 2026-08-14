@@ -371,17 +371,6 @@ func main() {
 			if err != nil {
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to marshal arguments: %v", err)), nil
 			}
-			diffBytes := -1
-			filepathArg := ""
-			if def.Name == "diff_patch_workspace_file" {
-				if v, ok := args["diff"].(string); ok {
-					diffBytes = len(v)
-				}
-				if v, ok := args["filepath"].(string); ok {
-					filepathArg = v
-				}
-			}
-
 			// Make HTTP POST request
 			httpReq, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(argsJSON)))
 			if err != nil {
@@ -402,7 +391,7 @@ func main() {
 			}
 
 			started := time.Now()
-			log.Printf("mcpbridge: tool call start type=%s tool=%s url=%s args_bytes=%d diff_bytes=%d filepath=%q session=%s", def.Type, def.Name, url, len(argsJSON), diffBytes, filepathArg, sessionID)
+			log.Printf("mcpbridge: tool call start type=%s tool=%s url=%s args_bytes=%d session=%s", def.Type, def.Name, url, len(argsJSON), sessionID)
 			resp, err := httpClient.Do(httpReq)
 			if err != nil {
 				log.Printf("mcpbridge: tool call http error type=%s tool=%s duration=%s error=%v", def.Type, def.Name, time.Since(started), err)

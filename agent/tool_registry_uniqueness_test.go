@@ -2,9 +2,12 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/manishiitg/mcpagent/events"
 )
 
 func TestRegisterCustomToolRejectsMCPNameCollision(t *testing.T) {
@@ -76,6 +79,68 @@ func TestRegisterCustomToolStoresOneCompleteCanonicalRecord(t *testing.T) {
 	}
 	if got := agent.toolToServer["query_records"]; got != "custom" {
 		t.Fatalf("routing projection = %q, want custom", got)
+	}
+}
+
+func TestDirectToolExecutionEventsCarryActualBridgeReceipt(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		sessionID:                 "direct-receipt-test",
+		listeners:                 []AgentEventListener{listener},
+		directToolExecutionEvents: true,
+	}
+	executor := agent.observedDirectToolExecutor("write_note", func(_ context.Context, args map[string]interface{}) (string, error) {
+		if args["title"] != "today" {
+			t.Fatalf("handler args = %#v", args)
+		}
+		return `{"saved":true}`, nil
+	})
+	if _, err := executor(context.Background(), map[string]interface{}{"title": "today"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(listener.events) != 2 {
+		t.Fatalf("events = %d, want start + end", len(listener.events))
+	}
+	start, ok := listener.events[0].Data.(*events.ToolCallStartEvent)
+	if !ok || start.ServerName != "direct_execution" || !strings.Contains(start.ToolParams.Arguments, `"title":"today"`) || start.ToolCallID == "" {
+		t.Fatalf("start = %#v", listener.events[0].Data)
+	}
+	end, ok := listener.events[1].Data.(*events.ToolCallEndEvent)
+	if !ok || end.Result != `{"saved":true}` || end.ToolCallID != start.ToolCallID {
+		t.Fatalf("end = %#v", listener.events[1].Data)
+	}
+
+	listener.events = nil
+	failing := agent.observedDirectToolExecutor("write_note", func(context.Context, map[string]interface{}) (string, error) {
+		return "partial", errors.New("disk full")
+	})
+	if _, err := failing(context.Background(), map[string]interface{}{}); err == nil {
+		t.Fatal("failing handler returned nil error")
+	}
+	if len(listener.events) != 2 {
+		t.Fatalf("failure events = %d, want start + error", len(listener.events))
+	}
+	if _, ok := listener.events[1].Data.(*events.ToolCallErrorEvent); !ok {
+		t.Fatalf("failure event = %T, want ToolCallErrorEvent", listener.events[1].Data)
+	}
+}
+
+func TestDirectToolExecutionEventsDoNotDuplicateActiveTurnTranscript(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		directToolExecutionEvents: true,
+		listeners:                 []AgentEventListener{listener},
+	}
+	agent.setTurnInFlight(true)
+	defer agent.setTurnInFlight(false)
+	executor := agent.observedDirectToolExecutor("write_note", func(context.Context, map[string]interface{}) (string, error) {
+		return "ok", nil
+	})
+	if _, err := executor(context.Background(), map[string]interface{}{"title": "today"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(listener.events) != 0 {
+		t.Fatalf("bridge emitted %d duplicate events during active transcript turn", len(listener.events))
 	}
 }
 
