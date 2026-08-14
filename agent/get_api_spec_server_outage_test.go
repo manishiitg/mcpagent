@@ -95,8 +95,12 @@ func TestGetAPISpecKeepsUnknownWhenTheServersAreHealthy(t *testing.T) {
 	if strings.Contains(message, "server_unavailable=") {
 		t.Fatalf("a healthy server was blamed for a misspelled name:\n%s", message)
 	}
-	if !strings.Contains(message, "tool index") {
-		t.Fatalf("error does not point at the tool index the system prompt already carries:\n%s", message)
+	// Every server is healthy, so the name is simply wrong — and the reply names
+	// the alternatives instead of telling the model to go re-read its system
+	// prompt. It used to say "use the exact tool names from the tool index",
+	// which cost a turn to act on when the answer was already in hand here.
+	if !strings.Contains(message, "search_issues") {
+		t.Fatalf("error does not name the registered tools the model could call instead:\n%s", message)
 	}
 }
 

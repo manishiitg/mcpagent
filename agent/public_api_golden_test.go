@@ -63,6 +63,7 @@ func TestAgentAndSessionCloseContractsMatch(t *testing.T) {
 
 func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 	want := []string{
+		"AgentSupportsSteering",
 		"ApplyAgentResumeHandle",
 		"BuildSafeEnvironment",
 		"ClearHTTPSessionStopped",
@@ -141,6 +142,7 @@ func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 
 func TestAgentFacadeFunctionSurface(t *testing.T) {
 	want := []string{
+		"AgentSupportsSteering",
 		"ApplyAgentResumeHandle",
 		"CompactStaleToolResponses",
 		"DeliverAgentControlKey",
