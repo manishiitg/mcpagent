@@ -1181,6 +1181,9 @@ type Agent struct {
 	// value type lives in llmtypes so adapters can reference it without
 	// importing mcpagent.
 	attachedSkills []*llmtypes.Skill
+	// Fallback for read_skill when a requested skill is installed in the host's
+	// workspace but not attached. Nil leaves read_skill attached-only.
+	installedSkillResolver InstalledSkillResolver
 	// read_skill is intrinsic to attached skill identity. These flags reserve
 	// its model-facing name from caller tools while allowing the internal
 	// construction path to register it through the normal direct-tool runtime.
