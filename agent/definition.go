@@ -165,6 +165,11 @@ type ObservabilityRuntimeConfig struct {
 	GenerationStreamingEvents *bool
 	StreamingCallback         func(llmtypes.StreamChunk)
 	Observers                 []AgentEventListener
+	// DirectToolExecutionEvents emits the canonical tool-call event pair from
+	// the bridge handler that actually executes a direct tool. Coding CLIs only
+	// report their intent in their transcript, and some omit the result; this
+	// opt-in provides the authoritative arguments, result/error and duration.
+	DirectToolExecutionEvents bool
 }
 
 // NewAgentFromDefinition constructs an Agent from a validated, cloned identity.
@@ -424,6 +429,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if obs.StreamingCallback != nil {
 		options = append(options, withStreamingCallback(obs.StreamingCallback))
+	}
+	if obs.DirectToolExecutionEvents {
+		options = append(options, withDirectToolExecutionEvents(true))
 	}
 	return options
 }

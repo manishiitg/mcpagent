@@ -13,6 +13,7 @@ import (
 )
 
 func CloseSession(sessionID string) {
+	closeTurnSession(sessionID)
 	registry := mcpclient.GetSessionRegistry()
 	registry.CloseSession(sessionID)
 	RemoveIsolatedSessionWorkspace(sessionID)

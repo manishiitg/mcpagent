@@ -302,6 +302,30 @@ func TestAnnotateUnifiedCompletionEventMarksCodingAgentTerminalFormat(t *testing
 	}
 }
 
+func TestFinalAssistantTextFromCodingTrailUsesLastTextualAssistantMessage(t *testing.T) {
+	messages := []llmtypes.MessageContent{
+		{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "I am checking the files."}},
+		},
+		{
+			Role:  llmtypes.ChatMessageTypeTool,
+			Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{Content: "tool output"}},
+		},
+		{
+			Role: llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.ToolCall{Type: "function"},
+				llmtypes.TextContent{Text: "\nFinal answer from the sidecar.\n"},
+			},
+		},
+	}
+
+	if got := finalAssistantTextFromCodingTrail(messages); got != "Final answer from the sidecar." {
+		t.Fatalf("final sidecar text = %q", got)
+	}
+}
+
 func TestWithClaudeCodeTransport(t *testing.T) {
 	agent := &Agent{}
 	withClaudeCodeTransport(llm.ClaudeCodeTransportTmux)(agent)

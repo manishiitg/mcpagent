@@ -9,6 +9,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
 	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -60,8 +61,10 @@ type Result struct {
 // DeliveryResult reports whether input was delivered into an active turn or
 // queued for the next provider boundary.
 type DeliveryResult struct {
-	Queued bool
-	Status UserMessageDeliveryStatus
+	Queued    bool
+	Status    UserMessageDeliveryStatus
+	Provider  llm.Provider
+	Transport llm.CodingAgentTransport
 }
 
 // ToolDefinitionView is the read-only diagnostic form of one registered tool.
@@ -95,7 +98,9 @@ func (a *Agent) Start(context.Context) (*Session, error) {
 	if a == nil {
 		return nil, fmt.Errorf("agent is nil")
 	}
-	return &Session{agent: a}, nil
+	session := &Session{agent: a}
+	registerTurnSession(a.sessionID, session)
+	return session, nil
 }
 
 // Run is the one-turn convenience API. Use Start when history must persist
@@ -105,6 +110,10 @@ func (a *Agent) Run(ctx context.Context, turn Turn) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// Run is explicitly the one-turn convenience API. It must not leave the
+	// durable session registry holding this Agent after the result returns;
+	// callers that need continuation use Start and own Session.Close.
+	defer session.Close()
 	return session.Run(ctx, turn)
 }
 
@@ -230,9 +239,6 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 
 // Send queues steering input for the active provider turn.
 func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error) {
-	if strings.TrimSpace(input) == "" {
-		return DeliveryResult{}, fmt.Errorf("delivery input is empty")
-	}
 	s.stateMu.Lock()
 	if s.closed {
 		s.stateMu.Unlock()
@@ -245,8 +251,10 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		Intent:    UserMessageDeliveryIntentAuto,
 	})
 	return DeliveryResult{
-		Queued: delivery.DeliveryStatus == UserMessageDeliveryStatusQueuedForInjection,
-		Status: delivery.DeliveryStatus,
+		Queued:    delivery.DeliveryStatus == UserMessageDeliveryStatusQueuedForInjection,
+		Status:    delivery.DeliveryStatus,
+		Provider:  delivery.Provider,
+		Transport: delivery.Transport,
 	}, err
 }
 
@@ -266,6 +274,7 @@ func (s *Session) Close() error {
 	defer s.stateMu.Unlock()
 	s.closed = true
 	s.history = nil
+	unregisterTurnSession(s)
 	return nil
 }
 

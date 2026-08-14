@@ -27,7 +27,6 @@ const (
 	ToolCallEnd            EventType = "tool_call_end"
 	ToolCallError          EventType = "tool_call_error"
 	ToolCallProgress       EventType = "tool_call_progress"
-	WorkspaceFileOperation EventType = "workspace_file_operation"
 
 	// Agent events
 	AgentStart EventType = "agent_start"
@@ -234,7 +233,7 @@ func GetComponentFromEventType(eventType EventType) string {
 		return "agent"
 	case LLMGenerationStart, LLMGenerationEnd, LLMGenerationError:
 		return "llm"
-	case ToolCallStart, ToolCallEnd, ToolCallError, WorkspaceFileOperation:
+	case ToolCallStart, ToolCallEnd, ToolCallError:
 		return "tool"
 	case ConversationStart, ConversationEnd, ConversationError, ConversationTurn, ConversationThinking:
 		return "conversation"

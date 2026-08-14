@@ -46,3 +46,24 @@ func TestDeliverUserMessageRejectsEmptyMessage(t *testing.T) {
 		t.Fatalf("error kind = %q, want %q", deliveryErr.Kind, DeliveryErrorKindEmptyMessage)
 	}
 }
+
+func TestDeliverUserMessageReportsActualStructuredTransport(t *testing.T) {
+	agent := &Agent{
+		provider:             llm.ProviderCodexCLI,
+		modelID:              "gpt-5.6-sol",
+		codingAgentTransport: llm.CodingAgentTransportStructured,
+	}
+	result, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
+		SessionID: "structured-session",
+		Message:   "continue",
+	})
+	if err != nil {
+		t.Fatalf("deliverUserMessage() error = %v", err)
+	}
+	if result.Transport != llm.CodingAgentTransportStructured {
+		t.Fatalf("transport = %q, want structured", result.Transport)
+	}
+	if result.DeliveryStatus != UserMessageDeliveryStatusQueuedForInjection {
+		t.Fatalf("status = %q, want queued_for_injection", result.DeliveryStatus)
+	}
+}

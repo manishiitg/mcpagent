@@ -31,7 +31,6 @@ var bridgeTools = []struct {
 	toolType string // "custom" or "virtual"
 }{
 	{"execute_shell_command", "custom"},
-	{"diff_patch_workspace_file", "custom"},
 	{"agent_browser", "custom"},
 	{"get_api_spec", "virtual"},
 }
@@ -286,21 +285,6 @@ func defaultBridgeToolDef(name, toolType string, logger loggerv2.Logger) *Bridge
 	switch name {
 	case "execute_shell_command":
 		return marshalBridgeToolDef(name, codeexec.ShellCommandDescription, codeexec.ShellCommandParams, toolType, logger)
-	case "diff_patch_workspace_file":
-		return marshalBridgeToolDef(name, "Apply a unified diff patch to a workspace file.", map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"filepath": map[string]interface{}{
-					"type":        "string",
-					"description": "Workspace-relative path or absolute path under the workspace docs root.",
-				},
-				"diff": map[string]interface{}{
-					"type":        "string",
-					"description": "Unified diff content to apply.",
-				},
-			},
-			"required": []string{"filepath", "diff"},
-		}, toolType, logger)
 	case "agent_browser":
 		return marshalBridgeToolDef(name, "Control a browser agent session.", map[string]interface{}{
 			"type": "object",

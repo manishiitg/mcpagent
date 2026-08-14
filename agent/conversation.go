@@ -112,6 +112,42 @@ func (a *Agent) annotateUnifiedCompletionEvent(event *events.UnifiedCompletionEv
 	}
 }
 
+// finalAssistantTextFromCodingTrail returns the last textual assistant message
+// reconstructed from a coding CLI's sidecar transcript.  For tmux providers,
+// that transcript is the authoritative record of the completed turn; the pane
+// capture is only a transport fallback and can be empty or contain stale UI.
+//
+// The same value must drive both the returned conversation result and the
+// unified_completion event.  Otherwise raw terminal mode can show the coding
+// CLI's final answer while formatted mode only receives an empty lifecycle
+// completion card.
+func finalAssistantTextFromCodingTrail(messages []llmtypes.MessageContent) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != llmtypes.ChatMessageTypeAI {
+			continue
+		}
+		var parts []string
+		for _, part := range messages[i].Parts {
+			switch text := part.(type) {
+			case llmtypes.TextContent:
+				if trimmed := strings.TrimSpace(text.Text); trimmed != "" {
+					parts = append(parts, trimmed)
+				}
+			case *llmtypes.TextContent:
+				if text != nil {
+					if trimmed := strings.TrimSpace(text.Text); trimmed != "" {
+						parts = append(parts, trimmed)
+					}
+				}
+			}
+		}
+		if result := strings.TrimSpace(strings.Join(parts, "\n")); result != "" {
+			return result
+		}
+	}
+	return ""
+}
+
 // isVirtualTool checks if a tool name is a virtual tool
 func isVirtualTool(toolName string) bool {
 	// Check hardcoded virtual tools (includes all possible virtual tools)
@@ -1782,6 +1818,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// don't populate it because the agent layer already sees
 			// those turns directly. Empty/missing is a no-op.
 			intermediate, hasIntermediate := llmtypes.ExtractCodingProviderIntermediateMessages(choice.GenerationInfo)
+			finalResult := choice.Content
 			if hasIntermediate && len(intermediate.Messages) > 0 {
 				// Trust the sidecar splice as the complete trail
 				// (text + tool_use + tool_result + final answer).
@@ -1791,6 +1828,9 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				// cursor's multi-input pane). The splice is built
 				// from the CLI's structured sidecar, not the pane.
 				messages = append(messages, intermediate.Messages...)
+				if sidecarFinal := finalAssistantTextFromCodingTrail(intermediate.Messages); sidecarFinal != "" {
+					finalResult = sidecarFinal
+				}
 			} else if choice.Content != "" {
 				assistantMessage := llmtypes.MessageContent{
 					Role:  llmtypes.ChatMessageTypeAI,
@@ -1811,7 +1851,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				"simple",                          // agentType
 				string(a.agentMode),               // agentMode
 				lastUserMessage,                   // question
-				choice.Content,                    // finalResult
+				finalResult,                       // finalResult
 				"completed",                       // status
 				time.Since(conversationStartTime), // duration
 				turn+1,                            // turns
@@ -1822,7 +1862,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			// NEW: End agent session for hierarchy tracking
 			a.endAgentSession(ctx, time.Since(conversationStartTime))
 
-			return choice.Content, messages, nil
+			return finalResult, messages, nil
 		}
 	}
 

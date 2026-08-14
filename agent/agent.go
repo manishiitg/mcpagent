@@ -562,7 +562,7 @@ func withConversationSink(sink convrecord.Sink) agentOption {
 // agent instance — callable directly by name, without the get_api_spec +
 // execute_shell_command+curl discovery route. Scoped to this agent only; it
 // does NOT touch the shared package-level bridgeTools list (execute_shell_command,
-// diff_patch_workspace_file, agent_browser, get_api_spec), which stays fixed
+// agent_browser, get_api_spec), which stays fixed
 // across every consumer of this module.
 //
 // Use this for a small, app-specific, known-in-advance tool set (e.g. an
@@ -723,6 +723,16 @@ func withGenerationStreamingEvents(enabled bool) agentOption {
 func withStreamingCallback(callback func(chunk llmtypes.StreamChunk)) agentOption {
 	return func(a *Agent) {
 		a.streamingCallback = callback
+	}
+}
+
+// withDirectToolExecutionEvents asks the direct-tool bridge executor to emit
+// canonical ToolCallStart/End/Error events when it actually runs a handler.
+// This is distinct from coding-CLI transcript events, which describe what the
+// CLI says it called and may not include the bridge result.
+func withDirectToolExecutionEvents(enabled bool) agentOption {
+	return func(a *Agent) {
+		a.directToolExecutionEvents = enabled
 	}
 }
 
@@ -1116,7 +1126,7 @@ type Agent struct {
 
 	// additionalBridgeTools are custom tool names exposed as NATIVE MCP bridge
 	// tools for THIS agent instance only, on top of the small fixed set in
-	// bridgeTools (execute_shell_command, diff_patch_workspace_file,
+	// bridgeTools (execute_shell_command,
 	// agent_browser, get_api_spec). Set via withAdditionalBridgeTools —
 	// callers must NOT edit the shared package-level bridgeTools var to add
 	// their own tools, since that list is global across every consumer of
@@ -1147,6 +1157,11 @@ type Agent struct {
 	// Listeners for typed events
 	listeners []AgentEventListener
 	mu        sync.RWMutex
+
+	// directToolExecutionEvents is opt-in because a coding CLI may separately
+	// stream its own intent events. Consumers that need authoritative bridge
+	// receipts can select these events by server_name="direct_execution".
+	directToolExecutionEvents bool
 
 	// Pre-filtered tool set used for the outgoing LLM call. Updated by
 	// request-scoped allow-list filters and otherwise mirrors the registered tools.
@@ -1273,7 +1288,11 @@ type Agent struct {
 	// all conversation phases (never reset) for accurate pricing and overall usage reporting.
 	// Context window is based on input tokens only, not output tokens.
 	currentContextWindowUsage int
-	modelContextWindow        int // Cached model context window size (0 = not cached yet)
+	// contextWindowUsageKnown is false when a coding CLI reports aggregate
+	// per-turn usage rather than a snapshot of the prompt currently resident in
+	// its context window. In that case a percentage would be fabricated.
+	contextWindowUsageKnown bool
+	modelContextWindow      int // Cached model context window size (0 = not cached yet)
 
 	// LLM Configuration
 	llmConfig AgentLLMConfiguration
@@ -1993,7 +2012,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use the declared execute_shell_command bridge tool. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.useCodeExecutionMode {
@@ -2042,7 +2061,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// The system prompt is the soft lever; --mode ask is the hard lever we
 	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
+		ag.appendBridgeRoutingInstructions("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.useCodeExecutionMode {
@@ -2333,14 +2352,16 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	// per-call cost, not the running total.
 	a.lastTurnCost = turnCost
 
-	// Update context window usage (current input tokens in conversation)
-	// Set currentContextWindowUsage to the actual prompt tokens from this LLM call.
-	// This represents the actual tokens currently in the context window (the messages sent to LLM).
-	// Note: currentContextWindowUsage represents the actual tokens currently in the
-	// context window (reset after summarization), while cumulativePromptTokens is
-	// truly cumulative across all conversation phases (never reset) for pricing/reporting.
-	// Context window is based on input tokens only, not output tokens
-	a.currentContextWindowUsage = usageMetrics.PromptTokens
+	// Update context-window telemetry only when the provider confirms that the
+	// number is a current-prompt snapshot. Coding CLIs can instead return all
+	// model calls made during one agent turn; dividing that aggregate by a model
+	// window produced the permanently saturated 100% UI indicator.
+	a.contextWindowUsageKnown = contextWindowUsageIsKnown(resp)
+	if a.contextWindowUsageKnown {
+		a.currentContextWindowUsage = usageMetrics.PromptTokens
+	} else {
+		a.currentContextWindowUsage = 0
+	}
 
 	// Token usage is tracked via events - log at debug level for per-turn, but also log cumulative
 	logger := getLogger(a)
@@ -2375,6 +2396,17 @@ func promptTokensIncludeCache(resp *llmtypes.ContentResponse) bool {
 		return true
 	}
 	return value
+}
+
+// contextWindowUsageIsKnown distinguishes a provider's current-context
+// snapshot from aggregate accounting used for cost tracking. The marker is
+// opt-out so regular API providers retain their established behaviour.
+func contextWindowUsageIsKnown(resp *llmtypes.ContentResponse) bool {
+	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].GenerationInfo == nil {
+		return true
+	}
+	known, marked := resp.Choices[0].GenerationInfo.Additional["context_window_usage_known"].(bool)
+	return !marked || known
 }
 
 func effectiveModelIDFromResponse(resp *llmtypes.ContentResponse, fallback string) string {
@@ -2419,11 +2451,11 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 	var fixedThresholdPercent float64
 	a.tokenTrackingMutex.RLock()
 	currentUsage := a.currentContextWindowUsage
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
 	}
 	// Calculate fixed threshold percentage if enabled
-	if a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
+	if a.contextWindowUsageKnown && a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
 		fixedThresholdPercent = (float64(currentUsage) / float64(a.fixedTokenThreshold)) * 100.0
 	}
 	a.tokenTrackingMutex.RUnlock()
@@ -2436,7 +2468,7 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 		llmEndEvent.Metadata = make(map[string]interface{})
 	}
 	llmEndEvent.Metadata["context_usage_percent"] = contextUsagePercent
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		llmEndEvent.Metadata["model_context_window"] = a.modelContextWindow
 	}
 	if fixedThresholdPercent > 0 {
@@ -2487,11 +2519,11 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	var contextUsagePercent float64
 	var fixedThresholdPercent float64
 	currentUsage := a.currentContextWindowUsage
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
 	}
 	// Calculate fixed threshold percentage if enabled
-	if a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
+	if a.contextWindowUsageKnown && a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
 		fixedThresholdPercent = (float64(currentUsage) / float64(a.fixedTokenThreshold)) * 100.0
 	}
 
@@ -2522,10 +2554,22 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	generationInfo["cumulative_cache_cost"] = a.cumulativeCacheCost
 	generationInfo["cumulative_total_cost"] = a.cumulativeTotalCost
 
-	// Add context window usage information
-	generationInfo["current_context_window_usage"] = currentUsage
-	generationInfo["model_context_window"] = a.modelContextWindow
-	generationInfo["context_usage_percent"] = contextUsagePercent
+	// Add context window usage information.
+	//
+	// Only when it is actually known. Coding-CLI transcripts report aggregate
+	// activity over a turn, not a current-context snapshot, so
+	// contextWindowUsageKnown is false for them. Publishing the pair anyway sent
+	// usage=0 alongside a real window size, which a consumer renders as
+	// "0/200,000" — indistinguishable from a genuinely empty context, and the
+	// most misleading of the three possible readings. Omit instead, and state
+	// the reason explicitly so a consumer can render "unknown" rather than
+	// having to infer it from absent keys.
+	generationInfo["context_window_usage_known"] = a.contextWindowUsageKnown
+	if a.contextWindowUsageKnown {
+		generationInfo["current_context_window_usage"] = currentUsage
+		generationInfo["model_context_window"] = a.modelContextWindow
+		generationInfo["context_usage_percent"] = contextUsagePercent
+	}
 	if fixedThresholdPercent > 0 {
 		generationInfo["fixed_threshold_percent"] = fixedThresholdPercent
 		generationInfo["fixed_threshold_tokens"] = a.fixedTokenThreshold
@@ -2553,9 +2597,14 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	totalTokenEvent.ReasoningCost = a.cumulativeReasoningCost
 	totalTokenEvent.CacheCost = a.cumulativeCacheCost
 	totalTokenEvent.TotalCost = a.cumulativeTotalCost
-	totalTokenEvent.ContextWindowUsage = a.currentContextWindowUsage
-	totalTokenEvent.ModelContextWindow = a.modelContextWindow
-	totalTokenEvent.ContextUsagePercent = contextUsagePercent
+	// Same reasoning as the generationInfo block above: leave the typed fields at
+	// zero when usage is unknown rather than pairing a zero usage with a real
+	// window size, which reads as an empty context instead of an unmeasured one.
+	if a.contextWindowUsageKnown {
+		totalTokenEvent.ContextWindowUsage = a.currentContextWindowUsage
+		totalTokenEvent.ModelContextWindow = a.modelContextWindow
+		totalTokenEvent.ContextUsagePercent = contextUsagePercent
+	}
 
 	// Set agent mode information
 	totalTokenEvent.SetAgentMode(string(a.agentMode), a.useCodeExecutionMode)
@@ -2585,7 +2634,7 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	}
 
 	// Log context window usage
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		logger.Info("📊 [CONTEXT_WINDOW] Context usage",
 			loggerv2.Int("current_usage_tokens", a.currentContextWindowUsage),
 			loggerv2.Int("context_window_tokens", a.modelContextWindow),
@@ -2650,7 +2699,7 @@ func (a *Agent) getTokenUsageWithPricing() (
 	totalCost = a.cumulativeTotalCost
 
 	// Calculate context window usage percentage
-	if a.modelContextWindow > 0 {
+	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		contextUsagePercent = (float64(a.currentContextWindowUsage) / float64(a.modelContextWindow)) * 100.0
 	}
 
@@ -3098,6 +3147,11 @@ func getClientNames(clients map[string]mcpclient.ClientInterface) []string {
 // It iterates through all active MCP client connections and closes them.
 // This method should be called when the agent is no longer needed to prevent resource leaks.
 func (a *Agent) Close() error {
+	// Invalidate a durable Session only when it still belongs to this exact
+	// Agent. A newer immutable Agent may already have replaced it under the same
+	// conversation ID, and closing the old Agent must not remove that session.
+	closeTurnSessionForAgent(a)
+
 	// Stop periodic cleanup routine
 	a.stopCleanupRoutine()
 	a.closeStreamingTracers()

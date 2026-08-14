@@ -416,6 +416,37 @@ type ToolParams struct {
 	Arguments string `json:"arguments"`
 }
 
+// ToolCallRecord is the portable, completed-or-in-flight view of a tool call.
+// It is deliberately derived from the typed start/end/error events rather than
+// from any coding CLI's transcript format, so every consumer can render one
+// contract for arguments, result/error, duration and execution state.
+type ToolCallRecord struct {
+	ToolCallID string        `json:"tool_call_id,omitempty"`
+	ToolName   string        `json:"tool_name"`
+	ServerName string        `json:"server_name,omitempty"`
+	Arguments  string        `json:"arguments,omitempty"`
+	Result     string        `json:"result,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	Duration   time.Duration `json:"duration,omitempty"`
+	Status     string        `json:"status"`
+}
+
+// ToolCallRecordFromEvent applies one canonical lifecycle event to a tool-call
+// record. Callers keep records keyed by ToolCallID; a start creates a running
+// record and end/error completes it.
+func ToolCallRecordFromEvent(event EventData) (ToolCallRecord, bool) {
+	switch e := event.(type) {
+	case *ToolCallStartEvent:
+		return ToolCallRecord{ToolCallID: e.ToolCallID, ToolName: e.ToolName, ServerName: e.ServerName, Arguments: e.ToolParams.Arguments, Status: "running"}, true
+	case *ToolCallEndEvent:
+		return ToolCallRecord{ToolCallID: e.ToolCallID, ToolName: e.ToolName, ServerName: e.ServerName, Result: e.Result, Duration: e.Duration, Status: "completed"}, true
+	case *ToolCallErrorEvent:
+		return ToolCallRecord{ToolCallID: e.ToolCallID, ToolName: e.ToolName, ServerName: e.ServerName, Error: e.Error, Duration: e.Duration, Status: "failed"}, true
+	default:
+		return ToolCallRecord{}, false
+	}
+}
+
 // ToolCallEndEvent represents the completion of a tool call
 type ToolCallEndEvent struct {
 	BaseEventData
@@ -435,44 +466,6 @@ type ToolCallEndEvent struct {
 
 func (e *ToolCallEndEvent) GetEventType() EventType {
 	return ToolCallEnd
-}
-
-// WorkspaceFileOperationEvent represents a workspace file operation
-type WorkspaceFileOperationEvent struct {
-	BaseEventData
-	Operation       string `json:"operation"`        // "read", "update", "delete", "list", "patch", "move"
-	Filepath        string `json:"filepath"`         // File path (empty for list operations)
-	Folder          string `json:"folder,omitempty"` // Folder path (for list operations)
-	Turn            int    `json:"turn"`
-	ServerName      string `json:"server_name"`
-	ShouldHighlight bool   `json:"should_highlight,omitempty"` // Whether to highlight this file in the UI (default: true)
-}
-
-func (e *WorkspaceFileOperationEvent) GetEventType() EventType {
-	return WorkspaceFileOperation
-}
-
-// NewWorkspaceFileOperationEvent creates a new WorkspaceFileOperationEvent
-// shouldHighlight defaults to true if not specified (for backward compatibility)
-func NewWorkspaceFileOperationEvent(operation, filepath, folder string, turn int, serverName string, shouldHighlight ...bool) *WorkspaceFileOperationEvent {
-	highlight := true // Default to true for backward compatibility
-	if len(shouldHighlight) > 0 {
-		highlight = shouldHighlight[0]
-	}
-
-	return &WorkspaceFileOperationEvent{
-		BaseEventData: BaseEventData{
-			Timestamp:      time.Now(),
-			HierarchyLevel: 1,
-			Component:      "tool",
-		},
-		Operation:       operation,
-		Filepath:        filepath,
-		Folder:          folder,
-		Turn:            turn,
-		ServerName:      serverName,
-		ShouldHighlight: highlight,
-	}
 }
 
 // MCPServerConnectionEvent represents MCP server connection
