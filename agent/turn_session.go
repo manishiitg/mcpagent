@@ -6,8 +6,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
+	"github.com/manishiitg/mcpagent/agent/retainedturn"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -88,9 +90,25 @@ type AgentDefinitionView struct {
 type Session struct {
 	agent   *Agent
 	runMu   sync.Mutex
+	sendMu  sync.Mutex
 	stateMu sync.Mutex
 	history []llmtypes.MessageContent
 	closed  bool
+
+	// runActive distinguishes true mid-turn steering from a message submitted
+	// between turns. retainedActive covers a directly-injected warm tmux turn:
+	// it has no Session.Run caller, but it still owns one canonical completion
+	// lifecycle and accepts later messages as steering into that same turn.
+	runActive        bool
+	retainedStarting bool
+	retainedActive   bool
+	retainedSeq      uint64
+	watchCtx         context.Context
+	watchCancel      context.CancelFunc
+
+	// Tests replace this on an individual Session. Production always reads the
+	// provider adapter's authoritative retained transcript/sidecar.
+	retainedFinalResponse func(llm.Provider, string, time.Time) string
 }
 
 // Start opens a stateful session over this immutable agent definition.
@@ -98,7 +116,13 @@ func (a *Agent) Start(context.Context) (*Session, error) {
 	if a == nil {
 		return nil, fmt.Errorf("agent is nil")
 	}
-	session := &Session{agent: a}
+	watchCtx, watchCancel := context.WithCancel(context.Background())
+	session := &Session{
+		agent:                 a,
+		watchCtx:              watchCtx,
+		watchCancel:           watchCancel,
+		retainedFinalResponse: retainedturn.FinalResponse,
+	}
 	registerTurnSession(a.sessionID, session)
 	return session, nil
 }
@@ -168,8 +192,25 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 		s.stateMu.Unlock()
 		return Result{}, fmt.Errorf("session is closed")
 	}
+	if s.retainedStarting || s.retainedActive {
+		s.stateMu.Unlock()
+		return Result{}, ErrTurnAlreadyInFlight
+	}
+	s.runActive = true
 	history := append([]llmtypes.MessageContent(nil), s.history...)
 	s.stateMu.Unlock()
+	if !s.agent.tryClaimTurnInFlight() {
+		s.stateMu.Lock()
+		s.runActive = false
+		s.stateMu.Unlock()
+		return Result{}, ErrTurnAlreadyInFlight
+	}
+	defer func() {
+		s.agent.setTurnInFlight(false)
+		s.stateMu.Lock()
+		s.runActive = false
+		s.stateMu.Unlock()
+	}()
 	policy, err := normalizeToolPolicy(turn.ToolPolicy)
 	if err != nil {
 		return Result{}, err
@@ -237,25 +278,111 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 	return result, err
 }
 
-// Send queues steering input for the active provider turn.
+// Send submits input to the durable provider conversation. During Session.Run
+// it steers the active turn. Between Runs it starts a retained tmux turn and
+// owns that turn through its canonical final-response event; callers receive a
+// fast delivery acknowledgement and do not need to scrape provider panes.
 func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error) {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	s.stateMu.Lock()
 	if s.closed {
 		s.stateMu.Unlock()
 		return DeliveryResult{}, fmt.Errorf("session is closed")
 	}
+	wasActive := s.runActive || s.retainedActive
+	if !wasActive {
+		s.retainedStarting = true
+	}
 	s.stateMu.Unlock()
+	clearStarting := func() {
+		s.stateMu.Lock()
+		s.retainedStarting = false
+		s.stateMu.Unlock()
+	}
 	delivery, err := s.agent.deliverUserMessage(ctx, UserMessageDeliveryRequest{
 		SessionID: s.agent.sessionID,
 		Message:   input,
 		Intent:    UserMessageDeliveryIntentAuto,
 	})
-	return DeliveryResult{
+	result := DeliveryResult{
 		Queued:    delivery.DeliveryStatus == UserMessageDeliveryStatusQueuedForInjection,
 		Status:    delivery.DeliveryStatus,
 		Provider:  delivery.Provider,
 		Transport: delivery.Transport,
-	}, err
+	}
+	if err != nil {
+		clearStarting()
+		return result, err
+	}
+	if !wasActive && delivery.DeliveryStatus == UserMessageDeliveryStatusSentToCLI && delivery.Transport == llm.CodingAgentTransportTmux {
+		s.startRetainedCompletionWatch(input, delivery.Provider, delivery.Transport)
+	} else if !wasActive {
+		clearStarting()
+	}
+	return result, nil
+}
+
+const retainedCompletionPollInterval = 100 * time.Millisecond
+
+func (s *Session) startRetainedCompletionWatch(input string, provider llm.Provider, transport llm.CodingAgentTransport) {
+	startedAt := time.Now()
+	s.stateMu.Lock()
+	s.retainedStarting = false
+	if s.closed || s.retainedActive {
+		s.stateMu.Unlock()
+		return
+	}
+	s.retainedActive = true
+	s.retainedSeq++
+	seq := s.retainedSeq
+	watchCtx := s.watchCtx
+	reader := s.retainedFinalResponse
+	s.stateMu.Unlock()
+	if watchCtx == nil {
+		watchCtx = context.Background()
+	}
+	if reader == nil {
+		reader = retainedturn.FinalResponse
+	}
+
+	go func() {
+		ticker := time.NewTicker(retainedCompletionPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-ticker.C:
+				finalResult := strings.TrimSpace(reader(provider, s.agent.sessionID, startedAt))
+				if finalResult == "" {
+					continue
+				}
+				s.completeRetainedTurn(seq, input, finalResult, provider, transport, startedAt)
+				return
+			}
+		}
+	}()
+}
+
+func (s *Session) completeRetainedTurn(seq uint64, input, finalResult string, provider llm.Provider, transport llm.CodingAgentTransport, startedAt time.Time) {
+	s.stateMu.Lock()
+	if s.closed || !s.retainedActive || s.retainedSeq != seq {
+		s.stateMu.Unlock()
+		return
+	}
+	s.retainedActive = false
+	s.history = append(s.history,
+		llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeHuman, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: input}}},
+		llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: finalResult}}},
+	)
+	s.stateMu.Unlock()
+
+	completion := events.NewUnifiedCompletionEvent("coding_agent", "retained", input, finalResult, "completed", time.Since(startedAt), 1)
+	completion.Metadata["source"] = "mcpagent_session"
+	completion.Metadata["provider"] = string(provider)
+	completion.Metadata["transport"] = string(transport)
+	s.agent.emitTypedEvent(context.Background(), completion)
 }
 
 func (s *Session) Snapshot() *AgentSessionHandle {
@@ -273,6 +400,11 @@ func (s *Session) Close() error {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	s.closed = true
+	if s.watchCancel != nil {
+		s.watchCancel()
+	}
+	s.retainedActive = false
+	s.retainedStarting = false
 	s.history = nil
 	unregisterTurnSession(s)
 	return nil
