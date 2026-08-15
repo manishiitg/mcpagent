@@ -14,8 +14,13 @@ import (
 // This is the completed migration ratchet for the Agent surface. It started at
 // 70 methods and now pins the final Agent/Session API exactly. Any deliberate
 // change updates this list in the same commit.
+//
+// SetInstalledSkillResolver was added deliberately: read_skill can serve a
+// skill the host installed but did not attach, and the host only knows its
+// workspace path after construction, so RuntimeConfig could not carry it
+// without a new parameter on a 25-argument constructor and every call site.
 func TestAgentPublicMethodSurface(t *testing.T) {
-	want := []string{"Close", "Definition", "Run", "Start"}
+	want := []string{"Close", "Definition", "Run", "SetInstalledSkillResolver", "Start"}
 
 	typeOfAgent := reflect.TypeOf((*Agent)(nil))
 	got := make([]string, 0, typeOfAgent.NumMethod())
@@ -23,8 +28,8 @@ func TestAgentPublicMethodSurface(t *testing.T) {
 		got = append(got, typeOfAgent.Method(i).Name)
 	}
 
-	if len(got) != 4 {
-		t.Fatalf("exported *Agent method count = %d, want final surface 4; methods=%v", len(got), got)
+	if len(got) != 5 {
+		t.Fatalf("exported *Agent method count = %d, want final surface 5; methods=%v", len(got), got)
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("exported *Agent methods changed\n got: %v\nwant: %v", got, want)
@@ -63,6 +68,7 @@ func TestAgentAndSessionCloseContractsMatch(t *testing.T) {
 
 func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 	want := []string{
+		"AgentSupportsSteering",
 		"ApplyAgentResumeHandle",
 		"BuildSafeEnvironment",
 		"ClearHTTPSessionStopped",
@@ -142,6 +148,7 @@ func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 
 func TestAgentFacadeFunctionSurface(t *testing.T) {
 	want := []string{
+		"AgentSupportsSteering",
 		"ApplyAgentResumeHandle",
 		"CompactStaleToolResponses",
 		"DeliverAgentControlKey",

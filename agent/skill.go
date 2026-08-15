@@ -10,13 +10,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 const (
 	readSkillToolName        = "read_skill"
 	readSkillToolCategory    = "skill_tools"
-	readSkillToolDescription = "Read ONE attached skill or bundled supporting file. Call with a skills array holding exactly one object; it requires name and may include path. To read several files, make several calls — reference docs are large and combining them in one result exceeds the consumer's per-result token limit, which truncates the result and spills it to a file the agent cannot open. This tool is intrinsic to the agent's attached identity and works on every transport."
+	readSkillToolDescription = "Read ONE skill or bundled supporting file — either an attached skill, or a skill installed in this workspace but not attached (a router skill will name those; ask for them by name, not by file path). Call with a skills array holding exactly one object; it requires name and may include path. To read several files, make several calls — reference docs are large and combining them in one result exceeds the consumer's per-result token limit, which truncates the result and spills it to a file the agent cannot open. This tool is intrinsic to the agent's attached identity and works on every transport."
 
 	// maxReadSkillBatchSize is 1 deliberately. Batched reads were the direct
 	// cause of an unrecoverable failure: three reference docs in one call
@@ -128,6 +129,50 @@ func (a *Agent) ensureSkillReaderTool() error {
 	return nil
 }
 
+// SetInstalledSkillResolver installs the fallback read_skill uses when a
+// requested skill is not attached. Optional: with no resolver, read_skill
+// serves attached skills only, exactly as before.
+//
+// This is a setter rather than a RuntimeConfig field because the host learns
+// its workspace path after the agent is constructed — the folder guard is
+// applied post-construction too. Threading it through would mean a new
+// parameter on a 25-argument constructor and every call site.
+func (a *Agent) SetInstalledSkillResolver(resolver InstalledSkillResolver) {
+	a.installedSkillResolver = resolver
+	if resolver == nil {
+		return
+	}
+	// Registering read_skill used to happen ONLY via ensureSkillReaderTool when
+	// an attached skill was added, so a host that configured a resolver but
+	// attached no skills stored a callback the model could never reach -- the
+	// documented capability existed with no callable tool behind it. Serving
+	// installed-but-unattached skills is precisely the case where there may be
+	// nothing attached, so the resolver itself has to guarantee the tool.
+	if err := a.ensureSkillReaderTool(); err != nil && a.logger != nil {
+		a.logger.Warn("Could not register read_skill for the installed-skill resolver",
+			loggerv2.String("error", err.Error()))
+	}
+}
+
+// InstalledSkillFile is one file belonging to a skill that is installed in the
+// session's workspace but not attached to the agent.
+type InstalledSkillFile struct {
+	Content        string
+	Description    string
+	AvailableFiles []string
+}
+
+// InstalledSkillResolver reads a skill file from wherever the host installs
+// skills. mcpagent deliberately knows nothing about that location — the host
+// supplies this, so read_skill can serve a skill the agent was told to read but
+// which was never attached.
+//
+// Progressive disclosure attaches a router skill and leaves the specialists on
+// disk; without this, reaching one meant knowing a filesystem path and shelling
+// out, which loses read_skill's batching limits and works differently per
+// provider.
+type InstalledSkillResolver func(skillName, relPath string) (InstalledSkillFile, error)
+
 type attachedSkillReadResult struct {
 	SkillName      string   `json:"skill_name"`
 	Path           string   `json:"path"`
@@ -135,7 +180,10 @@ type attachedSkillReadResult struct {
 	Content        string   `json:"content"`
 	Encoding       string   `json:"encoding"`
 	AvailableFiles []string `json:"available_files,omitempty"`
-	Error          string   `json:"error,omitempty"`
+	// "attached" or "installed" — an installed skill is read from the
+	// workspace on demand rather than carried in the prompt.
+	Source string `json:"source,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 type attachedSkillBatchReadResult struct {
@@ -241,6 +289,35 @@ func (a *Agent) readOneAttachedSkill(name, rawPath string) (attachedSkillReadRes
 	}
 	sort.Strings(availableSkills)
 	if selected == nil {
+		// Not attached — it may still be installed in the workspace. Reading it
+		// here grants nothing new (the host already exposes the skills folder);
+		// it just means the agent asks by name instead of by path.
+		if a.installedSkillResolver != nil {
+			resolvedName, nameErr := normalizeInstalledSkillName(name)
+			if nameErr != nil {
+				return attachedSkillReadResult{}, nameErr
+			}
+			requestedPath, pathErr := normalizeAttachedSkillPath(rawPath)
+			if pathErr != nil {
+				return attachedSkillReadResult{}, pathErr
+			}
+			file, resolveErr := a.installedSkillResolver(resolvedName, requestedPath)
+			if resolveErr == nil {
+				return attachedSkillReadResult{
+					SkillName:      name,
+					Path:           requestedPath,
+					Description:    strings.TrimSpace(file.Description),
+					Content:        file.Content,
+					Encoding:       "utf-8",
+					AvailableFiles: file.AvailableFiles,
+					Source:         "installed",
+				}, nil
+			}
+			// Name both possibilities: "not attached" and "not installed" need
+			// different fixes, and collapsing them sends the reader to the
+			// wrong one.
+			return attachedSkillReadResult{}, fmt.Errorf("skill %q is not attached and could not be read from the workspace: %w; attached skills: %s", name, resolveErr, strings.Join(availableSkills, ", "))
+		}
 		return attachedSkillReadResult{}, fmt.Errorf("attached skill %q not found; available skills: %s", name, strings.Join(availableSkills, ", "))
 	}
 
@@ -255,6 +332,7 @@ func (a *Agent) readOneAttachedSkill(name, rawPath string) (attachedSkillReadRes
 		Path:           requestedPath,
 		Encoding:       "utf-8",
 		AvailableFiles: availableFiles,
+		Source:         "attached",
 	}
 	if requestedPath == "SKILL.md" {
 		result.Description = strings.TrimSpace(selected.Description)
@@ -281,6 +359,14 @@ func (a *Agent) readOneAttachedSkill(name, rawPath string) (attachedSkillReadRes
 	}
 
 	return result, nil
+}
+
+func normalizeInstalledSkillName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" || name == "." || name == ".." || strings.ContainsRune(name, '\x00') || strings.ContainsAny(name, "/\\") {
+		return "", fmt.Errorf("skill name must be a safe catalog name, not a path: %q", raw)
+	}
+	return name, nil
 }
 
 func normalizeAttachedSkillPath(raw string) (string, error) {
@@ -313,7 +399,7 @@ func attachedSkillFileNames(skill *llmtypes.Skill) []string {
 }
 
 func (a *Agent) isIntrinsicIdentityTool(name string) bool {
-	return a != nil && name == readSkillToolName && len(a.attachedSkills) > 0
+	return a != nil && name == readSkillToolName && (len(a.attachedSkills) > 0 || a.installedSkillResolver != nil)
 }
 
 // AttachedSkills returns the current list of skills attached to this

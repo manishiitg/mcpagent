@@ -14,7 +14,7 @@ import (
 // hook), silently rejecting any tool registered via withAdditionalBridgeTools.
 // Both now derive from this single function.
 func TestClaudeBridgeAllowedToolIdentifiersIncludesAdditional(t *testing.T) {
-	got := claudeBridgeAllowedToolIdentifiers([]string{"my_custom_tool"})
+	got := claudeBridgeAllowedToolIdentifiers([]string{"my_custom_tool"}, nil)
 
 	want := []string{
 		"mcp__api-bridge__execute_shell_command",
@@ -39,7 +39,7 @@ func TestClaudeBridgeAllowedToolIdentifiersIncludesAdditional(t *testing.T) {
 	// A caller's additional-tools list may legitimately re-name a core default
 	// (see BuildBridgeMCPConfig's identical dedup rationale) — must not appear
 	// twice.
-	dup := claudeBridgeAllowedToolIdentifiers([]string{"agent_browser"})
+	dup := claudeBridgeAllowedToolIdentifiers([]string{"agent_browser"}, nil)
 	count := 0
 	for _, g := range dup {
 		if g == "mcp__api-bridge__agent_browser" {
@@ -64,7 +64,7 @@ func TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool(t *testing.T) {
 		t.Skip("python3 required to execute the generated hook script")
 	}
 
-	hookPath, err := writeClaudeHTTPRoutingHook([]string{"my_custom_tool"})
+	hookPath, err := writeClaudeHTTPRoutingHook([]string{"my_custom_tool"}, nil)
 	if err != nil {
 		t.Fatalf("writeClaudeHTTPRoutingHook: %v", err)
 	}
@@ -119,11 +119,11 @@ func TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool(t *testing.T) {
 // allowlist should safely share one (no needless growth, and no possibility
 // of one clobbering the other since the bytes are identical either way).
 func TestClaudeHTTPRoutingHookPathIsContentAddressed(t *testing.T) {
-	pathA, err := writeClaudeHTTPRoutingHook([]string{"tool_a"})
+	pathA, err := writeClaudeHTTPRoutingHook([]string{"tool_a"}, nil)
 	if err != nil {
 		t.Fatalf("writeClaudeHTTPRoutingHook(tool_a): %v", err)
 	}
-	pathB, err := writeClaudeHTTPRoutingHook([]string{"tool_b"})
+	pathB, err := writeClaudeHTTPRoutingHook([]string{"tool_b"}, nil)
 	if err != nil {
 		t.Fatalf("writeClaudeHTTPRoutingHook(tool_b): %v", err)
 	}
@@ -131,7 +131,7 @@ func TestClaudeHTTPRoutingHookPathIsContentAddressed(t *testing.T) {
 		t.Fatalf("two DIFFERENT allowlists produced the SAME hook path — a concurrent agent race would silently overwrite the other's allowlist: %s", pathA)
 	}
 
-	pathA2, err := writeClaudeHTTPRoutingHook([]string{"tool_a"})
+	pathA2, err := writeClaudeHTTPRoutingHook([]string{"tool_a"}, nil)
 	if err != nil {
 		t.Fatalf("writeClaudeHTTPRoutingHook(tool_a) again: %v", err)
 	}

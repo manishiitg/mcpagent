@@ -44,11 +44,47 @@ var bridgeTools = []struct {
 // allowlist, used both for --allowedTools and the enforced-mode PreToolUse
 // hook, so an additional bridge tool is never silently unusable in one path
 // while working in the other.
-func claudeBridgeAllowedToolIdentifiers(additional []string) []string {
+// admitsBridgeTool applies the owning profile's tool policy to one core bridge
+// tool, using the same rule BuildBridgeMCPConfig enforces: only the hardcoded
+// "custom" core tools are subject to it. Virtual tools (get_api_spec) are the
+// discovery door and must always survive, and withAdditionalBridgeTools is an
+// explicit per-agent opt-in that already made its own decision.
+//
+// This exists so the MCP configuration, Claude's --allowedTools, the
+// PreToolUse hook, and the routing prompt are all derived from ONE filtered
+// surface. When they were derived independently, a profile could remove a tool
+// from the catalog while the prompt still told the model to call it and the
+// allowlist still permitted it.
+func (a *Agent) admitsBridgeTool(name, toolType string) bool {
+	if toolType != "custom" || a == nil || a.bridgeToolAdmit == nil {
+		return true
+	}
+	return a.bridgeToolAdmit(name)
+}
+
+// admitsCoreBridgeTool answers for a core tool by name, looking up its type in
+// bridgeTools. Unknown names are treated as admitted: they are not part of the
+// policed core set.
+func (a *Agent) admitsCoreBridgeTool(name string) bool {
+	for _, tool := range bridgeTools {
+		if tool.name == name {
+			return a.admitsBridgeTool(tool.name, tool.toolType)
+		}
+	}
+	return true
+}
+
+func claudeBridgeAllowedToolIdentifiers(additional []string, admits func(name, toolType string) bool) []string {
 	seen := make(map[string]bool, len(bridgeTools)+len(additional))
 	names := make([]string, 0, len(bridgeTools)+len(additional))
 	for _, want := range bridgeTools {
 		if seen[want.name] {
+			continue
+		}
+		// Never advertise a tool the owning profile removed from the catalog:
+		// Claude would be permitted to call something the bridge will not
+		// register, which surfaces as "tool not registered for session".
+		if admits != nil && !admits(want.name, want.toolType) {
 			continue
 		}
 		seen[want.name] = true
@@ -112,6 +148,17 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 		toolType string
 	}, 0, len(bridgeTools)+len(a.additionalBridgeTools))
 	for _, want := range bridgeTools {
+		// Only the hardcoded core list is subject to the owning profile's tool
+		// policy. Virtual tools (get_api_spec) are the discovery door and must
+		// always survive, and withAdditionalBridgeTools below is an explicit
+		// per-agent opt-in that has already made its own decision — neither ever
+		// passed through the registration predicate, so asking it about them
+		// would return false and strip discovery and skills.
+		if !a.admitsBridgeTool(want.name, want.toolType) {
+			logger.Debug("Core bridge tool excluded by profile tool policy",
+				loggerv2.String("tool", want.name))
+			continue
+		}
 		seen[want.name] = true
 		wanted = append(wanted, want)
 	}

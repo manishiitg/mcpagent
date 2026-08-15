@@ -1,8 +1,10 @@
 package mcpagent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,7 +73,7 @@ func bridgeTestAgent() *Agent {
 }
 
 func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
-	prompt := bridgeRoutingExplicitInstructions()
+	prompt := bridgeRoutingExplicitInstructions(nil)
 	for _, want := range []string{
 		"mcp({ search:",
 		"Omit server_name normally",
@@ -97,6 +99,79 @@ func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
 	} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("bridge routing prompt should not advertise sub-agent tools as native bridge tools: found %q\n%s", unwanted, prompt)
+		}
+	}
+}
+
+// A profile that removes a core bridge tool must not have it advertised anyway.
+// defaultBridgeToolDef synthesizes a definition for an unregistered core tool,
+// so before bridgeToolAdmit the CLI was handed execute_shell_command — whose
+// description tells it to use it for HTTP calls — and every call then failed
+// with "not registered for session".
+func TestBuildBridgeMCPConfigOmitsCoreToolsTheProfileExcluded(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token-123")
+
+	names := func(t *testing.T, configJSON string) []string {
+		t.Helper()
+		var config map[string]interface{}
+		if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		servers := config["mcpServers"].(map[string]interface{})
+		bridge := servers["api-bridge"].(map[string]interface{})
+		env := bridge["env"].(map[string]interface{})
+		var defs []struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal([]byte(env["MCP_TOOLS"].(string)), &defs); err != nil {
+			t.Fatalf("invalid MCP_TOOLS: %v", err)
+		}
+		out := make([]string, 0, len(defs))
+		for _, d := range defs {
+			out = append(out, d.Name)
+		}
+		return out
+	}
+
+	// Baseline: no predicate means no change for every existing caller.
+	base := bridgeTestAgent()
+	baseJSON, err := base.buildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("buildBridgeMCPConfig() error: %v", err)
+	}
+	baseNames := names(t, baseJSON)
+	if !slices.Contains(baseNames, "execute_shell_command") {
+		t.Fatalf("nil predicate must advertise the core tools unchanged, got %v", baseNames)
+	}
+
+	// A hybrid profile whose allowlist keeps agent_browser but not the shell or
+	// the diff tool -- the CLI supplies its own for those.
+	allowed := map[string]bool{"agent_browser": true}
+	gated := bridgeTestAgent()
+	gated.bridgeToolAdmit = func(name string) bool { return allowed[name] }
+	gated.additionalBridgeTools = []string{"product_extra_tool"}
+	if err := gated.registerDirectTool("product_extra_tool", "An explicitly added bridge tool.", map[string]interface{}{"type": "object"},
+		func(context.Context, map[string]interface{}) (string, error) { return "", nil }, 0, "skills"); err != nil {
+		t.Fatalf("register product_extra_tool: %v", err)
+	}
+	gatedJSON, err := gated.buildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("buildBridgeMCPConfig() error: %v", err)
+	}
+	gatedNames := names(t, gatedJSON)
+
+	for _, excluded := range []string{"execute_shell_command", "diff_patch_workspace_file"} {
+		if slices.Contains(gatedNames, excluded) {
+			t.Fatalf("excluded core tool %q was still advertised: %v", excluded, gatedNames)
+		}
+	}
+	// The discovery door and an explicitly-added tool never went through the
+	// registration predicate, so the filter must not consult it for them.
+	for _, kept := range []string{"get_api_spec", "product_extra_tool"} {
+		if !slices.Contains(gatedNames, kept) {
+			t.Fatalf("%q must survive the profile filter, got %v", kept, gatedNames)
 		}
 	}
 }
@@ -468,33 +543,37 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 	}
 }
 
-func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
+func TestCodingCLIStreamingKeepsTranscriptAndTerminalSnapshots(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token")
 
 	tests := []struct {
-		name        string
-		metadataKey string
-		append      func(*Agent) ([]llmtypes.CallOption, error)
+		name            string
+		metadataKey     string
+		tmuxMetadataKey string
+		append          func(*Agent) ([]llmtypes.CallOption, error)
 	}{
 		{
-			name:        "claude",
-			metadataKey: claudecode.MetadataKeyStreamTranscript,
+			name:            "claude",
+			metadataKey:     claudecode.MetadataKeyStreamTranscript,
+			tmuxMetadataKey: claudecode.MetadataKeyStreamTmuxScreen,
 			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
 				return agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
 			},
 		},
 		{
-			name:        "codex",
-			metadataKey: codexcli.MetadataKeyStreamTranscript,
+			name:            "codex",
+			metadataKey:     codexcli.MetadataKeyStreamTranscript,
+			tmuxMetadataKey: codexcli.MetadataKeyStreamTmuxScreen,
 			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
 				return agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
 			},
 		},
 		{
-			name:        "cursor",
-			metadataKey: cursorcli.MetadataKeyStreamTranscript,
+			name:            "cursor",
+			metadataKey:     cursorcli.MetadataKeyStreamTranscript,
+			tmuxMetadataKey: cursorcli.MetadataKeyStreamTmuxScreen,
 			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
 				return agent.appendCursorCLIIntegrationOptions(nil)
 			},
@@ -519,7 +598,10 @@ func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
 				t.Fatalf("append tmux options: %v", err)
 			}
 			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != true {
-				t.Fatalf("tmux transcript metadata = %#v, want true", got)
+				t.Fatalf("streaming transcript metadata = %#v, want true", got)
+			}
+			if got := metadataFromCallOptions(opts)[tt.tmuxMetadataKey]; got != true {
+				t.Fatalf("streaming tmux-screen metadata = %#v, want true", got)
 			}
 
 			callbackAgent := bridgeTestAgent()
@@ -530,6 +612,9 @@ func TestCodingCLITranscriptStreamingRequiresStreamingTmux(t *testing.T) {
 			}
 			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != true {
 				t.Fatalf("streaming callback transcript metadata = %#v, want true", got)
+			}
+			if got := metadataFromCallOptions(opts)[tt.tmuxMetadataKey]; got != true {
+				t.Fatalf("streaming callback tmux-screen metadata = %#v, want true", got)
 			}
 
 			structuredAgent := bridgeTestAgent()
@@ -570,6 +655,117 @@ func TestAppendCodexCLIIntegrationOptionsSandboxDefault(t *testing.T) {
 	if _, ok := got[codexcli.MetadataKeyConfigOverrides]; ok {
 		t.Fatalf("default sandbox must not set network-access config overrides unless CodexNetworkAccess is also set: %#v", got[codexcli.MetadataKeyConfigOverrides])
 	}
+}
+
+func TestHybridCodingProviderAutoOptions(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	t.Run("Claude Code", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		opts, err := agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if got[claudecode.MetadataKeyTools] != "default" {
+			t.Fatalf("tools = %#v, want default", got[claudecode.MetadataKeyTools])
+		}
+		if got["claude_code_permission_mode"] != "auto" {
+			t.Fatalf("permission mode = %#v, want auto", got["claude_code_permission_mode"])
+		}
+		if _, dangerous := got[claudecode.MetadataKeyDangerouslySkipPermissions]; dangerous {
+			t.Fatalf("provider_auto must not skip Claude permissions: %#v", got)
+		}
+	})
+
+	t.Run("Cursor", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		opts, err := agent.appendCursorCLIIntegrationOptions(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if got["cursor_auto_review"] != true {
+			t.Fatalf("auto review = %#v, want true", got["cursor_auto_review"])
+		}
+		if got[cursorcli.MetadataKeyDenyBuiltinTools] != nil || got[cursorcli.MetadataKeyForce] != nil {
+			t.Fatalf("hybrid provider_auto must not deny builtins or force Cursor: %#v", got)
+		}
+	})
+
+	t.Run("Codex", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if _, disabled := got[codexcli.MetadataKeyDisableShellTool]; disabled {
+			t.Fatalf("hybrid must retain Codex native shell: %#v", got)
+		}
+		if got[codexcli.MetadataKeyApprovalPolicy] != "untrusted" {
+			t.Fatalf("approval policy = %#v, want untrusted", got[codexcli.MetadataKeyApprovalPolicy])
+		}
+		overrides, _ := got[codexcli.MetadataKeyConfigOverrides].([]string)
+		if !strings.Contains(strings.Join(overrides, "\n"), `approvals_reviewer="auto_review"`) {
+			t.Fatalf("config overrides = %#v, want auto reviewer", overrides)
+		}
+	})
+}
+
+func TestHybridCodingApproveAllOptions(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	t.Run("Claude Code", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
+		opts, err := agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if got[claudecode.MetadataKeyDangerouslySkipPermissions] != true {
+			t.Fatalf("approve_all must bypass Claude approvals: %#v", got)
+		}
+	})
+
+	t.Run("Cursor", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
+		opts, err := agent.appendCursorCLIIntegrationOptions(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := metadataFromCallOptions(opts)[cursorcli.MetadataKeyForce]; got != true {
+			t.Fatalf("approve_all Cursor force = %#v, want true", got)
+		}
+	})
+
+	t.Run("Codex", func(t *testing.T) {
+		agent := bridgeTestAgent()
+		agent.codingAgentToolsMode = codingAgentToolsHybrid
+		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
+		opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := metadataFromCallOptions(opts)
+		if got[codexcli.MetadataKeyApprovalPolicy] != "never" {
+			t.Fatalf("approve_all Codex policy = %#v, want never", got)
+		}
+		if _, reviewer := got[codexcli.MetadataKeyConfigOverrides]; reviewer {
+			t.Fatalf("approve_all must not configure Codex auto-review: %#v", got)
+		}
+	})
 }
 
 // TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess proves a caller that

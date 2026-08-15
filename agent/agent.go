@@ -58,6 +58,23 @@ func withLogger(logger loggerv2.Logger) agentOption {
 	}
 }
 
+func withCodingAgentSecretEnvironment(environment map[string]string) agentOption {
+	copy := make(map[string]string, len(environment))
+	for key, value := range environment {
+		// llmtypes owns this policy. This layer used to keep its own list, and
+		// admitted only SECRET_* while the application was also passing the MCP
+		// routes -- so the routes were dropped here and the provider below
+		// faithfully passed on an already-filtered environment. Nothing errored;
+		// the child just never saw MCP_CUSTOM. Do not reintroduce a local list.
+		if llmtypes.IsScopedCodingAgentEnvironmentKey(key) && value != "" {
+			copy[key] = value
+		}
+	}
+	return func(a *Agent) {
+		a.codingAgentSecretEnvironment = copy
+	}
+}
+
 // withTracer adds an observability tracer to the agent.
 //
 // The provided tracer will be wrapped in a StreamingTracer to support real-time
@@ -235,6 +252,31 @@ func withPiPersistentInteractiveSession(enabled bool) agentOption {
 func withCursorBridgeToolsMode(enabled bool) agentOption {
 	return func(a *Agent) {
 		a.cursorBridgeToolsMode = enabled
+	}
+}
+
+// withCodingAgentToolsMode chooses the relationship between a coding CLI's
+// native tools and the MCP bridge. Empty preserves the safe mcp_only default.
+func withCodingAgentToolsMode(mode string) agentOption {
+	return func(a *Agent) {
+		a.codingAgentToolsMode = strings.ToLower(strings.TrimSpace(mode))
+	}
+}
+
+// withBridgeToolAdmit restricts which CORE bridge tools this agent advertises.
+// Nil (the default) advertises all of them, unchanged.
+func withBridgeToolAdmit(admit func(name string) bool) agentOption {
+	return func(a *Agent) {
+		a.bridgeToolAdmit = admit
+	}
+}
+
+// withCodingAgentApprovalsMode chooses how a hybrid/native coding agent
+// handles its native approval prompts. Provider-specific launchers translate
+// this into their real CLI flags.
+func withCodingAgentApprovalsMode(mode string) agentOption {
+	return func(a *Agent) {
+		a.codingAgentApprovalsMode = strings.ToLower(strings.TrimSpace(mode))
 	}
 }
 
@@ -947,6 +989,27 @@ type Agent struct {
 	// chat). Cursor runs in default agent mode regardless of this flag.
 	cursorBridgeToolsMode bool
 
+	// codingAgentToolsMode is mcp_only unless an owning product explicitly opts
+	// into hybrid/native_only. This default keeps all existing AgentWorks and
+	// workflow callers bridge-contained.
+	codingAgentToolsMode string
+	// bridgeToolAdmit decides whether one of the hardcoded CORE bridge tools
+	// (bridgeTools) may be advertised to the coding CLI. Nil admits everything,
+	// which is the behavior every caller had before this existed.
+	//
+	// It guards advertisement, not execution. defaultBridgeToolDef synthesizes a
+	// definition for a core tool the agent never registered, so a profile that
+	// removed one still had it advertised — the CLI then called a tool the
+	// session refuses, and reported the product as broken rather than using its
+	// own native equivalent.
+	bridgeToolAdmit func(name string) bool
+	// codingAgentSecretEnvironment is copied into each provider call option and
+	// is never included in instructions, history, or observability payloads.
+	codingAgentSecretEnvironment map[string]string
+	// codingAgentApprovalsMode is interpreted only when native tools are
+	// enabled. Empty maps to provider_auto.
+	codingAgentApprovalsMode string
+
 	// CodingAgentTransport is THE explicit transport choice for coding-agent
 	// CLI providers: llm.CodingAgentTransportTmux or
 	// llm.CodingAgentTransportStructured. Empty means "use the provider
@@ -1118,6 +1181,9 @@ type Agent struct {
 	// value type lives in llmtypes so adapters can reference it without
 	// importing mcpagent.
 	attachedSkills []*llmtypes.Skill
+	// Fallback for read_skill when a requested skill is installed in the host's
+	// workspace but not attached. Nil leaves read_skill attached-only.
+	installedSkillResolver InstalledSkillResolver
 	// read_skill is intrinsic to attached skill identity. These flags reserve
 	// its model-facing name from caller tools while allowing the internal
 	// construction path to register it through the normal direct-tool runtime.
@@ -1195,18 +1261,19 @@ type Agent struct {
 	apiKeys *AgentAPIKeys
 
 	// Cumulative token tracking for entire conversation
-	cumulativePromptTokens     int          // Cumulative prompt/input tokens
-	cumulativeCompletionTokens int          // Cumulative completion/output tokens
-	cumulativeTotalTokens      int          // Cumulative total tokens
-	cumulativeCacheTokens      int          // Cumulative cache tokens (sum of all cache-related tokens)
-	cumulativeCacheReadTokens  int          // Cumulative tokens served from prompt cache
-	cumulativeCacheWriteTokens int          // Cumulative tokens written to prompt cache
-	lastEffectiveModelID       string       // Immutable provider-resolved model used for the latest priced turn
-	cumulativeReasoningTokens  int          // Cumulative reasoning tokens (for models like o3)
-	cumulativeCacheDiscount    float64      // Sum of cache discounts (for averaging)
-	llmCallCount               int          // Number of LLM calls made
-	cacheEnabledCallCount      int          // Number of calls with cache tokens > 0
-	tokenTrackingMutex         sync.RWMutex // Mutex for thread-safe token accumulation
+	cumulativePromptTokens        int          // Cumulative prompt/input tokens
+	cumulativeCompletionTokens    int          // Cumulative completion/output tokens
+	cumulativeTotalTokens         int          // Cumulative total tokens
+	cumulativeCacheTokens         int          // Cumulative cache tokens (sum of all cache-related tokens)
+	cumulativeCacheReadTokens     int          // Cumulative tokens served from prompt cache
+	cumulativeCacheWriteTokens    int          // Cumulative tokens written to prompt cache
+	lastEffectiveModelID          string       // Immutable provider-resolved model used for the latest priced turn
+	cumulativeReasoningTokens     int          // Cumulative reasoning tokens (for models like o3)
+	cumulativeCacheDiscount       float64      // Sum of cache discounts (for averaging)
+	cumulativeTokenUsageEstimated bool         // True when any accumulated turn lacks provider tokenizer telemetry
+	llmCallCount                  int          // Number of LLM calls made
+	cacheEnabledCallCount         int          // Number of calls with cache tokens > 0
+	tokenTrackingMutex            sync.RWMutex // Mutex for thread-safe token accumulation
 
 	// Cumulative pricing tracking for entire conversation
 	cumulativeInputCost     float64 // Cumulative cost for input tokens (in USD)
@@ -1912,7 +1979,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.appendBridgeRoutingInstructions("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		// Code execution mode is pre-set before virtual tool filtering (see pre-detection
@@ -1948,7 +2015,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.useCodeExecutionMode {
@@ -1997,7 +2064,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// The system prompt is the soft lever; --mode ask is the hard lever we
 	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.useCodeExecutionMode {
@@ -2030,7 +2097,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// pi-mcp-adapter mounted and built-in tools disabled by the adapter when the
 	// bridge config is available.
 	if ag.provider == llmproviders.ProviderPiCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: You are running inside Pi CLI with built-in tools disabled. Use the MCP bridge through Pi's MCP gateway: call mcp({ search: \"tool words\" }) to discover tools, mcp({ describe: \"api_bridge_execute_shell_command\" }) for schemas when needed, and mcp({ tool: \"api_bridge_execute_shell_command\", args: \"{...}\" }) or the direct api_bridge_* tools when available. If a built-in tool is unavailable, use the declared MCP bridge tools instead of reporting that no MCP server exists.")
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [PI_CLI] Provider detected - using tmux marker transport with MCP bridge")
 
 		if !ag.useCodeExecutionMode {
@@ -2177,6 +2244,14 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	a.cumulativeCacheWriteTokens += cacheWriteTokens
 	a.cumulativeReasoningTokens += reasoningTokens
 	a.cumulativeCacheDiscount += cacheDiscount
+	// CLI adapters that cannot expose tokenizer telemetry publish this explicit
+	// marker. The cumulative summary must retain it; otherwise a later
+	// conversation_total event makes an estimated per-turn value appear exact.
+	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		if estimated, _ := resp.Choices[0].GenerationInfo.Additional["token_usage_estimated"].(bool); estimated {
+			a.cumulativeTokenUsageEstimated = true
+		}
+	}
 	a.llmCallCount++
 
 	if totalCacheTokens > 0 {
@@ -2462,6 +2537,7 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	generationInfo["cumulative_total_tokens"] = a.cumulativeTotalTokens
 	generationInfo["cumulative_cache_tokens"] = a.cumulativeCacheTokens
 	generationInfo["cumulative_reasoning_tokens"] = a.cumulativeReasoningTokens
+	generationInfo["token_usage_estimated"] = a.cumulativeTokenUsageEstimated
 	generationInfo["llm_call_count"] = a.llmCallCount
 	generationInfo["cache_enabled_call_count"] = a.cacheEnabledCallCount
 	// Also expose cache reads under the raw Anthropic-style key the
@@ -3201,7 +3277,18 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 		}
 		return
 	}
-	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions())
+	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions(a.admitsCoreBridgeTool))
+}
+
+// codingAgentProviderRoutingPreamble describes the tool mode that is actually
+// configured for this agent without naming individual bridge tools. Exact tool
+// names belong to bridgeRoutingExplicitInstructions, where they are filtered
+// through the same admission predicate used to build the provider manifest.
+func (a *Agent) codingAgentProviderRoutingPreamble() string {
+	if a.nativeCodingToolsEnabled() {
+		return "IMPORTANT: Provider-native tools are enabled for this session. You may use them directly. Bridge tools are also available when explicitly declared; call only exact names present in this session and never invent alternate prefixes or namespaces. If an action fails, choose another genuinely available route or explain the specific blocker."
+	}
+	return "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Use only bridge tools explicitly declared in this session, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
 }
 
 // AddInstructions records supplementary instructions. They are composed with

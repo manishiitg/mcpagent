@@ -111,6 +111,21 @@ func DeliverAgentInput(ctx context.Context, agent *Agent, req UserMessageDeliver
 	return agent.deliverUserMessage(ctx, req)
 }
 
+// AgentSupportsSteering reports whether agent's transport accepts live input
+// into a running turn — see Agent.supportsSteering. A structured/JSON
+// coding-agent run (Cursor's one-shot `cursor-agent --print`, etc.) has no
+// live pane to steer input into between turns, so it always reports false
+// here regardless of what the provider's contract otherwise allows on tmux.
+// Callers deciding whether to attempt a live steer (as opposed to queuing for
+// the next turn boundary) should check this first, the same way
+// Agent.deliverUserMessage itself does.
+func AgentSupportsSteering(agent *Agent) bool {
+	if agent == nil {
+		return false
+	}
+	return agent.supportsSteering()
+}
+
 func DeliverAgentControlKey(ctx context.Context, agent *Agent, req ControlKeyDeliveryRequest) (ControlKeyDeliveryResult, error) {
 	return agent.deliverControlKey(ctx, req)
 }

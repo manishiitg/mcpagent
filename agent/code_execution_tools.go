@@ -104,7 +104,7 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	}
 
 	if len(unknown) > 0 || len(notAllowed) > 0 {
-		return "", a.unavailableToolsError(registry, serverName, unknown, notAllowed)
+		return "", a.unavailableToolsError(ctx, registry, serverName, unknown, notAllowed)
 	}
 
 	a.openAPISpecCacheMu.RLock()
@@ -145,7 +145,7 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 //
 // requestedServer is the model-supplied server_name. It never affects routing —
 // only whether this message can name the failing server outright.
-func (a *Agent) unavailableToolsError(registry *canonicalToolRegistry, requestedServer string, unknown, notAllowed []string) error {
+func (a *Agent) unavailableToolsError(ctx context.Context, registry *canonicalToolRegistry, requestedServer string, unknown, notAllowed []string) error {
 	if len(unknown) == 0 {
 		// Permission denials are already attributed correctly; leave them byte-identical.
 		return fmt.Errorf("tools_unavailable: unknown=%v not_allowed=%v", unknown, notAllowed)
@@ -156,7 +156,17 @@ func (a *Agent) unavailableToolsError(registry *canonicalToolRegistry, requested
 
 	var b strings.Builder
 	if len(blamed) > 0 {
-		fmt.Fprintf(&b, "tools_unavailable: server_unavailable=%v requested=%v not_allowed=%v: ", blamed, unknown, notAllowed)
+		// Same omission the healthy branch below applies: an empty not_allowed
+		// means nothing was permission-denied, and printing "not_allowed=[]"
+		// invites the reader to wonder which tools were withheld when none
+		// were. Leaving it here made the cleanup true in one path and not the
+		// other, which is worse than not doing it at all -- a reader can no
+		// longer tell whether its absence is meaningful.
+		if len(notAllowed) > 0 {
+			fmt.Fprintf(&b, "tools_unavailable: server_unavailable=%v requested=%v not_allowed=%v: ", blamed, unknown, notAllowed)
+		} else {
+			fmt.Fprintf(&b, "tools_unavailable: server_unavailable=%v requested=%v: ", blamed, unknown)
+		}
 		fmt.Fprintf(&b, "MCP server(s) %v are configured for this agent but currently have zero registered tools, so %s. ",
 			blamed, a.missingServerCause(blamed))
 		b.WriteString("The requested tool names are most likely correct — retrying with different or guessed tool names will NOT help. ")
@@ -164,17 +174,93 @@ func (a *Agent) unavailableToolsError(registry *canonicalToolRegistry, requested
 		return errors.New(b.String())
 	}
 
-	fmt.Fprintf(&b, "tools_unavailable: unknown=%v not_allowed=%v: ", unknown, notAllowed)
+	// not_allowed= is omitted when empty: an empty list means nothing was
+	// permission-denied, and printing it invited the reader to wonder which
+	// tools were withheld when none were.
+	if len(notAllowed) > 0 {
+		fmt.Fprintf(&b, "tools_unavailable: unknown=%v not_allowed=%v: ", unknown, notAllowed)
+	} else {
+		fmt.Fprintf(&b, "tools_unavailable: unknown=%v: ", unknown)
+	}
 	b.WriteString("these names are not registered by any currently connected server. ")
-	b.WriteString("Use the exact tool names from the tool index in your system prompt — do not guess variants. ")
+
 	if len(missing) > 0 {
+		// A configured server with zero tools may own the requested name, so the
+		// name itself is not necessarily wrong. Deliberately does NOT list the
+		// registered tools here: pairing "these are the tools you have" with an
+		// outage invites substituting a different tool for the one that is
+		// merely unreachable, which is the loop the outage wording exists to
+		// prevent.
 		fmt.Fprintf(&b, "Note: MCP server(s) %v are configured but currently have zero registered tools (failed to start or connect); "+
 			"if a requested tool belongs to one of them, no tool name will work.", missing)
-	} else {
-		b.WriteString("An MCP server that fails to start produces this same symptom, " +
-			"so a tool you expected to exist may be missing for reasons unrelated to its name.")
+		return errors.New(b.String())
 	}
+
+	// Every configured server is healthy, so the name really is wrong. Name the
+	// alternatives rather than pointing at the system prompt: telling a model to
+	// "use the exact names from your tool index" costs a turn re-reading what it
+	// already has, and a near-miss (diff_patch for diff_patch_workspace_file) is
+	// one substring away from being resolved right here. When the capability is
+	// genuinely absent, seeing the real surface is what stops the guessing.
+	available := a.registeredToolNamesForContext(ctx, registry)
+	if suggestions := nearestToolNames(unknown, available); len(suggestions) > 0 {
+		fmt.Fprintf(&b, "Closest registered name(s): %v. ", suggestions)
+	}
+	if len(available) > 0 {
+		fmt.Fprintf(&b, "Registered tools for this session: %v. ", available)
+	} else {
+		b.WriteString("This session has no registered tools at all. ")
+	}
+	b.WriteString("Call one of these exactly, or do the work with your own native tools if the capability you wanted is not here. ")
+	b.WriteString("An MCP server that fails to start produces this same symptom, " +
+		"so a tool you expected to exist may be missing for reasons unrelated to its name.")
 	return errors.New(b.String())
+}
+
+// registeredToolNamesForContext lists every registered name the current turn
+// can actually call. Error recovery must use the same authorization view as
+// execution; otherwise get_api_spec can suggest a tool that the turn policy
+// will reject on the very next call.
+func (a *Agent) registeredToolNamesForContext(ctx context.Context, registry *canonicalToolRegistry) []string {
+	if registry == nil {
+		return nil
+	}
+	tools := registry.snapshot() // already sorted by name
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if a.isToolAllowedForContext(ctx, tool.Name) {
+			names = append(names, tool.Name)
+		}
+	}
+	return names
+}
+
+// nearestToolNames returns registered names that plausibly match a requested
+// one, so a truncated or mis-suffixed guess is corrected in this reply instead
+// of costing another turn. Substring containment in either direction covers the
+// realistic failure — a shortened name (diff_patch) or an over-qualified one
+// (mcp__api-bridge__execute_shell_command for execute_shell_command).
+func nearestToolNames(unknown, available []string) []string {
+	var matches []string
+	seen := map[string]struct{}{}
+	for _, want := range unknown {
+		want = strings.TrimSpace(strings.ToLower(want))
+		if len(want) < 3 {
+			continue
+		}
+		for _, name := range available {
+			lower := strings.ToLower(name)
+			if !strings.Contains(lower, want) && !strings.Contains(want, lower) {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			matches = append(matches, name)
+		}
+	}
+	return matches
 }
 
 // blameMissingServer decides whether a server outage can be named as the cause

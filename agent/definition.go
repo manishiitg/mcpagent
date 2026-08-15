@@ -107,17 +107,37 @@ type ContextRuntimeConfig struct {
 }
 
 type CodingRuntimeConfig struct {
-	Transport                         llm.CodingAgentTransport
-	ClaudeCodeTransport               string
-	PersistentClaudeCode              bool
-	PersistentCodex                   bool
-	PersistentCursor                  bool
-	PersistentPi                      bool
-	CursorBridgeTools                 bool
+	Transport            llm.CodingAgentTransport
+	ClaudeCodeTransport  string
+	PersistentClaudeCode bool
+	PersistentCodex      bool
+	PersistentCursor     bool
+	PersistentPi         bool
+	CursorBridgeTools    bool
+	// AgentToolsMode selects whether coding-provider native tools are available:
+	// mcp_only (default) or hybrid.
+	AgentToolsMode string
+	// ApprovalsMode controls the provider-native approval posture when native
+	// tools are enabled: provider_auto (default) or approve_all.
+	ApprovalsMode string
+	// BridgeToolAdmit filters the hardcoded core bridge tools this session
+	// advertises (execute_shell_command, diff_patch_workspace_file,
+	// agent_browser). Nil advertises all of them. Pass the same predicate that
+	// decides tool registration so the catalog cannot offer a tool the session
+	// will refuse.
+	BridgeToolAdmit                   func(name string) bool
 	CodexSandbox                      string
 	CodexNetworkAccess                bool
 	CLISecurityPolicy                 *llmtypes.CLISecurityPolicy
 	BridgeRoutingInstructionsOverride *string
+	// SecretEnvironment is injected only into the native coding-agent child
+	// process for the current turn. Admission is decided by
+	// llmtypes.IsScopedCodingAgentEnvironmentKey, which is the single owner of
+	// that policy: SECRET_* values, VAR_* workflow variables, and — when an
+	// application explicitly enables native API transport — its scoped MCP API
+	// routes. This layer must not filter by its own list; doing so is what
+	// dropped the MCP routes before the child ever saw them.
+	SecretEnvironment map[string]string
 }
 
 type MCPRuntimeConfig struct {
@@ -336,6 +356,15 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	if coding.CursorBridgeTools {
 		options = append(options, withCursorBridgeToolsMode(true))
 	}
+	if coding.AgentToolsMode != "" {
+		options = append(options, withCodingAgentToolsMode(coding.AgentToolsMode))
+	}
+	if coding.ApprovalsMode != "" {
+		options = append(options, withCodingAgentApprovalsMode(coding.ApprovalsMode))
+	}
+	if coding.BridgeToolAdmit != nil {
+		options = append(options, withBridgeToolAdmit(coding.BridgeToolAdmit))
+	}
 	if coding.CodexSandbox != "" {
 		options = append(options, withCodexSandbox(coding.CodexSandbox))
 	}
@@ -347,6 +376,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if coding.BridgeRoutingInstructionsOverride != nil {
 		options = append(options, withBridgeRoutingInstructions(*coding.BridgeRoutingInstructionsOverride))
+	}
+	if len(coding.SecretEnvironment) > 0 {
+		options = append(options, withCodingAgentSecretEnvironment(coding.SecretEnvironment))
 	}
 
 	mcpConfig := runtime.MCP

@@ -31,6 +31,26 @@ var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentInteg
 	},
 }
 
+const (
+	codingAgentToolsMCPOnly  = "mcp_only"
+	codingAgentToolsHybrid   = "hybrid"
+	codingAgentApprovalsAuto = "provider_auto"
+	codingAgentApprovalsAll  = "approve_all"
+)
+
+func (a *Agent) nativeCodingToolsEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(a.codingAgentToolsMode)) {
+	case codingAgentToolsHybrid:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *Agent) approveAllCodingTools() bool {
+	return strings.EqualFold(strings.TrimSpace(a.codingAgentApprovalsMode), codingAgentApprovalsAll)
+}
+
 func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 	claudeHTTPHooksEnabled := claudeHTTPRoutingHooksEnabled()
 
@@ -42,15 +62,26 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// caller had registered.
 	allowedTools := "mcp__api-bridge__*,WebSearch"
 	if claudeHTTPHooksEnabled {
-		allowedTools = strings.Join(claudeBridgeAllowedToolIdentifiers(a.additionalBridgeTools), ",") + ",WebSearch"
+		allowedTools = strings.Join(claudeBridgeAllowedToolIdentifiers(a.additionalBridgeTools, a.admitsBridgeTool), ",") + ",WebSearch"
 	}
 	opts = append(opts, llm.WithAllowedTools(allowedTools))
 
-	// Force Claude to use our custom tools by disabling its own internal ones.
-	opts = append(opts, llm.WithClaudeCodeTools("WebSearch"))
+	if a.nativeCodingToolsEnabled() {
+		// "default" re-enables Claude Code's normal filesystem/shell/browser
+		// tools. The MCP bridge remains mounted for product tools.
+		opts = append(opts, llm.WithClaudeCodeTools("default"))
+		if a.approveAllCodingTools() {
+			opts = append(opts, llmproviders.WithDangerouslySkipPermissions())
+		} else {
+			opts = append(opts, llm.WithClaudeCodePermissionMode("auto"))
+		}
+	} else {
+		// Force Claude to use our custom tools by disabling its own internal ones.
+		opts = append(opts, llm.WithClaudeCodeTools("WebSearch"))
+	}
 
 	if claudeHTTPHooksEnabled {
-		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools)
+		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools, a.admitsBridgeTool)
 		if hookErr != nil {
 			a.logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
 		} else {
@@ -89,6 +120,10 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		opts = append(opts, llm.WithClaudeStructuredTransport(true))
 	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithClaudeStreamTranscript(true))
+		// Transcript events power formatted chat, while terminal snapshots power
+		// raw/terminal consumers. They are independent projections of the same
+		// retained session and must remain available together.
+		opts = append(opts, llm.WithClaudeStreamTmuxScreen(true))
 	}
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
@@ -103,13 +138,22 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// registered a StreamingCallback to consume the content.
 	if a.streamingCallback != nil {
 		opts = append(opts, llm.WithClaudeStreamTranscript(true))
+		opts = append(opts, llm.WithClaudeStreamTmuxScreen(true))
 	}
 	return opts, nil
 }
 
 func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
-	opts = append(opts, llm.WithCodexDisableShellTool())
-	opts = append(opts, llm.WithCodexApprovalPolicy("never"))
+	if !a.nativeCodingToolsEnabled() {
+		opts = append(opts, llm.WithCodexDisableShellTool())
+		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
+	} else if a.approveAllCodingTools() {
+		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
+	} else {
+		// Current Codex supports a stable approval reviewer. Keep the standard
+		// workspace sandbox; do not use dangerous bypass, which would remove it.
+		opts = append(opts, llm.WithCodexApprovalPolicy("untrusted"))
+	}
 	// Shell/exec containment: WithCodexDisableShellTool above turns OFF codex's
 	// built-in shell_tool + the other native code-exec features (unified_exec,
 	// tool_search, browser/computer use, …) via codex's first-class `--disable`
@@ -155,8 +199,15 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		sandboxMode = "workspace-write"
 	}
 	opts = append(opts, llm.WithCodexSandbox(sandboxMode))
+	configOverrides := make([]string, 0, 2)
 	if sandboxMode == "workspace-write" && a.codexNetworkAccess {
-		opts = append(opts, llm.WithCodexConfigOverrides([]string{"sandbox_workspace_write.network_access=true"}))
+		configOverrides = append(configOverrides, "sandbox_workspace_write.network_access=true")
+	}
+	if a.nativeCodingToolsEnabled() && !a.approveAllCodingTools() {
+		configOverrides = append(configOverrides, `approvals_reviewer="auto_review"`)
+	}
+	if len(configOverrides) > 0 {
+		opts = append(opts, llm.WithCodexConfigOverrides(configOverrides))
 	}
 	if a.codexSessionID != "" {
 		opts = append(opts, llm.WithCodexResumeSessionID(a.codexSessionID))
@@ -204,11 +255,13 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		opts = append(opts, llm.WithCodexStructuredTransport(true))
 	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithCodexStreamTranscript(true))
+		opts = append(opts, llm.WithCodexStreamTmuxScreen(true))
 	}
 	// See appendClaudeCodeIntegrationOptions' matching comment: content
 	// streaming needs this separate, explicit opt-in beyond EnableStreaming.
 	if a.streamingCallback != nil {
 		opts = append(opts, llm.WithCodexStreamTranscript(true))
+		opts = append(opts, llm.WithCodexStreamTmuxScreen(true))
 	}
 	return opts, nil
 }
