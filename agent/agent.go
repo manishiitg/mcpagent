@@ -3277,7 +3277,7 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 		}
 		return
 	}
-	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions())
+	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions(a.admitsCoreBridgeTool))
 }
 
 // AddInstructions records supplementary instructions. They are composed with

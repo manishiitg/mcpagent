@@ -97,3 +97,53 @@ func TestReadSkillRejectsUnsafePathsBeforeConsultingTheResolver(t *testing.T) {
 		t.Fatal("the resolver must never be asked to interpret an unsafe path")
 	}
 }
+
+// The reviewer's point: storing the resolver is not the contract -- being able
+// to CALL read_skill is. Registration previously happened only via
+// ensureSkillReaderTool when an attached skill was added, so a host that
+// configured a resolver and attached nothing had a documented capability with
+// no callable tool behind it. Serving installed-but-unattached skills is
+// exactly the case where nothing may be attached.
+func TestInstalledSkillResolverRegistersTheCallableReadSkillTool(t *testing.T) {
+	a := &Agent{}
+	if _, exists := a.lookupDirectTool(readSkillToolName); exists {
+		t.Fatal("read_skill should not exist before anything configures it")
+	}
+
+	a.SetInstalledSkillResolver(func(name, relPath string) (InstalledSkillFile, error) {
+		return InstalledSkillFile{Content: "body", Description: "d", AvailableFiles: []string{"SKILL.md"}}, nil
+	})
+
+	// No skill was ever attached -- this is the path that used to leave the
+	// resolver unreachable.
+	if len(a.attachedSkills) != 0 {
+		t.Fatalf("precondition: no attached skills, got %d", len(a.attachedSkills))
+	}
+	if _, exists := a.lookupDirectTool(readSkillToolName); !exists {
+		t.Fatal("read_skill is not registered, so the configured resolver is unreachable by the model")
+	}
+
+	// And it must be advertised over the bridge, or a coding agent still
+	// cannot call it.
+	advertised := false
+	for _, name := range a.additionalBridgeTools {
+		if name == readSkillToolName {
+			advertised = true
+			break
+		}
+	}
+	if !advertised {
+		t.Fatalf("read_skill missing from additionalBridgeTools: %v", a.additionalBridgeTools)
+	}
+}
+
+// A nil resolver must stay inert: it means "attached skills only", and
+// registering a reader tool for it would change the surface of every existing
+// caller that never set one.
+func TestNilInstalledSkillResolverDoesNotRegisterAnything(t *testing.T) {
+	a := &Agent{}
+	a.SetInstalledSkillResolver(nil)
+	if _, exists := a.lookupDirectTool(readSkillToolName); exists {
+		t.Fatal("a nil resolver must not register read_skill")
+	}
+}

@@ -53,13 +53,13 @@ func claudeHTTPRoutingHooksEnabled() bool {
 // withAdditionalBridgeTools. Previously this was a hardcoded 4-tool literal,
 // which silently denied any additional bridge tool once enforcement was on,
 // even though the caller had explicitly registered it.
-func writeClaudeHTTPRoutingHook(additional []string) (string, error) {
+func writeClaudeHTTPRoutingHook(additional []string, admits func(name, toolType string) bool) (string, error) {
 	hooksDir := filepath.Join(os.TempDir(), "claude-code-hooks")
 	if err := os.MkdirAll(hooksDir, 0750); err != nil {
 		return "", fmt.Errorf("create claude hooks dir: %w", err)
 	}
 
-	allowedIdentifiers := append(claudeBridgeAllowedToolIdentifiers(additional), "WebSearch")
+	allowedIdentifiers := append(claudeBridgeAllowedToolIdentifiers(additional, admits), "WebSearch")
 	allowedJSON, err := json.Marshal(allowedIdentifiers)
 	if err != nil {
 		return "", fmt.Errorf("marshal claude hook allowlist: %w", err)
@@ -1074,16 +1074,25 @@ func (a *Agent) executeLLMForCodingAgentTransportLaunch(ctx context.Context, mod
 
 func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
 	if bridgeConfig, bridgeErr := a.buildBridgeMCPConfig(); bridgeErr == nil {
+		// Honor the same tools-mode contract Claude/Codex/Cursor consult.
+		// Hardcoding bridge-only here made AgentToolsMode provider-dependent:
+		// a caller selecting hybrid got native tools everywhere except Pi,
+		// silently, with no error to explain the difference.
+		bridgeOnly := !a.nativeCodingToolsEnabled()
 		opts = append(opts,
 			llm.WithPiMCPConfig(bridgeConfig),
-			llm.WithPiBridgeOnlyTools(true),
+			llm.WithPiBridgeOnlyTools(bridgeOnly),
 		)
 		if a.bridgeReadyFile != "" {
 			// Hold a cold pi session's first prompt until the bridge reports the
 			// tools connected (tools/list answered) — see BuildBridgeMCPConfig.
 			opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
 		}
-		a.logger.Info("🌉 [PI_CLI] Configured MCP bridge through .pi/mcp.json with built-in tools disabled")
+		if bridgeOnly {
+			a.logger.Info("🌉 [PI_CLI] Configured MCP bridge through .pi/mcp.json with built-in tools disabled")
+		} else {
+			a.logger.Info("🌉 [PI_CLI] Configured MCP bridge through .pi/mcp.json with native built-in tools enabled (hybrid)")
+		}
 	} else {
 		return nil, fmt.Errorf("Pi CLI requires the MCP bridge: %w", bridgeErr)
 	}

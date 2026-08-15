@@ -156,7 +156,17 @@ func (a *Agent) unavailableToolsError(registry *canonicalToolRegistry, requested
 
 	var b strings.Builder
 	if len(blamed) > 0 {
-		fmt.Fprintf(&b, "tools_unavailable: server_unavailable=%v requested=%v not_allowed=%v: ", blamed, unknown, notAllowed)
+		// Same omission the healthy branch below applies: an empty not_allowed
+		// means nothing was permission-denied, and printing "not_allowed=[]"
+		// invites the reader to wonder which tools were withheld when none
+		// were. Leaving it here made the cleanup true in one path and not the
+		// other, which is worse than not doing it at all -- a reader can no
+		// longer tell whether its absence is meaningful.
+		if len(notAllowed) > 0 {
+			fmt.Fprintf(&b, "tools_unavailable: server_unavailable=%v requested=%v not_allowed=%v: ", blamed, unknown, notAllowed)
+		} else {
+			fmt.Fprintf(&b, "tools_unavailable: server_unavailable=%v requested=%v: ", blamed, unknown)
+		}
 		fmt.Fprintf(&b, "MCP server(s) %v are configured for this agent but currently have zero registered tools, so %s. ",
 			blamed, a.missingServerCause(blamed))
 		b.WriteString("The requested tool names are most likely correct — retrying with different or guessed tool names will NOT help. ")

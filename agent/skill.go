@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -138,6 +139,19 @@ func (a *Agent) ensureSkillReaderTool() error {
 // parameter on a 25-argument constructor and every call site.
 func (a *Agent) SetInstalledSkillResolver(resolver InstalledSkillResolver) {
 	a.installedSkillResolver = resolver
+	if resolver == nil {
+		return
+	}
+	// Registering read_skill used to happen ONLY via ensureSkillReaderTool when
+	// an attached skill was added, so a host that configured a resolver but
+	// attached no skills stored a callback the model could never reach -- the
+	// documented capability existed with no callable tool behind it. Serving
+	// installed-but-unattached skills is precisely the case where there may be
+	// nothing attached, so the resolver itself has to guarantee the tool.
+	if err := a.ensureSkillReaderTool(); err != nil && a.logger != nil {
+		a.logger.Warn("Could not register read_skill for the installed-skill resolver",
+			loggerv2.String("error", err.Error()))
+	}
 }
 
 // InstalledSkillFile is one file belonging to a skill that is installed in the

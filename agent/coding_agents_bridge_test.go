@@ -73,7 +73,7 @@ func bridgeTestAgent() *Agent {
 }
 
 func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
-	prompt := bridgeRoutingExplicitInstructions()
+	prompt := bridgeRoutingExplicitInstructions(nil)
 	for _, want := range []string{
 		"mcp({ search:",
 		"Omit server_name normally",

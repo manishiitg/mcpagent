@@ -62,7 +62,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// caller had registered.
 	allowedTools := "mcp__api-bridge__*,WebSearch"
 	if claudeHTTPHooksEnabled {
-		allowedTools = strings.Join(claudeBridgeAllowedToolIdentifiers(a.additionalBridgeTools), ",") + ",WebSearch"
+		allowedTools = strings.Join(claudeBridgeAllowedToolIdentifiers(a.additionalBridgeTools, a.admitsBridgeTool), ",") + ",WebSearch"
 	}
 	opts = append(opts, llm.WithAllowedTools(allowedTools))
 
@@ -81,7 +81,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	}
 
 	if claudeHTTPHooksEnabled {
-		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools)
+		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools, a.admitsBridgeTool)
 		if hookErr != nil {
 			a.logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
 		} else {
