@@ -70,3 +70,36 @@ func TestWithBridgeRoutingInstructionsOptionSetsOverride(t *testing.T) {
 		t.Fatalf("expected override value %q, got %q", "custom text", *a.bridgeRoutingInstructionsOverride)
 	}
 }
+
+func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.T) {
+	hybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid}
+	hybridPrompt := hybrid.codingAgentProviderRoutingPreamble()
+	if !strings.Contains(hybridPrompt, "Provider-native tools are enabled") || strings.Contains(hybridPrompt, "tools are disabled") {
+		t.Fatalf("hybrid routing preamble contradicts hybrid mode: %s", hybridPrompt)
+	}
+
+	mcpOnly := &Agent{codingAgentToolsMode: codingAgentToolsMCPOnly}
+	mcpOnlyPrompt := mcpOnly.codingAgentProviderRoutingPreamble()
+	if !strings.Contains(mcpOnlyPrompt, "Provider-native filesystem, shell, edit, and browser tools are disabled") {
+		t.Fatalf("mcp-only routing preamble does not describe disabled native tools: %s", mcpOnlyPrompt)
+	}
+}
+
+func TestCodingAgentProviderRoutingPromptDoesNotNameExcludedBridgeTools(t *testing.T) {
+	a := &Agent{
+		codingAgentToolsMode: codingAgentToolsHybrid,
+		bridgeToolAdmit: func(name string) bool {
+			return name != "execute_shell_command" && name != "diff_patch_workspace_file"
+		},
+	}
+	a.appendBridgeRoutingInstructions(a.codingAgentProviderRoutingPreamble())
+	got := a.instructions()
+	for _, excluded := range []string{"execute_shell_command", "diff_patch_workspace_file"} {
+		if strings.Contains(got, excluded) {
+			t.Fatalf("routing prompt advertised excluded tool %q: %s", excluded, got)
+		}
+	}
+	if !strings.Contains(got, "get_api_spec") {
+		t.Fatalf("routing prompt lost the always-available discovery tool: %s", got)
+	}
+}

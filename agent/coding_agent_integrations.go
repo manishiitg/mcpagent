@@ -32,10 +32,10 @@ var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentInteg
 }
 
 const (
-	codingAgentToolsMCPOnly    = "mcp_only"
-	codingAgentToolsHybrid     = "hybrid"
-	codingAgentApprovalsAuto   = "provider_auto"
-	codingAgentApprovalsAll    = "approve_all"
+	codingAgentToolsMCPOnly  = "mcp_only"
+	codingAgentToolsHybrid   = "hybrid"
+	codingAgentApprovalsAuto = "provider_auto"
+	codingAgentApprovalsAll  = "approve_all"
 )
 
 func (a *Agent) nativeCodingToolsEnabled() bool {
@@ -120,10 +120,10 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		opts = append(opts, llm.WithClaudeStructuredTransport(true))
 	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithClaudeStreamTranscript(true))
-		// Formatted chat streams are transcript-first. A tmux pane remains alive
-		// for steering and can still be inspected by the explicit terminal
-		// surface, but pane snapshots are not part of the default event stream.
-		opts = append(opts, llm.WithClaudeStreamTmuxScreen(false))
+		// Transcript events power formatted chat, while terminal snapshots power
+		// raw/terminal consumers. They are independent projections of the same
+		// retained session and must remain available together.
+		opts = append(opts, llm.WithClaudeStreamTmuxScreen(true))
 	}
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
@@ -138,11 +138,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// registered a StreamingCallback to consume the content.
 	if a.streamingCallback != nil {
 		opts = append(opts, llm.WithClaudeStreamTranscript(true))
-		// A user-facing callback consumes the provider's structured transcript.
-		// Keep tmux alive for steering and the terminal subsystem, but do not send
-		// pane snapshots through this response stream: they are display chrome,
-		// not assistant content, and can otherwise leak into product chat UIs.
-		opts = append(opts, llm.WithClaudeStreamTmuxScreen(false))
+		opts = append(opts, llm.WithClaudeStreamTmuxScreen(true))
 	}
 	return opts, nil
 }
@@ -259,13 +255,13 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		opts = append(opts, llm.WithCodexStructuredTransport(true))
 	} else if a.enableStreaming {
 		opts = append(opts, llmproviders.WithCodexStreamTranscript(true))
-		opts = append(opts, llm.WithCodexStreamTmuxScreen(false))
+		opts = append(opts, llm.WithCodexStreamTmuxScreen(true))
 	}
 	// See appendClaudeCodeIntegrationOptions' matching comment: content
 	// streaming needs this separate, explicit opt-in beyond EnableStreaming.
 	if a.streamingCallback != nil {
 		opts = append(opts, llm.WithCodexStreamTranscript(true))
-		opts = append(opts, llm.WithCodexStreamTmuxScreen(false))
+		opts = append(opts, llm.WithCodexStreamTmuxScreen(true))
 	}
 	return opts, nil
 }

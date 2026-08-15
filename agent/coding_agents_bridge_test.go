@@ -543,7 +543,7 @@ func TestAppendCodexCLIIntegrationOptionsEnablesMCPBridge(t *testing.T) {
 	}
 }
 
-func TestCodingCLIStreamingDefaultsToStructuredTranscript(t *testing.T) {
+func TestCodingCLIStreamingKeepsTranscriptAndTerminalSnapshots(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token")
@@ -600,8 +600,8 @@ func TestCodingCLIStreamingDefaultsToStructuredTranscript(t *testing.T) {
 			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != true {
 				t.Fatalf("streaming transcript metadata = %#v, want true", got)
 			}
-			if got := metadataFromCallOptions(opts)[tt.tmuxMetadataKey]; got != false {
-				t.Fatalf("streaming tmux-screen metadata = %#v, want false", got)
+			if got := metadataFromCallOptions(opts)[tt.tmuxMetadataKey]; got != true {
+				t.Fatalf("streaming tmux-screen metadata = %#v, want true", got)
 			}
 
 			callbackAgent := bridgeTestAgent()
@@ -613,8 +613,8 @@ func TestCodingCLIStreamingDefaultsToStructuredTranscript(t *testing.T) {
 			if got := metadataFromCallOptions(opts)[tt.metadataKey]; got != true {
 				t.Fatalf("streaming callback transcript metadata = %#v, want true", got)
 			}
-			if got := metadataFromCallOptions(opts)[tt.tmuxMetadataKey]; got != false {
-				t.Fatalf("streaming callback tmux-screen metadata = %#v, want false", got)
+			if got := metadataFromCallOptions(opts)[tt.tmuxMetadataKey]; got != true {
+				t.Fatalf("streaming callback tmux-screen metadata = %#v, want true", got)
 			}
 
 			structuredAgent := bridgeTestAgent()

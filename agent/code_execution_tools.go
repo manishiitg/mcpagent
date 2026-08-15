@@ -104,7 +104,7 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	}
 
 	if len(unknown) > 0 || len(notAllowed) > 0 {
-		return "", a.unavailableToolsError(registry, serverName, unknown, notAllowed)
+		return "", a.unavailableToolsError(ctx, registry, serverName, unknown, notAllowed)
 	}
 
 	a.openAPISpecCacheMu.RLock()
@@ -145,7 +145,7 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 //
 // requestedServer is the model-supplied server_name. It never affects routing —
 // only whether this message can name the failing server outright.
-func (a *Agent) unavailableToolsError(registry *canonicalToolRegistry, requestedServer string, unknown, notAllowed []string) error {
+func (a *Agent) unavailableToolsError(ctx context.Context, registry *canonicalToolRegistry, requestedServer string, unknown, notAllowed []string) error {
 	if len(unknown) == 0 {
 		// Permission denials are already attributed correctly; leave them byte-identical.
 		return fmt.Errorf("tools_unavailable: unknown=%v not_allowed=%v", unknown, notAllowed)
@@ -202,7 +202,7 @@ func (a *Agent) unavailableToolsError(registry *canonicalToolRegistry, requested
 	// already has, and a near-miss (diff_patch for diff_patch_workspace_file) is
 	// one substring away from being resolved right here. When the capability is
 	// genuinely absent, seeing the real surface is what stops the guessing.
-	available := registeredToolNames(registry)
+	available := a.registeredToolNamesForContext(ctx, registry)
 	if suggestions := nearestToolNames(unknown, available); len(suggestions) > 0 {
 		fmt.Fprintf(&b, "Closest registered name(s): %v. ", suggestions)
 	}
@@ -217,15 +217,20 @@ func (a *Agent) unavailableToolsError(registry *canonicalToolRegistry, requested
 	return errors.New(b.String())
 }
 
-// registeredToolNames lists every name the session can actually call.
-func registeredToolNames(registry *canonicalToolRegistry) []string {
+// registeredToolNamesForContext lists every registered name the current turn
+// can actually call. Error recovery must use the same authorization view as
+// execution; otherwise get_api_spec can suggest a tool that the turn policy
+// will reject on the very next call.
+func (a *Agent) registeredToolNamesForContext(ctx context.Context, registry *canonicalToolRegistry) []string {
 	if registry == nil {
 		return nil
 	}
 	tools := registry.snapshot() // already sorted by name
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
-		names = append(names, tool.Name)
+		if a.isToolAllowedForContext(ctx, tool.Name) {
+			names = append(names, tool.Name)
+		}
 	}
 	return names
 }

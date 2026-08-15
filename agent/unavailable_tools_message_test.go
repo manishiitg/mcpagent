@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func regWith(names ...string) *canonicalToolRegistry {
 func TestUnavailableToolsErrorListsRegisteredAndNearest(t *testing.T) {
 	a := &Agent{}
 	registry := regWith("execute_shell_command", "diff_patch_workspace_file", "agent_browser")
-	err := a.unavailableToolsError(registry, "", []string{"diff_patch"}, nil)
+	err := a.unavailableToolsError(context.Background(), registry, "", []string{"diff_patch"}, nil)
 	msg := err.Error()
 
 	if !strings.Contains(msg, "diff_patch_workspace_file") {
@@ -42,8 +43,25 @@ func TestUnavailableToolsErrorListsRegisteredAndNearest(t *testing.T) {
 // A real permission denial still has to be attributed.
 func TestUnavailableToolsErrorKeepsNonEmptyNotAllowed(t *testing.T) {
 	a := &Agent{}
-	err := a.unavailableToolsError(regWith("execute_shell_command"), "", []string{"nope"}, []string{"blocked_tool"})
+	err := a.unavailableToolsError(context.Background(), regWith("execute_shell_command"), "", []string{"nope"}, []string{"blocked_tool"})
 	if !strings.Contains(err.Error(), "not_allowed=[blocked_tool]") {
 		t.Fatalf("real denial dropped: %s", err.Error())
+	}
+}
+
+func TestUnavailableToolsErrorDoesNotSuggestToolsBlockedForTheTurn(t *testing.T) {
+	a := &Agent{}
+	policy, err := normalizeToolPolicy(ToolPolicy{AllowedTools: []string{"allowed_tool"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), turnPolicyContextKey{}, policy)
+	err = a.unavailableToolsError(ctx, regWith("allowed_tool", "blocked_tool"), "", []string{"missing_tool"}, nil)
+	msg := err.Error()
+	if !strings.Contains(msg, "allowed_tool") {
+		t.Fatalf("allowed tool missing from recovery message: %s", msg)
+	}
+	if strings.Contains(msg, "blocked_tool") {
+		t.Fatalf("turn-blocked tool leaked into recovery suggestions: %s", msg)
 	}
 }

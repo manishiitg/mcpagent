@@ -1979,7 +1979,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		loggerv2.Any("match", ag.provider == llmproviders.ProviderClaudeCode))
 
 	if ag.provider == llmproviders.ProviderClaudeCode {
-		ag.appendBridgeRoutingInstructions("CRITICAL INSTRUCTION: You are running within a restricted environment. Use only the tool names explicitly declared in the available tool list for this session. Do NOT invent alternate prefixes or namespaces. DO NOT use your built-in tools like `Bash`, `Read`, or `Write` as they are blocked and will fail. If an action is denied, blocked, unavailable, or returns a 404-like error, do not keep retrying the same approach; use another declared tool or stop and explain the blocker clearly.")
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [CLAUDE_CODE] Provider detected - silently disabling incompatible features")
 
 		// Code execution mode is pre-set before virtual tool filtering (see pre-detection
@@ -2015,7 +2015,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Codex CLI provider (same constraints as Claude Code)
 	if ag.provider == llmproviders.ProviderCodexCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: Do NOT use your built-in tools — only use the tools declared in this session. Do NOT use provider-native filesystem or shell tools. For filesystem access, use declared bridge tools such as execute_shell_command or diff_patch_workspace_file when available. If a tool call fails or is blocked, try a different declared tool or stop and explain.")
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [CODEX_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.useCodeExecutionMode {
@@ -2064,7 +2064,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// The system prompt is the soft lever; --mode ask is the hard lever we
 	// can't use for chat without breaking it.
 	if ag.provider == llmproviders.ProviderCursorCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: For any file write/edit, shell execution, browser operation, or other side-effecting action, prefer the declared MCP bridge tools (e.g. execute_shell_command, diff_patch_workspace_file, agent_browser) over your built-in equivalents. Use built-in tools only for READ operations where no MCP equivalent is declared. When calling MCP tools, use the EXACT tool name as declared (no namespace prefixes). If a declared tool is unavailable, stop and explain rather than falling back to a built-in.")
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [CURSOR_CLI] Provider detected - silently disabling incompatible features")
 
 		if !ag.useCodeExecutionMode {
@@ -2097,7 +2097,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// pi-mcp-adapter mounted and built-in tools disabled by the adapter when the
 	// bridge config is available.
 	if ag.provider == llmproviders.ProviderPiCLI {
-		ag.appendBridgeRoutingInstructions("IMPORTANT: You are running inside Pi CLI with built-in tools disabled. Use the MCP bridge through Pi's MCP gateway: call mcp({ search: \"tool words\" }) to discover tools, mcp({ describe: \"api_bridge_execute_shell_command\" }) for schemas when needed, and mcp({ tool: \"api_bridge_execute_shell_command\", args: \"{...}\" }) or the direct api_bridge_* tools when available. If a built-in tool is unavailable, use the declared MCP bridge tools instead of reporting that no MCP server exists.")
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [PI_CLI] Provider detected - using tmux marker transport with MCP bridge")
 
 		if !ag.useCodeExecutionMode {
@@ -3278,6 +3278,17 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 		return
 	}
 	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions(a.admitsCoreBridgeTool))
+}
+
+// codingAgentProviderRoutingPreamble describes the tool mode that is actually
+// configured for this agent without naming individual bridge tools. Exact tool
+// names belong to bridgeRoutingExplicitInstructions, where they are filtered
+// through the same admission predicate used to build the provider manifest.
+func (a *Agent) codingAgentProviderRoutingPreamble() string {
+	if a.nativeCodingToolsEnabled() {
+		return "IMPORTANT: Provider-native tools are enabled for this session. You may use them directly. Bridge tools are also available when explicitly declared; call only exact names present in this session and never invent alternate prefixes or namespaces. If an action fails, choose another genuinely available route or explain the specific blocker."
+	}
+	return "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Use only bridge tools explicitly declared in this session, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
 }
 
 // AddInstructions records supplementary instructions. They are composed with

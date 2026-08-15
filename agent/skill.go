@@ -293,11 +293,15 @@ func (a *Agent) readOneAttachedSkill(name, rawPath string) (attachedSkillReadRes
 		// here grants nothing new (the host already exposes the skills folder);
 		// it just means the agent asks by name instead of by path.
 		if a.installedSkillResolver != nil {
+			resolvedName, nameErr := normalizeInstalledSkillName(name)
+			if nameErr != nil {
+				return attachedSkillReadResult{}, nameErr
+			}
 			requestedPath, pathErr := normalizeAttachedSkillPath(rawPath)
 			if pathErr != nil {
 				return attachedSkillReadResult{}, pathErr
 			}
-			file, resolveErr := a.installedSkillResolver(name, requestedPath)
+			file, resolveErr := a.installedSkillResolver(resolvedName, requestedPath)
 			if resolveErr == nil {
 				return attachedSkillReadResult{
 					SkillName:      name,
@@ -357,6 +361,14 @@ func (a *Agent) readOneAttachedSkill(name, rawPath string) (attachedSkillReadRes
 	return result, nil
 }
 
+func normalizeInstalledSkillName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" || name == "." || name == ".." || strings.ContainsRune(name, '\x00') || strings.ContainsAny(name, "/\\") {
+		return "", fmt.Errorf("skill name must be a safe catalog name, not a path: %q", raw)
+	}
+	return name, nil
+}
+
 func normalizeAttachedSkillPath(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "SKILL.md" {
@@ -387,7 +399,7 @@ func attachedSkillFileNames(skill *llmtypes.Skill) []string {
 }
 
 func (a *Agent) isIntrinsicIdentityTool(name string) bool {
-	return a != nil && name == readSkillToolName && len(a.attachedSkills) > 0
+	return a != nil && name == readSkillToolName && (len(a.attachedSkills) > 0 || a.installedSkillResolver != nil)
 }
 
 // AttachedSkills returns the current list of skills attached to this

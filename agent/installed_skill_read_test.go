@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -98,6 +99,25 @@ func TestReadSkillRejectsUnsafePathsBeforeConsultingTheResolver(t *testing.T) {
 	}
 }
 
+func TestReadSkillRejectsUnsafeNamesBeforeConsultingTheResolver(t *testing.T) {
+	for _, name := range []string{"../specialist", "skills/specialist", `skills\specialist`, "/tmp/specialist", ".", "..", "bad\x00name"} {
+		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
+			a := &Agent{}
+			consulted := false
+			a.SetInstalledSkillResolver(func(name, relPath string) (InstalledSkillFile, error) {
+				consulted = true
+				return InstalledSkillFile{Content: "x"}, nil
+			})
+			if _, err := a.readOneAttachedSkill(name, ""); err == nil {
+				t.Fatal("an unsafe installed-skill name must be rejected")
+			}
+			if consulted {
+				t.Fatal("the resolver must never be asked to interpret an unsafe skill name")
+			}
+		})
+	}
+}
+
 // The reviewer's point: storing the resolver is not the contract -- being able
 // to CALL read_skill is. Registration previously happened only via
 // ensureSkillReaderTool when an attached skill was added, so a host that
@@ -134,6 +154,23 @@ func TestInstalledSkillResolverRegistersTheCallableReadSkillTool(t *testing.T) {
 	}
 	if !advertised {
 		t.Fatalf("read_skill missing from additionalBridgeTools: %v", a.additionalBridgeTools)
+	}
+
+	// Identity tools remain callable even when an owning workflow applies a
+	// narrower agent or per-turn allowlist. Resolver-only agents have the same
+	// read_skill identity contract as agents with attached skills.
+	a.toolAllowList = map[string]bool{"some_other_tool": true}
+	filtered := a.applyToolAllowList(a.tools)
+	if len(filtered) != 1 || filtered[0].Function == nil || filtered[0].Function.Name != readSkillToolName {
+		t.Fatalf("resolver-backed read_skill was filtered out: %#v", filtered)
+	}
+	policy, err := normalizeToolPolicy(ToolPolicy{AllowedTools: []string{"some_other_tool"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), turnPolicyContextKey{}, policy)
+	if !a.isToolAllowedForContext(ctx, readSkillToolName) {
+		t.Fatal("turn policy blocked resolver-backed read_skill")
 	}
 }
 
