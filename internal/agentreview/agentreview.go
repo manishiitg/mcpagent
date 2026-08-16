@@ -59,6 +59,9 @@ var StreamingCriteria = []string{
 	"tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
 	"the final answer is coherent and matches the work performed",
 	"real work actually happened (e.g. the file was written to disk)",
+	"paced for a watching human — where the record carries first_signal_ms / longest_silence_ms, " +
+		"something shows up promptly and keeps updating; a long opening wait or one long mid-turn " +
+		"silence reads as a hung app even when the final output is perfect",
 }
 
 func reviewDir() string {

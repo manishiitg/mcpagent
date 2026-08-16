@@ -49,7 +49,7 @@ var multiTurnProviderCases = []multiTurnProviderCase{
 	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", withClaudeCodePersistentInteractiveSession, true},
 	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", withCodexPersistentInteractiveSession, false},
 	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "auto", withCursorPersistentInteractiveSession, true},
-	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.5-flash", withPiPersistentInteractiveSession, true},
+	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.7-flash", withPiPersistentInteractiveSession, true},
 }
 
 // closePersistentInteractiveSession tears down the provider's persistent tmux

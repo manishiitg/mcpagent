@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,62 @@ import (
 	"github.com/manishiitg/mcpagent/internal/agentreview"
 	"github.com/manishiitg/mcpagent/llm"
 )
+
+// cleanChunk is one Source!=terminal content chunk plus the delta marker that
+// decides how it must be re-joined.
+type cleanChunk struct {
+	text    string
+	isDelta bool
+}
+
+// reassembleCleanStream rebuilds the message a UI would actually display from
+// the clean chunk run — the ONLY form in which formatting can be judged.
+//
+// The join is per-chunk, not per-provider, because the marker is per-chunk:
+//   - delta chunks are fragments of one continuous message (pi splits mid-word:
+//     "workspace_" + "advanced` server.") and MUST be concatenated verbatim.
+//   - block chunks are each a complete message and are separated by a newline.
+//
+// Joining everything with "\n" — which this test used to do — silently corrupts
+// every delta provider: pi's markdown table came out with newlines injected
+// mid-row ("|-------" + "\n" + "|"), yet still satisfied the old
+// Contains("|") && Contains(buildID) assertions. That is precisely the
+// "deterministic asserts pass on visibly-degraded output" trap agentreview
+// exists to close, so the reassembled form is what we now assert AND record.
+// malformedTableLines returns every markdown-table line in s that is structurally
+// broken: a line that opens a table row with "|" but does not close it with "|".
+//
+// This is the provider-agnostic signature of newline-injection between delta
+// fragments. Anchoring on a specific row instead does NOT work: whether a given
+// row survives depends on where the fragment boundaries happen to land, so a
+// Contains("| build_id | ... |") check passes on visibly garbled output whenever
+// the split misses that one row (it did — pi's break landed on the separator row,
+// "|-------|-------" + "\n" + "|"). Checking the invariant instead of a sample
+// catches the break wherever it lands, and stays robust to cell spacing.
+func malformedTableLines(s string) []string {
+	var bad []string
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimRight(line, " \t")
+		if !strings.HasPrefix(strings.TrimSpace(trimmed), "|") {
+			continue
+		}
+		if !strings.HasSuffix(trimmed, "|") || strings.Count(trimmed, "|") < 2 {
+			bad = append(bad, line)
+		}
+	}
+	return bad
+}
+
+func reassembleCleanStream(chunks []cleanChunk) string {
+	var b strings.Builder
+	for _, c := range chunks {
+		if b.Len() > 0 && !c.isDelta {
+			b.WriteString("\n")
+		}
+		b.WriteString(c.text)
+	}
+	return b.String()
+}
 
 func realBridgeRandHex(n int) string {
 	b := make([]byte, n)
@@ -272,7 +329,7 @@ func realBridgeProviderCases() []realBridgeProviderCase {
 		// pi streams structured chunks natively via its injected marker hook and
 		// needs a Gemini/Pi key.
 		{
-			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.5-flash", cliBin: "pi",
+			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.7-flash", cliBin: "pi",
 			apiKeyEnvs:       []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY"},
 			makeKeys:         func(k string) *llm.ProviderAPIKeys { return &llm.ProviderAPIKeys{PiCLI: &k} },
 			strictBridgeOnly: true,
@@ -415,6 +472,12 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 			"Finally, reply with the exact contents of %[2]s (the markdown table).",
 		buildIDPath, reportPath)
 
+	// turnStart anchors the perceived-latency numbers below. The question this
+	// test now also answers is not just "did content stream" but "would a user
+	// watching this see something happening, soon and steadily" — a provider can
+	// stream perfectly clean text and still feel dead if the first chunk lands
+	// 40s in, or if there is one silent 30s gap in the middle.
+	turnStart := time.Now()
 	answer, err := agent.ask(ctx, task)
 	if err != nil {
 		t.Fatalf("agent.Ask: %v", err)
@@ -425,8 +488,30 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	// event type at this layer) — both must appear for a streamed tool turn.
 	// StreamingChunkEvent.Source now separates raw terminal frames from clean
 	// content, so a no-terminal UI selects Source != "terminal" (no heuristics).
-	var contentChunks, cleanContentChunks, deltaContentChunks, toolChunks int
-	var cleanTexts, toolNames []string
+	var contentChunks, cleanContentChunks, deltaContentChunks, toolChunks, thinkingChunks int
+	var cleanTexts, toolNames, thinkingTexts []string
+	var cleanRun []cleanChunk
+	// Perceived-latency capture. signalAt collects, in arrival order, the offset
+	// of every event a UI could actually SHOW the user (clean content, tool call,
+	// thinking) — the union matters more than any single stream, because a
+	// provider that never streams text can still feel alive on tool activity
+	// alone. Reasoning is tracked separately because it is the one signal that is
+	// provider-discretionary: claude emits it, codex encrypts it, pi emits none.
+	var signalAt []time.Duration
+	firstAt := map[string]time.Duration{}
+	mark := func(kind string, ts time.Time) {
+		if ts.IsZero() {
+			return
+		}
+		off := ts.Sub(turnStart)
+		if off < 0 {
+			return
+		}
+		signalAt = append(signalAt, off)
+		if _, seen := firstAt[kind]; !seen {
+			firstAt[kind] = off
+		}
+	}
 	for _, ev := range listener.events {
 		switch d := ev.Data.(type) {
 		case *events.StreamingChunkEvent:
@@ -437,17 +522,43 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 			if d.Source != events.StreamingChunkSourceTerminal {
 				cleanContentChunks++
 				cleanTexts = append(cleanTexts, d.Content)
+				cleanRun = append(cleanRun, cleanChunk{text: d.Content, isDelta: d.IsDelta})
 				if d.IsDelta {
 					deltaContentChunks++
 				}
+				mark("clean_content", ev.Timestamp)
 			}
 		case *events.ToolCallStartEvent:
 			toolChunks++
 			toolNames = append(toolNames, d.ToolName)
+			mark("tool_call", ev.Timestamp)
+		case *events.ConversationThinkingEvent:
+			if strings.TrimSpace(d.Thinking) == "" {
+				continue
+			}
+			thinkingChunks++
+			thinkingTexts = append(thinkingTexts, d.Thinking)
+			mark("thinking", ev.Timestamp)
 		}
 	}
-	t.Logf("real-bridge stream: %d content chunk(s) (%d clean transcript, %d delta, rest terminal), %d tool-call event(s) %v; answer=%q",
-		contentChunks, cleanContentChunks, deltaContentChunks, toolChunks, toolNames, strings.TrimSpace(answer))
+	sort.Slice(signalAt, func(i, j int) bool { return signalAt[i] < signalAt[j] })
+	ms := func(d time.Duration) int64 { return d.Milliseconds() }
+	var firstSignalMS, longestSilenceMS int64 = -1, -1
+	if len(signalAt) > 0 {
+		firstSignalMS = ms(signalAt[0])
+		// Longest silence includes the opening wait (turnStart -> first signal),
+		// which is exactly the stall a user feels most.
+		longestSilenceMS = ms(signalAt[0])
+		for i := 1; i < len(signalAt); i++ {
+			if gap := ms(signalAt[i] - signalAt[i-1]); gap > longestSilenceMS {
+				longestSilenceMS = gap
+			}
+		}
+	}
+	t.Logf("real-bridge stream: %d content chunk(s) (%d clean transcript, %d delta, rest terminal), %d tool-call event(s) %v, %d thinking event(s); answer=%q",
+		contentChunks, cleanContentChunks, deltaContentChunks, toolChunks, toolNames, thinkingChunks, strings.TrimSpace(answer))
+	t.Logf("perceived latency: first signal %dms, longest silence %dms, %d total signal(s); first-by-kind %v",
+		firstSignalMS, longestSilenceMS, len(signalAt), firstAt)
 
 	// The clean view must be free of raw terminal frames (ANSI escapes) now that
 	// Source separates them — proves the fix on real output, not a heuristic.
@@ -495,26 +606,59 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		// the read-only sandbox; no native write/edit/patch tool appears.
 		assertNoNativeWrites(t, toolNames)
 	}
-	cleanJoined := strings.Join(cleanTexts, "\n")
+	// Reassemble the way a real UI must, then assert on THAT — not on a lossy
+	// "\n"-join of the fragments.
+	cleanJoined := reassembleCleanStream(cleanRun)
 	if !strings.Contains(cleanJoined, "|") || !strings.Contains(cleanJoined, codeWord) {
 		t.Fatalf("the markdown table (pipes + build id) did not stream as clean content; clean stream:\n%s", cleanJoined)
+	}
+	// The real formatting check: every table row in the message a user would SEE
+	// must be structurally intact. Contains("|")+Contains(buildID) passes happily
+	// on a table whose rows were split across lines, which is exactly how a
+	// garbled stream survived review before.
+	if bad := malformedTableLines(cleanJoined); len(bad) > 0 {
+		t.Fatalf("the reassembled clean stream contains %d broken markdown table row(s) %q — the streamed table is garbled "+
+			"(delta fragments re-joined wrongly, or the provider split content it did not mark as deltas).\nreassembled:\n%s",
+			len(bad), bad, cleanJoined)
 	}
 
 	rec := agentreview.Write(t, "TestRealBridgeStreaming_"+pc.name,
 		pc.name+" via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",
 		map[string]any{
 			"clean_transcript_content": cleanTexts,
+			// The reassembled message is what a human actually reads, so it is what
+			// the "proper formatting / no garbled or merged text" criterion must be
+			// judged against. The raw chunk array above is kept for provenance, but
+			// judging formatting from fragments is how a garbled table passed review.
+			"reassembled_message":      cleanJoined,
 			"clean_content_count":      cleanContentChunks,
 			"delta_content_count":      deltaContentChunks,
 			"total_content_chunks":     contentChunks,
 			"tool_call_events":         toolChunks,
 			"tool_names":               toolNames,
+			"thinking_event_count":     thinkingChunks,
+			"thinking_texts":           thinkingTexts,
+			"first_signal_ms":          firstSignalMS,
+			"longest_silence_ms":       longestSilenceMS,
+			"total_signal_events":      len(signalAt),
+			"first_signal_ms_by_kind":  firstAt,
 			"answer":                   strings.TrimSpace(answer),
 			"report_md_on_disk":        reportStr,
 			"build_id_only_via_tool":   codeWord,
 			"went_through_real_bridge": true,
 		},
-		map[string]any{"streamed_clean_content": cleanContentChunks > 0, "streamed_tool": toolChunks > 0, "streamed_table": strings.Contains(cleanJoined, "|")},
+		// Shape must stay token-INdependent, so the timings above are deliberately
+		// NOT in the fingerprint — they vary every run and would make every stored
+		// review permanently stale. Whether the provider emits reasoning at all IS
+		// stable per-provider behavior, so it belongs here: if a CLI release starts
+		// (or stops) surfacing thinking, the fingerprint changes and the review is
+		// correctly forced to be redone.
+		map[string]any{
+			"streamed_clean_content": cleanContentChunks > 0,
+			"streamed_tool":          toolChunks > 0,
+			"streamed_table":         strings.Contains(cleanJoined, "|"),
+			"streamed_thinking":      thinkingChunks > 0,
+		},
 	)
 	agentreview.RequireReviewed(t, rec)
 }

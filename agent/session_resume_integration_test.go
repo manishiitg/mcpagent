@@ -420,7 +420,7 @@ func TestCodingProviderContinuationHandleForModelRequiresMatchingNativeHandle(t 
 func TestCodingProviderContinuationHandleAcceptsPiNativeResume(t *testing.T) {
 	agent := &Agent{
 		provider:              llm.ProviderPiCLI,
-		modelID:               "google/gemini-3.5-flash",
+		modelID:               "google/gemini-3.7-flash",
 		codingAgentWorkingDir: "/tmp/pi-work",
 		codingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
 			Provider:        string(llm.ProviderPiCLI),
@@ -431,7 +431,7 @@ func TestCodingProviderContinuationHandleAcceptsPiNativeResume(t *testing.T) {
 		},
 	}
 
-	handle, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderPiCLI, "google/gemini-3.5-flash")
+	handle, ok := agent.codingProviderContinuationHandleForModel(llm.ProviderPiCLI, "google/gemini-3.7-flash")
 	if !ok {
 		t.Fatal("expected pi-cli provider-native continuation")
 	}
