@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,62 @@ import (
 	"github.com/manishiitg/mcpagent/internal/agentreview"
 	"github.com/manishiitg/mcpagent/llm"
 )
+
+// cleanChunk is one Source!=terminal content chunk plus the delta marker that
+// decides how it must be re-joined.
+type cleanChunk struct {
+	text    string
+	isDelta bool
+}
+
+// reassembleCleanStream rebuilds the message a UI would actually display from
+// the clean chunk run — the ONLY form in which formatting can be judged.
+//
+// The join is per-chunk, not per-provider, because the marker is per-chunk:
+//   - delta chunks are fragments of one continuous message (pi splits mid-word:
+//     "workspace_" + "advanced` server.") and MUST be concatenated verbatim.
+//   - block chunks are each a complete message and are separated by a newline.
+//
+// Joining everything with "\n" — which this test used to do — silently corrupts
+// every delta provider: pi's markdown table came out with newlines injected
+// mid-row ("|-------" + "\n" + "|"), yet still satisfied the old
+// Contains("|") && Contains(buildID) assertions. That is precisely the
+// "deterministic asserts pass on visibly-degraded output" trap agentreview
+// exists to close, so the reassembled form is what we now assert AND record.
+// malformedTableLines returns every markdown-table line in s that is structurally
+// broken: a line that opens a table row with "|" but does not close it with "|".
+//
+// This is the provider-agnostic signature of newline-injection between delta
+// fragments. Anchoring on a specific row instead does NOT work: whether a given
+// row survives depends on where the fragment boundaries happen to land, so a
+// Contains("| build_id | ... |") check passes on visibly garbled output whenever
+// the split misses that one row (it did — pi's break landed on the separator row,
+// "|-------|-------" + "\n" + "|"). Checking the invariant instead of a sample
+// catches the break wherever it lands, and stays robust to cell spacing.
+func malformedTableLines(s string) []string {
+	var bad []string
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimRight(line, " \t")
+		if !strings.HasPrefix(strings.TrimSpace(trimmed), "|") {
+			continue
+		}
+		if !strings.HasSuffix(trimmed, "|") || strings.Count(trimmed, "|") < 2 {
+			bad = append(bad, line)
+		}
+	}
+	return bad
+}
+
+func reassembleCleanStream(chunks []cleanChunk) string {
+	var b strings.Builder
+	for _, c := range chunks {
+		if b.Len() > 0 && !c.isDelta {
+			b.WriteString("\n")
+		}
+		b.WriteString(c.text)
+	}
+	return b.String()
+}
 
 func realBridgeRandHex(n int) string {
 	b := make([]byte, n)
@@ -62,13 +119,32 @@ func isBridgeOrWebsearchTool(name string) bool {
 	return false
 }
 
+// callInvokesBridge reports whether a tool call reaches the bridge through its
+// BODY rather than its name.
+//
+// codex's code-mode `exec` is a real example: the tool name is "exec", but the
+// script it runs is
+//
+//	await tools.mcp__api_bridge__execute_shell_command({command: "..."})
+//
+// so the work genuinely goes through the bridge. Judging that call by its outer
+// name alone reports a bridge BYPASS that never happened (it did — this test
+// failed with "no bridge tool was used" on a turn whose every action was
+// bridge-routed), and would equally miss a real native call hiding behind a
+// familiar name. The body is the only place the truth is visible.
+func callInvokesBridge(args string) bool {
+	a := strings.ToLower(args)
+	return strings.Contains(a, "mcp__api_bridge__") || strings.Contains(a, "mcp__api-bridge__")
+}
+
 // assertBridgeOrWebsearchOnly fails if any streamed tool is a native tool — the
 // strict bridge-only-plus-websearch policy. Empty toolNames is fine (no tools used).
-func assertBridgeOrWebsearchOnly(t *testing.T, toolNames []string) {
+func assertBridgeOrWebsearchOnly(t *testing.T, toolNames []string, tl toolLifecycle) {
 	t.Helper()
 	var native []string
-	for _, tn := range toolNames {
-		if !isBridgeOrWebsearchTool(tn) {
+	for _, id := range tl.order {
+		tn := tl.starts[id]
+		if !isBridgeOrWebsearchTool(tn) && !callInvokesBridge(tl.args[id]) {
 			native = append(native, tn)
 		}
 	}
@@ -94,12 +170,13 @@ func isNativeWriteTool(name string) bool {
 // remaining guarantee — that WRITES are bridge-routed: a bridge tool was actually
 // used, and no native WRITE/edit/patch tool appears. Native read-only exec is a
 // documented, tolerated exception (harmless under the read-only sandbox).
-func assertNoNativeWrites(t *testing.T, toolNames []string) {
+func assertNoNativeWrites(t *testing.T, toolNames []string, tl toolLifecycle) {
 	t.Helper()
 	usedBridge := false
 	var nativeWrites []string
-	for _, tn := range toolNames {
-		if isBridgeOrWebsearchTool(tn) {
+	for _, id := range tl.order {
+		tn := tl.starts[id]
+		if isBridgeOrWebsearchTool(tn) || callInvokesBridge(tl.args[id]) {
 			usedBridge = true
 			continue
 		}
@@ -272,7 +349,7 @@ func realBridgeProviderCases() []realBridgeProviderCase {
 		// pi streams structured chunks natively via its injected marker hook and
 		// needs a Gemini/Pi key.
 		{
-			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.5-flash", cliBin: "pi",
+			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.7-flash", cliBin: "pi",
 			apiKeyEnvs:       []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY"},
 			makeKeys:         func(k string) *llm.ProviderAPIKeys { return &llm.ProviderAPIKeys{PiCLI: &k} },
 			strictBridgeOnly: true,
@@ -296,12 +373,21 @@ func TestRealBridgeStreamingE2E(t *testing.T) {
 		t.Skip("set RUN_MCPAGENT_REAL_BRIDGE_E2E=1 to run the real-bridge streaming e2e")
 	}
 	only := os.Getenv("MCPAGENT_REAL_BRIDGE_ONLY")
+	// MCPAGENT_REAL_BRIDGE_TRANSPORT pins one transport ("tmux" / "structured")
+	// when iterating; unset runs the full matrix. Both halves use the SAME real
+	// bridge and real shell tool — only the CLI protocol differs.
+	onlyTransport := os.Getenv("MCPAGENT_REAL_BRIDGE_TRANSPORT")
 	bridgeBin := ensureRealBridgeBinary(t)
 	for _, pc := range realBridgeProviderCases() {
 		if only != "" && only != pc.name {
 			continue
 		}
-		t.Run(pc.name, func(t *testing.T) { runRealBridgeStreaming(t, pc, bridgeBin) })
+		for _, tr := range realBridgeTransports() {
+			if onlyTransport != "" && onlyTransport != tr.name {
+				continue
+			}
+			t.Run(pc.name+"/"+tr.name, func(t *testing.T) { runRealBridgeStreaming(t, pc, bridgeBin, tr) })
+		}
 	}
 }
 
@@ -309,7 +395,30 @@ func TestRealBridgeStreamingE2E(t *testing.T) {
 // execute_shell_command path, ready for a task. Shared setup for every
 // TestRealBridge* e2e in this file — factored out once a second test
 // (markdown fidelity) needed the identical ~60 lines of boilerplate.
-func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin string) (agent *Agent, ctx context.Context, apiURL, apiToken, workDir string) {
+// realBridgeTransport is the transport dimension of the matrix. Both run through
+// the SAME real mcpbridge -> executor -> real execute_shell_command path; only
+// the CLI's own protocol differs. Covering both is the point: a product pinning
+// one transport gets completely different streaming and tool-lifecycle behaviour
+// from the other, and until now only tmux was ever exercised here.
+type realBridgeTransport struct {
+	name string
+	opts []agentOption
+}
+
+// The measured results of this matrix — which providers stream, which surface
+// reasoning, and the evidence behind pinning cursor to structured — are recorded
+// in the coding-agent-loop repo at
+// docs/design/product_api_transport_for_coding_agents.md, section
+// "Measured matrix". Update that table when these numbers change materially;
+// it is the durable proof the product transport decision rests on.
+func realBridgeTransports() []realBridgeTransport {
+	return []realBridgeTransport{
+		{name: "tmux"},
+		{name: "structured", opts: []agentOption{withCodingAgentTransport(llm.CodingAgentTransportStructured)}},
+	}
+}
+
+func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin string, extraOpts ...agentOption) (agent *Agent, ctx context.Context, apiURL, apiToken, workDir string) {
 	t.Helper()
 	if _, err := exec.LookPath(pc.cliBin); err != nil {
 		t.Skipf("authenticated %q CLI required", pc.cliBin)
@@ -366,6 +475,7 @@ func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		// untested once the default changed.
 		agentOpts = append(agentOpts, withCodexSandbox("read-only"))
 	}
+	agentOpts = append(agentOpts, extraOpts...)
 	agent, err = newAgent(ctx, llmModel, configPath, agentOpts...)
 	if err != nil {
 		t.Fatalf("newAgent: %v", err)
@@ -388,8 +498,8 @@ func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	return agent, ctx, apiURL, apiToken, workDir
 }
 
-func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin string) {
-	agent, ctx, _, _, workDir := newRealBridgeTestAgent(t, pc, bridgeBin)
+func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin string, tr realBridgeTransport) {
+	agent, ctx, _, _, workDir := newRealBridgeTestAgent(t, pc, bridgeBin, tr.opts...)
 
 	listener := &recordingAgentEventListener{}
 	agent.addEventListener(listener)
@@ -415,6 +525,12 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 			"Finally, reply with the exact contents of %[2]s (the markdown table).",
 		buildIDPath, reportPath)
 
+	// turnStart anchors the perceived-latency numbers below. The question this
+	// test now also answers is not just "did content stream" but "would a user
+	// watching this see something happening, soon and steadily" — a provider can
+	// stream perfectly clean text and still feel dead if the first chunk lands
+	// 40s in, or if there is one silent 30s gap in the middle.
+	turnStart := time.Now()
 	answer, err := agent.ask(ctx, task)
 	if err != nil {
 		t.Fatalf("agent.Ask: %v", err)
@@ -425,8 +541,34 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	// event type at this layer) — both must appear for a streamed tool turn.
 	// StreamingChunkEvent.Source now separates raw terminal frames from clean
 	// content, so a no-terminal UI selects Source != "terminal" (no heuristics).
-	var contentChunks, cleanContentChunks, deltaContentChunks, toolChunks int
-	var cleanTexts, toolNames []string
+	var contentChunks, cleanContentChunks, deltaContentChunks, toolChunks, thinkingChunks int
+	var cleanTexts, toolNames, thinkingTexts []string
+	var cleanRun []cleanChunk
+	// Perceived-latency capture. signalAt collects, in arrival order, the offset
+	// of every event a UI could actually SHOW the user (clean content, tool call,
+	// thinking) — the union matters more than any single stream, because a
+	// provider that never streams text can still feel alive on tool activity
+	// alone. Reasoning is tracked separately because it is the one signal that is
+	// provider-discretionary: claude emits it, codex encrypts it, pi emits none.
+	var cleanAt []time.Time
+	var signalAt []time.Duration
+	// Milliseconds, not time.Duration: a Duration marshals to NANOseconds, so
+	// recording it under a *_ms key wrote 6556365459 where the reader expects
+	// 6556 — the artifact silently lied about its own units.
+	firstAt := map[string]int64{}
+	mark := func(kind string, ts time.Time) {
+		if ts.IsZero() {
+			return
+		}
+		off := ts.Sub(turnStart)
+		if off < 0 {
+			return
+		}
+		signalAt = append(signalAt, off)
+		if _, seen := firstAt[kind]; !seen {
+			firstAt[kind] = off.Milliseconds()
+		}
+	}
 	for _, ev := range listener.events {
 		switch d := ev.Data.(type) {
 		case *events.StreamingChunkEvent:
@@ -437,17 +579,52 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 			if d.Source != events.StreamingChunkSourceTerminal {
 				cleanContentChunks++
 				cleanTexts = append(cleanTexts, d.Content)
+				cleanRun = append(cleanRun, cleanChunk{text: d.Content, isDelta: d.IsDelta})
 				if d.IsDelta {
 					deltaContentChunks++
 				}
+				if !ev.Timestamp.IsZero() {
+					cleanAt = append(cleanAt, ev.Timestamp)
+				}
+				mark("clean_content", ev.Timestamp)
 			}
 		case *events.ToolCallStartEvent:
 			toolChunks++
 			toolNames = append(toolNames, d.ToolName)
+			mark("tool_call", ev.Timestamp)
+		case *events.ConversationThinkingEvent:
+			if strings.TrimSpace(d.Thinking) == "" {
+				continue
+			}
+			thinkingChunks++
+			thinkingTexts = append(thinkingTexts, d.Thinking)
+			mark("thinking", ev.Timestamp)
 		}
 	}
-	t.Logf("real-bridge stream: %d content chunk(s) (%d clean transcript, %d delta, rest terminal), %d tool-call event(s) %v; answer=%q",
-		contentChunks, cleanContentChunks, deltaContentChunks, toolChunks, toolNames, strings.TrimSpace(answer))
+	var cleanSpreadMS int64 = -1
+	if len(cleanAt) > 1 {
+		cleanSpreadMS = cleanAt[len(cleanAt)-1].Sub(cleanAt[0]).Milliseconds()
+	} else if len(cleanAt) == 1 {
+		cleanSpreadMS = 0
+	}
+	sort.Slice(signalAt, func(i, j int) bool { return signalAt[i] < signalAt[j] })
+	ms := func(d time.Duration) int64 { return d.Milliseconds() }
+	var firstSignalMS, longestSilenceMS int64 = -1, -1
+	if len(signalAt) > 0 {
+		firstSignalMS = ms(signalAt[0])
+		// Longest silence includes the opening wait (turnStart -> first signal),
+		// which is exactly the stall a user feels most.
+		longestSilenceMS = ms(signalAt[0])
+		for i := 1; i < len(signalAt); i++ {
+			if gap := ms(signalAt[i] - signalAt[i-1]); gap > longestSilenceMS {
+				longestSilenceMS = gap
+			}
+		}
+	}
+	t.Logf("real-bridge stream: %d content chunk(s) (%d clean transcript, %d delta, rest terminal), %d tool-call event(s) %v, %d thinking event(s); answer=%q",
+		contentChunks, cleanContentChunks, deltaContentChunks, toolChunks, toolNames, thinkingChunks, strings.TrimSpace(answer))
+	t.Logf("perceived latency: first signal %dms, longest silence %dms, %d total signal(s); first-by-kind %v",
+		firstSignalMS, longestSilenceMS, len(signalAt), firstAt)
 
 	// The clean view must be free of raw terminal frames (ANSI escapes) now that
 	// Source separates them — proves the fix on real output, not a heuristic.
@@ -475,9 +652,18 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		t.Fatalf("report.md is not the expected markdown table with the build id: %q", reportStr)
 	}
 	// Streaming through the real bridge: the tool call streamed as its own event...
-	if toolChunks == 0 {
-		t.Fatalf("no ToolCallStartEvent — the real bridge tool call did not stream to the mcpagent layer")
+	// Tool calls must COMPLETE, not merely start: an unpaired start is what
+	// leaves a product's tool chip spinning forever. Counting starts (the old
+	// `toolChunks == 0` check) cannot see that.
+	toolLife := collectToolLifecycle(listener.events)
+	// Log the pairing per call: when the lifecycle assertion fails, the useful
+	// information is WHICH tools ended and which did not (bridge vs native), and
+	// a bare failure message hides that.
+	for _, id := range toolLife.order {
+		endName, ended := toolLife.ends[id]
+		t.Logf("tool lifecycle: name=%s id=%s ended=%t end_name=%s", toolLife.starts[id], id, ended, endName)
 	}
+	tokenUsage := collectTurnTokenUsage(listener.events)
 	// ...and CLEAN transcript content (no raw terminal frames) reached the app,
 	// INCLUDING the rich markdown table the model produced — i.e. a no-terminal UI
 	// receives the renderable table, not just plain lines.
@@ -487,34 +673,121 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	// Bridge-only tool policy (see the P0 policy note above realBridgeProviderCases).
 	if pc.strictBridgeOnly {
 		// claude/cursor/pi: NO native tools at all.
-		assertBridgeOrWebsearchOnly(t, toolNames)
+		assertBridgeOrWebsearchOnly(t, toolNames, toolLife)
 	} else {
 		// codex: functions.exec is unremovable, so it runs read-only. Assert the
 		// weaker guarantee — NO NATIVE WRITES: a bridge tool was used and report.md
 		// on disk (asserted above) could only have been written by the bridge under
 		// the read-only sandbox; no native write/edit/patch tool appears.
-		assertNoNativeWrites(t, toolNames)
+		assertNoNativeWrites(t, toolNames, toolLife)
 	}
-	cleanJoined := strings.Join(cleanTexts, "\n")
+	// Reassemble the way a real UI must, then assert on THAT — not on a lossy
+	// "\n"-join of the fragments.
+	// Deferred until AFTER the bridge-only / no-native-writes policy checks
+	// above: containment is the stronger guarantee, and a tool-lifecycle failure
+	// must never mask a policy violation by aborting the test first.
+	assertToolLifecycleComplete(t, toolLife)
+	assertTurnTokenUsage(t, tokenUsage)
+
+	cleanJoined := reassembleCleanStream(cleanRun)
 	if !strings.Contains(cleanJoined, "|") || !strings.Contains(cleanJoined, codeWord) {
 		t.Fatalf("the markdown table (pipes + build id) did not stream as clean content; clean stream:\n%s", cleanJoined)
 	}
+	// The real formatting check: every table row in the message a user would SEE
+	// must be structurally intact. Contains("|")+Contains(buildID) passes happily
+	// on a table whose rows were split across lines, which is exactly how a
+	// garbled stream survived review before.
+	if bad := malformedTableLines(cleanJoined); len(bad) > 0 {
+		t.Fatalf("the reassembled clean stream contains %d broken markdown table row(s) %q — the streamed table is garbled "+
+			"(delta fragments re-joined wrongly, or the provider split content it did not mark as deltas).\nreassembled:\n%s",
+			len(bad), bad, cleanJoined)
+	}
 
-	rec := agentreview.Write(t, "TestRealBridgeStreaming_"+pc.name,
-		pc.name+" via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",
+	// SECOND TURN on the SAME warm session. The first turn's time-to-first-signal
+	// includes one-off setup (CLI process spawn, MCP bridge handshake, session
+	// bootstrap); a second turn on the same session pays none of that. Comparing
+	// the two is the only way to tell a warm-up cost from a per-turn cost, and
+	// the two call for opposite product fixes: a warm-up cost is hidden by
+	// keeping the session alive, a per-turn cost needs a progress affordance on
+	// every send.
+	turn2From := len(listener.events)
+	turn2Start := time.Now()
+	turn2Answer, turn2Err := agent.ask(ctx, "In one short sentence, what build id did you find? Do not use any tools.")
+	turn2FirstSignalMS := int64(-1)
+	if turn2Err == nil {
+		if d, ok := firstSignalAfter(listener.events, turn2From, turn2Start); ok {
+			turn2FirstSignalMS = d.Milliseconds()
+		}
+	}
+	turn2TotalMS := time.Since(turn2Start).Milliseconds()
+	t.Logf("turn 2 (warm session): first signal %dms, total %dms, err=%v, answer=%q",
+		turn2FirstSignalMS, turn2TotalMS, turn2Err, strings.TrimSpace(turn2Answer))
+
+	// The tmux record keeps its historical name so previously approved reviews
+	// stay valid; the structured half is a new artifact.
+	recordName := "TestRealBridgeStreaming_" + pc.name
+	if tr.name != "tmux" {
+		recordName += "_" + tr.name
+	}
+	rec := agentreview.Write(t, recordName,
+		pc.name+" over "+tr.name+" via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",
 		map[string]any{
+			"transport":          tr.name,
+			"tool_calls_started": len(toolLife.starts),
+			"tool_calls_ended":   len(toolLife.ends),
+			// The call BODIES, not just names. A reviewer cannot otherwise tell a
+			// bridge-routed call from raw native shell use: codex's code-mode tool
+			// is always named "exec", and only its body reveals whether the work
+			// went through tools.mcp__api_bridge__*. Recording names alone made
+			// that question unanswerable from the artifact.
+			"tool_calls":               toolCallRecords(toolLife),
+			"token_usage":              tokenUsage,
 			"clean_transcript_content": cleanTexts,
-			"clean_content_count":      cleanContentChunks,
-			"delta_content_count":      deltaContentChunks,
-			"total_content_chunks":     contentChunks,
-			"tool_call_events":         toolChunks,
-			"tool_names":               toolNames,
+			// The reassembled message is what a human actually reads, so it is what
+			// the "proper formatting / no garbled or merged text" criterion must be
+			// judged against. The raw chunk array above is kept for provenance, but
+			// judging formatting from fragments is how a garbled table passed review.
+			"reassembled_message":  cleanJoined,
+			"clean_content_count":  cleanContentChunks,
+			"delta_content_count":  deltaContentChunks,
+			"total_content_chunks": contentChunks,
+			"tool_call_events":     toolChunks,
+			"tool_names":           toolNames,
+			"thinking_event_count": thinkingChunks,
+			"thinking_texts":       thinkingTexts,
+			"first_signal_ms":      firstSignalMS,
+			"longest_silence_ms":   longestSilenceMS,
+			// Turn 2 runs on the same warm session, so comparing it against
+			// first_signal_ms separates one-off warm-up from a per-turn cost.
+			"turn2_first_signal_ms": turn2FirstSignalMS,
+			"turn2_total_ms":        turn2TotalMS,
+			"turn2_answer":          strings.TrimSpace(turn2Answer),
+			// spread_ms is what separates real streaming from a late single
+			// delivery: chunks that all land within a few ms did not stream,
+			// however many of them there were.
+			"clean_content_spread_ms":  cleanSpreadMS,
+			"delivered_in_one_block":   cleanContentChunks <= 1,
+			"total_signal_events":      len(signalAt),
+			"first_signal_ms_by_kind":  firstAt,
 			"answer":                   strings.TrimSpace(answer),
 			"report_md_on_disk":        reportStr,
 			"build_id_only_via_tool":   codeWord,
 			"went_through_real_bridge": true,
 		},
-		map[string]any{"streamed_clean_content": cleanContentChunks > 0, "streamed_tool": toolChunks > 0, "streamed_table": strings.Contains(cleanJoined, "|")},
+		// Shape must stay token-INdependent, so the timings above are deliberately
+		// NOT in the fingerprint — they vary every run and would make every stored
+		// review permanently stale. Whether the provider emits reasoning at all IS
+		// stable per-provider behavior, so it belongs here: if a CLI release starts
+		// (or stops) surfacing thinking, the fingerprint changes and the review is
+		// correctly forced to be redone.
+		map[string]any{
+			"transport":              tr.name,
+			"streamed_clean_content": cleanContentChunks > 0,
+			"streamed_tool":          toolChunks > 0,
+			"streamed_table":         strings.Contains(cleanJoined, "|"),
+			"streamed_thinking":      thinkingChunks > 0,
+			"tools_all_completed":    len(toolLife.starts) > 0 && len(toolLife.ends) >= len(toolLife.starts),
+		},
 	)
 	agentreview.RequireReviewed(t, rec)
 }
@@ -661,10 +934,11 @@ func runRealBridgeMarkdownFidelity(t *testing.T, pc realBridgeProviderCase, brid
 	if len(cleanTexts) == 0 {
 		t.Fatalf("no clean transcript content streamed")
 	}
+	toolLife := collectToolLifecycle(listener.events)
 	if pc.strictBridgeOnly {
-		assertBridgeOrWebsearchOnly(t, toolNames)
+		assertBridgeOrWebsearchOnly(t, toolNames, toolLife)
 	} else {
-		assertNoNativeWrites(t, toolNames)
+		assertNoNativeWrites(t, toolNames, toolLife)
 	}
 
 	// Same duplication guard, applied to the STREAMED transcript rather than the
@@ -702,4 +976,223 @@ func runRealBridgeMarkdownFidelity(t *testing.T, pc realBridgeProviderCase, brid
 		},
 	)
 	agentreview.RequireReviewed(t, rec)
+}
+
+// --- shared P0 assertions ----------------------------------------------------
+
+// toolLifecycle is the start/end pairing of every tool call in a turn.
+type toolLifecycle struct {
+	starts map[string]string // toolCallID -> name
+	args   map[string]string // toolCallID -> call body (arguments / code-mode script)
+	ends   map[string]string // toolCallID -> name
+	order  []string
+}
+
+func collectToolLifecycle(evs []*events.AgentEvent) toolLifecycle {
+	tl := toolLifecycle{starts: map[string]string{}, args: map[string]string{}, ends: map[string]string{}}
+	for _, ev := range evs {
+		switch d := ev.Data.(type) {
+		case *events.ToolCallStartEvent:
+			if _, seen := tl.starts[d.ToolCallID]; !seen {
+				tl.order = append(tl.order, d.ToolCallID)
+			}
+			tl.starts[d.ToolCallID] = d.ToolName
+			tl.args[d.ToolCallID] = d.ToolParams.Arguments
+		case *events.ToolCallEndEvent:
+			tl.ends[d.ToolCallID] = d.ToolName
+		}
+	}
+	return tl
+}
+
+// assertToolLifecycleComplete fails when any tool call started without a
+// matching end.
+//
+// This generalizes requireCodexStructuredToolIdentity, which asserted exactly
+// this but ONLY for codex AND only on the structured transport. The gap was not
+// theoretical: codex over tmux emits ToolCallStart with no ToolCallEnd, so the
+// product's tool chip spins forever, and every existing assertion passed anyway
+// because the suite only ever checked `toolChunks > 0` — the count of STARTS.
+// An unfinished tool call is indistinguishable from a completed one unless the
+// pairing itself is asserted.
+func toolLifecycleError(tl toolLifecycle) error {
+	if len(tl.starts) == 0 {
+		return fmt.Errorf("no ToolCallStartEvent — the real bridge tool call did not stream to the mcpagent layer")
+	}
+	var unfinished []string
+	for _, id := range tl.order {
+		startName := tl.starts[id]
+		if strings.TrimSpace(startName) == "" {
+			return fmt.Errorf("ToolCallStart %q has an empty name; the app would render a generic \"tool\"", id)
+		}
+		endName, ok := tl.ends[id]
+		if !ok {
+			unfinished = append(unfinished, startName+"("+id+")")
+			continue
+		}
+		if endName != "" && endName != startName {
+			return fmt.Errorf("tool %q changed name between start and end: start=%q end=%q", id, startName, endName)
+		}
+	}
+	if len(unfinished) > 0 {
+		return fmt.Errorf("%d tool call(s) started but never ended: %s — a UI keyed on ToolCallID leaves these spinning forever",
+			len(unfinished), strings.Join(unfinished, ", "))
+	}
+	return nil
+}
+
+func assertToolLifecycleComplete(t *testing.T, tl toolLifecycle) {
+	t.Helper()
+	if err := toolLifecycleError(tl); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// turnTokenUsage is the usage a product surface displays under the answer.
+type turnTokenUsage struct {
+	Prompt     int `json:"prompt_tokens"`
+	Completion int `json:"completion_tokens"`
+	Total      int `json:"total_tokens"`
+	Cache      int `json:"cache_tokens"`
+	Reasoning  int `json:"reasoning_tokens"`
+	Events     int `json:"token_usage_events"`
+}
+
+func collectTurnTokenUsage(evs []*events.AgentEvent) turnTokenUsage {
+	var u turnTokenUsage
+	for _, ev := range evs {
+		d, ok := ev.Data.(*events.TokenUsageEvent)
+		if !ok {
+			continue
+		}
+		u.Events++
+		// Keep the largest report rather than summing: providers emit both
+		// per-call and conversation-total usage, and summing double-counts.
+		if d.TotalTokens > u.Total {
+			u.Prompt, u.Completion, u.Total = d.PromptTokens, d.CompletionTokens, d.TotalTokens
+			u.Reasoning = d.ReasoningTokens
+			if gi := d.GenerationInfo; gi != nil {
+				for _, k := range []string{"cache_tokens", "cache_read_input_tokens", "cached_content_tokens"} {
+					if v, ok := gi[k].(float64); ok && int(v) > u.Cache {
+						u.Cache = int(v)
+					}
+					if v, ok := gi[k].(int); ok && v > u.Cache {
+						u.Cache = v
+					}
+				}
+			}
+		}
+	}
+	return u
+}
+
+// assertTurnTokenUsage pins the usage a product surface renders under the
+// answer. Input/output must be real numbers: a turn that reports zero prompt or
+// completion tokens shows "Input 0 Output 0" in the product, which reads as a
+// broken turn even when the answer is correct. Cache tokens are recorded but not
+// required — only some providers report them, and a cold turn legitimately has
+// none.
+func turnTokenUsageError(u turnTokenUsage) error {
+	if u.Events == 0 {
+		return fmt.Errorf("no TokenUsageEvent — the product surface would render no usage line for this turn")
+	}
+	if u.Prompt <= 0 {
+		return fmt.Errorf("prompt/input tokens = %d, want > 0 (usage line would show Input 0)", u.Prompt)
+	}
+	if u.Completion <= 0 {
+		return fmt.Errorf("completion/output tokens = %d, want > 0 (usage line would show Output 0)", u.Completion)
+	}
+	if u.Total < u.Prompt+u.Completion {
+		return fmt.Errorf("total tokens %d < prompt %d + completion %d — the usage line does not add up",
+			u.Total, u.Prompt, u.Completion)
+	}
+	return nil
+}
+
+func assertTurnTokenUsage(t *testing.T, u turnTokenUsage) {
+	t.Helper()
+	if err := turnTokenUsageError(u); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// toolCallRecords renders each tool call as name + whether it ended + a bounded
+// slice of its body, so the agentic reviewer can verify routing and lifecycle
+// from the artifact alone.
+func toolCallRecords(tl toolLifecycle) []map[string]any {
+	out := make([]map[string]any, 0, len(tl.order))
+	for _, id := range tl.order {
+		body := tl.args[id]
+		const maxBody = 1200
+		truncated := false
+		if len(body) > maxBody {
+			body, truncated = body[:maxBody], true
+		}
+		_, ended := tl.ends[id]
+		out = append(out, map[string]any{
+			"name":  tl.starts[id],
+			"ended": ended,
+			// Name OR body: claude reaches the bridge through the tool NAME
+			// (mcp__api-bridge__*), codex through the BODY of its code-mode exec.
+			// A body-only flag reads as "bypassed the bridge" for every claude
+			// call, which is exactly backwards.
+			"bridge_routed":  isBridgeOrWebsearchTool(tl.starts[id]) || callInvokesBridge(tl.args[id]),
+			"bridge_via":     bridgeRoutingSource(tl.starts[id], tl.args[id]),
+			"body":           body,
+			"body_truncated": truncated,
+		})
+	}
+	return out
+}
+
+// bridgeRoutingSource names WHERE a call's bridge routing is visible, so the
+// recorded artifact cannot be misread: "name" for providers that call the bridge
+// tool directly (claude), "body" for codex's code-mode exec whose script invokes
+// tools.mcp__api_bridge__*, and "none" when neither shows bridge routing.
+func bridgeRoutingSource(name, args string) string {
+	switch {
+	case isBridgeOrWebsearchTool(name):
+		return "name"
+	case callInvokesBridge(args):
+		return "body"
+	default:
+		return "none"
+	}
+}
+
+// firstSignalAfter returns how long after `since` the FIRST user-visible signal
+// (clean content, tool call, or thinking) appeared among events[from:].
+//
+// Used to answer a question the single-turn measurement cannot: whether the
+// multi-second wait before anything appears is one-off warm-up (process spawn,
+// MCP handshake, session bootstrap) or a cost paid on every turn. Those have
+// opposite product remedies — the first is hidden by a warm session, the second
+// needs a progress affordance on every send.
+func firstSignalAfter(evs []*events.AgentEvent, from int, since time.Time) (time.Duration, bool) {
+	best := time.Duration(-1)
+	for i := from; i < len(evs); i++ {
+		ev := evs[i]
+		if ev == nil || ev.Timestamp.IsZero() || ev.Timestamp.Before(since) {
+			continue
+		}
+		visible := false
+		switch d := ev.Data.(type) {
+		case *events.StreamingChunkEvent:
+			visible = !d.IsToolCall && strings.TrimSpace(d.Content) != "" && d.Source != events.StreamingChunkSourceTerminal
+		case *events.ToolCallStartEvent:
+			visible = true
+		case *events.ConversationThinkingEvent:
+			visible = strings.TrimSpace(d.Thinking) != ""
+		}
+		if !visible {
+			continue
+		}
+		if off := ev.Timestamp.Sub(since); best < 0 || off < best {
+			best = off
+		}
+	}
+	if best < 0 {
+		return 0, false
+	}
+	return best, true
 }

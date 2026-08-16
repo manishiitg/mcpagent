@@ -63,7 +63,7 @@ func TestIsCodingCLIBridgeProviderIncludesPiWhenBridgeMounted(t *testing.T) {
 	if !isCodingCLIBridgeProvider(llm.ProviderCodexCLI, "gpt-5.4") {
 		t.Fatal("codex-cli should be recognized as a coding CLI bridge provider")
 	}
-	if !isCodingCLIBridgeProvider(llm.ProviderPiCLI, "google/gemini-3.5-flash") {
+	if !isCodingCLIBridgeProvider(llm.ProviderPiCLI, "google/gemini-3.7-flash") {
 		t.Fatal("pi-cli should be treated as bridge-capable through pi-mcp-adapter")
 	}
 }

@@ -45,7 +45,7 @@ func TestPiCLIMcpAgentGeminiE2E(t *testing.T) {
 
 	agent := &Agent{
 		provider:                       llm.ProviderPiCLI,
-		modelID:                        "google/gemini-3.5-flash",
+		modelID:                        "google/gemini-3.7-flash",
 		sessionID:                      sessionID,
 		codingAgentWorkingDir:          t.TempDir(),
 		piPersistentInteractiveSession: false,
@@ -56,7 +56,7 @@ func TestPiCLIMcpAgentGeminiE2E(t *testing.T) {
 
 	model := LLMModel{
 		Provider: string(llm.ProviderPiCLI),
-		ModelID:  "google/gemini-3.5-flash",
+		ModelID:  "google/gemini-3.7-flash",
 		APIKey:   &apiKey,
 		Options: map[string]interface{}{
 			"pi_provider": "google",
