@@ -62,6 +62,17 @@ var StreamingCriteria = []string{
 	"paced for a watching human — where the record carries first_signal_ms / longest_silence_ms, " +
 		"something shows up promptly and keeps updating; a long opening wait or one long mid-turn " +
 		"silence reads as a hung app even when the final output is perfect",
+	"actually streamed rather than delivered late — delivered_in_one_block=true, or a " +
+		"clean_content_spread_ms near zero, means the text appeared all at once at the end; that is " +
+		"a single late delivery wearing streaming's clothes, and the chunk COUNT alone cannot tell " +
+		"the difference",
+	"thinking claims match the evidence — thinking_event_count=0 means the turn surfaced NO " +
+		"reasoning content, so any 'thinking' a product shows for it must be streamed reply text " +
+		"under a Thinking label, not the model's reasoning; say which it is rather than assuming",
+	"tool calls completed — every started tool has a matching end (tool_calls_started == " +
+		"tool_calls_ended); a started-but-never-ended call leaves a spinning chip in the UI",
+	"usage is renderable — input and output tokens are non-zero so the product's usage line is " +
+		"not 'Input 0 Output 0'; note when cache_tokens is absent on a provider that normally caches",
 }
 
 func reviewDir() string {

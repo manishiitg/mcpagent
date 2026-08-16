@@ -144,7 +144,7 @@ func TestRealBridgeStreamingToolFailureRecovery(t *testing.T) {
 			// does not configure here — skip the check entirely for Codex
 			// rather than assert something this test's setup can't guarantee.
 			if tc.strictBridgeOnly {
-				assertBridgeOrWebsearchOnly(t, toolNames)
+				assertBridgeOrWebsearchOnly(t, toolNames, collectToolLifecycle(listener.events))
 			}
 
 			rec := agentreview.Write(t, "TestRealBridgeStreamingToolFailureRecovery_"+tc.name,
@@ -246,7 +246,7 @@ func TestRealBridgeStreamingToolFailureGiveUp(t *testing.T) {
 			// Skip for Codex — see the identical note in
 			// TestRealBridgeStreamingToolFailureRecovery above.
 			if tc.strictBridgeOnly {
-				assertBridgeOrWebsearchOnly(t, toolNames)
+				assertBridgeOrWebsearchOnly(t, toolNames, collectToolLifecycle(listener.events))
 			}
 
 			rec := agentreview.Write(t, "TestRealBridgeStreamingToolFailureGiveUp_"+tc.name,

@@ -1,42 +1,99 @@
 {
   "test": "TestRealBridgeStreaming_claude",
-  "summary": "claude via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",
+  "summary": "claude over tmux via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",
   "review_criteria": [
     "no duplicated lines or chunks",
     "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
     "human-readable — reads like an assistant working, coherent and natural",
-    "correct text <-> tool interleaving order (narration then the tool it describes)",
+    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
     "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
     "the final answer is coherent and matches the work performed",
-    "real work actually happened (e.g. the file was written to disk)"
+    "real work actually happened (e.g. the file was written to disk)",
+    "paced for a watching human — where the record carries first_signal_ms / longest_silence_ms, something shows up promptly and keeps updating; a long opening wait or one long mid-turn silence reads as a hung app even when the final output is perfect",
+    "actually streamed rather than delivered late — delivered_in_one_block=true, or a clean_content_spread_ms near zero, means the text appeared all at once at the end; that is a single late delivery wearing streaming's clothes, and the chunk COUNT alone cannot tell the difference",
+    "thinking claims match the evidence — thinking_event_count=0 means the turn surfaced NO reasoning content, so any 'thinking' a product shows for it must be streamed reply text under a Thinking label, not the model's reasoning; say which it is rather than assuming",
+    "tool calls completed — every started tool has a matching end (tool_calls_started == tool_calls_ended); a started-but-never-ended call leaves a spinning chip in the UI",
+    "usage is renderable — input and output tokens are non-zero so the product's usage line is not 'Input 0 Output 0'; note when cache_tokens is absent on a provider that normally caches"
   ],
   "output": {
-    "answer": "┌──────────┬───────────────────────┐\n│  Field   │         Value         │\n├──────────┼───────────────────────┤\n│ build_id │ BUILD_ID_07c40d80a7fc │\n├──────────┼───────────────────────┤\n│ status   │ ok                    │\n└──────────┴───────────────────────┘",
-    "build_id_only_via_tool": "BUILD_ID_07c40d80a7fc",
+    "answer": "Here is the exact contents of the report.md file:\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_ca4a2dd19377 |\n| status | ok |",
+    "build_id_only_via_tool": "BUILD_ID_ca4a2dd19377",
     "clean_content_count": 4,
+    "clean_content_spread_ms": 6499,
     "clean_transcript_content": [
-      "I'll read the build ID and create the report table.",
-      "Now I'll write the report with the build ID.",
-      "Now I'll verify the report was created correctly.",
-      "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_07c40d80a7fc |\n| status | ok |"
+      "I'll complete these steps in order.\n\nReading the project build id:",
+      "Writing the markdown report with the build id:",
+      "Reading the report file:",
+      "Here is the exact contents of the report.md file:\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_ca4a2dd19377 |\n| status | ok |"
     ],
+    "delivered_in_one_block": false,
     "delta_content_count": 0,
-    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_07c40d80a7fc |\n| status | ok |\n",
+    "first_signal_ms": 7190,
+    "first_signal_ms_by_kind": {
+      "clean_content": 7190,
+      "tool_call": 7190
+    },
+    "longest_silence_ms": 7190,
+    "reassembled_message": "I'll complete these steps in order.\n\nReading the project build id:\nWriting the markdown report with the build id:\nReading the report file:\nHere is the exact contents of the report.md file:\n\n| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_ca4a2dd19377 |\n| status | ok |",
+    "report_md_on_disk": "| Field | Value |\n|-------|-------|\n| build_id | BUILD_ID_ca4a2dd19377 |\n| status | ok |\n",
+    "thinking_event_count": 0,
+    "thinking_texts": null,
+    "token_usage": {
+      "prompt_tokens": 47503,
+      "completion_tokens": 709,
+      "total_tokens": 48212,
+      "cache_tokens": 47463,
+      "reasoning_tokens": 0,
+      "token_usage_events": 1
+    },
     "tool_call_events": 3,
+    "tool_calls": [
+      {
+        "body": "{\"command\":\"cat /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Eclaudetmux2671049609/002/build_id.txt\"}",
+        "body_truncated": false,
+        "bridge_routed": true,
+        "bridge_via": "name",
+        "ended": true,
+        "name": "mcp__api-bridge__execute_shell_command"
+      },
+      {
+        "body": "{\"command\":\"cat \u003e /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Eclaudetmux2671049609/002/report.md \u003c\u003c 'EOF'\\n| Field | Value |\\n|-------|-------|\\n| build_id | BUILD_ID_ca4a2dd19377 |\\n| status | ok |\\nEOF\"}",
+        "body_truncated": false,
+        "bridge_routed": true,
+        "bridge_via": "name",
+        "ended": true,
+        "name": "mcp__api-bridge__execute_shell_command"
+      },
+      {
+        "body": "{\"command\":\"cat /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Eclaudetmux2671049609/002/report.md\"}",
+        "body_truncated": false,
+        "bridge_routed": true,
+        "bridge_via": "name",
+        "ended": true,
+        "name": "mcp__api-bridge__execute_shell_command"
+      }
+    ],
+    "tool_calls_ended": 3,
+    "tool_calls_started": 3,
     "tool_names": [
       "mcp__api-bridge__execute_shell_command",
       "mcp__api-bridge__execute_shell_command",
       "mcp__api-bridge__execute_shell_command"
     ],
     "total_content_chunks": 16,
+    "total_signal_events": 7,
+    "transport": "tmux",
+    "turn2_answer": "The build id is BUILD_ID_ca4a2dd19377.",
+    "turn2_first_signal_ms": 5369,
+    "turn2_total_ms": 12917,
     "went_through_real_bridge": true
   },
-  "fingerprint": "564124321e6d3085",
+  "fingerprint": "a20e26ded38c0166",
   "agent_review": {
-    "verdict": "good",
-    "reviewed_fingerprint": "564124321e6d3085",
-    "reviewer": "claude-opus-4-8 (agentic P0 review)",
+    "verdict": "",
+    "reviewed_fingerprint": "",
+    "reviewer": "",
     "issues": null,
-    "notes": "PRODUCTION-FIDELITY, RICH TASK: claude ran the real read/write/table workflow through the REAL bridge — 3x mcp__api-bridge__execute_shell_command (read build_id.txt -> write report.md -> read it back), each a ToolCallStartEvent. build id BUILD_ID_07c40d80a7fc was only in the file; report.md on disk is a correct markdown table with it. The clean stream (Source != terminal) is interleaved narration + the final markdown table verbatim, no ANSI. As a block provider claude shows delta_content_count=0 (confirming the new IsDelta marker is per-provider correct — pi shows all deltas, claude none). Clean end to end."
+    "notes": ""
   }
 }
