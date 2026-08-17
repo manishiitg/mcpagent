@@ -284,3 +284,52 @@ func TestToolNameFromResult(t *testing.T) {
 		})
 	}
 }
+
+// PLAT-127. agent_browser's wait action reports {"waited":"timeout"} when its
+// poll deadline elapsed without the awaited condition firing -- a documented,
+// successful outcome, not a failure. The literal payload shape below is from a
+// live social-media run: 142 of 524 suspects on that one workflow were this
+// exact field with "success":true alongside it, none a real failure.
+func TestSuspiciousDoesNotFlagAgentBrowserWaitTimeoutOutcome(t *testing.T) {
+	live := `{"success":true,"data":{"lifecycle":{"effectiveTargetedBrowser":false,"restartedBackground":false,"restoreStatus":"not_configured","reused":true,"saveStatus":"not_attempted"},"ms":1500,"waited":"timeout"},"error":null}`
+	if signal, suspicious := Suspicious(live); suspicious {
+		t.Errorf("Suspicious(...) = true (signal %q), want a documented wait outcome to stay quiet", signal)
+	}
+}
+
+// The suppression must be exact to the known field, not a blanket exemption
+// for "timeout" wherever it appears -- a genuine timeout failure elsewhere in
+// the same result must still be caught.
+func TestSuspiciousStillFlagsARealTimeoutBesideAWaitOutcome(t *testing.T) {
+	mixed := `{"success":true,"waited":"timeout","note":"connection to browser context deadline exceeded"}`
+	if _, suspicious := Suspicious(mixed); !suspicious {
+		t.Error("Suspicious(...) = false, want the unrelated real timeout to still be flagged")
+	}
+}
+
+// Spacing variant: "waited": "timeout" (with a space after the colon) is the
+// same field mcpagent's own JSON marshaling can produce; the pattern must not
+// be brittle to that.
+func TestSuspiciousDoesNotFlagAgentBrowserWaitTimeoutOutcomeWithSpacing(t *testing.T) {
+	live := `{"success": true, "waited": "timeout"}`
+	if signal, suspicious := Suspicious(live); suspicious {
+		t.Errorf("Suspicious(...) = true (signal %q), want a documented wait outcome to stay quiet", signal)
+	}
+}
+
+// PLAT-127. get_route_description (no route_id: a full route-catalog dump)
+// hit the exact shape that justified the original problemReportingTools list
+// -- prose describing routes, not a tool failure. Measured live on
+// social-media: 12 of 12 suspects, zero real failures.
+func TestSuspiciousForToolSuppressesRouteDescriptionCatalogDump(t *testing.T) {
+	problemText := `{"findings":[{"title":"urls.md not found","detail":"permission denied"}]}`
+	if signal, suspicious := SuspiciousForTool("get_route_description", problemText); suspicious {
+		t.Errorf("SuspiciousForTool(get_route_description, ...) = true (signal %q), want suppressed", signal)
+	}
+	// A genuine failure from this tool must still surface as a confirmed
+	// [TOOL_ERROR] -- this suppresses only the heuristic, per the doc comment
+	// on problemReportingTools.
+	if _, suspicious := SuspiciousForTool("agent_browser", problemText); !suspicious {
+		t.Error("unrelated tool must keep the broad behaviour")
+	}
+}

@@ -307,6 +307,10 @@ func Suspicious(resultText string) (string, bool) {
 		return "", false
 	}
 	lowered := strings.ToLower(trimmed)
+	// Strip documented successful-outcome values before scanning for failure
+	// signals below, so a value that happens to spell a failure word cannot
+	// masquerade as one. See benignJSONOutcomePattern.
+	lowered = benignJSONOutcomePattern.ReplaceAllString(lowered, "")
 
 	// A JSON envelope that carries its own status is more reliable than prose,
 	// so check those first and report them distinctly.
@@ -333,6 +337,23 @@ func Suspicious(resultText string) (string, bool) {
 	}
 	return "", false
 }
+
+// benignJSONOutcomePattern matches known JSON field/value pairs where the
+// value is a documented, successful outcome of the call rather than a symptom
+// of failure -- so the generic signal scan below cannot mistake the value text
+// for a failure word.
+//
+// agent_browser's wait action reports {"waited":"timeout"} when its poll
+// deadline elapsed without the awaited condition firing. That is success: the
+// tool did what it was told and reported what happened; it is not the same
+// signal as a transport or context timeout. Measured 2026-08-17: 142 of 524
+// suspects on one workflow (27%) were this exact field, none a real failure.
+//
+// This must stay narrow. It removes only text this codebase itself produces
+// with a known vocabulary, not general prose -- a genuine timeout reported
+// anywhere else in the same payload (a different field, a nested error, free
+// text) is untouched and still fires normally.
+var benignJSONOutcomePattern = regexp.MustCompile(`"waited"\s*:\s*"timeout"`)
 
 // nonZeroExitCodeSignal finds an exit_code field whose value is not 0. Shell
 // results carry the real outcome here while the transport reports success, so a
@@ -395,6 +416,12 @@ var problemReportingTools = map[string]bool{
 	"record_pulse_worklist":         true,
 	"organize_global_learnings":     true,
 	"consolidate_knowledgebase":     true,
+	// PLAT-127. A message-sequence orchestrator step's route catalog dump
+	// (get_route_description with no route_id, listing every configured route's
+	// full behavior prose) hit this same shape on 2026-08-17: 12 of 12 suspects
+	// on one workflow, zero of them an actual failure -- one whose prose happened
+	// to contain a word this heuristic treats as a failure signal.
+	"get_route_description": true,
 }
 
 // SuspiciousForTool is Suspicious with the per-tool suppression applied. Prefer
