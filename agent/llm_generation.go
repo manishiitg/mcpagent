@@ -1354,19 +1354,49 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	// Get effective configuration (supports new and legacy)
 	llmConfig := a.getEffectiveLLMConfig()
 
-	// Build list of models to try: Primary + Fallbacks, skipping permanently quota-exhausted models.
+	// Build list of models to try: Primary + Fallbacks, skipping models whose
+	// usage window is still shut. A model whose window has since reopened is
+	// tried again rather than benched for the agent's lifetime (PLAT-101).
 	allModels := append([]LLMModel{llmConfig.Primary}, llmConfig.Fallbacks...)
 	var modelsToTry []LLMModel
+	var soonestReset time.Time
+	now := time.Now()
 	for _, m := range allModels {
 		key := m.Provider + "/" + m.ModelID
-		if a.quotaExhaustedModels[key] {
-			logger.Info(fmt.Sprintf("⏭️ [QUOTA_SKIP] Skipping permanently exhausted model %s (remembered from prior turn)", key))
+		resetAt, exhausted := a.quotaExhaustedModels[key]
+		if exhausted {
+			if !resetAt.IsZero() && !resetAt.After(now) {
+				// The window this model was waiting on has reopened.
+				delete(a.quotaExhaustedModels, key)
+				logger.Info(fmt.Sprintf("♻️ [QUOTA_RESET] Usage window for %s reopened at %s; trying it again", key, resetAt.Format(time.RFC3339)))
+				modelsToTry = append(modelsToTry, m)
+				continue
+			}
+			if resetAt.IsZero() {
+				logger.Info(fmt.Sprintf("⏭️ [QUOTA_SKIP] Skipping exhausted model %s (no reset time known)", key))
+			} else {
+				logger.Info(fmt.Sprintf("⏭️ [QUOTA_SKIP] Skipping exhausted model %s until %s", key, resetAt.Format(time.RFC3339)))
+				if soonestReset.IsZero() || resetAt.Before(soonestReset) {
+					soonestReset = resetAt
+				}
+			}
 			continue
 		}
 		modelsToTry = append(modelsToTry, m)
 	}
 	if len(modelsToTry) == 0 {
-		return nil, usage, fmt.Errorf("all LLMs failed (primary + %d fallbacks): all models are quota-exhausted", len(llmConfig.Fallbacks))
+		// Carry the reset time out with the failure. A caller that must decide
+		// between failing the run and suspending it until capacity returns
+		// cannot do so from a sentence; this is the whole point of the typed
+		// error (PLAT-101). soonestReset stays zero when no model stated a
+		// time, which is the explicit unknown-capacity state, never a guess.
+		return nil, usage, &llmerrors.Error{
+			Kind:     llmerrors.KindQuotaExhausted,
+			Provider: llmConfig.Primary.Provider,
+			Model:    llmConfig.Primary.ModelID,
+			RetryAt:  soonestReset,
+			Err:      fmt.Errorf("all LLMs failed (primary + %d fallbacks): all models are quota-exhausted", len(llmConfig.Fallbacks)),
+		}
 	}
 
 	generationStartTime := time.Now()
@@ -1509,11 +1539,18 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				// Permanent quota exhaustion (daily/monthly) — retrying same model is pointless.
 				// Remember this model so future turns skip it immediately.
 				if a.quotaExhaustedModels == nil {
-					a.quotaExhaustedModels = make(map[string]bool)
+					a.quotaExhaustedModels = make(map[string]time.Time)
 				}
 				key := model.Provider + "/" + model.ModelID
-				a.quotaExhaustedModels[key] = true
-				logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Daily/permanent quota exceeded for %s — marked as exhausted for remaining turns", key))
+				// Zero when the provider stated no reliable reset: still skipped,
+				// but never retried on a guessed schedule.
+				resetAt := llmerrors.RetryAtOrZero(err)
+				a.quotaExhaustedModels[key] = resetAt
+				if resetAt.IsZero() {
+					logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Usage window spent for %s (no reset time stated) — skipping it on later turns", key))
+				} else {
+					logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Usage window spent for %s until %s — skipping it until then", key, resetAt.Format(time.RFC3339)))
+				}
 				break
 			} else if errorType == "auth_error" {
 				// Credential/permission failure for THIS provider's key — retrying the
@@ -1526,10 +1563,13 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				// Unknown/unavailable model ID — a permanent config error. Memoize it
 				// (like quota) so future turns skip it, then move to the fallback chain.
 				if a.quotaExhaustedModels == nil {
-					a.quotaExhaustedModels = make(map[string]bool)
+					a.quotaExhaustedModels = make(map[string]time.Time)
 				}
 				key := model.Provider + "/" + model.ModelID
-				a.quotaExhaustedModels[key] = true
+				// A missing model is a config error, not a window that reopens:
+				// the zero reset keeps it skipped permanently rather than
+				// retried on a schedule.
+				a.quotaExhaustedModels[key] = time.Time{}
 				logger.Warn(fmt.Sprintf("🚫 [MODEL_NOT_FOUND] Model %s is unavailable; marked to skip on future turns, trying fallback chain", key))
 				break
 			} else if errorType == "zero_candidates_error" {

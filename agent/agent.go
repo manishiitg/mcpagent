@@ -1300,10 +1300,22 @@ type Agent struct {
 	// LLM Configuration
 	llmConfig AgentLLMConfiguration
 
-	// quotaExhaustedModels tracks models that hit permanent quota exhaustion (daily/monthly limits).
-	// These are skipped on subsequent turns to avoid wasted API calls.
+	// quotaExhaustedModels tracks models whose usage window is spent, so later
+	// turns skip them instead of spending a call to rediscover it.
+	//
+	// The value is WHEN the window reopens, not merely that it is shut
+	// (PLAT-101). A bool could only ever mean "never try again", which is wrong
+	// twice over: a five-hour window that reopens mid-run left the model
+	// permanently benched for the agent's lifetime, and the terminal
+	// "all models are quota-exhausted" error could not tell a caller when
+	// capacity returns — which is exactly what a workflow needs in order to
+	// suspend and resume rather than lose the run.
+	//
+	// A zero value means exhausted with no reliable reset time. That is a real
+	// state, distinct from "recovers at T": it is skipped like any exhausted
+	// model, but yields no resume time and must never be turned into a guess.
 	// Key: "provider/model_id"
-	quotaExhaustedModels map[string]bool
+	quotaExhaustedModels map[string]time.Time
 }
 
 // LLMModel represents a single LLM configuration
