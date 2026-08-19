@@ -364,3 +364,39 @@ func TestSuspiciousStillFlagsARealNotifyUserFailure(t *testing.T) {
 		t.Error("Suspicious(...) = false, want a real per-channel failure to still be flagged")
 	}
 }
+
+// Live tab list, 2026-08-19 (agent_browser, ICICI-BANK-PARSING run): a genuine
+// third-party page happened to be titled "Sorry, you have been logged out !".
+// Verified against pkg/browser/cdp_tabs.go's actual output format, not
+// invented -- each line is `- <tabID>[ active][ label=%q][ title=%q][ url=%q]`.
+func TestSuspiciousDoesNotFlagBrowserTabListPageTitleContent(t *testing.T) {
+	live := "- t1 title=\"Shiv Nadar School - Student Portal\" url=\"https://portals.veracross.com/sns/student\"\n" +
+		"- t2 title=\"Sorry, you have been logged out !\" url=\"https://cibnext.icici.bank.in/corp/Finacle;jsessionid=0000qz2f40aweClE7NNlLtplejY:1aeuba78B\"\n" +
+		"- t4 title=\"Feedback page Income tax portal, government of India\" url=\"https://eportal.incometax.gov.in/iec/foservices/\"\n" +
+		"- t10 active label=\"mahimakh_icici\" title=\"ICICI Bank- Net Banking\" url=\"https://retailnetbanking.icici.bank.in/bank-account/view-statements\""
+	if signal, suspicious := Suspicious(live); suspicious {
+		t.Errorf("Suspicious(...) = true (signal %q), want arbitrary page title/url content to stay quiet", signal)
+	}
+}
+
+// A title containing a literal double quote is %q-escaped by Go as \" --
+// pkg/browser/cdp_tabs.go's own quoting behavior, confirmed directly
+// (fmt.Printf("title=%q", ...)). The pattern must still match the whole
+// value rather than stopping at the escaped quote's trailing ".
+func TestSuspiciousDoesNotFlagBrowserTabTitleWithEscapedQuote(t *testing.T) {
+	live := `- t1 title="Sorry, \"not found\" - please try again" url="https://example.com/"`
+	if signal, suspicious := Suspicious(live); suspicious {
+		t.Errorf("Suspicious(...) = true (signal %q), want an escaped quote inside the title to not break the match", signal)
+	}
+}
+
+// A real agent_browser failure (an element genuinely not found by a click/find
+// action, not tab-list page metadata) must still be caught -- the suppression
+// is scoped to the title=/url= attribute shape, not the word "not found"
+// generally.
+func TestSuspiciousStillFlagsARealBrowserElementNotFoundError(t *testing.T) {
+	live := `{"success":false,"error":"element not found: selector '#submit-button' matched 0 nodes"}`
+	if _, suspicious := Suspicious(live); !suspicious {
+		t.Error("Suspicious(...) = false, want a real element-not-found error outside title=/url= to still be flagged")
+	}
+}

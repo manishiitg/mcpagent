@@ -309,10 +309,11 @@ func Suspicious(resultText string) (string, bool) {
 	lowered := strings.ToLower(trimmed)
 	// Strip documented successful-outcome values before scanning for failure
 	// signals below, so a value that happens to spell a failure word cannot
-	// masquerade as one. See benignJSONOutcomePattern and
-	// notifyUserEmptyFailedFieldPattern.
+	// masquerade as one. See benignJSONOutcomePattern,
+	// notifyUserEmptyFailedFieldPattern, and browserTabListAttrValuePattern.
 	lowered = benignJSONOutcomePattern.ReplaceAllString(lowered, "")
 	lowered = notifyUserEmptyFailedFieldPattern.ReplaceAllString(lowered, "")
+	lowered = browserTabListAttrValuePattern.ReplaceAllString(lowered, "")
 
 	// A JSON envelope that carries its own status is more reliable than prose,
 	// so check those first and report them distinctly.
@@ -384,6 +385,33 @@ var benignJSONOutcomePattern = regexp.MustCompile(`"waited"\s*:\s*"timeout"`)
 // backslashes so the pattern matches at any nesting depth, not only the
 // direct, unwrapped call.
 var notifyUserEmptyFailedFieldPattern = regexp.MustCompile(`\\*"failed\\*"\s*:\s*\{\s*\}`)
+
+// browserTabListAttrValuePattern matches a `title="..."` or `url="..."`
+// attribute value from agent_browser's tab-list line format (confirmed from
+// source, agent_go's pkg/browser/cdp_tabs.go: each line is built as
+// `- <tabID>[ active][ label=%q][ title=%q][ url=%q]`, joined with "\n"). %q
+// double-quotes and backslash-escapes any internal quote, so a title
+// containing a literal `"` produces `\"` inside the value -- `(?:[^"\\]|\\.)`
+// matches that correctly (any non-quote-non-backslash character, OR a
+// backslash followed by any character), where a naive `[^"]*` would stop at
+// the first escaped quote's trailing `"` and truncate the match.
+//
+// title and url are page metadata an arbitrary third-party website chose,
+// not a report on the tab-list command's own outcome -- the same reasoning as
+// get_route_description's suppression, applied to a field instead of a whole
+// tool. A live tab list on 2026-08-18 included a genuine page titled "Sorry,
+// you have been logged out !"; had its content instead spelled a signal word
+// like "not found" or "timeout", it would have been misread as the COMMAND
+// failing rather than a description of what page happened to be open.
+//
+// Deliberately narrower than suppressing agent_browser outright, or the word
+// "not found" for that tool generally: a real failure reported OUTSIDE a
+// title=/url= attribute -- an element genuinely not found by a click/find
+// action, say -- is untouched by this pattern and still fires normally (see
+// TestSuspiciousStillFlagsARealBrowserElementNotFoundError). Only content
+// that this codebase's own source confirms is arbitrary third-party page
+// metadata is stripped, nothing else.
+var browserTabListAttrValuePattern = regexp.MustCompile(`\b(?:title|url)="(?:[^"\\]|\\.)*"`)
 
 // nonZeroExitCodeSignal finds an exit_code field whose value is not 0. Shell
 // results carry the real outcome here while the transport reports success, so a
