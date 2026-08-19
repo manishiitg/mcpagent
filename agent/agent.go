@@ -3000,6 +3000,7 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 // Thread-safe: uses eventMu to protect hierarchy state (currentParentEventID, currentHierarchyLevel)
 // which can be mutated concurrently during parallel tool execution.
 func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) {
+	debugLogToolCallEventOrigin(a, eventData)
 
 	// Lock eventMu to protect hierarchy state reads and writes
 	a.eventMu.Lock()
