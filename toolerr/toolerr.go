@@ -309,8 +309,10 @@ func Suspicious(resultText string) (string, bool) {
 	lowered := strings.ToLower(trimmed)
 	// Strip documented successful-outcome values before scanning for failure
 	// signals below, so a value that happens to spell a failure word cannot
-	// masquerade as one. See benignJSONOutcomePattern.
+	// masquerade as one. See benignJSONOutcomePattern and
+	// notifyUserEmptyFailedFieldPattern.
 	lowered = benignJSONOutcomePattern.ReplaceAllString(lowered, "")
+	lowered = notifyUserEmptyFailedFieldPattern.ReplaceAllString(lowered, "")
 
 	// A JSON envelope that carries its own status is more reliable than prose,
 	// so check those first and report them distinctly.
@@ -354,6 +356,34 @@ func Suspicious(resultText string) (string, bool) {
 // anywhere else in the same payload (a different field, a nested error, free
 // text) is untouched and still fires normally.
 var benignJSONOutcomePattern = regexp.MustCompile(`"waited"\s*:\s*"timeout"`)
+
+// notifyUserEmptyFailedFieldPattern matches notify_user's own documented
+// success shape: {"delivered":[...],"failed":{},"skipped":[...],"status":"..."}.
+// An empty `"failed":{}` means zero channels failed -- it is the report of a
+// successful send, not a symptom of one. The word "failed" is a signal-list
+// entry, so this fired on every clean send, and doubly so: notify_user is
+// often also relayed through execute_shell_command (a python/curl wrapper
+// hitting the same endpoint), so one successful notification produced two
+// [TOOL_ERROR_SUSPECT] lines from the identical shape under two different
+// tool names. Live example, 2026-08-19:
+// {"stdout":"{\"delivered\":[\"gmail\"],\"failed\":{},\"skipped\":[\"whatsapp\"],
+// \"status\":\"delivered\"}","stderr":"","exit_code":0,...} -- exit_code 0,
+// status "delivered", and still flagged signal=failed purely off the empty
+// object.
+//
+// Deliberately narrow, same discipline as benignJSONOutcomePattern above: only
+// the exact empty-object shape this codebase produces is stripped. A REAL
+// failure list -- "failed":{"whatsapp":"connection refused"} -- has content
+// inside the braces and does not match, so it still fires normally.
+//
+// notify_user is frequently relayed through execute_shell_command (a
+// python/curl wrapper calling the same endpoint), whose own result wraps
+// notify_user's JSON as a *string value* of its own "stdout" field --
+// standard JSON-in-JSON, where the inner quotes are backslash-escaped
+// (`\"failed\":{}`, not `"failed":{}`). `\\*` tolerates zero or more of those
+// backslashes so the pattern matches at any nesting depth, not only the
+// direct, unwrapped call.
+var notifyUserEmptyFailedFieldPattern = regexp.MustCompile(`\\*"failed\\*"\s*:\s*\{\s*\}`)
 
 // nonZeroExitCodeSignal finds an exit_code field whose value is not 0. Shell
 // results carry the real outcome here while the transport reports success, so a

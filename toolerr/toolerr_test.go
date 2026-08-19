@@ -333,3 +333,34 @@ func TestSuspiciousForToolSuppressesRouteDescriptionCatalogDump(t *testing.T) {
 		t.Error("unrelated tool must keep the broad behaviour")
 	}
 }
+
+// Live example, 2026-08-19: a successful notify_user send, relayed through
+// execute_shell_command (a python/curl wrapper hitting the same endpoint),
+// flagged purely because "failed":{} -- zero channels failed -- contains the
+// word "failed". exit_code 0 and status "delivered" were both already present
+// and ignored by the substring scan.
+func TestSuspiciousDoesNotFlagNotifyUserEmptyFailedField(t *testing.T) {
+	live := `{"stdout":"{\"delivered\":[\"gmail\"],\"failed\":{},\"skipped\":[\"whatsapp\"],\"status\":\"delivered\"}","stderr":"","exit_code":0,"execution_time_ms":1412}`
+	if signal, suspicious := Suspicious(live); suspicious {
+		t.Errorf("Suspicious(...) = true (signal %q), want a documented empty-failed-list outcome to stay quiet", signal)
+	}
+}
+
+// Spacing variant, matching benignJSONOutcomePattern's own precedent test.
+func TestSuspiciousDoesNotFlagNotifyUserEmptyFailedFieldWithSpacing(t *testing.T) {
+	live := `{"delivered": ["gmail"], "failed": {}, "status": "delivered"}`
+	if signal, suspicious := Suspicious(live); suspicious {
+		t.Errorf("Suspicious(...) = true (signal %q), want a documented empty-failed-list outcome to stay quiet", signal)
+	}
+}
+
+// The suppression must be exact to an EMPTY failed list, not a blanket
+// exemption for the word "failed" -- a real per-channel failure report must
+// still be caught, since that is exactly the signal a human reviewing
+// [TOOL_ERROR_SUSPECT] logs needs to see.
+func TestSuspiciousStillFlagsARealNotifyUserFailure(t *testing.T) {
+	live := `{"delivered":["gmail"],"failed":{"whatsapp":"connection refused"},"status":"partial"}`
+	if _, suspicious := Suspicious(live); !suspicious {
+		t.Error("Suspicious(...) = false, want a real per-channel failure to still be flagged")
+	}
+}
