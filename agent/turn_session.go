@@ -243,10 +243,30 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 
 	var text string
 	var updated []llmtypes.MessageContent
-	if handle := s.agent.currentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
-		text, updated, _, err = s.agent.continueAgentSessionWithHistory(ctx, handle, history)
+	handleBeforeTurn := s.agent.currentAgentSessionHandle()
+	nativeSessionID := ""
+	if handleBeforeTurn != nil {
+		nativeSessionID = handleBeforeTurn.Provider.NativeSessionID
+	}
+	providerStartedAt := time.Now()
+	if s.agent.logger != nil {
+		s.agent.logger.Debug(fmt.Sprintf("[COMPLETION_TRACE] stage=mcpagent_provider_call_started session=%q provider=%q native_session=%q", s.agent.sessionID, s.agent.provider, nativeSessionID))
+	}
+	if handleBeforeTurn != nil && !handleBeforeTurn.Provider.Empty() {
+		text, updated, _, err = s.agent.continueAgentSessionWithHistory(ctx, handleBeforeTurn, history)
 	} else {
 		text, updated, err = s.agent.askWithHistory(ctx, history)
+	}
+	if s.agent.logger != nil {
+		outcome := "completed"
+		if err != nil {
+			outcome = "error"
+		}
+		handleAfterTurn := s.agent.currentAgentSessionHandle()
+		if handleAfterTurn != nil && handleAfterTurn.Provider.NativeSessionID != "" {
+			nativeSessionID = handleAfterTurn.Provider.NativeSessionID
+		}
+		s.agent.logger.Debug(fmt.Sprintf("[COMPLETION_TRACE] stage=mcpagent_provider_call_returned session=%q provider=%q native_session=%q outcome=%s elapsed=%s", s.agent.sessionID, s.agent.provider, nativeSessionID, outcome, time.Since(providerStartedAt).Round(time.Millisecond)))
 	}
 	if len(updated) > 0 {
 		s.stateMu.Lock()
