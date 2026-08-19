@@ -456,6 +456,23 @@ type ToolCallEndEvent struct {
 	Duration   time.Duration `json:"duration"`
 	ServerName string        `json:"server_name"`
 	ToolCallID string        `json:"tool_call_id,omitempty"` // Unique ID from the LLM response, used to correlate start/end/error events
+	// SyntheticSettle marks an end event the PLATFORM fabricated because the
+	// tool call never reported one of its own (agent_go's settleOpenToolCalls,
+	// PLAT-141), rather than one the provider actually sent.
+	//
+	// It exists because Duration means something DIFFERENT on these events: it
+	// is how long the call sat open before being force-closed at turn end, not
+	// how long the tool ran. The backend already logs that distinction
+	// verbatim ("open-to-settle (NOT tool runtime)"), but nothing carried it to
+	// a consumer, so the UI rendered open-to-settle time under a "Duration"
+	// label and a reader reasonably concluded the tools were slow. Observed
+	// 2026-08-19: a Codex chat session settling 14 of 14 unreported calls, all
+	// stamped the same second, showing durations up to 6.3m for tools that had
+	// not necessarily taken any such time.
+	//
+	// Absent/false means the provider genuinely reported the end and Duration
+	// is real runtime.
+	SyntheticSettle bool `json:"synthetic_settle,omitempty"`
 	// Token usage information (optional)
 	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"`
 	ModelContextWindow  int     `json:"model_context_window,omitempty"`
