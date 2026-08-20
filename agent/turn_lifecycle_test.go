@@ -53,7 +53,11 @@ func TestCanonicalTurnLifecycleSuppressesDuplicateCompletion(t *testing.T) {
 	}
 }
 
-func TestSessionRunOwnsErrorCompletionAndStableTurnID(t *testing.T) {
+// TestP0CanonicalTurnContract is the credential-free mandatory release gate
+// for IC-12. It exercises the public Session.Run boundary: every accepted turn
+// has one stable identity and exactly one terminal completion, including an
+// error before any provider is called.
+func TestP0CanonicalTurnContract(t *testing.T) {
 	capture := &canonicalTurnCapture{}
 	agent := &Agent{sessionID: "canonical-run-error", listeners: []AgentEventListener{capture}}
 	session := &Session{agent: agent}
