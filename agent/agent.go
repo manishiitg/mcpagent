@@ -3011,7 +3011,6 @@ func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) 
 		}
 		return
 	}
-	debugLogToolCallEventOrigin(a, eventData)
 
 	// Lock eventMu to protect hierarchy state reads and writes
 	a.eventMu.Lock()
