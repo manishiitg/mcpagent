@@ -51,7 +51,8 @@ func TestRetainedSessionOwnsCompletionAfterDirectDelivery(t *testing.T) {
 		},
 	}
 
-	session.startRetainedCompletionWatch("upgrade the report", llm.ProviderPiCLI, llm.CodingAgentTransportTmux)
+	lifecycle := newCanonicalTurnLifecycle("")
+	session.startRetainedCompletionWatch(lifecycle, "upgrade the report", llm.ProviderPiCLI, llm.CodingAgentTransportTmux)
 	select {
 	case <-capture.ready:
 	case <-time.After(2 * time.Second):
@@ -80,6 +81,9 @@ func TestRetainedSessionOwnsCompletionAfterDirectDelivery(t *testing.T) {
 	}
 	if completion.FinalResult != "upgrade complete" || completion.Metadata["source"] != "mcpagent_session" {
 		t.Fatalf("completion = %#v", completion)
+	}
+	if completion.Metadata["turn_id"] != lifecycle.id || capture.events[0].TurnID != lifecycle.id {
+		t.Fatalf("completion turn identity = metadata:%v wrapper:%q want %q", completion.Metadata["turn_id"], capture.events[0].TurnID, lifecycle.id)
 	}
 }
 

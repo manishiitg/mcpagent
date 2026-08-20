@@ -27,6 +27,9 @@ type ToolPolicy struct {
 // Turn contains the user input, optional prior history, and runtime policy for
 // one model turn. Runtime policy is deliberately not part of AgentDefinition.
 type Turn struct {
+	// ID is the stable provider-neutral identity for this message. Session.Run
+	// creates one when omitted.
+	ID                string
 	Input             string
 	History           []llmtypes.MessageContent
 	ToolPolicy        ToolPolicy
@@ -54,6 +57,7 @@ type Usage struct {
 
 // Result contains the completed output and continuation state for a turn.
 type Result struct {
+	TurnID  string
 	Text    string
 	History []llmtypes.MessageContent
 	Handle  *AgentSessionHandle
@@ -63,6 +67,7 @@ type Result struct {
 // DeliveryResult reports whether input was delivered into an active turn or
 // queued for the next provider boundary.
 type DeliveryResult struct {
+	TurnID    string
 	Queued    bool
 	Status    UserMessageDeliveryStatus
 	Provider  llm.Provider
@@ -103,6 +108,7 @@ type Session struct {
 	retainedStarting bool
 	retainedActive   bool
 	retainedSeq      uint64
+	activeTurn       *canonicalTurnLifecycle
 	watchCtx         context.Context
 	watchCancel      context.CancelFunc
 
@@ -184,7 +190,7 @@ func (a *Agent) Definition() AgentDefinitionView {
 }
 
 // Run executes one turn using the supplied runtime policy.
-func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
+func (s *Session) Run(ctx context.Context, turn Turn) (result Result, err error) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	s.stateMu.Lock()
@@ -205,10 +211,34 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 		s.stateMu.Unlock()
 		return Result{}, ErrTurnAlreadyInFlight
 	}
+	lifecycle := newCanonicalTurnLifecycle(turn.ID)
+	turn.ID = lifecycle.id
+	ctx = withCanonicalTurnLifecycle(ctx, lifecycle)
+	s.stateMu.Lock()
+	s.activeTurn = lifecycle
+	s.stateMu.Unlock()
 	defer func() {
+		result.TurnID = lifecycle.id
+		if !lifecycle.isTerminal() {
+			status := "completed"
+			completion := events.NewUnifiedCompletionEvent(
+				"session", string(s.agent.agentMode), turn.Input, result.Text,
+				status, time.Since(lifecycle.startedAt), 1,
+			)
+			completion.Metadata["source"] = "mcpagent_session"
+			if err != nil {
+				completion.Status = "error"
+				completion.Error = err.Error()
+			}
+			s.agent.annotateUnifiedCompletionEvent(completion)
+			s.agent.emitTypedEvent(ctx, completion)
+		}
 		s.agent.setTurnInFlight(false)
 		s.stateMu.Lock()
 		s.runActive = false
+		if s.activeTurn == lifecycle {
+			s.activeTurn = nil
+		}
 		s.stateMu.Unlock()
 	}()
 	policy, err := normalizeToolPolicy(turn.ToolPolicy)
@@ -275,7 +305,8 @@ func (s *Session) Run(ctx context.Context, turn Turn) (Result, error) {
 	}
 	prompt, completion, total, cache, reasoning, calls, cacheCalls,
 		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextUsage := s.agent.getTokenUsageWithPricing()
-	result := Result{
+	result = Result{
+		TurnID:  lifecycle.id,
 		Text:    text,
 		History: append([]llmtypes.MessageContent(nil), updated...),
 		Handle:  s.agent.currentAgentSessionHandle(),
@@ -311,13 +342,22 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		return DeliveryResult{}, fmt.Errorf("session is closed")
 	}
 	wasActive := s.runActive || s.retainedActive
+	lifecycle := s.activeTurn
 	if !wasActive {
 		s.retainedStarting = true
+		lifecycle = newCanonicalTurnLifecycle("")
+		s.activeTurn = lifecycle
 	}
 	s.stateMu.Unlock()
+	if lifecycle != nil {
+		ctx = withCanonicalTurnLifecycle(ctx, lifecycle)
+	}
 	clearStarting := func() {
 		s.stateMu.Lock()
 		s.retainedStarting = false
+		if !s.runActive && !s.retainedActive && s.activeTurn == lifecycle {
+			s.activeTurn = nil
+		}
 		s.stateMu.Unlock()
 	}
 	delivery, err := s.agent.deliverUserMessage(ctx, UserMessageDeliveryRequest{
@@ -325,7 +365,12 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		Message:   input,
 		Intent:    UserMessageDeliveryIntentAuto,
 	})
+	turnID := ""
+	if lifecycle != nil {
+		turnID = lifecycle.id
+	}
 	result := DeliveryResult{
+		TurnID:    turnID,
 		Queued:    delivery.DeliveryStatus == UserMessageDeliveryStatusQueuedForInjection,
 		Status:    delivery.DeliveryStatus,
 		Provider:  delivery.Provider,
@@ -336,7 +381,7 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		return result, err
 	}
 	if !wasActive && delivery.DeliveryStatus == UserMessageDeliveryStatusSentToCLI && delivery.Transport == llm.CodingAgentTransportTmux {
-		s.startRetainedCompletionWatch(input, delivery.Provider, delivery.Transport)
+		s.startRetainedCompletionWatch(lifecycle, input, delivery.Provider, delivery.Transport)
 	} else if !wasActive {
 		clearStarting()
 	}
@@ -345,7 +390,7 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 
 const retainedCompletionPollInterval = 100 * time.Millisecond
 
-func (s *Session) startRetainedCompletionWatch(input string, provider llm.Provider, transport llm.CodingAgentTransport) {
+func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle, input string, provider llm.Provider, transport llm.CodingAgentTransport) {
 	startedAt := time.Now()
 	s.stateMu.Lock()
 	s.retainedStarting = false
@@ -354,6 +399,10 @@ func (s *Session) startRetainedCompletionWatch(input string, provider llm.Provid
 		return
 	}
 	s.retainedActive = true
+	if lifecycle == nil {
+		lifecycle = newCanonicalTurnLifecycle("")
+	}
+	s.activeTurn = lifecycle
 	s.retainedSeq++
 	seq := s.retainedSeq
 	watchCtx := s.watchCtx
@@ -378,20 +427,23 @@ func (s *Session) startRetainedCompletionWatch(input string, provider llm.Provid
 				if finalResult == "" {
 					continue
 				}
-				s.completeRetainedTurn(seq, input, finalResult, provider, transport, startedAt)
+				s.completeRetainedTurn(lifecycle, seq, input, finalResult, provider, transport, startedAt)
 				return
 			}
 		}
 	}()
 }
 
-func (s *Session) completeRetainedTurn(seq uint64, input, finalResult string, provider llm.Provider, transport llm.CodingAgentTransport, startedAt time.Time) {
+func (s *Session) completeRetainedTurn(lifecycle *canonicalTurnLifecycle, seq uint64, input, finalResult string, provider llm.Provider, transport llm.CodingAgentTransport, startedAt time.Time) {
 	s.stateMu.Lock()
 	if s.closed || !s.retainedActive || s.retainedSeq != seq {
 		s.stateMu.Unlock()
 		return
 	}
 	s.retainedActive = false
+	if s.activeTurn == lifecycle {
+		s.activeTurn = nil
+	}
 	s.history = append(s.history,
 		llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeHuman, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: input}}},
 		llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: finalResult}}},
@@ -402,7 +454,7 @@ func (s *Session) completeRetainedTurn(seq uint64, input, finalResult string, pr
 	completion.Metadata["source"] = "mcpagent_session"
 	completion.Metadata["provider"] = string(provider)
 	completion.Metadata["transport"] = string(transport)
-	s.agent.emitTypedEvent(context.Background(), completion)
+	s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), completion)
 }
 
 func (s *Session) Snapshot() *AgentSessionHandle {
@@ -425,6 +477,7 @@ func (s *Session) Close() error {
 	}
 	s.retainedActive = false
 	s.retainedStarting = false
+	s.activeTurn = nil
 	s.history = nil
 	unregisterTurnSession(s)
 	return nil

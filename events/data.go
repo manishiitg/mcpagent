@@ -32,6 +32,7 @@ type AgentEvent struct {
 	HierarchyLevel int    `json:"hierarchy_level"`      // 0=root, 1=child, 2=grandchild
 	SessionID      string `json:"session_id,omitempty"` // Group related events
 	Component      string `json:"component,omitempty"`  // orchestrator, agent, llm, tool
+	TurnID         string `json:"turn_id,omitempty"`    // Stable identity of one accepted message/turn
 }
 
 // Getter methods to implement observability.AgentEvent interface
@@ -734,12 +735,21 @@ func GenerateEventID() string {
 
 // NewAgentEvent creates a new AgentEvent with typed data
 func NewAgentEvent(eventData EventData) *AgentEvent {
-	return &AgentEvent{
+	event := &AgentEvent{
 		Type:           eventData.GetEventType(),
 		Timestamp:      time.Now(),
 		Data:           eventData,
 		HierarchyLevel: 0, // Default to root level
 	}
+	if base, ok := eventData.(interface{ GetBaseEventData() *BaseEventData }); ok {
+		metadata := base.GetBaseEventData().Metadata
+		if metadata != nil {
+			if turnID, ok := metadata["turn_id"].(string); ok {
+				event.TurnID = turnID
+			}
+		}
+	}
+	return event
 }
 
 // NewAgentStartEvent creates a new AgentStartEvent

@@ -3000,6 +3000,17 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 // Thread-safe: uses eventMu to protect hierarchy state (currentParentEventID, currentHierarchyLevel)
 // which can be mutated concurrently during parallel tool execution.
 func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) {
+	// Session owns the provider-neutral turn lifecycle. Stamp all events with
+	// the same turn identity and suppress duplicate terminal completions before
+	// tracers/listeners can persist or render them (PLAT-116).
+	if lifecycle := canonicalTurnLifecycleFromContext(ctx); lifecycle != nil && !lifecycle.prepareEvent(eventData) {
+		if a.logger != nil {
+			a.logger.Warn("Suppressed duplicate canonical turn completion",
+				loggerv2.String("session_id", a.sessionID),
+				loggerv2.String("turn_id", lifecycle.id))
+		}
+		return
+	}
 	debugLogToolCallEventOrigin(a, eventData)
 
 	// Lock eventMu to protect hierarchy state reads and writes
@@ -3035,6 +3046,11 @@ func (a *Agent) emitTypedEvent(ctx context.Context, eventData events.EventData) 
 		event.HierarchyLevel = baseData.HierarchyLevel
 		event.SessionID = baseData.SessionID
 		event.Component = baseData.Component
+		if baseData.Metadata != nil {
+			if turnID, ok := baseData.Metadata["turn_id"].(string); ok {
+				event.TurnID = turnID
+			}
+		}
 	}
 
 	// Update hierarchy for next event based on event type

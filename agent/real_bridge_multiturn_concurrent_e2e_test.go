@@ -169,6 +169,31 @@ func captureRealBridge(evs []*events.AgentEvent) (cleanText string, toolCalls, c
 	return sb.String(), toolCalls, contentChunks
 }
 
+func validateCanonicalTurnContract(evs []*events.AgentEvent, result Result) error {
+	if strings.TrimSpace(result.TurnID) == "" {
+		return fmt.Errorf("Session.Run returned no turn id")
+	}
+	var completions []*events.UnifiedCompletionEvent
+	for _, event := range evs {
+		completion, ok := event.Data.(*events.UnifiedCompletionEvent)
+		if !ok || event.TurnID != result.TurnID {
+			continue
+		}
+		completions = append(completions, completion)
+	}
+	if len(completions) != 1 {
+		return fmt.Errorf("turn %s emitted %d canonical completions, want exactly one", result.TurnID, len(completions))
+	}
+	completion := completions[0]
+	if completion.Metadata["canonical_turn_completion"] != true || completion.Metadata["turn_id"] != result.TurnID {
+		return fmt.Errorf("turn %s completion lacks canonical identity: %#v", result.TurnID, completion.Metadata)
+	}
+	if completion.Status != "completed" || strings.TrimSpace(completion.FinalResult) != strings.TrimSpace(result.Text) {
+		return fmt.Errorf("turn %s completion disagrees with result: status=%q completion=%q result=%q", result.TurnID, completion.Status, completion.FinalResult, result.Text)
+	}
+	return nil
+}
+
 // TestRealBridgeStreamingMultiTurn proves streaming works across MULTIPLE
 // turns on a PERSISTENT coding-agent session through the real bridge, on
 // every provider: turn 2 reuses the same tmux session (so the cold-turn
@@ -205,14 +230,23 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 			defer cleanup()
 			listener := &recordingAgentEventListener{}
 			agent.addEventListener(listener)
+			runtimeSession, err := agent.Start(ctx)
+			if err != nil {
+				t.Fatalf("start session: %v", err)
+			}
+			defer runtimeSession.Close()
 
 			// Turn 1 — read the build id through the real shell tool.
-			ans1, err := agent.ask(ctx, fmt.Sprintf(
-				"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly: cat %s\nReply with the build id it printed (you do not otherwise know it).", buildIDPath))
+			result1, err := runtimeSession.Run(ctx, Turn{Input: fmt.Sprintf(
+				"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly: cat %s\nReply with the build id it printed (you do not otherwise know it).", buildIDPath)})
 			if err != nil {
 				t.Fatalf("turn 1: %v", err)
 			}
+			ans1 := result1.Text
 			turn1End := len(listener.events)
+			if err := validateCanonicalTurnContract(listener.events[:turn1End], result1); err != nil {
+				t.Fatal(err)
+			}
 			tmux1 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
 			_, t1tools, t1content := captureRealBridge(listener.events[:turn1End])
 			if !strings.Contains(ans1, codeWord) {
@@ -224,14 +258,18 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 
 			// Turn 2 — SAME session; carry the turn-1 build id into a real file write.
 			turn2Start := time.Now()
-			ans2, err := agent.ask(ctx, fmt.Sprintf(
-				"Using the build id from the previous step, use execute_shell_command to write a GitHub-flavored markdown table to %s with a header row and the rows '| build_id | <that build id> |' and '| status | ok |'. Then run: cat %s and reply with its contents.", reportPath, reportPath))
+			result2, err := runtimeSession.Run(ctx, Turn{Input: fmt.Sprintf(
+				"Using the build id from the previous step, use execute_shell_command to write a GitHub-flavored markdown table to %s with a header row and the rows '| build_id | <that build id> |' and '| status | ok |'. Then run: cat %s and reply with its contents.", reportPath, reportPath)})
 			if err != nil {
 				t.Fatalf("turn 2: %v", err)
 			}
+			ans2 := result2.Text
 			turn2Elapsed := time.Since(turn2Start)
 			tmux2 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
 			_, t2tools, t2content := captureRealBridge(listener.events[turn1End:])
+			if err := validateCanonicalTurnContract(listener.events[turn1End:], result2); err != nil {
+				t.Fatal(err)
+			}
 
 			// Session reused across turns → the cold-turn readiness wait is skipped on
 			// turn 2 (it only runs on a freshly created session).
@@ -315,7 +353,9 @@ func TestRealBridgeStreamingConcurrent(t *testing.T) {
 
 			type result struct {
 				answer, cleanText string
+				turnID            string
 				tools             int
+				canonical         bool
 				err               error
 			}
 			results := make([]result, n)
@@ -333,14 +373,24 @@ func TestRealBridgeStreamingConcurrent(t *testing.T) {
 					defer cleanup()
 					listener := &recordingAgentEventListener{}
 					agent.addEventListener(listener)
-					ans, askErr := agent.ask(ctx, fmt.Sprintf(
-						"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly: cat %s\nReply with the build id it printed.", w.buildIDPath))
+					runtimeSession, startErr := agent.Start(ctx)
+					if startErr != nil {
+						results[i] = result{err: startErr}
+						return
+					}
+					defer runtimeSession.Close()
+					runResult, askErr := runtimeSession.Run(ctx, Turn{Input: fmt.Sprintf(
+						"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly: cat %s\nReply with the build id it printed.", w.buildIDPath)})
 					if askErr != nil {
 						results[i] = result{err: askErr}
 						return
 					}
+					if contractErr := validateCanonicalTurnContract(listener.events, runResult); contractErr != nil {
+						results[i] = result{err: contractErr}
+						return
+					}
 					text, tools, _ := captureRealBridge(listener.events)
-					results[i] = result{answer: ans, cleanText: text, tools: tools}
+					results[i] = result{answer: runResult.Text, cleanText: text, turnID: runResult.TurnID, tools: tools, canonical: true}
 				}(i)
 			}
 			wg.Wait()
@@ -354,6 +404,9 @@ func TestRealBridgeStreamingConcurrent(t *testing.T) {
 				}
 				if r.tools == 0 {
 					t.Fatalf("worker %d did not stream a tool call", i)
+				}
+				if !r.canonical || r.turnID == "" {
+					t.Fatalf("worker %d lacked canonical terminal contract", i)
 				}
 				for j := range workers {
 					if j == i {
