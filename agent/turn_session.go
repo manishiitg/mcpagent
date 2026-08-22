@@ -461,6 +461,26 @@ func (s *Session) Snapshot() *AgentSessionHandle {
 	return s.agent.currentAgentSessionHandle()
 }
 
+// ActiveTurnID reports the ID of whichever turn owns this session's canonical
+// completion right now -- a Session.Run in flight, or a retained tmux turn
+// started by Send between Runs -- or "" if none is active. Hosts that tag
+// per-tool-call events (e.g. tool_call_start/tool_call_end) with a turn ID
+// must call this at the moment each event fires rather than caching a turn ID
+// from an earlier setup: a retained delivery never calls Run again, so an ID
+// captured once at the first turn goes stale the moment a later retained turn
+// starts (PLAT-180).
+func (s *Session) ActiveTurnID() string {
+	if s == nil {
+		return ""
+	}
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.activeTurn == nil {
+		return ""
+	}
+	return s.activeTurn.id
+}
+
 func (s *Session) Events() <-chan *events.AgentEvent {
 	stream, _ := s.agent.getEventStream()
 	return stream

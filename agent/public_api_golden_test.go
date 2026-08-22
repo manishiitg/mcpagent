@@ -236,8 +236,13 @@ func expressionMentionsAgent(expression ast.Expr) bool {
 	return false
 }
 
+// ActiveTurnID was added deliberately (PLAT-180): a host tagging per-tool-call
+// events with a turn ID must ask the session which turn is active RIGHT NOW,
+// not cache a turn ID captured once at an earlier setup -- a retained
+// (tmux-delivered) turn never calls Run again, so a cached ID goes stale the
+// moment Send starts a new retained turn.
 func TestSessionPublicMethodSurface(t *testing.T) {
-	want := []string{"Close", "Events", "Run", "Send", "Snapshot"}
+	want := []string{"ActiveTurnID", "Close", "Events", "Run", "Send", "Snapshot"}
 	typeOfSession := reflect.TypeOf((*Session)(nil))
 	got := make([]string, 0, typeOfSession.NumMethod())
 	for i := 0; i < typeOfSession.NumMethod(); i++ {

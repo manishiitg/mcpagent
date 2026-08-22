@@ -106,6 +106,66 @@ func TestSessionRunMarksAgentTurnInFlightForDirectReceiptSuppression(t *testing.
 	}
 }
 
+// PLAT-180. A retained delivery never calls Session.Run again -- it mints its
+// own lifecycle via startRetainedCompletionWatch. A caller that cached a turn
+// ID from an earlier Run (as agent_go's tool-call hook used to) would still
+// see that stale ID; ActiveTurnID must reflect the retained turn's own,
+// different ID for as long as it is in flight, then "" once it completes.
+func TestActiveTurnIDReflectsTheRetainedTurnNotAnEarlierCachedTurn(t *testing.T) {
+	agent := &Agent{sessionID: "retained-turn-id-session", provider: llm.ProviderPiCLI}
+	watchCtx, watchCancel := context.WithCancel(context.Background())
+	defer watchCancel()
+
+	release := make(chan string, 1)
+	session := &Session{
+		agent:       agent,
+		watchCtx:    watchCtx,
+		watchCancel: watchCancel,
+		retainedFinalResponse: func(llm.Provider, string, time.Time) string {
+			select {
+			case result := <-release:
+				return result
+			default:
+				return ""
+			}
+		},
+	}
+
+	staleTurnID := "turn_from_an_earlier_run"
+	if got := session.ActiveTurnID(); got != "" {
+		t.Fatalf("ActiveTurnID() before any turn = %q, want empty", got)
+	}
+
+	retainedLifecycle := newCanonicalTurnLifecycle("")
+	if retainedLifecycle.id == staleTurnID {
+		t.Fatal("test setup: retained lifecycle must not coincidentally match the stale ID")
+	}
+	session.startRetainedCompletionWatch(retainedLifecycle, "steer the running agent", llm.ProviderPiCLI, llm.CodingAgentTransportTmux)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got := session.ActiveTurnID(); got == retainedLifecycle.id {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ActiveTurnID() never reported the retained turn's own ID %q", retainedLifecycle.id)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	release <- "the real final answer"
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		if got := session.ActiveTurnID(); got == "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ActiveTurnID() did not clear after the retained turn completed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestSessionRunRejectsWhileRetainedTurnIsActive(t *testing.T) {
 	agent := &Agent{}
 	session := &Session{agent: agent, retainedActive: true}
