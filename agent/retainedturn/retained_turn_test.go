@@ -59,3 +59,38 @@ func TestFinalResponseReturnsEmptyWhenOnlyMessageHasAPendingToolCall(t *testing.
 		t.Fatalf("finalResponse()=%q, want empty (turn not actually finished yet)", got)
 	}
 }
+
+func TestFinalResponseReturnsEmptyWhenNewestAssistantMessageHasToolCall(t *testing.T) {
+	messages := []llmtypes.MessageContent{
+		llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "older progress update"),
+		{
+			Role: llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "checking now"},
+				llmtypes.ToolCall{ID: "call-1", Type: "function", FunctionCall: &llmtypes.FunctionCall{Name: "execute_shell_command"}},
+			},
+		},
+	}
+
+	if got := finalResponse(messages); got != "" {
+		t.Fatalf("finalResponse()=%q, want empty while newest assistant message has a pending tool call", got)
+	}
+}
+
+func TestFinalResponseUsesTextAfterEarlierToolCallCompletes(t *testing.T) {
+	messages := []llmtypes.MessageContent{
+		{
+			Role: llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "checking now"},
+				llmtypes.ToolCall{ID: "call-1", Type: "function", FunctionCall: &llmtypes.FunctionCall{Name: "execute_shell_command"}},
+			},
+		},
+		llmtypes.TextPart(llmtypes.ChatMessageTypeTool, "done"),
+		llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "final answer"),
+	}
+
+	if got := finalResponse(messages); got != "final answer" {
+		t.Fatalf("finalResponse()=%q, want final answer", got)
+	}
+}

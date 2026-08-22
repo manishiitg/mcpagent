@@ -48,8 +48,11 @@ func finalResponse(messages []llmtypes.MessageContent) string {
 		if messages[i].Role != llmtypes.ChatMessageTypeAI {
 			continue
 		}
+		// Only the newest assistant message can describe the current terminal
+		// state. If it contains a tool call, the turn is still in progress; do
+		// not scan backward and misclassify an older progress update as final.
 		if messageHasToolCall(messages[i]) {
-			continue
+			return ""
 		}
 		parts := make([]string, 0, len(messages[i].Parts))
 		for _, part := range messages[i].Parts {
@@ -66,9 +69,7 @@ func finalResponse(messages []llmtypes.MessageContent) string {
 				}
 			}
 		}
-		if result := strings.TrimSpace(strings.Join(parts, "\n")); result != "" {
-			return result
-		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
 	}
 	return ""
 }
