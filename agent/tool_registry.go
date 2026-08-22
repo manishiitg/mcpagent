@@ -214,6 +214,7 @@ func (a *Agent) observedDirectToolExecutor(name string, executor ToolExecutor) T
 		if a.isTurnInFlight() {
 			return executor(ctx, args)
 		}
+		ctx = a.attachActiveTurnLifecycle(ctx)
 		arguments, err := json.Marshal(args)
 		if err != nil {
 			arguments = []byte(`{"_serialization_error":"could not encode tool arguments"}`)
@@ -237,4 +238,33 @@ func (a *Agent) observedDirectToolExecutor(name string, executor ToolExecutor) T
 		a.emitTypedEvent(ctx, end)
 		return result, nil
 	}
+}
+
+// attachActiveTurnLifecycle carries the session's currently active turn
+// identity into ctx when ctx does not already have one. observedDirectToolExecutor
+// runs with a bare HTTP-request-derived context (the bridge handler passes
+// r.Context() straight through, all the way from
+// executor/handlers.go's custom-tool handler) -- it never carries the
+// canonicalTurnLifecycle that Session.Send attaches to the context IT builds
+// for delivering the message, because that context and this one are
+// unrelated: the tool call arrives over HTTP from the coding CLI's own
+// subprocess, on a completely different call stack. Without this,
+// emitTypedEvent's canonicalTurnLifecycleFromContext finds nil and never
+// stamps turn_id at all, so a retained turn's tool_call_start/tool_call_end
+// events (the only ones actually emitted for a retained delivery -- see the
+// isTurnInFlight branch above) carry no turn_id whatsoever, not merely the
+// wrong one (PLAT-180).
+func (a *Agent) attachActiveTurnLifecycle(ctx context.Context) context.Context {
+	if canonicalTurnLifecycleFromContext(ctx) != nil {
+		return ctx
+	}
+	session, ok := LookupSession(a.sessionID)
+	if !ok || session == nil {
+		return ctx
+	}
+	lifecycle := session.currentTurnLifecycle()
+	if lifecycle == nil {
+		return ctx
+	}
+	return withCanonicalTurnLifecycle(ctx, lifecycle)
 }

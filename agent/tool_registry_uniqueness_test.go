@@ -144,6 +144,52 @@ func TestDirectToolExecutionEventsDoNotDuplicateActiveTurnTranscript(t *testing.
 	}
 }
 
+// PLAT-180. observedDirectToolExecutor is the only source of
+// tool_call_start/tool_call_end events for a retained (tmux-delivered) turn's
+// tool call (see the isTurnInFlight branch above -- during an active Run this
+// function does nothing at all). It runs with a bare context, the same shape
+// executor/handlers.go's custom-tool HTTP handler actually hands it -- no
+// canonicalTurnLifecycle attached, because that lifecycle lives on the
+// context Session.Send built for an unrelated call stack. Confirmed failing
+// before this fix: the emitted events carried no turn_id metadata key at all
+// (canonicalTurnLifecycleFromContext found nil), not merely the wrong value.
+func TestDirectToolExecutionEventsCarryTheSessionsActiveTurnID(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{
+		sessionID:                 "retained-turn-lifecycle-test",
+		listeners:                 []AgentEventListener{listener},
+		directToolExecutionEvents: true,
+	}
+	session := &Session{agent: agent}
+	registerTurnSession(agent.sessionID, session)
+	defer unregisterTurnSession(session)
+
+	lifecycle := newCanonicalTurnLifecycle("")
+	session.stateMu.Lock()
+	session.activeTurn = lifecycle
+	session.stateMu.Unlock()
+
+	executor := agent.observedDirectToolExecutor("execute_shell_command", func(context.Context, map[string]interface{}) (string, error) {
+		return "done", nil
+	})
+	// Deliberately bare -- exactly what the real HTTP call site passes.
+	if _, err := executor(context.Background(), map[string]interface{}{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(listener.events) != 2 {
+		t.Fatalf("events = %d, want start + end", len(listener.events))
+	}
+	for _, event := range listener.events {
+		base, ok := event.Data.(interface{ GetBaseEventData() *events.BaseEventData })
+		if !ok {
+			t.Fatalf("event %T does not expose BaseEventData", event.Data)
+		}
+		if got := base.GetBaseEventData().Metadata["turn_id"]; got != lifecycle.id {
+			t.Fatalf("event %T turn_id = %v, want %q", event.Data, got, lifecycle.id)
+		}
+	}
+}
+
 func objectSchema() map[string]interface{} {
 	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
 }

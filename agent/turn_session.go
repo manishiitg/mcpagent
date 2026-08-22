@@ -470,15 +470,23 @@ func (s *Session) Snapshot() *AgentSessionHandle {
 // captured once at the first turn goes stale the moment a later retained turn
 // starts (PLAT-180).
 func (s *Session) ActiveTurnID() string {
-	if s == nil {
+	lifecycle := s.currentTurnLifecycle()
+	if lifecycle == nil {
 		return ""
+	}
+	return lifecycle.id
+}
+
+// currentTurnLifecycle returns the same lifecycle object ActiveTurnID reads
+// its ID from, for package-internal callers that need to attach it to a
+// context (e.g. withCanonicalTurnLifecycle) rather than just read its ID.
+func (s *Session) currentTurnLifecycle() *canonicalTurnLifecycle {
+	if s == nil {
+		return nil
 	}
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	if s.activeTurn == nil {
-		return ""
-	}
-	return s.activeTurn.id
+	return s.activeTurn
 }
 
 func (s *Session) Events() <-chan *events.AgentEvent {
