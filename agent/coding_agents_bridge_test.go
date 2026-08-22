@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -183,7 +184,8 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 
 	agent := bridgeTestAgent()
 	agent.sessionID = "sess-abc-123"
-	agent.codingAgentWorkingDir = "/workspace/social-media"
+	workingDir := t.TempDir()
+	agent.codingAgentWorkingDir = workingDir
 
 	configJSON, err := agent.buildBridgeMCPConfig()
 	if err != nil {
@@ -209,14 +211,36 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	if env["MCP_API_TOKEN"].(string) != "test-token-123" {
 		t.Fatalf("MCP_API_TOKEN mismatch")
 	}
-	if got := env["MCP_TOOL_OUTPUT_DIR"].(string); got != "/workspace/social-media/tool_output_folder" {
+	wantToolOutputDir := filepath.Join(workingDir, DefaultToolOutputFolder)
+	if got := env["MCP_TOOL_OUTPUT_DIR"].(string); got != wantToolOutputDir {
 		t.Fatalf("MCP_TOOL_OUTPUT_DIR = %q", got)
+	}
+	if info, statErr := os.Stat(wantToolOutputDir); statErr != nil || !info.IsDir() {
+		t.Fatalf("MCP tool output directory was not created during bridge setup: info=%v err=%v", info, statErr)
 	}
 	if bridge["command"].(string) != "/usr/local/bin/mcpbridge" {
 		t.Fatalf("command mismatch")
 	}
 	if bridge["trust"] != true {
 		t.Fatal("trust should be true")
+	}
+}
+
+func TestBuildBridgeMCPConfigFailsWhenToolOutputDirectoryCannotBeCreated(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	workingDir := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(workingDir, []byte("file"), 0o600); err != nil {
+		t.Fatalf("write blocking file: %v", err)
+	}
+	agent := bridgeTestAgent()
+	agent.codingAgentWorkingDir = workingDir
+
+	_, err := agent.buildBridgeMCPConfig()
+	if err == nil || !strings.Contains(err.Error(), "create MCP tool output directory") {
+		t.Fatalf("buildBridgeMCPConfig error = %v, want tool output directory creation failure", err)
 	}
 }
 

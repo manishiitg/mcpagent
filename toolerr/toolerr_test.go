@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// The payloads below are real, taken from incidents in docs/bugs. Each was
-// returned by a tool that reported success, and each was invisible until
-// somebody read the transcript by hand.
-func TestSuspiciousToolResultCatchesRealMaskedFailures(t *testing.T) {
+// These structured payload facts are strong enough to override a successful
+// outer transport. Arbitrary prose is deliberately tested separately below.
+func TestSuspiciousToolResultCatchesStructuredMaskedFailures(t *testing.T) {
 	cases := []struct {
 		name   string
 		result string
@@ -27,20 +26,8 @@ func TestSuspiciousToolResultCatchesRealMaskedFailures(t *testing.T) {
 			result: `tool execution failed: layer=custom_tool_handler tool=diff_patch_workspace_file session=abc`,
 		},
 		{
-			name:   "workspace API cancellation surfaced as content",
-			result: `failed to call workspace API: Patch "http://127.0.0.1:18744/...": context canceled`,
-		},
-		{
-			name:   "skill lookup miss",
-			result: `attached skill "agent-browser" not found; available skills: builder-reference`,
-		},
-		{
 			name:   "JSON success flag contradicting the transport",
 			result: `{"success": false, "error": "tools_unavailable: unknown=[foo]"}`,
-		},
-		{
-			name:   "python traceback in tool output",
-			result: "Traceback (most recent call last):\n  File \"main.py\", line 1\nValueError: bad",
 		},
 	}
 
@@ -110,6 +97,9 @@ func TestSuspiciousToolResultStaysQuietOnOrdinarySuccess(t *testing.T) {
 		"ok",
 		`{"success": true, "data": {"rows": 3}}`,
 		`{"stdout":"hello\n","stderr":"","exit_code":0}`,
+		`{"stdout":"rg found historical prose: forbidden, failed, not found","stderr":"","exit_code":0}`,
+		`attached skill "agent-browser" not found; available skills: builder-reference`,
+		"Traceback (most recent call last):\n  File \"historical-report.txt\", line 1",
 		"Wrote 3 files to Workflow/demo/output",
 		`{"exit_code": 0}`,
 	} {
@@ -157,9 +147,7 @@ func TestTruncateToolResultForLogBoundsPayload(t *testing.T) {
 	}
 }
 
-// Suppression must be scoped to the heuristic only. These tools return problem
-// text as their normal payload — 70 of 173 live suspect hits came from them and
-// none was a real failure — but a genuine error still surfaces under Marker.
+// Domain records and documentation are semantic content, not transport state.
 func TestSuspiciousForToolSuppressesProblemReportingTools(t *testing.T) {
 	problemText := `{"findings":[{"title":"urls.md not found","detail":"permission denied"}]}`
 
@@ -172,10 +160,11 @@ func TestSuspiciousForToolSuppressesProblemReportingTools(t *testing.T) {
 		}
 	}
 
-	// Everything else keeps the broad behaviour.
+	// The same prose remains successful for unrelated tools too. Classification
+	// is structural now, not a growing list of tool-specific lexical exemptions.
 	for _, tool := range []string{"execute_shell_command", "agent_browser", "diff_patch_workspace_file", ""} {
-		if _, suspicious := SuspiciousForTool(tool, problemText); !suspicious {
-			t.Errorf("SuspiciousForTool(%q, ...) = false, want flagged", tool)
+		if signal, suspicious := SuspiciousForTool(tool, problemText); suspicious {
+			t.Errorf("SuspiciousForTool(%q, ...) = true (signal %q), want content left to the agent", tool, signal)
 		}
 	}
 }
@@ -188,8 +177,8 @@ func TestSuspiciousForToolCatchesHarnessEnvelopeWrappedInShellSuccess(t *testing
 	if !suspicious {
 		t.Fatal("live masked failure was not flagged")
 	}
-	if signal != "tool execution failed:" {
-		t.Fatalf("signal = %q, want the harness envelope to win over weaker phrases", signal)
+	if signal != "tool execution failure envelope" {
+		t.Fatalf("signal = %q, want canonical harness envelope", signal)
 	}
 }
 
@@ -297,13 +286,12 @@ func TestSuspiciousDoesNotFlagAgentBrowserWaitTimeoutOutcome(t *testing.T) {
 	}
 }
 
-// The suppression must be exact to the known field, not a blanket exemption
-// for "timeout" wherever it appears -- a genuine timeout failure elsewhere in
-// the same result must still be caught.
-func TestSuspiciousStillFlagsARealTimeoutBesideAWaitOutcome(t *testing.T) {
+// Free-text timeout discussion is not a platform failure fact. A real timeout
+// must arrive as an executor error or a canonical failure envelope.
+func TestSuspiciousDoesNotPromoteTimeoutProseBesideAWaitOutcome(t *testing.T) {
 	mixed := `{"success":true,"waited":"timeout","note":"connection to browser context deadline exceeded"}`
-	if _, suspicious := Suspicious(mixed); !suspicious {
-		t.Error("Suspicious(...) = false, want the unrelated real timeout to still be flagged")
+	if signal, suspicious := Suspicious(mixed); suspicious {
+		t.Errorf("Suspicious(...) = true (signal %q), want prose left to the agent", signal)
 	}
 }
 
@@ -326,11 +314,8 @@ func TestSuspiciousForToolSuppressesRouteDescriptionCatalogDump(t *testing.T) {
 	if signal, suspicious := SuspiciousForTool("get_route_description", problemText); suspicious {
 		t.Errorf("SuspiciousForTool(get_route_description, ...) = true (signal %q), want suppressed", signal)
 	}
-	// A genuine failure from this tool must still surface as a confirmed
-	// [TOOL_ERROR] -- this suppresses only the heuristic, per the doc comment
-	// on problemReportingTools.
-	if _, suspicious := SuspiciousForTool("agent_browser", problemText); !suspicious {
-		t.Error("unrelated tool must keep the broad behaviour")
+	if signal, suspicious := SuspiciousForTool("agent_browser", problemText); suspicious {
+		t.Errorf("unrelated tool's domain prose was promoted to failure: %q", signal)
 	}
 }
 
@@ -346,7 +331,7 @@ func TestSuspiciousDoesNotFlagNotifyUserEmptyFailedField(t *testing.T) {
 	}
 }
 
-// Spacing variant, matching benignJSONOutcomePattern's own precedent test.
+// Spacing variant of the precedent test above.
 func TestSuspiciousDoesNotFlagNotifyUserEmptyFailedFieldWithSpacing(t *testing.T) {
 	live := `{"delivered": ["gmail"], "failed": {}, "status": "delivered"}`
 	if signal, suspicious := Suspicious(live); suspicious {
@@ -354,14 +339,12 @@ func TestSuspiciousDoesNotFlagNotifyUserEmptyFailedFieldWithSpacing(t *testing.T
 	}
 }
 
-// The suppression must be exact to an EMPTY failed list, not a blanket
-// exemption for the word "failed" -- a real per-channel failure report must
-// still be caught, since that is exactly the signal a human reviewing
-// [TOOL_ERROR_SUSPECT] logs needs to see.
-func TestSuspiciousStillFlagsARealNotifyUserFailure(t *testing.T) {
+// Partial notification delivery is a domain result for the agent to interpret;
+// the tool call itself completed and did not return a canonical failure fact.
+func TestSuspiciousDoesNotPromoteNotifyUserPartialDelivery(t *testing.T) {
 	live := `{"delivered":["gmail"],"failed":{"whatsapp":"connection refused"},"status":"partial"}`
-	if _, suspicious := Suspicious(live); !suspicious {
-		t.Error("Suspicious(...) = false, want a real per-channel failure to still be flagged")
+	if signal, suspicious := Suspicious(live); suspicious {
+		t.Errorf("Suspicious(...) = true (signal %q), want partial delivery left to the agent", signal)
 	}
 }
 

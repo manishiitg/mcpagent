@@ -21,19 +21,13 @@ import (
 // suffixed forms let you separate what is certain from what is guessed.
 //
 //	[TOOL_ERROR]         the tool reported failure — err != nil, or IsError set
-//	[TOOL_ERROR_SUSPECT] the tool reported SUCCESS but the result reads like a
-//	                     failure
+//	[TOOL_ERROR_SUSPECT] the transport reported success but the payload carries
+//	                     a structured failure fact
 //
-// The second exists because reported success is not evidence of success. A day
-// of rollouts on 2026-08-01 held 34 bridge failures that every surface rendered
-// as a green check, because the outer transport returned exit_code 0 and the
-// error text was the payload. Content-sniffing catches that class; nothing else
-// does.
-//
-// This deliberately over-matches. A tool whose legitimate output discusses
-// errors will be flagged, and that is the accepted trade: a false positive
-// costs one log line, a false negative costs an investigation that starts with
-// no evidence at all.
+// The second exists because reported success is not evidence of success. It is
+// intentionally field/envelope-aware: arbitrary stdout and prose belong to the
+// agent's semantic interpretation and must not become platform errors merely
+// because they contain words such as "failed", "not found", or "forbidden".
 const (
 	Marker        = "[TOOL_ERROR]"
 	SuspectMarker = "[TOOL_ERROR_SUSPECT]"
@@ -42,9 +36,9 @@ const (
 var httpFailurePrefix = regexp.MustCompile(`(?i)^HTTP(?:/\S+)?\s+([45][0-9]{2})(?:\s|$)`)
 
 // CanonicalFailure recognizes only payload signals strong enough to change the
-// runtime result from success to error. Suspicious is intentionally broad for
-// logging; this function is deliberately narrower because it controls retries,
-// terminal state, timing counters, and the IsError value sent back to the LLM.
+// runtime result from success to error. The same structural contract is used by
+// Suspicious logging so observability cannot contradict the result sent to the
+// LLM.
 //
 // Bridge results are often JSON nested inside MCP content/text strings, so the
 // classifier unwraps those envelopes recursively. Plain prose that merely
@@ -249,169 +243,12 @@ func numericCode(value interface{}) (int64, bool) {
 	}
 }
 
-// toolResultErrorSignals are matched case-insensitively against a successful
-// tool result. Ordered roughly by how strongly each implies a real failure, and
-// the first match is reported so the log says which phrase fired.
-var toolResultErrorSignals = []string{
-	// The harness envelope itself. This is the highest-value signal in the list:
-	// a bridge failure returned as stdout with exit_code 0 is exactly the class
-	// that rendered as green checks, and it is unambiguous — no legitimate tool
-	// output contains it.
-	"tool execution failed:",
-	"tool execution canceled:",
-	"tool execution timed out:",
-
-	"access denied",
-	"permission denied",
-	"operation not permitted",
-	"unauthorized",
-	"forbidden",
-	"authentication failed",
-	"traceback (most recent call last)",
-	"panic:",
-	"fatal:",
-	"segmentation fault",
-	"command not found",
-	"no such file or directory",
-	"not found",
-	"does not exist",
-	"connection refused",
-	"connection reset",
-	"broken pipe",
-	"timed out",
-	"timeout",
-	"context canceled",
-	"context deadline exceeded",
-	"exception",
-	"stacktrace",
-	"failed to",
-	"failed:",
-	"failed.",
-	"failed",
-	"failure",
-	"denied",
-	"cannot ",
-	"unable to",
-	"invalid",
-	"refused",
-	"error:",
-	"error ",
-}
-
-// suspiciousToolResult reports whether a result the tool called successful reads
-// like a failure, and which signal fired. An empty result is not suspicious:
-// plenty of tools legitimately return nothing.
+// Suspicious is retained as the logging-facing API, but it intentionally shares
+// CanonicalFailure's field-aware contract. Semantic content is not a transport
+// failure signal.
 func Suspicious(resultText string) (string, bool) {
-	trimmed := strings.TrimSpace(resultText)
-	if trimmed == "" {
-		return "", false
-	}
-	lowered := strings.ToLower(trimmed)
-	// Strip documented successful-outcome values before scanning for failure
-	// signals below, so a value that happens to spell a failure word cannot
-	// masquerade as one. See benignJSONOutcomePattern,
-	// notifyUserEmptyFailedFieldPattern, and browserTabListAttrValuePattern.
-	lowered = benignJSONOutcomePattern.ReplaceAllString(lowered, "")
-	lowered = notifyUserEmptyFailedFieldPattern.ReplaceAllString(lowered, "")
-	lowered = browserTabListAttrValuePattern.ReplaceAllString(lowered, "")
-
-	// A JSON envelope that carries its own status is more reliable than prose,
-	// so check those first and report them distinctly.
-	for _, explicit := range []string{
-		`"success": false`, `"success":false`,
-		`"ok": false`, `"ok":false`,
-		`"is_error": true`, `"is_error":true`,
-		`"iserror": true`, `"iserror":true`,
-		`"status": "error"`, `"status":"error"`,
-		`"status": "failed"`, `"status":"failed"`,
-	} {
-		if strings.Contains(lowered, explicit) {
-			return explicit, true
-		}
-	}
-	if signal, found := nonZeroExitCodeSignal(lowered); found {
-		return signal, true
-	}
-
-	for _, signal := range toolResultErrorSignals {
-		if strings.Contains(lowered, signal) {
-			return strings.TrimSpace(signal), true
-		}
-	}
-	return "", false
+	return CanonicalFailure(resultText)
 }
-
-// benignJSONOutcomePattern matches known JSON field/value pairs where the
-// value is a documented, successful outcome of the call rather than a symptom
-// of failure -- so the generic signal scan below cannot mistake the value text
-// for a failure word.
-//
-// agent_browser's wait action reports {"waited":"timeout"} when its poll
-// deadline elapsed without the awaited condition firing. That is success: the
-// tool did what it was told and reported what happened; it is not the same
-// signal as a transport or context timeout. Measured 2026-08-17: 142 of 524
-// suspects on one workflow (27%) were this exact field, none a real failure.
-//
-// This must stay narrow. It removes only text this codebase itself produces
-// with a known vocabulary, not general prose -- a genuine timeout reported
-// anywhere else in the same payload (a different field, a nested error, free
-// text) is untouched and still fires normally.
-var benignJSONOutcomePattern = regexp.MustCompile(`"waited"\s*:\s*"timeout"`)
-
-// notifyUserEmptyFailedFieldPattern matches notify_user's own documented
-// success shape: {"delivered":[...],"failed":{},"skipped":[...],"status":"..."}.
-// An empty `"failed":{}` means zero channels failed -- it is the report of a
-// successful send, not a symptom of one. The word "failed" is a signal-list
-// entry, so this fired on every clean send, and doubly so: notify_user is
-// often also relayed through execute_shell_command (a python/curl wrapper
-// hitting the same endpoint), so one successful notification produced two
-// [TOOL_ERROR_SUSPECT] lines from the identical shape under two different
-// tool names. Live example, 2026-08-19:
-// {"stdout":"{\"delivered\":[\"gmail\"],\"failed\":{},\"skipped\":[\"whatsapp\"],
-// \"status\":\"delivered\"}","stderr":"","exit_code":0,...} -- exit_code 0,
-// status "delivered", and still flagged signal=failed purely off the empty
-// object.
-//
-// Deliberately narrow, same discipline as benignJSONOutcomePattern above: only
-// the exact empty-object shape this codebase produces is stripped. A REAL
-// failure list -- "failed":{"whatsapp":"connection refused"} -- has content
-// inside the braces and does not match, so it still fires normally.
-//
-// notify_user is frequently relayed through execute_shell_command (a
-// python/curl wrapper calling the same endpoint), whose own result wraps
-// notify_user's JSON as a *string value* of its own "stdout" field --
-// standard JSON-in-JSON, where the inner quotes are backslash-escaped
-// (`\"failed\":{}`, not `"failed":{}`). `\\*` tolerates zero or more of those
-// backslashes so the pattern matches at any nesting depth, not only the
-// direct, unwrapped call.
-var notifyUserEmptyFailedFieldPattern = regexp.MustCompile(`\\*"failed\\*"\s*:\s*\{\s*\}`)
-
-// browserTabListAttrValuePattern matches a `title="..."` or `url="..."`
-// attribute value from agent_browser's tab-list line format (confirmed from
-// source, agent_go's pkg/browser/cdp_tabs.go: each line is built as
-// `- <tabID>[ active][ label=%q][ title=%q][ url=%q]`, joined with "\n"). %q
-// double-quotes and backslash-escapes any internal quote, so a title
-// containing a literal `"` produces `\"` inside the value -- `(?:[^"\\]|\\.)`
-// matches that correctly (any non-quote-non-backslash character, OR a
-// backslash followed by any character), where a naive `[^"]*` would stop at
-// the first escaped quote's trailing `"` and truncate the match.
-//
-// title and url are page metadata an arbitrary third-party website chose,
-// not a report on the tab-list command's own outcome -- the same reasoning as
-// get_route_description's suppression, applied to a field instead of a whole
-// tool. A live tab list on 2026-08-18 included a genuine page titled "Sorry,
-// you have been logged out !"; had its content instead spelled a signal word
-// like "not found" or "timeout", it would have been misread as the COMMAND
-// failing rather than a description of what page happened to be open.
-//
-// Deliberately narrower than suppressing agent_browser outright, or the word
-// "not found" for that tool generally: a real failure reported OUTSIDE a
-// title=/url= attribute -- an element genuinely not found by a click/find
-// action, say -- is untouched by this pattern and still fires normally (see
-// TestSuspiciousStillFlagsARealBrowserElementNotFoundError). Only content
-// that this codebase's own source confirms is arbitrary third-party page
-// metadata is stripped, nothing else.
-var browserTabListAttrValuePattern = regexp.MustCompile(`\b(?:title|url)="(?:[^"\\]|\\.)*"`)
 
 // nonZeroExitCodeSignal finds an exit_code field whose value is not 0. Shell
 // results carry the real outcome here while the transport reports success, so a
@@ -482,13 +319,11 @@ var problemReportingTools = map[string]bool{
 	"get_route_description": true,
 }
 
-// SuspiciousForTool is Suspicious with the per-tool suppression applied. Prefer
-// it wherever the tool name is known.
+// SuspiciousForTool is the logging-facing name for the same per-tool canonical
+// classifier. Keeping one classifier prevents a successful tool call from being
+// returned to the model while observability labels it as a failure.
 func SuspiciousForTool(toolName, resultText string) (string, bool) {
-	if problemReportingTools[strings.TrimSpace(toolName)] {
-		return "", false
-	}
-	return Suspicious(resultText)
+	return CanonicalFailureForTool(toolName, resultText)
 }
 
 // Per-field budgets for TruncateArgsForLog. A short diagnostic field must

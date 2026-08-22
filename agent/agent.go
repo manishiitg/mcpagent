@@ -3481,6 +3481,14 @@ func (a *Agent) registerDirectTool(name string, description string, parameters m
 		)
 	}
 
+	// Keep execution and discovery on one contract. Providers invoking the tool
+	// directly receive this schema, while coding CLIs discover the same schema
+	// through get_api_spec before using the HTTP bridge. The executor must enforce
+	// it too; otherwise HTTP callers can guess field names and reach a handler
+	// with malformed arguments even though the published contract rejected that
+	// shape.
+	executionFunc = validateDirectToolArguments(name, parameters, executionFunc)
+
 	// Create the tool definition
 	tool := llmtypes.Tool{
 		Type: "function",

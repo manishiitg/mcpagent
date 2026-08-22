@@ -243,7 +243,16 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	// working directory; this remains stable even when the CLI itself runs in an
 	// isolated temporary cwd.
 	if workingDir := strings.TrimSpace(a.codingAgentWorkingDir); workingDir != "" {
-		bridgeEnv["MCP_TOOL_OUTPUT_DIR"] = filepath.Join(workingDir, DefaultToolOutputFolder)
+		toolOutputDir := filepath.Join(workingDir, DefaultToolOutputFolder)
+		// Folder Guard grants this path before the first bridge tool executes.
+		// Landlock requires every granted path to exist when its ruleset is built,
+		// so waiting for the first oversized result to create the directory makes
+		// ordinary shell and browser calls fail with SANDBOX_UNAVAILABLE on fresh
+		// workflows. Create the bridge-owned directory as part of bridge setup.
+		if err := os.MkdirAll(toolOutputDir, 0o700); err != nil {
+			return "", fmt.Errorf("create MCP tool output directory %q: %w", toolOutputDir, err)
+		}
+		bridgeEnv["MCP_TOOL_OUTPUT_DIR"] = toolOutputDir
 	}
 	// Route mcpbridge stderr to a log file for debugging startup/crash issues.
 	// Claude Code swallows the subprocess stderr, so without this there is no

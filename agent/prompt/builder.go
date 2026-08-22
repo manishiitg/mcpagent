@@ -47,6 +47,20 @@ curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/{tool_na
 # Response envelope: {"success": true|false, "result": ..., "error": "..."}
 ` + "```" + `
 
+When an argument contains quotes, newlines, SQL, JSON paths, or other shell
+punctuation, **do not inline it inside a single-quoted JSON literal**. Shell
+single quotes do not nest: a command such as ` + "`" + `payload='{"sql":"SELECT
+json_extract(data, '$.field')"}'` + "`" + ` silently removes the quotes around
+` + "`" + `$.field` + "`" + ` before the request reaches the tool. Keep the value in its own
+shell variable and let ` + "`" + `jq` + "`" + ` encode the JSON instead:
+` + "```" + `bash
+sql="SELECT json_extract(data, '$.field') FROM events"
+payload="$(jq -cn --arg sql "$sql" '{sql:$sql}')"
+curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/query_workflow_db"
+` + "```" + `
+Use the same ` + "`" + `jq -n --arg` + "`" + ` pattern for any custom or MCP tool argument
+whose contents are not a fixed simple literal.
+
 **Calling a real MCP-server tool:**
 Only keys listed under ` + "`" + `mcp_servers` + "`" + ` are valid server path segments. Their tools are reachable at ` + "`" + `$MCP_MCP/{server}/{tool}` + "`" + `.
 ` + "```" + `bash
