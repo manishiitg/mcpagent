@@ -112,6 +112,90 @@ func TestCallVirtualToolWithSessionKeepsScopedNonEmptyDiscoveryErrors(t *testing
 	}
 }
 
+// TestCallVirtualToolWithSessionFallsBackFromStaleScopeCurrentErrorFormat is
+// the fail-before/pass-after regression test for PLAT-177's confirmed
+// registry-scope-retry gap: get_api_spec's unavailableToolsError no longer
+// produces the legacy "Available servers/categories: []" phrasing this
+// retry was originally written against, so a genuinely stale/restored scope
+// (the shape latestVirtualScopeBySession exists to recover from) silently
+// never retried against the latest scope -- the model just saw the raw
+// stale error. This reproduces get_api_spec's actual current wording
+// (agent/code_execution_tools.go's unavailableToolsError, healthy-servers
+// branch) and confirms the retry now engages.
+func TestCallVirtualToolWithSessionFallsBackFromStaleScopeCurrentErrorFormat(t *testing.T) {
+	resetRegistryForTest(t)
+
+	const (
+		baseScope   = "builder-session"
+		staleScope  = baseScope + ":vt:restored-terminal"
+		latestScope = baseScope + ":vt:chat-agent"
+	)
+	staleCalls := 0
+	latestCalls := 0
+
+	InitRegistryVirtualToolsForSession(staleScope, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"get_api_spec": func(context.Context, map[string]interface{}) (string, error) {
+			staleCalls++
+			return "", fmt.Errorf("tools_unavailable: unknown=[delete_schedule]: these names are not registered by any currently connected server. Closest registered name(s): [delete_schedule]. Registered tools for this session: [add_group add_human_input_step validate_plan_change validate_report_html]. Call one of these exactly, or do the work with your own native tools if the capability you wanted is not here.")
+		},
+	}, nil)
+	InitRegistryVirtualToolsForSession(latestScope, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"get_api_spec": func(context.Context, map[string]interface{}) (string, error) {
+			latestCalls++
+			return "latest-spec", nil
+		},
+	}, nil)
+
+	got, err := CallVirtualToolWithSession(context.Background(), staleScope, "get_api_spec", nil)
+	if err != nil {
+		t.Fatalf("CallVirtualToolWithSession() error = %v", err)
+	}
+	if got != "latest-spec" {
+		t.Fatalf("CallVirtualToolWithSession() = %q, want latest-spec", got)
+	}
+	if staleCalls != 1 || latestCalls != 1 {
+		t.Fatalf("calls stale=%d latest=%d, want 1/1", staleCalls, latestCalls)
+	}
+}
+
+// TestCallVirtualToolWithSessionKeepsRealOutageErrorsInCurrentFormat mirrors
+// TestCallVirtualToolWithSessionKeepsScopedNonEmptyDiscoveryErrors for the
+// current error format: unavailableToolsError's server_unavailable branch
+// explicitly states retrying with a different scope will not help (the
+// server itself is down), so it must not trigger the scope retry even
+// though it also starts with "tools_unavailable:" and a matching latest
+// scope exists.
+func TestCallVirtualToolWithSessionKeepsRealOutageErrorsInCurrentFormat(t *testing.T) {
+	resetRegistryForTest(t)
+
+	const (
+		baseScope   = "builder-session"
+		staleScope  = baseScope + ":vt:child-agent"
+		latestScope = baseScope + ":vt:chat-agent"
+	)
+	latestCalls := 0
+
+	InitRegistryVirtualToolsForSession(staleScope, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"get_api_spec": func(context.Context, map[string]interface{}) (string, error) {
+			return "", fmt.Errorf("tools_unavailable: server_unavailable=[google_sheets] requested=[batch_update]: MCP server(s) [google_sheets] are configured for this agent but currently have zero registered tools, so it failed to start. The requested tool names are most likely correct — retrying with different or guessed tool names will NOT help. Treat this as a server outage: report it and continue without those tools.")
+		},
+	}, nil)
+	InitRegistryVirtualToolsForSession(latestScope, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"get_api_spec": func(context.Context, map[string]interface{}) (string, error) {
+			latestCalls++
+			return "latest-spec", nil
+		},
+	}, nil)
+
+	_, err := CallVirtualToolWithSession(context.Background(), staleScope, "get_api_spec", nil)
+	if err == nil {
+		t.Fatal("CallVirtualToolWithSession() error = nil, want scoped error")
+	}
+	if latestCalls != 0 {
+		t.Fatalf("latest scope calls = %d, want 0 (a real server outage must not be masked by retrying a different scope)", latestCalls)
+	}
+}
+
 func TestCallCustomToolWithSessionDoesNotBorrowGlobalExecutor(t *testing.T) {
 	resetRegistryForTest(t)
 

@@ -595,12 +595,33 @@ func baseSessionFromVirtualScopeID(scopeID string) string {
 	return scopeID
 }
 
+// shouldRetryVirtualToolWithLatestScope decides whether a virtual tool call's
+// error looks like it came from a stale, incomplete view of the registry --
+// the shape a restored/relaunched bridge process produces when it still
+// carries an old session:vt:<trace> scope from before this session's full
+// tool set was registered (see latestVirtualScopeBySession above) -- as
+// opposed to a real, specific error that a different scope would not
+// change.
+//
+// "Available servers/categories: []" is the legacy empty-discovery phrasing
+// this was originally written against. get_api_spec's current wording
+// (agent/code_execution_tools.go's unavailableToolsError) reports the same
+// stale-view shape differently: "these names are not registered by any
+// currently connected server." is unique to its healthy-servers-name-is-
+// unknown branch, the one instance where a tool that is registered
+// elsewhere plausibly cannot be found through this specific scope. Its
+// other branches (a configured server that is down, or a genuine
+// permission denial) deliberately do not contain either phrase -- retrying
+// those against a "latest" scope would not help, matching how
+// TestCallVirtualToolWithSessionKeepsScopedNonEmptyDiscoveryErrors already
+// requires a legitimate non-empty-discovery error not to trigger a retry.
 func shouldRetryVirtualToolWithLatestScope(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "Available servers/categories: []")
+	return strings.Contains(msg, "Available servers/categories: []") ||
+		strings.Contains(msg, "these names are not registered by any currently connected server")
 }
 
 func (r *ToolRegistry) latestVirtualToolExecutorLocked(sessionID, toolName string) (string, func(ctx context.Context, args map[string]interface{}) (string, error)) {
