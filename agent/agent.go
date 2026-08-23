@@ -3211,13 +3211,16 @@ func (a *Agent) Close() error {
 		if a.logger != nil {
 			a.logger.Info("IsolatedSessionWorkspace: removed tmp dir " + a.isolatedWorkspacePath)
 		}
-	} else if wd := strings.TrimSpace(a.codingAgentWorkingDir); wd != "" && llm.IsCodingAgentProvider(a.provider, a.modelID) {
+	} else if wd := strings.TrimSpace(a.codingAgentWorkingDir); wd != "" && llm.IsCodingAgentProvider(a.provider, a.modelID) && !a.codingAgentPersistentInteractiveEnabled(a.provider) {
 		// Real (non-isolated) workdir: the whole-tree rm -rf above never runs, so
 		// skills + the managed system prompt this session projected would otherwise
-		// linger in the operator's repo after close (Claude/Codex/Pi don't wipe
-		// them; only Cursor's adapter does). Remove exactly what we projected —
-		// named skill folders + marker-verified prompt files — leaving operator
-		// content intact.
+		// linger in the operator's repo after a one-shot session. Persistent
+		// interactive sessions are different: a new immutable Agent is closed at
+		// the end of every web-chat turn while the provider's tmux session remains
+		// alive. Removing its projected skills here made a warm session lose its
+		// visible/native workspace contract between turns. Keep those managed
+		// artifacts for the persistent session; isolated workflow workspaces and
+		// non-persistent runs still clean up exactly what they projected.
 		cleanupProjectedArtifactsOnClose(wd, a.provider, a.attachedSkills)
 	}
 	return nil

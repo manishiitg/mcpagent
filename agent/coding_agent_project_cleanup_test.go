@@ -125,3 +125,39 @@ func TestCleanupProjectedArtifactsNoopForNonCodingProvider(t *testing.T) {
 		t.Fatalf("non-coding provider cleanup must be a no-op, but the dir was removed: %v", err)
 	}
 }
+
+// A product/chat Agent is constructed and closed for every browser turn, while
+// its provider-native tmux session stays alive for the whole conversation.
+// Closing the short-lived Agent must therefore not delete the skill folders or
+// managed project instructions that the live CLI still uses.
+func TestAgentCloseKeepsProjectedArtifactsForPersistentInteractiveSession(t *testing.T) {
+	workdir := t.TempDir()
+	skillDir := filepath.Join(workdir, ".claude", "skills", "managed-skill")
+	if err := os.MkdirAll(skillDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# managed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prompt := filepath.Join(workdir, "CLAUDE.md")
+	if err := os.WriteFile(prompt, []byte("<!-- mlp-session-instructions -->\nmanaged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := &Agent{
+		provider:                               llm.ProviderClaudeCode,
+		modelID:                                "claude-sonnet-5",
+		codingAgentWorkingDir:                  workdir,
+		claudeCodePersistentInteractiveSession: true,
+		attachedSkills:                         []*llmtypes.Skill{{Name: "managed-skill"}},
+	}
+	if err := agent.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Stat(skillDir); err != nil {
+		t.Fatalf("persistent session skill must survive per-turn Agent.Close: %v", err)
+	}
+	if _, err := os.Stat(prompt); err != nil {
+		t.Fatalf("persistent session CLAUDE.md must survive per-turn Agent.Close: %v", err)
+	}
+}
