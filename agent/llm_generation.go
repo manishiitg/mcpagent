@@ -1250,10 +1250,32 @@ func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, mess
 				continuationHandle.NativeSessionID,
 			))
 		}
-		return a.executeLLMInnerAttempt(ctx, model, messages, baseOpts, false, false)
+		// Drop the stream channel for the retry: the failed first attempt
+		// already ran the adapter's `defer close(opts.StreamChan)` on its way
+		// out, so reusing baseOpts hands the retry an ALREADY-CLOSED channel.
+		// Its adapter then sends the first assistant chunk into it and the
+		// process dies with "panic: send on closed channel" — a crash, not a
+		// failed turn. Observed live: a stale --resume id fails, this recovery
+		// re-runs the turn fresh, and the claude structured adapter's scanner
+		// goroutine panics mid-stream.
+		//
+		// Same rule llmproviders.ContinueCodingAgentSession already follows for
+		// its tmux-session-lost retry ("the first failed GenerateContent owns
+		// closing it"). The recovered turn loses mid-turn streaming but still
+		// returns its full response; a lost stream beats a dead server.
+		return a.executeLLMInnerAttempt(ctx, model, messages, staleSessionRetryOptions(baseOpts), false, false)
 	}
 
 	return llmInstance.GenerateContent(ctx, messages, opts...)
+}
+
+// staleSessionRetryOptions copies the caller's options for a stale-native-session
+// retry with the stream channel removed. See the call site for why: the first
+// attempt's adapter already closed that channel, so the retry must not be handed
+// it. Kept as a named function so the invariant is testable on its own.
+func staleSessionRetryOptions(baseOpts []llmtypes.CallOption) []llmtypes.CallOption {
+	retryOpts := append([]llmtypes.CallOption(nil), baseOpts...)
+	return append(retryOpts, llmtypes.WithStreamingChan(nil))
 }
 
 // StartCodingAgentTransportSession starts or reacquires the agent's current

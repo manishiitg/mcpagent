@@ -537,3 +537,35 @@ func TestLatestHumanMessageTextForProviderContinuation(t *testing.T) {
 		t.Fatalf("latest message = %q, want new\\nmessage", got)
 	}
 }
+
+// A stale-native-session retry must never carry the previous attempt's stream
+// channel. The failed attempt's adapter already ran `defer close(opts.StreamChan)`,
+// so handing that channel to the retry makes its adapter send on a closed channel
+// and take the whole process down with "panic: send on closed channel" — observed
+// live against claude-code structured transport, where a dead --resume id failed,
+// this recovery re-ran the turn, and the scanner goroutine panicked mid-stream.
+func TestStaleSessionRetryDropsClosedStreamChannel(t *testing.T) {
+	// Exactly the state after a failed first attempt: the adapter closed it.
+	streamChan := make(chan llmtypes.StreamChunk, 1)
+	close(streamChan)
+
+	baseOpts := []llmtypes.CallOption{llmtypes.WithStreamingChan(streamChan)}
+
+	resolved := &llmtypes.CallOptions{}
+	for _, opt := range staleSessionRetryOptions(baseOpts) {
+		opt(resolved)
+	}
+	if resolved.StreamChan != nil {
+		t.Fatal("stale-session retry must resolve to a nil StreamChan; reusing the first attempt's closed channel panics the process")
+	}
+
+	// The caller's own slice must be left alone — the surrounding turn still
+	// owns it (finishStreaming closes/drains it) and must not be mutated here.
+	originalResolved := &llmtypes.CallOptions{}
+	for _, opt := range baseOpts {
+		opt(originalResolved)
+	}
+	if originalResolved.StreamChan == nil {
+		t.Fatal("staleSessionRetryOptions must not mutate the caller's options")
+	}
+}
