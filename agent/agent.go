@@ -1134,14 +1134,33 @@ type Agent struct {
 	// TestBridgeToolsList, which pins bridgeTools to exactly those 4 entries).
 	additionalBridgeTools []string
 
-	// bridgeReadyFile is the per-launch path the mcpbridge subprocess creates
-	// once the CLI completes its tools/list handshake (the tools-connected
-	// marker). BuildBridgeMCPConfig allocates a fresh unique path each call and
-	// stores it here; the coding-agent option builders read it immediately after
-	// and hand it to the adapter via WithMCPReadyFile so a cold session holds its
-	// first prompt until the tools are connected. A fresh unique temp path per
-	// call guarantees a stale marker from a prior session can never satisfy the
-	// gate. Empty when no bridge is in use.
+	// bridgeReadyFile is the path the mcpbridge subprocess creates once the
+	// CLI completes its tools/list handshake (the tools-connected marker).
+	// BuildBridgeMCPConfig stores it here; the coding-agent option builders
+	// read it immediately after and hand it to the adapter via
+	// WithMCPReadyFile so a cold session holds its first prompt until the
+	// tools are connected. Empty when no bridge is in use.
+	//
+	// PLAT-186: this used to be a fresh, random temp path on every call --
+	// a stale marker from a prior session could never satisfy the gate, but
+	// it also meant pi-mcp-adapter's own config-identity hash never matched
+	// twice, permanently defeating its "directTools" native-tool caching.
+	// It is now STABLE per working directory instead (a fixed
+	// ".mcpbridge-ready.marker" path, deleted immediately before each
+	// launch), so repeated launches for the same directory keep the same
+	// config identity and direct tools actually activate. The
+	// stale-marker guarantee is preserved by controlling the
+	// delete-then-launch ordering ourselves rather than by never reusing a
+	// name. A same-day follow-up review found that stability alone is not
+	// enough when two sessions with the same MCP config run concurrently
+	// in one working directory (a case pi-cli deliberately allows,
+	// acquirePiWorkspaceMCPConfigLease in multi-llm-provider-go) -- they
+	// would race on that one shared path. BuildBridgeMCPConfig now guards
+	// against that with a time-windowed check (piReadyMarkerLastAcquired):
+	// a launch that starts while another launch for the same directory may
+	// still be mid readiness-wait falls back to a private, random path
+	// instead -- the original pre-PLAT-186 behavior, still fully safe,
+	// just without that one launch's caching benefit.
 	bridgeReadyFile string
 
 	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
