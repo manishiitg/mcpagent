@@ -258,13 +258,36 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	// Claude Code swallows the subprocess stderr, so without this there is no
 	// record of why the bridge failed (e.g. empty MCP_TOOLS, parse errors, crashes).
 	bridgeEnv["MCP_BRIDGE_LOG"] = os.TempDir() + "/mcpbridge.log"
-	// Allocate a fresh, unique readiness-marker path for THIS launch. The bridge
-	// creates it on tools/list (tools connected); the adapter waits for it before
-	// a cold session's first prompt. A unique temp path per call (removed here so
-	// only this launch's bridge can create it) means a stale marker from a prior
-	// session in the same workspace can never falsely satisfy the gate.
+	// Readiness-marker path: the bridge creates it on tools/list (tools
+	// connected); the adapter waits for it before a cold session's first
+	// prompt. This path also becomes part of the MCP server config that
+	// pi-mcp-adapter hashes to decide whether its on-disk tool-metadata
+	// cache -- and therefore whether "directTools" native tool registration
+	// -- is still valid for this launch (PLAT-186). A path that differs on
+	// every launch defeats that hash unconditionally, regardless of
+	// anything else being configured correctly, forcing every pi-cli call
+	// through the fragile double-JSON-encoded "mcp" proxy wrapper instead
+	// of native per-tool schemas -- confirmed as the structural cause of a
+	// live incident where the model malformed that encoding and failed a
+	// whole run.
+	//
+	// Use a path that's STABLE per (workspace, agent) identity instead, and
+	// get the "a stale marker from a prior session can never falsely
+	// satisfy this session's gate" guarantee a different way: delete any
+	// leftover file at that fixed path immediately before this launch,
+	// rather than never reusing the name. We control both the deletion and
+	// the launch ordering, so this is the same guarantee, just earned
+	// differently. Falls back to the original random-path behavior when
+	// there is no stable working directory to anchor to -- there is no
+	// cache-stability benefit to protect in that case anyway, since a
+	// fresh temp directory never had a prior cache entry either.
 	a.bridgeReadyFile = ""
-	if f, tmpErr := os.CreateTemp("", "mcpbridge-ready-*.marker"); tmpErr == nil {
+	if workingDir := strings.TrimSpace(a.codingAgentWorkingDir); workingDir != "" {
+		readyPath := filepath.Join(workingDir, ".mcpbridge-ready.marker")
+		_ = os.Remove(readyPath)
+		a.bridgeReadyFile = readyPath
+		bridgeEnv["MCP_READY_FILE"] = readyPath
+	} else if f, tmpErr := os.CreateTemp("", "mcpbridge-ready-*.marker"); tmpErr == nil {
 		readyPath := f.Name()
 		_ = f.Close()
 		_ = os.Remove(readyPath)

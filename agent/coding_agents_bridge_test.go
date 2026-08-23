@@ -226,6 +226,91 @@ func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	}
 }
 
+// PLAT-186. pi-mcp-adapter (the third-party MCP extension pi-cli loads)
+// gates native "directTools" registration on a hash of the MCP server's
+// entire declared config, env included -- confirmed by reading its own
+// source (pi-mcp-adapter@2.27.0 metadata-cache.ts computeServerHash). If
+// MCP_READY_FILE differs between two launches for the SAME agent/working
+// directory identity, that hash never matches twice, and pi-cli is forced
+// through the fragile double-JSON-encoded "mcp" proxy wrapper on every
+// call regardless of directTools being configured correctly -- exactly
+// what let a live incident happen (a model malformed that encoding and
+// failed a whole run). Two consecutive builds for the same identity must
+// produce byte-identical env, MCP_READY_FILE included, so pi-mcp-adapter's
+// cache can actually stay valid across repeated launches.
+//
+// Fails before the fix (MCP_READY_FILE was a fresh os.CreateTemp path on
+// every call, unconditionally, with no exceptions); passes after.
+func TestBuildBridgeMCPConfigReadyFileIsStableAcrossRepeatedCallsForTheSameIdentity(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token-123")
+
+	agent := bridgeTestAgent()
+	agent.sessionID = "sess-abc-123"
+	agent.codingAgentWorkingDir = t.TempDir()
+
+	readyFileFromConfig := func() string {
+		configJSON, err := agent.buildBridgeMCPConfig()
+		if err != nil {
+			t.Fatalf("buildBridgeMCPConfig() error: %v", err)
+		}
+		var config map[string]interface{}
+		if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		servers := config["mcpServers"].(map[string]interface{})
+		bridge := servers["api-bridge"].(map[string]interface{})
+		env := bridge["env"].(map[string]interface{})
+		readyFile, _ := env["MCP_READY_FILE"].(string)
+		if readyFile == "" {
+			t.Fatal("MCP_READY_FILE missing from bridge env")
+		}
+		return readyFile
+	}
+
+	first := readyFileFromConfig()
+	second := readyFileFromConfig()
+	if first != second {
+		t.Fatalf("MCP_READY_FILE changed across repeated calls for the same agent identity: %q != %q -- this alone defeats pi-mcp-adapter's cache-validity hash on every launch, regardless of any other config being correct", first, second)
+	}
+	if !strings.HasPrefix(first, agent.codingAgentWorkingDir) {
+		t.Fatalf("MCP_READY_FILE = %q, want it anchored under the stable working directory %q, not a random temp path", first, agent.codingAgentWorkingDir)
+	}
+}
+
+// A fresh agent with no stable working directory has no cache-validity
+// benefit to protect (a brand-new temp dir never had a prior cache entry
+// either), so it must keep the original random-path fallback rather than
+// collide on some fixed name.
+func TestBuildBridgeMCPConfigReadyFileFallsBackToRandomPathWithoutAWorkingDir(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token-123")
+
+	agent := bridgeTestAgent()
+	agent.codingAgentWorkingDir = ""
+
+	configJSON, err := agent.buildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("buildBridgeMCPConfig() error: %v", err)
+	}
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	servers := config["mcpServers"].(map[string]interface{})
+	bridge := servers["api-bridge"].(map[string]interface{})
+	env := bridge["env"].(map[string]interface{})
+	readyFile, _ := env["MCP_READY_FILE"].(string)
+	if readyFile == "" {
+		t.Fatal("MCP_READY_FILE missing from bridge env")
+	}
+	if !strings.Contains(readyFile, "mcpbridge-ready-") {
+		t.Fatalf("MCP_READY_FILE = %q, want the random-path fallback pattern when there is no working directory to anchor to", readyFile)
+	}
+}
+
 func TestBuildBridgeMCPConfigFailsWhenToolOutputDirectoryCannotBeCreated(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
