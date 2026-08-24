@@ -32,25 +32,33 @@ func TestAppendBridgeRoutingInstructionsDefaultUnchanged(t *testing.T) {
 
 // Confirmed live (trading workflow, 2026-08-24): a pi-cli session called
 // mcp({tool: "get_human_input_request", args: "..."}) -- get_human_input_request
-// is a custom HTTP-backed tool, not one of the small directTools set the mcp()
-// wrapper resolves -- and got stuck retrying the same failing call ("Tool
+// is a custom HTTP-backed tool, never reachable through pi-mcp-adapter's mcp()
+// proxy at all -- and got stuck retrying the same failing call ("Tool
 // \"get_human_input_request\" not found. Use mcp({ search: \"...\" }) to
-// search.") instead of falling back to curl. The wrapper bullet previously
-// didn't say the search/describe/tool forms are scoped to that short list, so
-// a model could plausibly read it as a general fallback for any custom tool.
-func TestAppendBridgeRoutingInstructionsWarnsMcpWrapperCannotReachCustomTools(t *testing.T) {
+// search.") instead of falling back to curl. The routing prompt used to teach
+// the mcp() wrapper syntax as a fallback for the small directTools set, which
+// a model could plausibly (and incorrectly) generalize to any tool it
+// couldn't call directly. Now that normalizePiMCPConfig
+// (picli_interactive_adapter.go) sets settings.disableProxyTool=true by
+// default -- confirmed safe against pi-mcp-adapter's own
+// shouldRegisterProxyTool logic, which still registers the proxy on a cold
+// direct-tools cache -- the model won't normally see that tool at all, and
+// when it is registered pi-mcp-adapter gives it its own self-documenting
+// schema. The prompt no longer needs to teach mcp() syntax itself.
+func TestAppendBridgeRoutingInstructionsNoLongerTeachesMcpWrapperSyntax(t *testing.T) {
 	a := &Agent{}
 	a.appendBridgeRoutingInstructions(testDefaultPreamble)
 
 	got := a.instructions()
+	if strings.Contains(got, "mcp({") {
+		t.Fatalf("expected no mcp() wrapper syntax taught in system prompt (proxy tool is disabled by default), got: %s", got)
+	}
 	for _, want := range []string{
-		"ONLY for the small set of documented bridge tools named above",
-		"calling mcp({tool: \"<custom_tool_name>\", ...}) for a custom tool",
-		"fails with \"Tool not found\"",
-		"never via mcp(), never by their bare name as a direct tool call",
+		"Custom tools (get_human_input_request, create_human_input_request, notify_user, and everything else not covered above) are called ONLY through execute_shell_command + curl",
+		"never as a direct tool call by their bare name",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("expected mcp()-wrapper-cannot-reach-custom-tools guardrail %q in system prompt, got: %s", want, got)
+			t.Fatalf("expected custom-tools-via-curl-only guardrail %q in system prompt, got: %s", want, got)
 		}
 	}
 }
