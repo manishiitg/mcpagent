@@ -30,6 +30,31 @@ func TestAppendBridgeRoutingInstructionsDefaultUnchanged(t *testing.T) {
 	}
 }
 
+// Confirmed live (trading workflow, 2026-08-24): a pi-cli session called
+// mcp({tool: "get_human_input_request", args: "..."}) -- get_human_input_request
+// is a custom HTTP-backed tool, not one of the small directTools set the mcp()
+// wrapper resolves -- and got stuck retrying the same failing call ("Tool
+// \"get_human_input_request\" not found. Use mcp({ search: \"...\" }) to
+// search.") instead of falling back to curl. The wrapper bullet previously
+// didn't say the search/describe/tool forms are scoped to that short list, so
+// a model could plausibly read it as a general fallback for any custom tool.
+func TestAppendBridgeRoutingInstructionsWarnsMcpWrapperCannotReachCustomTools(t *testing.T) {
+	a := &Agent{}
+	a.appendBridgeRoutingInstructions(testDefaultPreamble)
+
+	got := a.instructions()
+	for _, want := range []string{
+		"ONLY for the small set of documented bridge tools named above",
+		"calling mcp({tool: \"<custom_tool_name>\", ...}) for a custom tool",
+		"fails with \"Tool not found\"",
+		"never via mcp(), never by their bare name as a direct tool call",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected mcp()-wrapper-cannot-reach-custom-tools guardrail %q in system prompt, got: %s", want, got)
+		}
+	}
+}
+
 func TestAppendBridgeRoutingInstructionsCustomOverride(t *testing.T) {
 	custom := "MY CUSTOM ROUTING TEXT"
 	a := &Agent{bridgeRoutingInstructionsOverride: &custom}
