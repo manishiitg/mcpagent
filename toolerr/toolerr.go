@@ -35,6 +35,26 @@ const (
 
 var httpFailurePrefix = regexp.MustCompile(`(?i)^HTTP(?:/\S+)?\s+([45][0-9]{2})(?:\s|$)`)
 
+// jsonEnvelopeFields are the field names whose string content may itself be a
+// nested transport envelope worth JSON-decoding and inspecting recursively —
+// how MCP bridge results typically arrive (JSON stringified inside a
+// content/text block). stdout/stderr are deliberately excluded: they carry a
+// tool's own arbitrary output, not a nested envelope. Confirmed live: `cat`
+// on a file whose CONTENT was a captured API error response
+// ({"success":false,"error":...}) was misclassified as the shell command
+// itself failing, via this exact decode-and-recurse step, even though its
+// real exit code was 0. Their plain TEXT is still checked against the prefix
+// patterns below — an "ERROR: ..." or "tool execution failed: ..." message
+// is a genuine self-reported failure — only the JSON-decode-and-recurse step
+// into arbitrary nested structure is skipped for these two fields.
+var jsonEnvelopeFields = map[string]bool{
+	"":       true, // the top-level call, before any field is known
+	"content": true,
+	"text":    true,
+	"result":  true,
+	"error":   true,
+}
+
 // CanonicalFailure recognizes only payload signals strong enough to change the
 // runtime result from success to error. The same structural contract is used by
 // Suspicious logging so observability cannot contradict the result sent to the
@@ -100,9 +120,11 @@ func canonicalFailureValue(value interface{}, field string, depth int) (string, 
 		if trimmed == "" {
 			return "", false
 		}
-		if decoded, ok := decodeJSONValue(trimmed); ok {
-			if signal, failed := canonicalFailureValue(decoded, field, depth+1); failed {
-				return signal, true
+		if jsonEnvelopeFields[field] {
+			if decoded, ok := decodeJSONValue(trimmed); ok {
+				if signal, failed := canonicalFailureValue(decoded, field, depth+1); failed {
+					return signal, true
+				}
 			}
 		}
 		lowered := strings.ToLower(trimmed)

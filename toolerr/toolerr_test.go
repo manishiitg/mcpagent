@@ -79,6 +79,28 @@ func TestCanonicalFailureDoesNotPromoteDiscussionOrDomainData(t *testing.T) {
 	}
 }
 
+// TestCanonicalFailureDoesNotDecodeStdoutAsANestedEnvelope reproduces the
+// confida-login live finding: `cat` on a file whose CONTENT happened to be a
+// captured API error response was misclassified as the shell command itself
+// failing, even though the real exit_code was 0. The bug was
+// canonicalFailureValue JSON-decoding stdout's arbitrary text and treating
+// whatever structure it happened to contain (here, {"success":false,...} —
+// data about a captured API response, not about this shell command) as a
+// nested transport signal.
+func TestCanonicalFailureDoesNotDecodeStdoutAsANestedEnvelope(t *testing.T) {
+	tests := []string{
+		// A raw captured API error response, catted verbatim.
+		`{"stdout":"{\"success\":false,\"error\":\"invalid token\"}","stderr":"","exit_code":0}`,
+		// Same shape via stderr, in case a similar capture lands there.
+		`{"stdout":"","stderr":"{\"status\":\"failed\",\"reason\":\"expired\"}","exit_code":0}`,
+	}
+	for _, text := range tests {
+		if signal, failed := CanonicalFailure(text); failed {
+			t.Errorf("CanonicalFailure(%q) = (%q, true), want success — the shell command's real exit_code was 0; the JSON inside stdout/stderr is arbitrary content, not a transport signal", text, signal)
+		}
+	}
+}
+
 func TestCanonicalFailureForToolSuppressesProblemReportingPayloads(t *testing.T) {
 	if signal, failed := CanonicalFailureForTool("query_workflow_db", `[{"status":"failed"}]`); failed {
 		t.Fatalf("query result classified as failure: %q", signal)
