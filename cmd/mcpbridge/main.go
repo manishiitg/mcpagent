@@ -443,6 +443,21 @@ func main() {
 				if errorMsg == "" {
 					errorMsg = "unknown error (no details in response)"
 				}
+				// result.Result is not an alternate success payload -- it is the
+				// same tool output the caller would have received on success (for
+				// execute_shell_command, the captured stdout/stderr/exit_code of
+				// every command in a chain, even the ones that ran and produced
+				// real output before a later command failed). Discarding it here
+				// left only a bare "tool execution failed: exit_code=N" with no way
+				// to see what actually happened short of a blind retry
+				// (PUL-AAC278EF). Append it whenever present.
+				if strings.TrimSpace(result.Result) != "" {
+					bounded, savedPath, truncated, saveErr := prepareBridgeToolResult(def.Name, result.Result, toolOutputDir)
+					if truncated {
+						log.Printf("mcpbridge: truncated tool result on failure type=%s tool=%s original_bytes=%d returned_bytes=%d saved_path=%q save_error=%v", def.Type, def.Name, len(result.Result), len(bounded), savedPath, saveErr)
+					}
+					return mcp.NewToolResultText(fmt.Sprintf("ERROR: %s\n\n%s", truncateBridgeErrorText(errorMsg), bounded)), nil
+				}
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: %s", truncateBridgeErrorText(errorMsg))), nil
 			}
 			bounded, savedPath, truncated, saveErr := prepareBridgeToolResult(def.Name, result.Result, toolOutputDir)
