@@ -802,6 +802,22 @@ func withAPIConfig(baseURL, token string) agentOption {
 	}
 }
 
+// withBridgeAPIBaseURL sets the host-reachable executor URL for the bridge
+// subprocess explicitly, ahead of any environment value.
+func withBridgeAPIBaseURL(url string) agentOption {
+	return func(a *Agent) {
+		a.bridgeAPIBaseURL = url
+	}
+}
+
+// withBridgeBinary sets the mcpbridge executable explicitly, ahead of
+// MCP_BRIDGE_BINARY and PATH lookup.
+func withBridgeBinary(path string) agentOption {
+	return func(a *Agent) {
+		a.bridgeBinary = path
+	}
+}
+
 // withUserID sets the user ID for per-user OAuth token isolation.
 //
 // When set, OAuth tokens for MCP servers are stored at user-specific paths:
@@ -1249,6 +1265,11 @@ type Agent struct {
 	// When set, code execution subprocesses receive these as MCP_API_URL and MCP_API_TOKEN env vars
 	apiBaseURL string
 	apiToken   string
+	// bridgeAPIBaseURL and bridgeBinary are the explicit (non-environment)
+	// counterparts of MCP_BRIDGE_API_URL and MCP_BRIDGE_BINARY; see
+	// MCPRuntimeConfig.BridgeAPIBaseURL and CodingRuntimeConfig.BridgeBinary.
+	bridgeAPIBaseURL string
+	bridgeBinary     string
 
 	// Cached OpenAPI specs per server (generated on-demand by get_api_spec)
 	openAPISpecCache   map[string][]byte

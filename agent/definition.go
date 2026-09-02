@@ -130,6 +130,10 @@ type CodingRuntimeConfig struct {
 	CodexNetworkAccess                bool
 	CLISecurityPolicy                 *llmtypes.CLISecurityPolicy
 	BridgeRoutingInstructionsOverride *string
+	// BridgeBinary is the mcpbridge executable to spawn for coding-CLI
+	// transports. Explicit beats the MCP_BRIDGE_BINARY environment variable,
+	// which beats PATH lookup.
+	BridgeBinary string
 	// SecretEnvironment is injected only into the native coding-agent child
 	// process for the current turn. Admission is decided by
 	// llmtypes.IsScopedCodingAgentEnvironmentKey, which is the single owner of
@@ -146,6 +150,12 @@ type MCPRuntimeConfig struct {
 	RuntimeOverrides mcpclient.RuntimeOverrides
 	APIBaseURL       string
 	APIToken         string
+	// BridgeAPIBaseURL is the host-reachable executor URL the coding-CLI
+	// bridge subprocess calls back into, when it differs from APIBaseURL (an
+	// in-Docker URL, say). Explicit values take precedence over the
+	// MCP_BRIDGE_API_URL / MCP_API_URL environment fallbacks, so several
+	// executors can coexist in one process without touching the environment.
+	BridgeAPIBaseURL string
 }
 
 type WorkspaceRuntimeConfig struct {
@@ -377,6 +387,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	if coding.BridgeRoutingInstructionsOverride != nil {
 		options = append(options, withBridgeRoutingInstructions(*coding.BridgeRoutingInstructionsOverride))
 	}
+	if coding.BridgeBinary != "" {
+		options = append(options, withBridgeBinary(coding.BridgeBinary))
+	}
 	if len(coding.SecretEnvironment) > 0 {
 		options = append(options, withCodingAgentSecretEnvironment(coding.SecretEnvironment))
 	}
@@ -393,6 +406,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if mcpConfig.APIBaseURL != "" || mcpConfig.APIToken != "" {
 		options = append(options, withAPIConfig(mcpConfig.APIBaseURL, mcpConfig.APIToken))
+	}
+	if mcpConfig.BridgeAPIBaseURL != "" {
+		options = append(options, withBridgeAPIBaseURL(mcpConfig.BridgeAPIBaseURL))
 	}
 
 	workspace := runtime.Workspace

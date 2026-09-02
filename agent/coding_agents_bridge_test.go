@@ -1139,3 +1139,53 @@ func mapKeys[V any](m map[string]V) []string {
 	}
 	return keys
 }
+
+// Explicit bridge configuration must beat the process environment: that is
+// what lets two executors coexist in one process (a host application's own
+// and one started by an embedded session) without either clobbering the
+// other through MCP_* variables.
+func TestBuildBridgeMCPConfigPrefersExplicitOverEnvironment(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/env/mcpbridge")
+	t.Setenv("MCP_BRIDGE_API_URL", "http://env-bridge:1")
+	t.Setenv("MCP_API_URL", "http://env-api:2")
+	t.Setenv("MCP_API_TOKEN", "env-token")
+
+	a := bridgeTestAgent()
+	a.bridgeBinary = "/explicit/mcpbridge"
+	a.bridgeAPIBaseURL = "http://127.0.0.1:43210"
+	a.apiBaseURL = "http://127.0.0.1:43210"
+	a.apiToken = "explicit-token"
+
+	configJSON, err := a.buildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("buildBridgeMCPConfig() error: %v", err)
+	}
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	bridge := config["mcpServers"].(map[string]interface{})["api-bridge"].(map[string]interface{})
+	if got := bridge["command"]; got != "/explicit/mcpbridge" {
+		t.Fatalf("command = %v, want the explicit binary over MCP_BRIDGE_BINARY", got)
+	}
+	env := bridge["env"].(map[string]interface{})
+	if got := env["MCP_API_URL"]; got != "http://127.0.0.1:43210" {
+		t.Fatalf("MCP_API_URL = %v, want the explicit bridge URL over the environment", got)
+	}
+	if got := env["MCP_API_TOKEN"]; got != "explicit-token" {
+		t.Fatalf("MCP_API_TOKEN = %v, want the explicit token", got)
+	}
+
+	// Without explicit values the environment still applies, unchanged.
+	b := bridgeTestAgent()
+	fallbackJSON, err := b.buildBridgeMCPConfig()
+	if err != nil {
+		t.Fatalf("fallback buildBridgeMCPConfig() error: %v", err)
+	}
+	var fallback map[string]interface{}
+	_ = json.Unmarshal([]byte(fallbackJSON), &fallback)
+	fb := fallback["mcpServers"].(map[string]interface{})["api-bridge"].(map[string]interface{})
+	if fb["command"] != "/env/mcpbridge" || fb["env"].(map[string]interface{})["MCP_API_URL"] != "http://env-bridge:1" {
+		t.Fatalf("environment fallback broken: %v", fb)
+	}
+}

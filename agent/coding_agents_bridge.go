@@ -163,8 +163,11 @@ func claudeBridgeAllowedToolIdentifiers(additional []string, admits func(name, t
 func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	logger := getLogger(a)
 
-	// 1. Resolve bridge binary path
-	bridgePath := os.Getenv("MCP_BRIDGE_BINARY")
+	// 1. Resolve bridge binary path: explicit config, then environment, then PATH.
+	bridgePath := a.bridgeBinary
+	if bridgePath == "" {
+		bridgePath = os.Getenv("MCP_BRIDGE_BINARY")
+	}
 	if bridgePath == "" {
 		var err error
 		bridgePath, err = exec.LookPath("mcpbridge")
@@ -242,8 +245,14 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 
 	// 3. Resolve API URL and token for the bridge process
 	// The bridge binary runs on the host (not in Docker), so it needs a host-reachable URL.
-	// MCP_BRIDGE_API_URL overrides MCP_API_URL for this purpose.
-	apiURL := os.Getenv("MCP_BRIDGE_API_URL")
+	// Explicit configuration wins over the environment so that several
+	// executors can live in one process (each agent carries its own); the
+	// MCP_BRIDGE_API_URL / MCP_API_URL variables remain the fallback for
+	// consumers that configure one executor process-wide.
+	apiURL := a.bridgeAPIBaseURL
+	if apiURL == "" {
+		apiURL = os.Getenv("MCP_BRIDGE_API_URL")
+	}
 	if apiURL == "" {
 		apiURL = a.apiBaseURL
 	}
