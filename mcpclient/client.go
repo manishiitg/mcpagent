@@ -2,6 +2,7 @@ package mcpclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -120,6 +121,9 @@ func (c *Client) Connect(ctx context.Context) error {
 			loggerv2.String("server", c.getServerName()),
 			loggerv2.Int("attempt", attempt))
 
+		if isNonRetryableConnectError(err) {
+			return fmt.Errorf("failed to connect to MCP server '%s': %w", c.getServerName(), err)
+		}
 		if attempt == maxRetries {
 			return fmt.Errorf("failed to connect to MCP server '%s' after %d attempts: %w", c.getServerName(), maxRetries, err)
 		}
@@ -299,6 +303,9 @@ func (c *Client) ConnectWithRetry(ctx context.Context) error {
 			loggerv2.String("server", c.getServerName()),
 			loggerv2.Int("attempt", attempt+1))
 
+		if isNonRetryableConnectError(err) {
+			return fmt.Errorf("failed to connect to MCP server '%s': %w", c.getServerName(), err)
+		}
 		// If this was the last attempt, don't sleep
 		if attempt == c.retryConfig.MaxRetries {
 			break
@@ -997,4 +1004,14 @@ func (c *Client) DiscoverOAuthEndpoints(ctx context.Context) (*oauth.OAuthEndpoi
 	}
 
 	return nil, fmt.Errorf("server did not return 401 for discovery (got %d)", resp.StatusCode)
+}
+
+// isNonRetryableConnectError reports errors that no amount of retrying can
+// turn into a connection. A hosted OAuth connector whose user has never signed
+// in (oauth.ErrNoValidToken) is the important one: the nested retry loops
+// used to spend ~19s per agent start re-checking a token file that only an
+// interactive login can create, and every workflow turn on a deployment with
+// an unauthenticated connector paid that before the model was even launched.
+func isNonRetryableConnectError(err error) bool {
+	return errors.Is(err, oauth.ErrNoValidToken)
 }
