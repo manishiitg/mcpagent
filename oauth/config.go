@@ -6,12 +6,17 @@ type OAuthConfig struct {
 	AutoDiscover bool `json:"auto_discover,omitempty"` // Auto-discover endpoints from 401 responses
 
 	// OAuth endpoints (required if not using auto-discovery)
-	ClientID     string   `json:"client_id,omitempty"`
-	ClientSecret string   `json:"client_secret,omitempty"` // Optional for public clients (PKCE)
-	AuthURL      string   `json:"auth_url,omitempty"`
-	TokenURL     string   `json:"token_url,omitempty"`
-	RedirectURL  string   `json:"redirect_url,omitempty"` // Default: http://localhost:8080/callback
-	Scopes       []string `json:"scopes,omitempty"`
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"` // Optional for public clients (PKCE)
+	AuthURL      string `json:"auth_url,omitempty"`
+	TokenURL     string `json:"token_url,omitempty"`
+	// RegistrationEndpoint enables Dynamic Client Registration (RFC 7591) for
+	// servers that issue a client_id on demand instead of accepting a Client ID
+	// Metadata Document URL. Set it and leave ClientID empty; the caller
+	// registers through RegisterClient and fills ClientID in at connect time.
+	RegistrationEndpoint string   `json:"registration_endpoint,omitempty"`
+	RedirectURL          string   `json:"redirect_url,omitempty"` // Default: http://localhost:8080/callback
+	Scopes               []string `json:"scopes,omitempty"`
 
 	// RFC 8707 Resource Indicator
 	Resource string `json:"resource,omitempty"` // Resource URI for token audience restriction
