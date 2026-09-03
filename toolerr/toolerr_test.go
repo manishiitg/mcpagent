@@ -405,3 +405,26 @@ func TestSuspiciousStillFlagsARealBrowserElementNotFoundError(t *testing.T) {
 		t.Error("Suspicious(...) = false, want a real element-not-found error outside title=/url= to still be flagged")
 	}
 }
+
+func TestCanonicalFailureRecognisesErrorEnvelopeMessageKeys(t *testing.T) {
+	denied := `{"error":{"errorMessage":"Built-in filesystem/shell/edit/search/delegation tools are disabled in this session by the orchestrator."}}`
+	signal, failed := CanonicalFailure(denied)
+	if !failed {
+		t.Fatalf("error envelope with errorMessage must classify as a failure: %s", denied)
+	}
+	if signal != "error.errormessage" {
+		t.Fatalf("unexpected signal %q", signal)
+	}
+	// The glob shape kept working.
+	if _, failed := CanonicalFailure(`{"error":{"error":"Built-in tools are disabled"}}`); !failed {
+		t.Fatal("nested error string must still classify as a failure")
+	}
+	// A domain record carrying a message under a non-error key stays quiet.
+	if _, failed := CanonicalFailure(`{"result":{"message":"3 files matched","status":"ok"}}`); failed {
+		t.Fatal("result.message must not be promoted to a failure")
+	}
+	// An empty error envelope is not a signal on its own.
+	if _, failed := CanonicalFailure(`{"error":{"errorMessage":""}}`); failed {
+		t.Fatal("empty errorMessage must not classify as a failure")
+	}
+}

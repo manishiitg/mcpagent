@@ -153,6 +153,20 @@ func canonicalFailureValue(value interface{}, field string, depth int) (string, 
 			}
 		}
 	case map[string]interface{}:
+		if field == "error" {
+			// A transport error envelope is a failure whatever the inner key is
+			// called. Cursor's built-in read tool reports the deny-hook verdict as
+			// {"error":{"errorMessage":"..."}} while glob uses
+			// {"error":{"error":"..."}}; only the latter was recognised, so the
+			// same denied call rendered as a success for one tool and a failure
+			// for the other (RTS, 2026-09-03). Scoped to the "error" field so a
+			// domain record carrying a "message" stays out of it.
+			for _, key := range []string{"errorMessage", "error_message", "message", "msg", "reason", "detail", "details"} {
+				if msg, ok := stringFieldFold(typed, key); ok && strings.TrimSpace(msg) != "" {
+					return "error." + strings.ToLower(key), true
+				}
+			}
+		}
 		if explicitBoolean(typed, "success") == boolFalse ||
 			explicitBoolean(typed, "ok") == boolFalse {
 			return "success=false", true
