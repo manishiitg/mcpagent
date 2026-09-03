@@ -54,3 +54,26 @@ func TestConnectFailsFastWithoutOAuthToken(t *testing.T) {
 		})
 	}
 }
+
+// ConnectWithRetry must make exactly MaxRetries+1 attempts. It used to call
+// Connect (its own 3-attempt loop), tripling every retry and stacking both
+// backoffs.
+func TestConnectWithRetryDoesNotNestConnectRetries(t *testing.T) {
+	c := NewWithRetryConfig(
+		MCPServerConfig{Command: "/nonexistent/mlp-mcp-server-binary"},
+		RetryConfig{MaxRetries: 2, InitialDelay: time.Millisecond, MaxDelay: 2 * time.Millisecond, BackoffFactor: 2, ConnectTimeout: 5 * time.Second},
+		loggerv2.NewNoop(),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := c.ConnectWithRetry(ctx); err == nil {
+		t.Fatal("expected a missing binary to fail")
+	}
+	if got := c.connectAttempts.Load(); got != 3 {
+		t.Fatalf("ConnectWithRetry made %d attempts, want MaxRetries+1 = 3", got)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("took %s; backoffs are stacking", elapsed)
+	}
+}

@@ -42,18 +42,19 @@ func DefaultRetryConfig() RetryConfig {
 
 // Client wraps the underlying MCP client with convenience methods
 type Client struct {
-	config        MCPServerConfig
-	mcpClient     *client.Client
-	serverInfo    *mcp.Implementation
-	retryConfig   RetryConfig
-	logger        loggerv2.Logger
-	contextCancel context.CancelFunc // Store context cancel function for SSE connections
-	context       context.Context    // Store context for SSE connections
-	mu            sync.RWMutex       // Protect access to contextCancel, context, and leakGuard
-	oauthManager  *oauth.Manager     // OAuth manager for authentication
-	reconnectMu   sync.Mutex         // Serializes mid-session reconnects (resilience.go)
-	connGen       atomic.Int64       // Connection generation; bumped on each successful connect
-	leakGuard     *runtime.Cleanup   // GC guard that reaps unclosed connections (resilience.go)
+	config          MCPServerConfig
+	mcpClient       *client.Client
+	serverInfo      *mcp.Implementation
+	retryConfig     RetryConfig
+	logger          loggerv2.Logger
+	contextCancel   context.CancelFunc // Store context cancel function for SSE connections
+	context         context.Context    // Store context for SSE connections
+	mu              sync.RWMutex       // Protect access to contextCancel, context, and leakGuard
+	oauthManager    *oauth.Manager     // OAuth manager for authentication
+	reconnectMu     sync.Mutex         // Serializes mid-session reconnects (resilience.go)
+	connGen         atomic.Int64       // Connection generation; bumped on each successful connect
+	connectAttempts atomic.Int32       // Total connectOnce calls (retry accounting in tests)
+	leakGuard       *runtime.Cleanup   // GC guard that reaps unclosed connections (resilience.go)
 }
 
 // New creates a new MCP client for the given server configuration
@@ -134,6 +135,7 @@ func (c *Client) Connect(ctx context.Context) error {
 
 // connectOnce performs a single connection attempt
 func (c *Client) connectOnce(ctx context.Context) error {
+	c.connectAttempts.Add(1)
 	// Close existing client before reconnect to prevent subprocess leaks
 	if c.mcpClient != nil {
 		c.logger.Debug("Closing existing mcpClient before reconnect")
@@ -282,8 +284,10 @@ func (c *Client) ConnectWithRetry(ctx context.Context) error {
 				loggerv2.Any("args", c.config.Args))
 		}
 
-		// Attempt connection
-		err := c.Connect(connectCtx)
+		// One attempt per iteration. This used to call Connect, which runs its
+		// own 3-attempt loop, so a failing server was tried 12 times with both
+		// loops' backoffs stacked (~19s for a server that fails instantly).
+		err := c.connectOnce(connectCtx)
 		cancel()
 
 		if err == nil {
