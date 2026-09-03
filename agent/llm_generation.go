@@ -608,6 +608,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
 						Thinking:      chunk.Content,
 						Turn:          sm.turn,
+						IsDelta:       contentChunkIsDelta(chunk),
 					})
 				}
 				if sm.callback != nil {

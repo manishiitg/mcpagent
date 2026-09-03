@@ -2195,6 +2195,12 @@ type ConversationThinkingEvent struct {
 	BaseEventData
 	Thinking string `json:"thinking"` // The thinking/reasoning content
 	Turn     int    `json:"turn"`
+	// IsDelta marks a fragment of the thinking span still being streamed:
+	// append it verbatim to the preceding thinking event of the same turn
+	// instead of showing it as a separate block. Providers that emit whole
+	// thinking blocks (Claude Code) leave it false; token-streaming ones
+	// (Cursor) set it, mirroring StreamingChunkEvent.IsDelta.
+	IsDelta bool `json:"is_delta,omitempty"`
 }
 
 func (e *ConversationThinkingEvent) GetEventType() EventType {
