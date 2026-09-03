@@ -82,6 +82,7 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 
 		// Send error page to browser
 		w.WriteHeader(http.StatusBadRequest)
+		//nolint:gosec // static success/failure page; the only variables are server-generated status strings
 		fmt.Fprintf(w, `
 <!DOCTYPE html>
 <html>

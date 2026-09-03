@@ -368,11 +368,11 @@ func openBrowser(url string) error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", url) //nolint:gosec // opening the provider's authorization URL in the user's browser is the feature
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", url) //nolint:gosec // see above
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) //nolint:gosec // see above
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}

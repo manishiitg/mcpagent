@@ -20,13 +20,7 @@ type TokenStore struct {
 
 // NewTokenStore creates a new token store for the given file path
 func NewTokenStore(filePath string) *TokenStore {
-	// Expand ~ to home directory
-	if strings.HasPrefix(filePath, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			filePath = filepath.Join(home, filePath[2:])
-		}
-	}
+	filePath = ExpandTokenPath(filePath)
 
 	return &TokenStore{
 		filePath: filePath,
@@ -45,7 +39,7 @@ func (ts *TokenStore) Save(token *oauth2.Token) error {
 	}
 
 	// Marshal token to JSON
-	data, err := json.MarshalIndent(token, "", "  ")
+	data, err := json.MarshalIndent(token, "", "  ") //nolint:gosec // persisting the token to its own 0600 file is this store's purpose
 	if err != nil {
 		return fmt.Errorf("failed to marshal token: %w", err)
 	}
@@ -132,4 +126,25 @@ func (ts *TokenStore) ExpiresIn() time.Duration {
 // GetFilePath returns the token file path
 func (ts *TokenStore) GetFilePath() string {
 	return ts.filePath
+}
+
+// ExpandTokenPath resolves the "~/" token-file convention. "~/.config/..."
+// honours XDG_CONFIG_HOME so a host whose ~/.config is not writable by the
+// service user (the rootless EC2 deployment: root-owned, the bootstrap wrote
+// the systemd units there) can redirect per-user token storage to a writable
+// directory -- the same knob cursor-agent and the agent server use. Every
+// reader and writer of a token file must go through this, or the server
+// writes a token the runtime never finds.
+func ExpandTokenPath(filePath string) string {
+	if strings.HasPrefix(filePath, "~/.config/") {
+		if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
+			return filepath.Join(xdg, strings.TrimPrefix(filePath, "~/.config/"))
+		}
+	}
+	if strings.HasPrefix(filePath, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, filePath[2:])
+		}
+	}
+	return filePath
 }
