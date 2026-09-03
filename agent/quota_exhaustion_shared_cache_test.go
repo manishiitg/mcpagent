@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -60,6 +61,58 @@ func TestSharedQuotaExhaustionSelfClearsOnceReopened(t *testing.T) {
 	sharedQuotaExhaustedMu.RUnlock()
 	if stillPresent {
 		t.Fatal("a reopened window's entry must be forgotten, not merely read as false")
+	}
+}
+
+// An unknown-reset mark (Cursor's only case: it never states a reset time)
+// must not bench a model for the life of the process. It gets a real retry
+// once unknownResetCooldown passes, unlike a stated reset time which is
+// authoritative and never guessed at.
+func TestSharedQuotaExhaustionWithUnknownResetExpiresAfterCooldown(t *testing.T) {
+	key := "cursor-cli/auto"
+	t.Cleanup(func() {
+		forgetSharedModelQuotaExhaustion(key)
+		os.Unsetenv("QUOTA_UNKNOWN_RESET_COOLDOWN_SECONDS")
+	})
+	t.Setenv("QUOTA_UNKNOWN_RESET_COOLDOWN_SECONDS", "1")
+
+	markModelQuotaExhaustedShared(key, time.Time{})
+	if _, exhausted := sharedModelQuotaExhaustion(key); !exhausted {
+		t.Fatal("must be exhausted immediately after marking")
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+
+	resetAt, exhausted := sharedModelQuotaExhaustion(key)
+	if exhausted {
+		t.Fatal("an unknown-reset mark must expire after the cooldown, allowing a real retry")
+	}
+	if !resetAt.IsZero() {
+		t.Fatal("an expired mark must never report a fabricated reset time")
+	}
+}
+
+// The cooldown must never be applied to a real, provider-stated reset time --
+// that value is authoritative (PLAT-101) and only expires when it actually
+// passes, not on the shorter unknown-reset schedule.
+func TestSharedQuotaExhaustionStatedResetIgnoresTheCooldown(t *testing.T) {
+	key := "claude-code/claude-sonnet-5"
+	t.Cleanup(func() {
+		forgetSharedModelQuotaExhaustion(key)
+		os.Unsetenv("QUOTA_UNKNOWN_RESET_COOLDOWN_SECONDS")
+	})
+	t.Setenv("QUOTA_UNKNOWN_RESET_COOLDOWN_SECONDS", "1")
+
+	stated := time.Now().Add(2 * time.Second)
+	markModelQuotaExhaustedShared(key, stated)
+
+	time.Sleep(1200 * time.Millisecond)
+	got, exhausted := sharedModelQuotaExhaustion(key)
+	if !exhausted {
+		t.Fatal("a stated reset time in the future must stay exhausted past the shorter unknown-reset cooldown")
+	}
+	if !got.Equal(stated) {
+		t.Errorf("resetAt = %v, want the unmodified stated time %v", got, stated)
 	}
 }
 
