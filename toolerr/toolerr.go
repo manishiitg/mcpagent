@@ -48,7 +48,7 @@ var httpFailurePrefix = regexp.MustCompile(`(?i)^HTTP(?:/\S+)?\s+([45][0-9]{2})(
 // is a genuine self-reported failure — only the JSON-decode-and-recurse step
 // into arbitrary nested structure is skipped for these two fields.
 var jsonEnvelopeFields = map[string]bool{
-	"":       true, // the top-level call, before any field is known
+	"":        true, // the top-level call, before any field is known
 	"content": true,
 	"text":    true,
 	"result":  true,
@@ -161,9 +161,9 @@ func canonicalFailureValue(value interface{}, field string, depth int) (string, 
 			// same denied call rendered as a success for one tool and a failure
 			// for the other (RTS, 2026-09-03). Scoped to the "error" field so a
 			// domain record carrying a "message" stays out of it.
-			for _, key := range []string{"errorMessage", "error_message", "message", "msg", "reason", "detail", "details"} {
+			for _, key := range []string{"error", "errorMessage", "error_message", "message", "msg", "reason", "detail", "details"} {
 				if msg, ok := stringFieldFold(typed, key); ok && strings.TrimSpace(msg) != "" {
-					return "error." + strings.ToLower(key), true
+					return "error.message", true
 				}
 			}
 		}

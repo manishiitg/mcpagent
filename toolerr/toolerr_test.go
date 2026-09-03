@@ -412,7 +412,7 @@ func TestCanonicalFailureRecognisesErrorEnvelopeMessageKeys(t *testing.T) {
 	if !failed {
 		t.Fatalf("error envelope with errorMessage must classify as a failure: %s", denied)
 	}
-	if signal != "error.errormessage" {
+	if signal != "error.message" {
 		t.Fatalf("unexpected signal %q", signal)
 	}
 	// The glob shape kept working.
