@@ -1409,10 +1409,27 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	for _, m := range allModels {
 		key := m.Provider + "/" + m.ModelID
 		resetAt, exhausted := a.quotaExhaustedModels[key]
+		if !exhausted {
+			// Not learned within this turn's own retries yet -- an earlier
+			// turn (a different *Agent instance; agent_go builds one per
+			// request) may already have discovered this exhaustion. Skip it
+			// immediately instead of paying the provider's slow failure
+			// again (cursor-cli/grok-4.6 took 142s to report
+			// resource_exhausted live on RTS, 2026-09-03).
+			if sharedResetAt, sharedExhausted := sharedModelQuotaExhaustion(key); sharedExhausted {
+				resetAt, exhausted = sharedResetAt, true
+				if a.quotaExhaustedModels == nil {
+					a.quotaExhaustedModels = make(map[string]time.Time)
+				}
+				a.quotaExhaustedModels[key] = resetAt
+				logger.Info(fmt.Sprintf("⏭️ [QUOTA_SKIP] %s already known exhausted from an earlier turn; skipping without retrying", key))
+			}
+		}
 		if exhausted {
 			if !resetAt.IsZero() && !resetAt.After(now) {
 				// The window this model was waiting on has reopened.
 				delete(a.quotaExhaustedModels, key)
+				forgetSharedModelQuotaExhaustion(key)
 				logger.Info(fmt.Sprintf("♻️ [QUOTA_RESET] Usage window for %s reopened at %s; trying it again", key, resetAt.Format(time.RFC3339)))
 				modelsToTry = append(modelsToTry, m)
 				continue
@@ -1582,7 +1599,9 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					model.Provider, model.ModelID, errorType))
 			} else if errorType == "quota_exhausted_error" {
 				// Permanent quota exhaustion (daily/monthly) — retrying same model is pointless.
-				// Remember this model so future turns skip it immediately.
+				// Remember this model so future turns skip it immediately, in
+				// THIS turn's fallback loop and in every later turn regardless
+				// of which *Agent instance handles it.
 				if a.quotaExhaustedModels == nil {
 					a.quotaExhaustedModels = make(map[string]time.Time)
 				}
@@ -1591,6 +1610,7 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				// but never retried on a guessed schedule.
 				resetAt := llmerrors.RetryAtOrZero(err)
 				a.quotaExhaustedModels[key] = resetAt
+				markModelQuotaExhaustedShared(key, resetAt)
 				if resetAt.IsZero() {
 					logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Usage window spent for %s (no reset time stated) — skipping it on later turns", key))
 				} else {
@@ -1613,8 +1633,10 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				key := model.Provider + "/" + model.ModelID
 				// A missing model is a config error, not a window that reopens:
 				// the zero reset keeps it skipped permanently rather than
-				// retried on a schedule.
+				// retried on a schedule. Shared so a broken model_id learned by
+				// one turn does not get rediscovered the slow way by the next.
 				a.quotaExhaustedModels[key] = time.Time{}
+				markModelQuotaExhaustedShared(key, time.Time{})
 				logger.Warn(fmt.Sprintf("🚫 [MODEL_NOT_FOUND] Model %s is unavailable; marked to skip on future turns, trying fallback chain", key))
 				break
 			} else if errorType == "zero_candidates_error" {
