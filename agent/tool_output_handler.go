@@ -3,6 +3,7 @@ package mcpagent
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -372,24 +373,33 @@ func (h *ToolOutputHandler) CleanupOldFiles(maxAge time.Duration) error {
 	}
 
 	cutoffTime := time.Now().Add(-maxAge)
+	root, err := os.OpenRoot(h.OutputFolder)
+	if err != nil {
+		return fmt.Errorf("open output folder for cleanup: %w", err)
+	}
+	defer root.Close()
 	var totalDeleted int
 	var totalErrors int
 
 	// Walk through all session folders
-	err := filepath.Walk(h.OutputFolder, func(path string, info os.FileInfo, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			// Continue on errors for individual files/dirs
 			return nil
 		}
 
 		// Skip directories
-		if info.IsDir() {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
 			return nil
 		}
 
 		// Check if file is older than cutoff time
 		if info.ModTime().Before(cutoffTime) {
-			if err := os.Remove(path); err != nil {
+			if err := root.Remove(path); err != nil {
 				totalErrors++
 				// Continue cleaning other files even if one fails
 				return nil

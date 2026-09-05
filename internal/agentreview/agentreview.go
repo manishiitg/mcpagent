@@ -93,8 +93,14 @@ func fingerprint(shape any) string {
 // token-independent shape of the output — typically the chunk order + distinct
 // tool names). `output` is the full real output for a human/agent to read.
 func Write(t testing.TB, test, summary string, output, shape any) Record {
+	return WriteWithCriteria(t, test, summary, StreamingCriteria, output, shape)
+}
+
+// WriteWithCriteria records a live-test artifact using the rubric appropriate
+// to that test surface rather than the default streaming-output rubric.
+func WriteWithCriteria(t testing.TB, test, summary string, criteria []string, output, shape any) Record {
 	t.Helper()
-	rec := Record{Test: test, Summary: summary, Criteria: StreamingCriteria, Output: output, Fingerprint: fingerprint(shape)}
+	rec := Record{Test: test, Summary: summary, Criteria: criteria, Output: output, Fingerprint: fingerprint(shape)}
 
 	// In capture mode every run RESETS the review to pending, so a fresh suite
 	// run always starts "unreviewed" and the agent running the tests must sign

@@ -532,7 +532,7 @@ func GetCachedOrFreshConnection(
 	// HYBRID APPROACH: Handle different cache scenarios
 	if allFromCache && len(cachedData) > 0 {
 		// SCENARIO 1: All servers cached - use cached data
-		logger.Info("All servers cached - using cached data (will still connect)",
+		logger.Info("All servers cached - loading metadata and ensuring selected server connections",
 			loggerv2.Int("cached_servers", len(cachedData)))
 
 		// Emit comprehensive cache event for cached data usage

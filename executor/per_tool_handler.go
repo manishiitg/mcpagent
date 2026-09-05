@@ -103,7 +103,7 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Create a new request with the wrapped body
-	newReq, err := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(bodyBytes)))
+	newReq, err := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(bodyBytes))) // #nosec G704 -- In-process handler adapter only; this request is never sent by an HTTP client.
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec
 			Success: false,
@@ -132,7 +132,7 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 
 	wrappedBody.Server = desanitizedServer
 	desanitizedBytes, _ := json.Marshal(wrappedBody)
-	desanitizedReq, desanitizedErr := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(desanitizedBytes)))
+	desanitizedReq, desanitizedErr := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(desanitizedBytes))) // #nosec G704 -- Passed directly to HandleMCPExecute, not to a network transport.
 	if desanitizedErr != nil {
 		h.HandleMCPExecute(w, newReq)
 		return
@@ -160,7 +160,7 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 
 		wrappedBody.Server = server
 		retryBytes, _ := json.Marshal(wrappedBody)
-		retryReq, retryErr := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(retryBytes)))
+		retryReq, retryErr := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(retryBytes))) // #nosec G704 -- Passed directly to HandleMCPExecute, not to a network transport.
 		if retryErr == nil {
 			retryReq.Header.Set("Content-Type", "application/json")
 			h.HandleMCPExecute(w, retryReq)
@@ -226,7 +226,7 @@ func (h *ExecutorHandlers) handlePerToolCustom(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	newReq, err := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(bodyBytes)))
+	newReq, err := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(bodyBytes))) // #nosec G704 -- In-process handler adapter only; this request is never sent by an HTTP client.
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(CustomExecuteResponse{ //nolint:gosec
 			Success: false,
@@ -307,7 +307,7 @@ func (h *ExecutorHandlers) HandlePerToolVirtualRequest(w http.ResponseWriter, r 
 		return
 	}
 
-	newReq, err := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(bodyBytes)))
+	newReq, err := http.NewRequestWithContext(r.Context(), "POST", r.URL.String(), strings.NewReader(string(bodyBytes))) // #nosec G704 -- In-process handler adapter only; this request is never sent by an HTTP client.
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec
 			Success: false,

@@ -120,12 +120,13 @@ func GetCacheManager(logger loggerv2.Logger) *CacheManager {
 func GenerateServerConfigHash(config mcpclient.MCPServerConfig) string {
 	// Create a deterministic representation of the config
 	configData := struct {
-		Command  string            `json:"command"`
-		Args     []string          `json:"args"`
-		Env      map[string]string `json:"env"`
-		URL      string            `json:"url"`
-		Headers  map[string]string `json:"headers"`
-		Protocol string            `json:"protocol"`
+		Command        string            `json:"command"`
+		Args           []string          `json:"args"`
+		Env            map[string]string `json:"env"`
+		URL            string            `json:"url"`
+		Headers        map[string]string `json:"headers"`
+		Protocol       string            `json:"protocol"`
+		OAuthTokenFile string            `json:"oauth_token_file,omitempty"`
 	}{
 		Command:  config.Command,
 		Args:     config.Args,
@@ -133,6 +134,11 @@ func GenerateServerConfigHash(config mcpclient.MCPServerConfig) string {
 		URL:      config.URL,
 		Headers:  config.Headers,
 		Protocol: string(config.Protocol),
+	}
+	// Tool visibility may differ by OAuth account. Never share metadata between
+	// users merely because they connect to the same server URL.
+	if config.OAuth != nil {
+		configData.OAuthTokenFile = config.OAuth.TokenFile
 	}
 
 	// Sort maps for deterministic output

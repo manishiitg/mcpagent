@@ -670,13 +670,13 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 			if srvCfg.Protocol == ProtocolSSE {
 				// For SSE, create a new background context with timeout to avoid parent cancellation
 				// IMPORTANT: Do NOT defer cancel() here - we need the context to remain valid for the entire client lifecycle
-				connCtx, cancel = context.WithTimeout(context.Background(), 15*time.Minute)
+				connCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
 				logger.Debug("Using SSE protocol with isolated context",
 					loggerv2.String("server", name),
 					loggerv2.String("timeout", "15m"))
 			} else {
 				// For stdio and other protocols, also use isolated context with longer timeout
-				connCtx, cancel = context.WithTimeout(context.Background(), 15*time.Minute)
+				connCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
 				defer cancel() // Safe to cancel immediately for non-SSE protocols
 				logger.Debug("Using protocol with isolated context",
 					loggerv2.String("protocol", string(srvCfg.Protocol)),

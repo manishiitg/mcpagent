@@ -25,7 +25,14 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// writeReadyFileOnce, when MCP_READY_FILE is set, creates that file the first
+// bridgeLogf keeps externally sourced values on one physical log line.
+func bridgeLogf(format string, args ...any) {
+	line := fmt.Sprintf(format, args...)
+	line = strings.NewReplacer("\r", "\\r", "\n", "\\n", "\u2028", "\\u2028", "\u2029", "\\u2029").Replace(line)
+	log.Print(line) // #nosec G706 -- Line separators are escaped above, preventing forged log records.
+}
+
+// makeReadyFileWriter, when MCP_READY_FILE is set, creates that file the first
 // time the CLI completes its tools/list handshake — i.e. the instant the bridge
 // tools become connected and callable. The parent adapter waits for this file
 // before sending a cold session's first prompt, closing the race where the
@@ -43,11 +50,11 @@ func makeReadyFileWriter(readyPath string) func() {
 				//nolint:gosec // dir derives from a parent-controlled temp path.
 				_ = os.MkdirAll(dir, 0o750)
 			}
-			if err := os.WriteFile(readyPath, []byte("ready\n"), 0o600); err != nil {
-				log.Printf("mcpbridge: failed to write MCP_READY_FILE %q: %v", readyPath, err)
+			if err := os.WriteFile(readyPath, []byte("ready\n"), 0o600); err != nil { // #nosec G703 -- Marker destination is selected by the parent process via its environment, never by MCP tool arguments.
+				bridgeLogf("mcpbridge: failed to write MCP_READY_FILE %q: %v", readyPath, err)
 				return
 			}
-			log.Printf("mcpbridge: wrote MCP readiness marker %q (tools connected)", readyPath)
+			bridgeLogf("mcpbridge: wrote MCP readiness marker %q (tools connected)", readyPath)
 		})
 	}
 }
@@ -382,7 +389,7 @@ func main() {
 				}
 			}
 			// Make HTTP POST request
-			httpReq, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(argsJSON)))
+			httpReq, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(argsJSON))) // #nosec G704 -- Destination comes from parent-configured MCP_API_URL and tool definitions, not tool-call arguments; local bridge endpoints are intentional.
 			if err != nil {
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to create request: %v", err)), nil
 			}
@@ -401,8 +408,8 @@ func main() {
 			}
 
 			started := time.Now()
-			log.Printf("mcpbridge: tool call start type=%s tool=%s url=%s args_bytes=%d diff_bytes=%d filepath=%q session=%s", def.Type, def.Name, url, len(argsJSON), diffBytes, filepathArg, sessionID)
-			resp, err := httpClient.Do(httpReq)
+			bridgeLogf("mcpbridge: tool call start type=%s tool=%s url=%s args_bytes=%d diff_bytes=%d filepath=%q session=%s", def.Type, def.Name, url, len(argsJSON), diffBytes, filepathArg, sessionID)
+			resp, err := httpClient.Do(httpReq) // #nosec G704 -- Sends to the parent-configured bridge service; callers control the JSON body, not the destination.
 			if err != nil {
 				log.Printf("mcpbridge: tool call http error type=%s tool=%s duration=%s error=%v", def.Type, def.Name, time.Since(started), err)
 				return mcp.NewToolResultText(bridgeRequestError(def.Type, def.Name, sessionID, httpClient.Timeout, err)), nil
@@ -411,10 +418,10 @@ func main() {
 
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
-				log.Printf("mcpbridge: tool call read error type=%s tool=%s status=%d duration=%s error=%v", def.Type, def.Name, resp.StatusCode, time.Since(started), err)
+				bridgeLogf("mcpbridge: tool call read error type=%s tool=%s status=%d duration=%s error=%v", def.Type, def.Name, resp.StatusCode, time.Since(started), err)
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to read response: %v", err)), nil
 			}
-			log.Printf("mcpbridge: tool call response type=%s tool=%s status=%d duration=%s body_bytes=%d", def.Type, def.Name, resp.StatusCode, time.Since(started), len(body))
+			bridgeLogf("mcpbridge: tool call response type=%s tool=%s status=%d duration=%s body_bytes=%d", def.Type, def.Name, resp.StatusCode, time.Since(started), len(body))
 
 			if resp.StatusCode >= 400 {
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: HTTP %d: %s", resp.StatusCode, truncateBridgeErrorText(string(body)))), nil
@@ -468,7 +475,7 @@ func main() {
 		})
 	}
 
-	log.Printf("mcpbridge: starting with %d tools, API URL: %s, default_http_timeout=%s, long_running_http_timeout=%s", len(toolDefs), apiURL, defaultHTTPClient.Timeout, longRunningTimeout)
+	bridgeLogf("mcpbridge: starting with %d tools, API URL: %s, default_http_timeout=%s, long_running_http_timeout=%s", len(toolDefs), apiURL, defaultHTTPClient.Timeout, longRunningTimeout)
 
 	if err := server.ServeStdio(s); err != nil {
 		log.Fatalf("mcpbridge: stdio server error: %v", err)

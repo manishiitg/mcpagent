@@ -126,7 +126,7 @@ func TestClaudeCodeBridge(log loggerv2.Logger, tracer observability.Tracer, trac
 func ensureBridgeBinary(log loggerv2.Logger) (string, error) {
 	// Check MCP_BRIDGE_BINARY env var first
 	if envPath := os.Getenv("MCP_BRIDGE_BINARY"); envPath != "" {
-		if _, err := os.Stat(envPath); err == nil {
+		if _, err := os.Stat(envPath); err == nil { // #nosec G703 -- Local diagnostic CLI intentionally checks the executable path selected by its operator.
 			return envPath, nil
 		}
 	}

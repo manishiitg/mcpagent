@@ -18,7 +18,7 @@ import (
 func TestConnectFailsFastWithoutOAuthToken(t *testing.T) {
 	cfg := MCPServerConfig{
 		URL: "https://127.0.0.1:1/mcp", // never reached: the token check comes first
-		OAuth: &oauth.OAuthConfig{
+		OAuth: &oauth.OAuthConfig{ // #nosec G101 -- Synthetic example.invalid OAuth endpoints and a temporary token-file path; no credentials.
 			ClientID:  "https://example.invalid/.well-known/mcp-client.json",
 			AuthURL:   "https://example.invalid/authorize",
 			TokenURL:  "https://example.invalid/token",

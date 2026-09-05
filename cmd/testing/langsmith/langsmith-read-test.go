@@ -207,9 +207,9 @@ func (c *langsmithAPIClient) makeRequest(method, endpoint string, body []byte) (
 	var err error
 
 	if body != nil {
-		req, err = http.NewRequest(method, reqURL, bytes.NewBuffer(body))
+		req, err = http.NewRequest(method, reqURL, bytes.NewBuffer(body)) // #nosec G704 -- Operator-configured LangSmith endpoint in a local diagnostic CLI; supports self-hosted services.
 	} else {
-		req, err = http.NewRequest(method, reqURL, nil)
+		req, err = http.NewRequest(method, reqURL, nil) // #nosec G704 -- Operator-configured LangSmith endpoint in a local diagnostic CLI; supports self-hosted services.
 	}
 	if err != nil {
 		return nil, err
@@ -218,7 +218,7 @@ func (c *langsmithAPIClient) makeRequest(method, endpoint string, body []byte) (
 	req.Header.Set("X-API-Key", c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.client.Do(req)
+	resp, err := c.client.Do(req) // #nosec G704 -- Destination is the local CLI operator's configured LangSmith service, not an untrusted incoming request.
 	if err != nil {
 		return nil, err
 	}

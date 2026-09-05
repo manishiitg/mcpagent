@@ -62,7 +62,7 @@ func (s *StdioManager) CreateClient() (*client.Client, error) {
 	if s.workingDir != "" {
 		opts := []transport.StdioOption{
 			transport.WithCommandFunc(func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error) {
-				cmd := exec.CommandContext(ctx, command, args...)
+				cmd := exec.CommandContext(ctx, command, args...) // #nosec G204 -- Runs the explicitly configured MCP executable with separate argv, not a shell or tool-supplied command.
 				cmd.Env = env
 				cmd.Dir = s.workingDir
 				return cmd, nil
@@ -126,7 +126,7 @@ func (s *StdioManager) Connect(ctx context.Context) (*client.Client, error) {
 	if s.workingDir != "" {
 		opts := []transport.StdioOption{
 			transport.WithCommandFunc(func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error) {
-				cmd := exec.CommandContext(ctx, command, args...)
+				cmd := exec.CommandContext(ctx, command, args...) // #nosec G204 -- Runs the explicitly configured MCP executable with separate argv, not a shell or tool-supplied command.
 				cmd.Env = env
 				cmd.Dir = s.workingDir
 				return cmd, nil
