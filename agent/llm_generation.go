@@ -1109,10 +1109,18 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 }
 
 func (a *Agent) executeLLMInner(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly bool) (*llmtypes.ContentResponse, error) {
+	opts = appendManagedCodingAgentReleaseSession(opts, os.Getenv("AGENTWORKS_MANAGED_CLI_BIN"), a.sessionID)
 	if len(a.codingAgentSecretEnvironment) > 0 {
 		opts = append(opts, llmtypes.WithCodingAgentSecretEnvironment(a.codingAgentSecretEnvironment))
 	}
 	return a.executeLLMInnerAttempt(ctx, model, messages, opts, launchOnly, true)
+}
+
+func appendManagedCodingAgentReleaseSession(opts []llmtypes.CallOption, managedBin, sessionID string) []llmtypes.CallOption {
+	if managedBin == "" || sessionID == "" || sessionID == "global" {
+		return opts
+	}
+	return append(opts, llmtypes.WithCodingAgentReleaseSession(sessionID))
 }
 
 func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, launchOnly, allowMissingSessionRecovery bool) (*llmtypes.ContentResponse, error) {
