@@ -37,9 +37,9 @@ func (s *SSEManager) CreateClient() (*client.Client, error) {
 	}
 
 	// Add custom logger for better debugging
-	// Adapt v2.Logger to util.Logger for transport
-	utilLogger := loggerv2.ToUtilLogger(s.logger)
-	options = append(options, transport.WithSSELogger(utilLogger))
+	// Adapt v2.Logger to *slog.Logger for transport
+	slogLogger := loggerv2.ToSlogLogger(s.logger)
+	options = append(options, transport.WithSSELogger(slogLogger))
 
 	// Create SSE transport
 	sseTransport, err := transport.NewSSE(s.url, options...)
