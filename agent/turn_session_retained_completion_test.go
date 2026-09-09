@@ -175,3 +175,71 @@ func TestSessionRunRejectsWhileRetainedTurnIsActive(t *testing.T) {
 		t.Fatalf("Run error = %v, want ErrTurnAlreadyInFlight", err)
 	}
 }
+
+func TestRetainedFollowupReplacesInFlightCompletionRead(t *testing.T) {
+	capture := &retainedCompletionCapture{ready: make(chan struct{}, 2)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	entered := make(chan struct{})
+	oldReply := make(chan struct{})
+	newReply := make(chan struct{})
+	var once sync.Once
+	var firstStart time.Time
+	var mu sync.Mutex
+	session := &Session{
+		agent:    &Agent{sessionID: "cursor-followup", listeners: []AgentEventListener{capture}},
+		watchCtx: ctx,
+		retainedFinalResponse: func(_ llm.Provider, _ string, start time.Time) string {
+			mu.Lock()
+			if firstStart.IsZero() {
+				firstStart = start
+			}
+			first := firstStart.Equal(start)
+			mu.Unlock()
+			if first {
+				once.Do(func() { close(entered) })
+				<-oldReply
+				return "Latency now runs every other day."
+			}
+			select {
+			case <-newReply:
+				return "The Slack card is easier to scan."
+			default:
+				return ""
+			}
+		},
+	}
+	lifecycle := newCanonicalTurnLifecycle("")
+	session.startRetainedCompletionWatch(lifecycle, "change schedule", llm.ProviderCursorCLI, llm.CodingAgentTransportTmux)
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reader did not start")
+	}
+	// Match Send's critical section: an old read finishes while a new input is
+	// being delivered, and must lose ownership before it can emit completion.
+	session.sendMu.Lock()
+	close(oldReply)
+	session.startRetainedCompletionWatch(lifecycle, "fix Slack readability", llm.ProviderCursorCLI, llm.CodingAgentTransportTmux)
+	session.sendMu.Unlock()
+	select {
+	case <-capture.ready:
+		t.Fatal("previous response completed the new request")
+	case <-time.After(3 * retainedCompletionPollInterval):
+	}
+	close(newReply)
+	select {
+	case <-capture.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("follow-up final reply was lost")
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if len(capture.events) != 1 {
+		t.Fatalf("completions = %d", len(capture.events))
+	}
+	completion := capture.events[0].Data.(*events.UnifiedCompletionEvent)
+	if completion.FinalResult != "The Slack card is easier to scan." {
+		t.Fatalf("final = %q", completion.FinalResult)
+	}
+}

@@ -94,3 +94,13 @@ func TestFinalResponseUsesTextAfterEarlierToolCallCompletes(t *testing.T) {
 		t.Fatalf("finalResponse()=%q, want final answer", got)
 	}
 }
+
+func TestFinalResponseDoesNotCrossANewerUserQuery(t *testing.T) {
+	messages := []llmtypes.MessageContent{
+		llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "old schedule reply"),
+		llmtypes.TextPart(llmtypes.ChatMessageTypeHuman, "fix Slack readability"),
+	}
+	if got := finalResponse(messages); got != "" {
+		t.Fatalf("stale final = %q", got)
+	}
+}

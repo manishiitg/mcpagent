@@ -341,7 +341,8 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		s.stateMu.Unlock()
 		return DeliveryResult{}, fmt.Errorf("session is closed")
 	}
-	wasActive := s.runActive || s.retainedActive
+	runWasActive := s.runActive
+	wasActive := runWasActive || s.retainedActive
 	lifecycle := s.activeTurn
 	if !wasActive {
 		s.retainedStarting = true
@@ -380,7 +381,9 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		clearStarting()
 		return result, err
 	}
-	if !wasActive && delivery.DeliveryStatus == UserMessageDeliveryStatusSentToCLI && delivery.Transport == llm.CodingAgentTransportTmux {
+	if (!wasActive || (!runWasActive && delivery.Provider == llm.ProviderCursorCLI)) && delivery.DeliveryStatus == UserMessageDeliveryStatusSentToCLI && delivery.Transport == llm.CodingAgentTransportTmux {
+		// Cursor queues follow-ups behind the current reply. Refresh its watcher
+		// so the previous final cannot complete the newly submitted request.
 		s.startRetainedCompletionWatch(lifecycle, input, delivery.Provider, delivery.Transport)
 	} else if !wasActive {
 		clearStarting()
@@ -394,7 +397,7 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 	startedAt := time.Now()
 	s.stateMu.Lock()
 	s.retainedStarting = false
-	if s.closed || s.retainedActive {
+	if s.closed {
 		s.stateMu.Unlock()
 		return
 	}
@@ -423,6 +426,12 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 			case <-watchCtx.Done():
 				return
 			case <-ticker.C:
+				s.stateMu.Lock()
+				current := !s.closed && s.retainedActive && s.retainedSeq == seq
+				s.stateMu.Unlock()
+				if !current {
+					return
+				}
 				finalResult := strings.TrimSpace(reader(provider, s.agent.sessionID, startedAt))
 				if finalResult == "" {
 					continue
@@ -435,6 +444,10 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 }
 
 func (s *Session) completeRetainedTurn(lifecycle *canonicalTurnLifecycle, seq uint64, input, finalResult string, provider llm.Provider, transport llm.CodingAgentTransport, startedAt time.Time) {
+	// A follow-up may arrive while the previous transcript read is in flight.
+	// Let delivery replace the watcher before accepting that old completion.
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	s.stateMu.Lock()
 	if s.closed || !s.retainedActive || s.retainedSeq != seq {
 		s.stateMu.Unlock()
