@@ -230,6 +230,15 @@ func WithCodexProjectInstructionOnly(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithCodexProjectInstructionOnly(enabled)
 }
 
+// WithMuseProjectInstructionOnly carries the muse system prompt solely via
+// the projected AGENTS.md, skipping the inline preamble, so the prompt is
+// applied once instead of doubled. Falls back to inline if the projection
+// is disabled/fails. Muse has no system-prompt flag, so the file is the
+// only dedicated channel.
+func WithMuseProjectInstructionOnly(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithMuseProjectInstructionOnly(enabled)
+}
+
 // WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning
 // application session so live follow-up input can be sent to it.
 func WithCodexInteractiveSessionID(id string) llmtypes.CallOption {
