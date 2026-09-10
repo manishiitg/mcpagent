@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,11 +23,15 @@ func TestRetainedProgressStreamsWhileFinalIsPending(t *testing.T) {
 	capture := &retainedProgressCapture{events: make(chan *events.AgentEvent, 20)}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var reads atomic.Int32
 	s := &Session{
 		agent:                 &Agent{sessionID: t.Name(), listeners: []AgentEventListener{capture}},
 		watchCtx:              ctx,
 		retainedFinalResponse: func(llm.Provider, string, time.Time) string { return "" },
 		retainedProgressMessages: func(llm.Provider, string) []llmtypes.MessageContent {
+			if reads.Add(1) > 1 {
+				return nil
+			}
 			return []llmtypes.MessageContent{
 				llmtypes.TextPart(llmtypes.ChatMessageTypeHuman, "test login"),
 				{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{
@@ -63,10 +68,49 @@ func TestRetainedProgressStreamsWhileFinalIsPending(t *testing.T) {
 	s.stateMu.Lock()
 	s.closed = true
 	s.stateMu.Unlock()
-	s.emitRetainedProgress(lifecycle, 1, []llmtypes.MessageContent{llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "stale")}, map[string]bool{})
+	index := 0
+	s.emitRetainedProgress(lifecycle, 1, llm.ProviderCursorCLI, func(llm.Provider, string) []llmtypes.MessageContent {
+		t.Error("stale watcher consumed progress")
+		return nil
+	}, &index)
 	select {
 	case e := <-capture.events:
 		t.Fatalf("stale progress: %#v", e)
 	default:
+	}
+}
+
+func TestRetainedCompletionFlushesProgressCommittedAfterPoll(t *testing.T) {
+	capture := &retainedProgressCapture{events: make(chan *events.AgentEvent, 20)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var finalRead atomic.Bool
+	var delivered atomic.Bool
+	s := &Session{
+		agent: &Agent{sessionID: t.Name(), listeners: []AgentEventListener{capture}}, watchCtx: ctx,
+		retainedProgressMessages: func(llm.Provider, string) []llmtypes.MessageContent {
+			if !finalRead.Load() || delivered.Swap(true) {
+				return nil
+			}
+			return []llmtypes.MessageContent{llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "Updating the dashboard with a clear What we test tab.")}
+		},
+		retainedFinalResponse: func(llm.Provider, string, time.Time) string { finalRead.Store(true); return "Dashboard updated." },
+	}
+	s.startRetainedCompletionWatch(newCanonicalTurnLifecycle(""), "update dashboard", llm.ProviderCursorCLI, llm.CodingAgentTransportTmux)
+	for i := 0; i < 2; i++ {
+		select {
+		case event := <-capture.events:
+			if i == 0 {
+				if _, ok := event.Data.(*events.StreamingChunkEvent); !ok {
+					t.Fatalf("completion preceded progress: %T", event.Data)
+				}
+			} else {
+				if _, ok := event.Data.(*events.UnifiedCompletionEvent); !ok {
+					t.Fatalf("expected completion: %T", event.Data)
+				}
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("missing progress or completion")
+		}
 	}
 }

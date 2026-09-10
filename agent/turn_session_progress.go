@@ -2,18 +2,18 @@ package mcpagent
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // Retained sends bypass GenerateContent and its stream channel. Publish their
 // committed narration through the same transcript events used by normal turns.
 // The final-response reader remains the only authority for completion.
-func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq uint64, messages []llmtypes.MessageContent, seen map[string]bool) {
+func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq uint64, provider llm.Provider, reader func(llm.Provider, string) []llmtypes.MessageContent, chunkIndex *int) {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	s.stateMu.Lock()
@@ -22,11 +22,13 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 	if !current {
 		return
 	}
-	for i, message := range messages {
+	// Read only after checking the watcher under sendMu. The provider shares
+	// an incremental cursor with the normal stream, so stale reads lose data.
+	for _, message := range reader(provider, s.agent.sessionID) {
 		if message.Role != llmtypes.ChatMessageTypeAI {
 			continue
 		}
-		for j, part := range message.Parts {
+		for _, part := range message.Parts {
 			var content string
 			switch text := part.(type) {
 			case llmtypes.TextContent:
@@ -37,15 +39,14 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 				}
 			}
 			content = strings.TrimSpace(content)
-			key := fmt.Sprintf("%d:%d:%s", i, j, content)
-			if content == "" || seen[key] {
+			if content == "" {
 				continue
 			}
-			seen[key] = true
+			*chunkIndex++
 			s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), &events.StreamingChunkEvent{
 				BaseEventData: events.BaseEventData{Timestamp: time.Now()},
 				Content:       content,
-				ChunkIndex:    len(seen),
+				ChunkIndex:    *chunkIndex,
 				Source:        "transcript",
 			})
 		}

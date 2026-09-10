@@ -427,7 +427,7 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 	go func() {
 		ticker := time.NewTicker(retainedCompletionPollInterval)
 		defer ticker.Stop()
-		seenProgress := make(map[string]bool)
+		chunkIndex := 0
 		var lastProgressRead time.Time
 		for {
 			select {
@@ -441,14 +441,16 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 					return
 				}
 				if time.Since(lastProgressRead) >= 400*time.Millisecond {
-					messages := progressReader(provider, s.agent.sessionID)
-					s.emitRetainedProgress(lifecycle, seq, messages, seenProgress)
+					s.emitRetainedProgress(lifecycle, seq, provider, progressReader, &chunkIndex)
 					lastProgressRead = time.Now()
 				}
 				finalResult := strings.TrimSpace(reader(provider, s.agent.sessionID, startedAt))
 				if finalResult == "" {
 					continue
 				}
+				// The final read can see a commit newer than the last progress poll.
+				// Flush it before completion closes this watcher.
+				s.emitRetainedProgress(lifecycle, seq, provider, progressReader, &chunkIndex)
 				s.completeRetainedTurn(lifecycle, seq, input, finalResult, provider, transport, startedAt)
 				return
 			}
