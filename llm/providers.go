@@ -245,6 +245,12 @@ func WithMuseStreamTranscript(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithMuseStreamTranscript(enabled)
 }
 
+// WithMuseStreamTmuxScreen opts muse tmux turns into raw pane snapshots
+// (Terminal chunks, the mode1 view).
+func WithMuseStreamTmuxScreen(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithMuseStreamTmuxScreen(enabled)
+}
+
 // WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning
 // application session so live follow-up input can be sent to it.
 func WithCodexInteractiveSessionID(id string) llmtypes.CallOption {

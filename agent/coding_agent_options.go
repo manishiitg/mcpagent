@@ -318,6 +318,7 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 		opts = append(opts, llm.WithMuseStructuredTransport(true))
 	} else if a.enableStreaming {
 		opts = append(opts, llm.WithMuseStreamTranscript(true))
+		opts = append(opts, llm.WithMuseStreamTmuxScreen(true))
 	}
 	return opts, nil
 }
