@@ -19,13 +19,14 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
 // multiTurnProviderCase is one provider's real-CLI binary, mcpagent.Provider,
 // model ID, and persistent-session option — generalized from the
 // Claude-only helper this file originally had, so multi-turn and
-// concurrency isolation get proven against all 4 real coding-agent CLIs, not
+// concurrency isolation get proven against all 5 real coding-agent CLIs, not
 // just Claude (see docs/layer_test_coverage.html §matrix — this was the
 // single largest "Claude only" gap in mcpagent's real e2e coverage).
 type multiTurnProviderCase struct {
@@ -50,6 +51,11 @@ var multiTurnProviderCases = []multiTurnProviderCase{
 	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", withCodexPersistentInteractiveSession, false},
 	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "auto", withCursorPersistentInteractiveSession, true},
 	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.7-flash", withPiPersistentInteractiveSession, true},
+	// Muse: strictBridgeOnly=false — muse has no native-tool denial flags
+	// (the appender warns mcp_only is uncontained), so strict bridge-only
+	// assertions would misread native-tool use as a regression, same
+	// documented rationale as the Codex row.
+	{"Muse", "muse", llm.ProviderMuseCLI, "muse-spark-1.3-contributor", withMusePersistentInteractiveSession, false},
 }
 
 // closePersistentInteractiveSession tears down the provider's persistent tmux
@@ -72,6 +78,8 @@ func closePersistentInteractiveSession(tc multiTurnProviderCase, sessionID strin
 		cursorcli.CloseCursorCLIInteractiveSessionForOwner(sessionID, "test cleanup")
 	case llm.ProviderPiCLI:
 		picli.ClosePiCLIInteractiveSessionForOwner(sessionID, "test cleanup")
+	case llm.ProviderMuseCLI:
+		musecli.KillMusePersistentSession(sessionID)
 	}
 }
 

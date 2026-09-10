@@ -354,6 +354,9 @@ func realBridgeProviderCases() []realBridgeProviderCase {
 			makeKeys:         func(k string) *llm.ProviderAPIKeys { return &llm.ProviderAPIKeys{PiCLI: &k} },
 			strictBridgeOnly: true,
 		},
+		// muse: strictBridgeOnly=false — no native-tool denial flags exist,
+		// so native-tool use must not read as a regression (codex rationale).
+		{name: "muse", provider: llm.ProviderMuseCLI, modelID: "muse-spark-1.3-contributor", cliBin: "muse", strictBridgeOnly: false},
 	}
 }
 

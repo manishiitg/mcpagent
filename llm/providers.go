@@ -239,6 +239,12 @@ func WithMuseProjectInstructionOnly(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithMuseProjectInstructionOnly(enabled)
 }
 
+// WithMuseStreamTranscript opts muse tmux turns into transcript streaming
+// (assistant text, tool starts/ends, reasoning from session.jsonl).
+func WithMuseStreamTranscript(enabled bool) llmtypes.CallOption {
+	return llmproviders.WithMuseStreamTranscript(enabled)
+}
+
 // WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning
 // application session so live follow-up input can be sent to it.
 func WithCodexInteractiveSessionID(id string) llmtypes.CallOption {

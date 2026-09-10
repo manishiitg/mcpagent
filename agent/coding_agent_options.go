@@ -316,6 +316,8 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 	}
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithMuseStructuredTransport(true))
+	} else if a.enableStreaming {
+		opts = append(opts, llm.WithMuseStreamTranscript(true))
 	}
 	return opts, nil
 }
