@@ -712,6 +712,13 @@ func WithPiStructuredTransport(enabled bool) CallOption {
 	return llmproviders.WithPiStructuredTransport(enabled)
 }
 
+// WithMuseStructuredTransport selects `muse exec --json` instead of the tmux
+// interactive transport. OFF by default — the adapter runs the tmux lane
+// unless this option explicitly requests the one-shot JSON lane.
+func WithMuseStructuredTransport(enabled bool) CallOption {
+	return llmproviders.WithMuseStructuredTransport(enabled)
+}
+
 // WithCodexStreamTranscript opts into streaming structured content (assistant
 // text + tool-call starts) mid-turn by tailing Codex's own rollout JSONL. OFF
 // by default — a caller with no StreamingCallback registered has nothing to

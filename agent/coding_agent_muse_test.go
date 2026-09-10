@@ -72,19 +72,48 @@ func TestAppendMuseCLIIntegrationOptionsRegisteredInAppenders(t *testing.T) {
 	}
 }
 
-// TestMuseUsesStructuredTransportWhileExecOnly pins the transport override:
-// the provider contract declares tmux, but mcpagent runs the exec lane
-// (the tmux lane is explicit opt-in the orchestrator never requests), so
-// orchestration must treat muse as structured (queue delivery, structured
-// continuation handles).
-func TestMuseUsesStructuredTransportWhileExecOnly(t *testing.T) {
+// TestMuseFollowsTmuxContract pins the post-tmux-lane transport contract:
+// the adapter runs the tmux lane by default, so orchestration treats muse
+// as steerable with tmux continuation handles; the explicit structured
+// opt-in (workflow steps) stays a query-only one-shot.
+func TestMuseFollowsTmuxContract(t *testing.T) {
 	agent := bridgeTestAgent()
 	agent.provider = llm.ProviderMuseCLI
-	if !agent.usesStructuredTransport() {
-		t.Fatal("usesStructuredTransport = false for muse-cli, want true while exec-only")
+	if agent.usesStructuredTransport() {
+		t.Fatal("usesStructuredTransport = true for default muse-cli, want false (tmux lane)")
 	}
-	if agent.supportsSteering() {
-		t.Fatal("supportsSteering = true for muse-cli, want false (no live pane exists)")
+	if !agent.supportsSteering() {
+		t.Fatal("supportsSteering = false for default muse-cli, want true (live pane exists)")
+	}
+
+	structured := bridgeTestAgent()
+	structured.provider = llm.ProviderMuseCLI
+	withCodingAgentTransport(llm.CodingAgentTransportStructured)(structured)
+	if !structured.usesStructuredTransport() {
+		t.Fatal("usesStructuredTransport = false for structured muse-cli, want true")
+	}
+	if structured.supportsSteering() {
+		t.Fatal("supportsSteering = true for structured muse-cli, want false (one-shot process)")
+	}
+}
+
+// TestAppendMuseCLIIntegrationOptionsStructuredOptIn mirrors the cursor
+// structured test: an explicit structured transport must append the muse
+// structured metadata key so the adapter takes the exec --json lane.
+func TestAppendMuseCLIIntegrationOptionsStructuredOptIn(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+
+	agent := bridgeTestAgent()
+	withCodingAgentTransport(llm.CodingAgentTransportStructured)(agent)
+	opts, err := agent.appendMuseCLIIntegrationOptions(nil)
+	if err != nil {
+		t.Fatalf("appendMuseCLIIntegrationOptions() error = %v", err)
+	}
+	got := metadataFromCallOptions(opts)
+	if got[musecli.MetadataKeyMuseStructuredTransport] != true {
+		t.Fatalf("Muse structured transport = %#v, want true", got[musecli.MetadataKeyMuseStructuredTransport])
 	}
 }
 

@@ -314,6 +314,9 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 	if a.logger != nil {
 		a.logger.Info("🌉 [MUSE_CLI] Configured MCP bridge through user settings.json merge")
 	}
+	if a.wantsStructuredTransport() {
+		opts = append(opts, llm.WithMuseStructuredTransport(true))
+	}
 	return opts, nil
 }
 

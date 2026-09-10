@@ -333,7 +333,7 @@ func (a *Agent) isTurnInFlight() bool {
 // plus the per-provider opt-in flags that flip a normally-tmux provider:
 //
 //   - ForceStructuredCodingAgent — the workflow step's transport="structured"
-//   - CodexStructuredTransport / CursorStructuredTransport / PiStructuredTransport
+//   - CodexStructuredTransport / CursorStructuredTransport / PiStructuredTransport / MuseStructuredTransport
 //   - a provider whose native contract transport simply isn't tmux
 //
 // Returns false for non-coding-agent providers (contract lookup fails) — steering
@@ -345,16 +345,11 @@ func (a *Agent) usesStructuredTransport() bool {
 	if a.wantsStructuredTransport() {
 		return true
 	}
-	// Muse runs the provider's exec --json lane unless a turn explicitly
-	// opts into the interactive tmux lane, even though its contract
-	// declares the tmux transport. mcpagent never opts in (no live pane
-	// exists to steer into), so without this orchestration would steer
-	// live input into a pane that does not exist and record tmux
-	// continuation handles for structured turns. Revisit if the tmux lane
-	// becomes the default.
-	if a.provider == llm.ProviderMuseCLI {
-		return true
-	}
+	// Muse follows its declared tmux contract now that the adapter runs the
+	// tmux lane by default: structured only via the explicit
+	// withCodingAgentTransport opt-in (which appends
+	// WithMuseStructuredTransport alongside). A persistent-interactive muse
+	// chat therefore steers and records tmux handles like cursor.
 	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
 		return contract.Transport != llm.CodingAgentTransportTmux
 	}

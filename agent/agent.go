@@ -244,6 +244,15 @@ func withPiPersistentInteractiveSession(enabled bool) agentOption {
 	}
 }
 
+// withMusePersistentInteractiveSession keeps Muse CLI tmux sessions alive
+// across completed chat turns. Use only for interactive chat; workflow steps
+// should keep the default per-turn lifecycle.
+func withMusePersistentInteractiveSession(enabled bool) agentOption {
+	return func(a *Agent) {
+		a.musePersistentInteractiveSession = enabled
+	}
+}
+
 // withCursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 // The flag is retained for API compatibility but no longer sets --mode ask:
 // that mode hard-refuses natural-language writes with "Switch to Agent mode",
