@@ -320,6 +320,13 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 		opts = append(opts, llm.WithMuseStreamTranscript(true))
 		opts = append(opts, llm.WithMuseStreamTmuxScreen(true))
 	}
+	// See appendClaudeCodeIntegrationOptions' matching comment (coding_agent_
+	// integrations.go): content streaming needs this separate, explicit
+	// opt-in beyond EnableStreaming.
+	if a.streamingCallback != nil {
+		opts = append(opts, llm.WithMuseStreamTranscript(true))
+		opts = append(opts, llm.WithMuseStreamTmuxScreen(true))
+	}
 	return opts, nil
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
@@ -769,6 +770,14 @@ func TestCodingCLIStreamingKeepsTranscriptAndTerminalSnapshots(t *testing.T) {
 			tmuxMetadataKey: cursorcli.MetadataKeyStreamTmuxScreen,
 			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
 				return agent.appendCursorCLIIntegrationOptions(nil)
+			},
+		},
+		{
+			name:            "muse",
+			metadataKey:     musecli.MetadataKeyMuseStreamTranscript,
+			tmuxMetadataKey: musecli.MetadataKeyMuseStreamTmuxScreen,
+			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
+				return agent.appendMuseCLIIntegrationOptions(nil)
 			},
 		},
 	}
