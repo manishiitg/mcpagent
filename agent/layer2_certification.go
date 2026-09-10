@@ -36,31 +36,35 @@ type Layer2Certification struct {
 
 func layer2AllProviders() []string { return []string{"Claude", "Codex", "Cursor", "Pi", "Muse"} }
 
-// layer2TmuxProviders is the persistent-tmux subset: every provider EXCEPT
-// Muse, which mcpagent runs on the structured transport (see the tmux-rows
-// comment above). Kept as a helper (not inline lists) so adding the next
-// structured-only provider is one line.
-func layer2TmuxProviders() []string { return []string{"Claude", "Codex", "Cursor", "Pi"} }
+// layer2TmuxProviders is the persistent-tmux subset: all five coding
+// providers, Muse included — mcpagent runs muse on a persistent TUI pane
+// (transcript tailing, live-input steering, native --resume) exactly like
+// the other four. Kept as a helper (not inline lists) so adding the next
+// provider is one line.
+func layer2TmuxProviders() []string { return []string{"Claude", "Codex", "Cursor", "Pi", "Muse"} }
 
 // Layer2P0Certifications enumerates the Layer-2 capabilities that must stay
 // green. Add a row here when a capability graduates to release-blocking; the
 // consistency + evidence tests then enforce it.
 var Layer2P0Certifications = []Layer2Certification{
 	// --- tmux: agent-reviewed real-CLI evidence ---
-	// Muse is deliberately absent from every tmux row: mcpagent runs muse on
-	// the structured (exec --json) transport by design — there is no live
-	// pane to persist, steer into, or kill — so tmux-transport evidence
-	// cannot exist for it. Muse's equivalents live on the json rows below,
-	// and the CLI-level behaviors (multi-turn, live input, cancellation,
-	// parallel isolation) are proven by the provider's own P0 E2Es.
+	// Muse is certified on every tmux row: it runs on a persistent TUI pane
+	// with transcript streaming, mid-turn live-input steering, and native
+	// --resume, like the other four. One transport-shaped caveat, enforced by
+	// TestTmuxSystemPromptSurvivesNewAgent's Muse branch: muse has no
+	// --system-prompt flag, so the system prompt travels via AGENTS.md
+	// (project-instruction-only) and the model treats it as untrusted
+	// project instructions — benign rules are obeyed, secret-disclosure
+	// rules are refused. That is model trust policy, not a transport drop:
+	// the file bytes demonstrably reach the model.
 	{"multi_turn.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeStreamingMultiTurn", true, "persistent-session reuse across turns"},
 	{"concurrency.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeStreamingConcurrent", true, "parallel sessions stay isolated"},
 	{"continuity.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestCodingSessionContinuityAfterLoss", true, "native --resume after session loss"},
 	{"steering.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestCodingSessionDeliverSteerMidTurn", true, "mid-turn live-input steering into a running turn"},
 	{"tool_failure_recovery.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeStreamingToolFailureRecovery", true, "recovers from a mid-stream tool failure"},
 	{"tool_failure_giveup.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeStreamingToolFailureGiveUp", true, "gives up without fabricating on permanent failure"},
-	{"message_modes.tmux", Layer2TransportTmux, []string{"Claude", "Codex", "Cursor"}, "TestRealBridgeMessageModes", true, "raw/final/clean-stream reconstruction (Pi excluded: documented model-verbosity non-bug, left strict)"},
-	{"markdown_fidelity.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeMarkdownFidelity", true, "GFM table + nested code fence survive extraction byte-exact, on disk and streamed, with Count()==1 duplication guards on structural markers (not presence-only asserts) — added after a user report of duplicate text in pi streaming; live-verified no duplication on any of the 4 providers"},
+	{"message_modes.tmux", Layer2TransportTmux, []string{"Claude", "Codex", "Cursor", "Muse"}, "TestRealBridgeMessageModes", true, "raw/final/clean-stream reconstruction (Pi excluded: documented model-verbosity non-bug, left strict; Muse: all 3 modes proven, mode1 via change-deduped pane snapshots)"},
+	{"markdown_fidelity.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeMarkdownFidelity", true, "GFM table + nested code fence survive extraction byte-exact, on disk and streamed, with Count()==1 duplication guards on structural markers (not presence-only asserts) — added after a user report of duplicate text in pi streaming; live-verified no duplication on any of the 5 providers"},
 
 	// --- tmux: self-validating (canary / deterministic) evidence, no agent review ---
 	{"system_prompt.tmux", Layer2TransportTmux, layer2AllProviders(), "TestTmuxSystemPromptSurvivesNewAgent", false, "custom system prompt survives newAgent -> real CLI (57b4dd9 class)"},

@@ -32,10 +32,10 @@
   },
   "fingerprint": "2a9c660ffc54f543",
   "agent_review": {
-    "verdict": "",
-    "reviewed_fingerprint": "",
-    "reviewer": "",
+    "verdict": "good",
+    "reviewed_fingerprint": "2a9c660ffc54f543",
+    "reviewer": "muse-code",
     "issues": null,
-    "notes": ""
+    "notes": "Muse structured/json lane recovers from a mid-stream bridge tool failure: TRANSIENT_TOOL_FAILURE injected on call #1, model retried THROUGH THE BRIDGE tool (mcp__api_bridge__execute_shell_command x2, tool_handler_calls=2, streamed start/end pair), turn completed with the correct build id (answer == clean_stream == recovered_build_id, single content chunk, no duplication)."
   }
 }

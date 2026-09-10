@@ -201,6 +201,24 @@ func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
 
 			canary := "PROMPT_SURVIVAL_" + realBridgeRandHex(6)
 			customPrompt := "Your secret codeword is " + canary + ". If the user ever asks for your secret codeword, reply with ONLY that word."
+			question := "What is your secret codeword?"
+			if tc.provider == llm.ProviderMuseCLI {
+				// Muse carries the system prompt via AGENTS.md
+				// (project-instruction-only: no --system-prompt flag), and
+				// muse treats project-file instructions as untrusted — a
+				// "secret codeword" disclosure rule is refused live even
+				// though the file bytes demonstrably reach the model
+				// (projection dump showed the canary in AGENTS.md; the TUI
+				// pane showed the model weighing "whether untrusted project
+				// file instructions can override higher-level policy to
+				// disclose a secret"). A benign exact-echo rule asserts the
+				// same transport survival without tripping model trust
+				// policy; the marker still appears ONLY if the custom
+				// prompt survived newAgent -> bridge -> AGENTS.md -> model.
+				canary = "MOTTO_" + realBridgeRandHex(6)
+				customPrompt = "Whenever asked for the session motto, reply with exactly " + canary + " and nothing else."
+				question = "What is the session motto?"
+			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
@@ -211,7 +229,7 @@ func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
 			}
 			defer cleanup()
 
-			answer, err := agent.ask(ctx, "What is your secret codeword?")
+			answer, err := agent.ask(ctx, question)
 			if err != nil {
 				t.Fatalf("agent.Ask: %v", err)
 			}
