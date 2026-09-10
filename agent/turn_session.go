@@ -12,6 +12,7 @@ import (
 	"github.com/manishiitg/mcpagent/agent/retainedturn"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -114,7 +115,8 @@ type Session struct {
 
 	// Tests replace this on an individual Session. Production always reads the
 	// provider adapter's authoritative retained transcript/sidecar.
-	retainedFinalResponse func(llm.Provider, string, time.Time) string
+	retainedFinalResponse    func(llm.Provider, string, time.Time) string
+	retainedProgressMessages func(llm.Provider, string) []llmtypes.MessageContent
 }
 
 // Start opens a stateful session over this immutable agent definition.
@@ -410,6 +412,7 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 	seq := s.retainedSeq
 	watchCtx := s.watchCtx
 	reader := s.retainedFinalResponse
+	progressReader := s.retainedProgressMessages
 	s.stateMu.Unlock()
 	if watchCtx == nil {
 		watchCtx = context.Background()
@@ -417,10 +420,15 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 	if reader == nil {
 		reader = retainedturn.FinalResponse
 	}
+	if progressReader == nil {
+		progressReader = llmproviders.ReadCodingAgentRetainedTurnProgressMessages
+	}
 
 	go func() {
 		ticker := time.NewTicker(retainedCompletionPollInterval)
 		defer ticker.Stop()
+		seenProgress := make(map[string]bool)
+		var lastProgressRead time.Time
 		for {
 			select {
 			case <-watchCtx.Done():
@@ -431,6 +439,11 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 				s.stateMu.Unlock()
 				if !current {
 					return
+				}
+				if time.Since(lastProgressRead) >= 400*time.Millisecond {
+					messages := progressReader(provider, s.agent.sessionID)
+					s.emitRetainedProgress(lifecycle, seq, messages, seenProgress)
+					lastProgressRead = time.Now()
 				}
 				finalResult := strings.TrimSpace(reader(provider, s.agent.sessionID, startedAt))
 				if finalResult == "" {
