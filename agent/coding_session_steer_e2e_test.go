@@ -27,7 +27,14 @@ func newFirstToolCallSignal() *firstToolCallSignal {
 }
 
 func (l *firstToolCallSignal) HandleEvent(_ context.Context, event *events.AgentEvent) error {
-	if _, ok := event.Data.(*events.ToolCallStartEvent); ok {
+	// Start OR end: the muse exec lane is END-only (its wire has no tool-
+	// started event, only tool.result), so a start-only signal never fires
+	// for it. For start-emitting providers the start still wins the race,
+	// so their timing is unchanged; for END-only lanes the first end marks
+	// a tool call provably underway-or-done, and the callers re-assert
+	// isTurnInFlight before delivering.
+	switch event.Data.(type) {
+	case *events.ToolCallStartEvent, *events.ToolCallEndEvent:
 		l.once.Do(func() { close(l.ch) })
 	}
 	return nil

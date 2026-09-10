@@ -36,19 +36,31 @@ type Layer2Certification struct {
 
 func layer2AllProviders() []string { return []string{"Claude", "Codex", "Cursor", "Pi", "Muse"} }
 
+// layer2TmuxProviders is the persistent-tmux subset: every provider EXCEPT
+// Muse, which mcpagent runs on the structured transport (see the tmux-rows
+// comment above). Kept as a helper (not inline lists) so adding the next
+// structured-only provider is one line.
+func layer2TmuxProviders() []string { return []string{"Claude", "Codex", "Cursor", "Pi"} }
+
 // Layer2P0Certifications enumerates the Layer-2 capabilities that must stay
 // green. Add a row here when a capability graduates to release-blocking; the
 // consistency + evidence tests then enforce it.
 var Layer2P0Certifications = []Layer2Certification{
 	// --- tmux: agent-reviewed real-CLI evidence ---
-	{"multi_turn.tmux", Layer2TransportTmux, layer2AllProviders(), "TestRealBridgeStreamingMultiTurn", true, "persistent-session reuse across turns"},
-	{"concurrency.tmux", Layer2TransportTmux, layer2AllProviders(), "TestRealBridgeStreamingConcurrent", true, "parallel sessions stay isolated"},
-	{"continuity.tmux", Layer2TransportTmux, layer2AllProviders(), "TestCodingSessionContinuityAfterLoss", true, "native --resume after session loss"},
-	{"steering.tmux", Layer2TransportTmux, layer2AllProviders(), "TestCodingSessionDeliverSteerMidTurn", true, "mid-turn live-input steering into a running turn"},
-	{"tool_failure_recovery.tmux", Layer2TransportTmux, layer2AllProviders(), "TestRealBridgeStreamingToolFailureRecovery", true, "recovers from a mid-stream tool failure"},
-	{"tool_failure_giveup.tmux", Layer2TransportTmux, layer2AllProviders(), "TestRealBridgeStreamingToolFailureGiveUp", true, "gives up without fabricating on permanent failure"},
+	// Muse is deliberately absent from every tmux row: mcpagent runs muse on
+	// the structured (exec --json) transport by design — there is no live
+	// pane to persist, steer into, or kill — so tmux-transport evidence
+	// cannot exist for it. Muse's equivalents live on the json rows below,
+	// and the CLI-level behaviors (multi-turn, live input, cancellation,
+	// parallel isolation) are proven by the provider's own P0 E2Es.
+	{"multi_turn.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeStreamingMultiTurn", true, "persistent-session reuse across turns"},
+	{"concurrency.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeStreamingConcurrent", true, "parallel sessions stay isolated"},
+	{"continuity.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestCodingSessionContinuityAfterLoss", true, "native --resume after session loss"},
+	{"steering.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestCodingSessionDeliverSteerMidTurn", true, "mid-turn live-input steering into a running turn"},
+	{"tool_failure_recovery.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeStreamingToolFailureRecovery", true, "recovers from a mid-stream tool failure"},
+	{"tool_failure_giveup.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeStreamingToolFailureGiveUp", true, "gives up without fabricating on permanent failure"},
 	{"message_modes.tmux", Layer2TransportTmux, []string{"Claude", "Codex", "Cursor"}, "TestRealBridgeMessageModes", true, "raw/final/clean-stream reconstruction (Pi excluded: documented model-verbosity non-bug, left strict)"},
-	{"markdown_fidelity.tmux", Layer2TransportTmux, layer2AllProviders(), "TestRealBridgeMarkdownFidelity", true, "GFM table + nested code fence survive extraction byte-exact, on disk and streamed, with Count()==1 duplication guards on structural markers (not presence-only asserts) — added after a user report of duplicate text in pi streaming; live-verified no duplication on any of the 4 providers"},
+	{"markdown_fidelity.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestRealBridgeMarkdownFidelity", true, "GFM table + nested code fence survive extraction byte-exact, on disk and streamed, with Count()==1 duplication guards on structural markers (not presence-only asserts) — added after a user report of duplicate text in pi streaming; live-verified no duplication on any of the 4 providers"},
 
 	// --- tmux: self-validating (canary / deterministic) evidence, no agent review ---
 	{"system_prompt.tmux", Layer2TransportTmux, layer2AllProviders(), "TestTmuxSystemPromptSurvivesNewAgent", false, "custom system prompt survives newAgent -> real CLI (57b4dd9 class)"},
@@ -56,7 +68,7 @@ var Layer2P0Certifications = []Layer2Certification{
 	{"convrecord.tmux", Layer2TransportTmux, layer2AllProviders(), "TestConversationRecordingWritesRealTurnData", false, "record->reload round-trip + real token usage (no USD — pricing is a caller decision)"},
 
 	// --- json/structured: agent-reviewed real-CLI evidence (Claude gained a lane this line of work) ---
-	{"multi_turn.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportMultiTurn", true, "native --resume: codex exec resume / cursor --resume / pi --session-id / claude --resume"},
+	{"multi_turn.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportMultiTurn", true, "native --resume: codex exec resume / cursor --resume / pi --session-id / claude --resume / muse --session-id"},
 	{"steering_queue.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportDeliverQueuesMidTurn", true, "query-only transport: Deliver QUEUES, never live-steers"},
 	{"tool_failure_recovery.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportToolFailureRecovery", true, "recovers from a mid-stream tool failure"},
 	{"tool_failure_giveup.json", Layer2TransportJSON, layer2AllProviders(), "TestStructuredTransportToolFailureGiveUp", true, "gives up without fabricating. Codex runs bridge-only with native code-exec features disabled and must emit named execute_shell_command ToolCallStart events, so both execution and UI tool identity are falsifiable"},

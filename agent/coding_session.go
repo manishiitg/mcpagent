@@ -345,6 +345,16 @@ func (a *Agent) usesStructuredTransport() bool {
 	if a.wantsStructuredTransport() {
 		return true
 	}
+	// Muse runs the provider's exec --json lane unless a turn explicitly
+	// opts into the interactive tmux lane, even though its contract
+	// declares the tmux transport. mcpagent never opts in (no live pane
+	// exists to steer into), so without this orchestration would steer
+	// live input into a pane that does not exist and record tmux
+	// continuation handles for structured turns. Revisit if the tmux lane
+	// becomes the default.
+	if a.provider == llm.ProviderMuseCLI {
+		return true
+	}
 	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
 		return contract.Transport != llm.CodingAgentTransportTmux
 	}

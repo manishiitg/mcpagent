@@ -94,3 +94,5 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.49.1 // indirect
 )
+
+replace github.com/manishiitg/multi-llm-provider-go => /Users/mipl/ai-work/multi-llm-provider-go
