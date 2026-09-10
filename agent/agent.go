@@ -999,6 +999,16 @@ type Agent struct {
 	// native chat memory instead of starting fresh.
 	cursorSessionID string
 
+	// Muse CLI native session ID for --session-id resume on subsequent
+	// turns. Populated from the exec lane's session handle (stream.id), so
+	// a restored chat picks up muse's native conversation instead of
+	// starting fresh.
+	museSessionID string
+
+	// Muse CLI persistent tmux mode for interactive chat (consumed when the
+	// provider's interactive adapter lands).
+	musePersistentInteractiveSession bool
+
 	// CursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 	// Retained for API compatibility; no longer sets --mode ask (that mode
 	// refuses natural-language writes with "Switch to Agent mode" and breaks
@@ -1450,6 +1460,8 @@ func (a *Agent) getLLMModelConfig() LLMModel {
 			config.APIKey = a.apiKeys.CursorCLI
 		case llm.ProviderPiCLI:
 			config.APIKey = a.apiKeys.PiCLI
+		case llm.ProviderMuseCLI:
+			config.APIKey = a.apiKeys.MuseCLI
 		case llm.ProviderMiniMax:
 			config.APIKey = a.apiKeys.MiniMax
 		case llm.ProviderMiniMaxCodingPlan:
@@ -1516,6 +1528,7 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 			Vertex:               providerKeys.Vertex,
 			CodexCLI:             providerKeys.CodexCLI,
 			PiCLI:                providerKeys.PiCLI,
+			MuseCLI:              providerKeys.MuseCLI,
 			MiniMax:              providerKeys.MiniMax,
 			MiniMaxCodingPlan:    providerKeys.MiniMaxCodingPlan,
 		}
@@ -2142,6 +2155,41 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.enableStreaming {
 			ag.enableStreaming = true
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled streaming (required for tool call observability)")
+		}
+	}
+
+	// Auto-configure Muse CLI provider (same constraints as Cursor: the CLI
+	// manages its own agentic loop, context natively, streams for
+	// observability). The MCP bridge mounts via user settings.json merge
+	// (see appendMuseCLIIntegrationOptions); native-tool denial is unmapped,
+	// so mcp_only is NOT containment for muse yet.
+	if ag.provider == llmproviders.ProviderMuseCLI {
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
+		logger.Debug("🔧 [MUSE_CLI] Provider detected - silently disabling incompatible features")
+
+		if !ag.useCodeExecutionMode {
+			ag.useCodeExecutionMode = true
+			logger.Debug("🔧 [MUSE_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
+		}
+
+		if ag.enableContextEditing {
+			ag.enableContextEditing = false
+			logger.Debug("🔧 [MUSE_CLI] Disabled Context Editing (handled natively by CLI)")
+		}
+
+		if ag.enableContextSummarization {
+			ag.enableContextSummarization = false
+			logger.Debug("🔧 [MUSE_CLI] Disabled Context Summarization (handled natively by CLI)")
+		}
+
+		if ag.enableContextOffloading {
+			ag.enableContextOffloading = false
+			logger.Debug("🔧 [MUSE_CLI] Disabled Context Offloading (handled natively by CLI)")
+		}
+
+		if !ag.enableStreaming {
+			ag.enableStreaming = true
+			logger.Debug("🔧 [MUSE_CLI] Auto-enabled streaming (required for tool call observability)")
 		}
 	}
 

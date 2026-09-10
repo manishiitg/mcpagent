@@ -32,7 +32,7 @@ func TestLayer2P0RegistryConsistent(t *testing.T) {
 		seen[c.ID] = true
 		for _, p := range c.Providers {
 			switch p {
-			case "Claude", "Codex", "Cursor", "Pi":
+			case "Claude", "Codex", "Cursor", "Pi", "Muse":
 			default:
 				t.Errorf("cert %q lists unknown provider %q", c.ID, p)
 			}

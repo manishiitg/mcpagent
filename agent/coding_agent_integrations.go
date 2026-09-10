@@ -26,6 +26,9 @@ var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentInteg
 	llmproviders.ProviderCursorCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 		return a.appendCursorCLIIntegrationOptions(opts)
 	},
+	llmproviders.ProviderMuseCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
+		return a.appendMuseCLIIntegrationOptions(opts)
+	},
 	llmproviders.ProviderPiCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 		return a.appendPiCLIIntegrationOptionsForModel(opts, model)
 	},

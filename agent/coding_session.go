@@ -281,6 +281,8 @@ func (a *Agent) enablePersistentInteractiveForProvider() {
 		a.cursorPersistentInteractiveSession = true
 	case llm.ProviderPiCLI:
 		a.piPersistentInteractiveSession = true
+	case llm.ProviderMuseCLI:
+		a.musePersistentInteractiveSession = true
 	}
 }
 

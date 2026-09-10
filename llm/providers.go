@@ -29,6 +29,7 @@ const (
 	ProviderCodexCLI          = llmproviders.ProviderCodexCLI
 	ProviderCursorCLI         = llmproviders.ProviderCursorCLI
 	ProviderPiCLI             = llmproviders.ProviderPiCLI
+	ProviderMuseCLI           = llmproviders.ProviderMuseCLI
 	ProviderMiniMax           = llmproviders.ProviderMiniMax
 	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
 	ProviderElevenLabs        = llmproviders.ProviderElevenLabs
@@ -266,6 +267,13 @@ func WithCursorMCPConfig(config string) llmtypes.CallOption {
 // WithCursorProjectConfig writes a temporary/restored .cursor/cli.json for Cursor.
 func WithCursorProjectConfig(config string) llmtypes.CallOption {
 	return llmproviders.WithCursorProjectConfig(config)
+}
+
+// WithMuseMCPConfig merges the document's mcpServers into the user-level muse
+// settings.json for one run (restored afterwards). Muse has no --mcp-config
+// flag; this is the only bridge mount mechanism.
+func WithMuseMCPConfig(config string) llmtypes.CallOption {
+	return llmproviders.WithMuseMCPConfig(config)
 }
 
 // WithCursorForce enables Cursor Agent CLI's --force flag.

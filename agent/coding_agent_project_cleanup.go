@@ -26,6 +26,9 @@ var projectedSkillLocations = map[llm.Provider]projectedSkillLocation{
 	llm.ProviderCodexCLI:   {".agents/skills", "AGENTS.md", "mlp-session-instructions"},
 	llm.ProviderCursorCLI:  {".cursor/skills", "", ""},
 	llm.ProviderPiCLI:      {".pi/skills", ".pi/APPEND_SYSTEM.md", "MCP Agent System Instructions"},
+	// Muse shares codex's convention: .agents/skills subdirs and AGENTS.md
+	// (both discovered by the CLI; .muse/skills is NOT discovered).
+	llm.ProviderMuseCLI: {".agents/skills", "AGENTS.md", "mlp-session-instructions"},
 }
 
 // cleanupProjectedArtifactsOnClose removes exactly the skills + managed prompt
@@ -84,8 +87,11 @@ func cleanupInactiveCodingAgentProjectArtifacts(workingDir string, activeProvide
 		removeManagedInstructionFile(filepath.Join(workingDir, "CLAUDE.md"))
 		removeManagedDir(filepath.Join(workingDir, ".claude"))
 	}
-	if active != string(llm.ProviderCodexCLI) {
+	// AGENTS.md is shared by codex and muse: spare it when either is active.
+	if active != string(llm.ProviderCodexCLI) && active != string(llm.ProviderMuseCLI) {
 		removeManagedInstructionFile(filepath.Join(workingDir, "AGENTS.md"))
+	}
+	if active != string(llm.ProviderCodexCLI) {
 		removeManagedDir(filepath.Join(workingDir, ".codex"))
 	}
 	removeManagedInstructionFile(filepath.Join(workingDir, "GEMINI.md"))
@@ -97,7 +103,10 @@ func cleanupInactiveCodingAgentProjectArtifacts(workingDir string, activeProvide
 	if active != string(llm.ProviderPiCLI) {
 		removeManagedDir(filepath.Join(workingDir, ".pi"))
 	}
-	if active != string(llm.ProviderCodexCLI) {
+	// .agents/skills is shared by codex and muse: spare the tree when either
+	// is active (per-skill dirs are still removed by
+	// cleanupProjectedArtifactsOnClose for the active provider's own skills).
+	if active != string(llm.ProviderCodexCLI) && active != string(llm.ProviderMuseCLI) {
 		removeManagedDir(filepath.Join(workingDir, ".agents"))
 	}
 	// Antigravity CLI (Agy) is no longer a supported provider, so its

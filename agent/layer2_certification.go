@@ -34,7 +34,7 @@ type Layer2Certification struct {
 	Notes         string          //
 }
 
-func layer2AllProviders() []string { return []string{"Claude", "Codex", "Cursor", "Pi"} }
+func layer2AllProviders() []string { return []string{"Claude", "Codex", "Cursor", "Pi", "Muse"} }
 
 // Layer2P0Certifications enumerates the Layer-2 capabilities that must stay
 // green. Add a row here when a capability graduates to release-blocking; the

@@ -18,6 +18,7 @@ var codingAgentPersistentInteractiveEnabledByProvider = map[llm.Provider]func(*A
 	llm.ProviderCodexCLI:   func(a *Agent) bool { return a.codexPersistentInteractiveSession },
 	llm.ProviderCursorCLI:  func(a *Agent) bool { return a.cursorPersistentInteractiveSession },
 	llm.ProviderPiCLI:      func(a *Agent) bool { return a.piPersistentInteractiveSession },
+	llm.ProviderMuseCLI:    func(a *Agent) bool { return a.musePersistentInteractiveSession },
 }
 
 func (a *Agent) appendCodingAgentInteractiveOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
@@ -277,6 +278,41 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	if a.streamingCallback != nil {
 		opts = append(opts, llm.WithCursorStreamTranscript(true))
 		opts = append(opts, llm.WithCursorStreamTmuxScreen(true))
+	}
+	return opts, nil
+}
+
+func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
+	bridgeConfig, bridgeErr := a.buildBridgeMCPConfig()
+	if bridgeErr != nil {
+		return nil, fmt.Errorf("Muse CLI requires the MCP bridge: %w", bridgeErr)
+	}
+
+	// Mounts api-bridge by merging mcpServers into the user-level muse
+	// settings.json for one run (restored afterwards). Muse has no
+	// --mcp-config flag; this is the only mount mechanism.
+	opts = append(opts, llm.WithMuseMCPConfig(bridgeConfig))
+	if a.bridgeReadyFile != "" {
+		// Hold a cold session's first prompt until the bridge reports the
+		// tools connected — same cold-turn race as cursor (an unreachable
+		// bridge fails the whole muse run at startup init).
+		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
+	}
+	if sessionID := strings.TrimSpace(a.museSessionID); sessionID != "" {
+		if option := llm.NativeResumeOption(llm.ProviderMuseCLI, sessionID); option != nil {
+			opts = append(opts, option)
+		}
+	}
+	if !a.nativeCodingToolsEnabled() && a.logger != nil {
+		// Bridge-only containment is TBD for muse: no --disallowedTools
+		// equivalent exists (--disable-shell/--disable-write/--disable-web-tools
+		// are partial, --permission-profile is unmapped). The bridge is
+		// mounted but native tools are NOT denied — do not mistake this mode
+		// for containment. Release-blocking for bridge_only_tools.
+		a.logger.Warn("🌉 [MUSE_CLI] mcp_only requested but native-tool denial is unmapped for muse; running uncontained")
+	}
+	if a.logger != nil {
+		a.logger.Info("🌉 [MUSE_CLI] Configured MCP bridge through user settings.json merge")
 	}
 	return opts, nil
 }
