@@ -270,6 +270,18 @@ func ScopedServerNames() []string {
 	return names
 }
 
+// MCPClientForServer resolves only the explicitly requested provider. Never use
+// toolToServer here: different providers routinely expose search and fetch.
+func MCPClientForServer(serverName string) mcpclient.ClientInterface {
+	registry := GetRegistry()
+	if registry == nil {
+		return nil
+	}
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	return registry.mcpClients[serverName]
+}
+
 // CallMCPTool calls an MCP tool by name
 func CallMCPTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	registry := GetRegistry()

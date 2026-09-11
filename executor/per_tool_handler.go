@@ -118,8 +118,9 @@ func (h *ExecutorHandlers) handlePerToolMCP(w http.ResponseWriter, r *http.Reque
 	// Try the desanitized (hyphenated) name first so we hit the session registry / lazy connect
 	// path instead of falling through to mcpcache and spawning a duplicate process.
 	desanitizedServer := strings.ReplaceAll(server, "_", "-")
-	if desanitizedServer == server {
-		// No underscores to desanitize — just delegate directly
+	if desanitizedServer == server || h.mcpServerResolver != nil {
+		// A host resolver prefers exact configured names before considering aliases.
+		// Do not try a different provider first when both names exist.
 		h.HandleMCPExecute(w, newReq)
 		return
 	}

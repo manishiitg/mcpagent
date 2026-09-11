@@ -12,6 +12,8 @@ package mcpagent
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -176,8 +178,10 @@ func NewAgentConnectionWithSession(
 
 			// Override OAuth token file path for per-user isolation
 			if userID != "" && serverConfig.OAuth != nil {
-				userTokenFile := fmt.Sprintf("~/.config/mcpagent/tokens/%s/%s.json", userID, srvName)
-				serverConfig.OAuth.TokenFile = userTokenFile
+				userTokenFile := userOAuthTokenFile(userID, srvName)
+				oauth := *serverConfig.OAuth
+				oauth.TokenFile = userTokenFile
+				serverConfig.OAuth = &oauth
 				logger.Info("Using per-user OAuth token path",
 					loggerv2.String("server", srvName),
 					loggerv2.String("user_id", userID),
@@ -454,4 +458,14 @@ func (a *Agent) resolveOnDemandMCPClient(ctx context.Context, serverName string,
 		}
 	}
 	return mcpcache.GetFreshConnection(ctx, serverName, a.configPath, logger)
+}
+
+// Match the host connector OAuth store, including headless services whose
+// writable config directory is supplied through XDG_CONFIG_HOME.
+func userOAuthTokenFile(userID, server string) string {
+	root := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if root == "" {
+		root = "~/.config"
+	}
+	return filepath.Join(root, "mcpagent", "tokens", userID, server+".json")
 }

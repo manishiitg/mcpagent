@@ -110,16 +110,33 @@ type VirtualExecuteResponse struct {
 
 // --- EXECUTOR HANDLERS ---
 
+// ResolvedMCPServer is an authoritative, current server selection supplied by
+// the host. Returning a resolution bypasses process-wide fallback registries.
+type ResolvedMCPServer struct {
+	Name                string
+	Config              mcpclient.MCPServerConfig
+	ConnectionSessionID string
+}
+
+type MCPServerResolver func(context.Context, string, string, string) (*ResolvedMCPServer, error)
+
 // ExecutorHandlers provides HTTP handlers for tool execution endpoints.
 // Use NewExecutorHandlers to create and attach to your HTTP mux.
 type ExecutorHandlers struct {
-	configPath string
-	logger     loggerv2.Logger
+	mcpServerResolver MCPServerResolver
+	configPath        string
+	logger            loggerv2.Logger
 	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
 	// before execution. This is the HTTP handler path (backup) — the primary interception
 	// happens in agent/conversation.go for agent-internal tool calls.
 	// Example: resolving workspace-relative file paths for an MCP tool.
 	toolArgTransformers map[string]func(args map[string]interface{})
+}
+
+// SetMCPServerResolver installs a host scope resolver before handlers are served.
+// A nil result delegates to legacy connection resolution; errors deny execution.
+func (h *ExecutorHandlers) SetMCPServerResolver(resolve MCPServerResolver) {
+	h.mcpServerResolver = resolve
 }
 
 // SetToolArgTransformer registers a function that mutates tool arguments in-place
@@ -237,9 +254,26 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	var client mcpclient.ClientInterface
 	var err error
 
+	var resolved *ResolvedMCPServer
+	if h.mcpServerResolver != nil {
+		resolved, err = h.mcpServerResolver(ctx, req.SessionID, req.Server, req.Tool)
+		if err != nil {
+			_ = json.NewEncoder(w).Encode(MCPExecuteResponse{Success: false, Error: err.Error()})
+			return
+		}
+		if resolved != nil {
+			req.Server = resolved.Name
+			client, _, err = mcpclient.GetSessionRegistry().GetOrCreateConnection(ctx, resolved.ConnectionSessionID, resolved.Name, resolved.Config, h.logger)
+			if err != nil {
+				_ = json.NewEncoder(w).Encode(MCPExecuteResponse{Success: false, Error: fmt.Sprintf("Failed to connect to server %s: %v", req.Server, err)})
+				return
+			}
+		}
+	}
+
 	// PRIORITY 1: If session_id is provided, try session registry first
 	// This is the primary mechanism for connection reuse.
-	if req.SessionID != "" {
+	if client == nil && req.SessionID != "" {
 		registry := mcpclient.GetSessionRegistry()
 		connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
 
@@ -308,27 +342,15 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 
 	// PRIORITY 2: Try codeexec global registry if no session connection found
 	if client == nil {
-		resultStr, callErr := codeexec.CallMCPTool(ctx, req.Tool, req.Args)
-		if callErr == nil {
-			h.logger.Info("✅ Tool executed via codeexec registry",
-				loggerv2.String("tool", req.Tool),
-				loggerv2.Int("result_length", len(resultStr)))
-			_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
-				Success: true,
-				Result:  resultStr,
-			})
-			return
-		}
-		h.logger.Info("🔄 Codeexec registry miss, falling back to mcpcache",
-			loggerv2.String("tool", req.Tool),
-			loggerv2.String("server", req.Server),
-			loggerv2.String("registry_error", callErr.Error()))
+		// An MCP request names its provider explicitly. A global lookup by
+		// tool name could dispatch Notion/search to Jam/search.
+		client = codeexec.MCPClientForServer(req.Server)
 
 		// 🔒 SCOPE ENFORCEMENT: If the session registry is active (has MCP clients) but
 		// the requested server is not in scope, deny the request instead of spawning a
 		// new process. This prevents agents from reaching MCP servers that are not
 		// configured for the current workflow.
-		if req.SessionID != "" && !codeexec.IsServerInScope(req.Server) {
+		if client == nil && req.SessionID != "" && !codeexec.IsServerInScope(req.Server) {
 			availableServers := codeexec.ScopedServerNames()
 			h.logger.Warn("🔒 [SCOPE DENIED] Server not in session scope, refusing mcpcache fallback",
 				loggerv2.String("server", req.Server),
@@ -415,10 +437,19 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			if req.SessionID != "" {
 				registry := mcpclient.GetSessionRegistry()
 				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
+				if resolved != nil {
+					connSessionID = resolved.ConnectionSessionID
+				}
 				registry.CloseSessionServer(connSessionID, req.Server)
 			}
 
-			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			var freshClient mcpclient.ClientInterface
+			var freshErr error
+			if resolved != nil {
+				freshClient, _, freshErr = mcpclient.GetSessionRegistry().GetOrCreateConnection(ctx, resolved.ConnectionSessionID, resolved.Name, resolved.Config, h.logger)
+			} else {
+				freshClient, freshErr = mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			}
 			if freshErr == nil {
 				h.logger.Info("🔧 [BROKEN PIPE] Retrying with fresh connection...",
 					loggerv2.String("tool", req.Tool))
@@ -491,12 +522,23 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 			if req.SessionID != "" {
 				registry := mcpclient.GetSessionRegistry()
 				connSessionID := registry.ResolveConnectionSessionID(req.SessionID, req.Server)
+				if resolved != nil {
+					connSessionID = resolved.ConnectionSessionID
+				}
 				registry.CloseSessionServer(connSessionID, req.Server)
 			}
 
-			freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			var freshClient mcpclient.ClientInterface
+			var freshErr error
+			if resolved != nil {
+				freshClient, _, freshErr = mcpclient.GetSessionRegistry().GetOrCreateConnection(ctx, resolved.ConnectionSessionID, resolved.Name, resolved.Config, h.logger)
+			} else {
+				freshClient, freshErr = mcpcache.GetFreshConnection(ctx, req.Server, h.configPath, h.logger)
+			}
 			if freshErr == nil {
-				defer freshClient.Close() //nolint:errcheck
+				if resolved == nil {
+					defer freshClient.Close()
+				} //nolint:errcheck
 				h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Retrying with fresh connection...",
 					loggerv2.String("tool", req.Tool))
 				retryResult, retryErr := freshClient.CallTool(ctx, req.Tool, req.Args)
