@@ -149,7 +149,15 @@ func buildClaudeHTTPRoutingSettings(hookPath string) (string, error) {
 	return string(settingsBytes), nil
 }
 
-// retryOriginalModel handles retry logic for throttling and zero_candidates errors
+func retryLogCategory(errorType string) string {
+	category := strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(errorType)), "_ERROR")
+	if category == "" {
+		return "RETRY"
+	}
+	return category
+}
+
+// retryOriginalModel handles same-model retry scheduling for transient errors.
 // Returns: shouldRetry (bool), delay (time.Duration), error
 func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt, maxRetries int, baseDelay, maxDelay time.Duration, turn int, logger loggerv2.Logger, usage observability.UsageMetrics) (bool, time.Duration, error) {
 	// Exponential backoff: 10s, 20s, 40s, 80s, 160s...
@@ -166,12 +174,8 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 	)
 	a.emitTypedEvent(ctx, retryAttemptEvent)
 
-	var logMsg string
-	if errorType == "zero_candidates_error" {
-		logMsg = fmt.Sprintf("🔄 [ZERO_CANDIDATES] Retrying selected model. Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
-	} else {
-		logMsg = fmt.Sprintf("🔄 [THROTTLING] Retrying selected model. Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
-	}
+	category := retryLogCategory(errorType)
+	logMsg := fmt.Sprintf("🔄 [%s] Retrying selected model. Waiting %v before retry (attempt %d/%d)...", category, delay, attempt+1, maxRetries)
 	logger.Info(logMsg)
 
 	timer := time.NewTimer(delay)
@@ -184,12 +188,7 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 	case <-timer.C:
 	}
 
-	var retryLogMsg string
-	if errorType == "zero_candidates_error" {
-		retryLogMsg = fmt.Sprintf("🔄 [ZERO_CANDIDATES] Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries)
-	} else {
-		retryLogMsg = fmt.Sprintf("🔄 [THROTTLING] Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries)
-	}
+	retryLogMsg := fmt.Sprintf("🔄 [%s] Retrying with original model (turn %d, attempt %d/%d)...", category, turn, attempt+2, maxRetries)
 	logger.Info(retryLogMsg)
 	return true, delay, nil
 }

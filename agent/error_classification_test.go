@@ -242,3 +242,17 @@ func TestNilErrorsReturnFalse(t *testing.T) {
 		})
 	}
 }
+
+func TestRetryLogCategoryMatchesActualErrorType(t *testing.T) {
+	tests := map[string]string{
+		"connection_error":      "CONNECTION",
+		"throttling_error":      "THROTTLING",
+		"zero_candidates_error": "ZERO_CANDIDATES",
+		"":                      "RETRY",
+	}
+	for input, want := range tests {
+		if got := retryLogCategory(input); got != want {
+			t.Errorf("retryLogCategory(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

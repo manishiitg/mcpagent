@@ -3404,7 +3404,7 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 		}
 		return
 	}
-	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions(a.admitsCoreBridgeTool))
+	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions(a.admitsCoreBridgeTool, a.additionalBridgeTools...))
 }
 
 // codingAgentProviderRoutingPreamble describes the tool mode that is actually

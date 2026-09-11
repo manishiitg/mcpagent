@@ -30,6 +30,23 @@ func TestAppendBridgeRoutingInstructionsDefaultUnchanged(t *testing.T) {
 	}
 }
 
+func TestAppendBridgeRoutingInstructionsNamesDirectPlatformReadImage(t *testing.T) {
+	a := &Agent{additionalBridgeTools: []string{"read_image"}}
+	a.appendBridgeRoutingInstructions(testDefaultPreamble)
+
+	got := a.instructions()
+	for _, want := range []string{
+		"api-bridge.read_image",
+		"mcp__api-bridge__read_image",
+		"platform's workspace-aware image-analysis tool",
+		"not explicitly declared as a direct api-bridge tool above",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("direct read_image routing prompt missing %q: %s", want, got)
+		}
+	}
+}
+
 // Confirmed live (trading workflow, 2026-08-24): a pi-cli session called
 // mcp({tool: "get_human_input_request", args: "..."}) -- get_human_input_request
 // is a custom HTTP-backed tool, never reachable through pi-mcp-adapter's mcp()
@@ -54,7 +71,7 @@ func TestAppendBridgeRoutingInstructionsNoLongerTeachesMcpWrapperSyntax(t *testi
 		t.Fatalf("expected no mcp() wrapper syntax taught in system prompt (proxy tool is disabled by default), got: %s", got)
 	}
 	for _, want := range []string{
-		"Custom tools (get_human_input_request, create_human_input_request, notify_user, and everything else not covered above) are called ONLY through execute_shell_command + curl",
+		"Custom tools (get_human_input_request, create_human_input_request, notify_user, and everything else not explicitly declared as a direct api-bridge tool above) are called ONLY through execute_shell_command + curl",
 		"never as a direct tool call by their bare name",
 	} {
 		if !strings.Contains(got, want) {
