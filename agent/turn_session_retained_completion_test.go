@@ -243,3 +243,14 @@ func TestRetainedFollowupReplacesInFlightCompletionRead(t *testing.T) {
 		t.Fatalf("final = %q", completion.FinalResult)
 	}
 }
+
+func TestProvidersThatQueueRetainedFollowupsRefreshTheirWatcher(t *testing.T) {
+	for _, provider := range []llm.Provider{llm.ProviderCursorCLI, llm.ProviderMuseCLI} {
+		if !providerRefreshesRetainedWatcher(provider) {
+			t.Errorf("providerRefreshesRetainedWatcher(%s) = false, want true", provider)
+		}
+	}
+	if providerRefreshesRetainedWatcher(llm.ProviderPiCLI) {
+		t.Error("Pi should keep its existing in-flight watcher")
+	}
+}
