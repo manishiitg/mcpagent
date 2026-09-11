@@ -95,4 +95,4 @@ require (
 	modernc.org/sqlite v1.49.1 // indirect
 )
 
-replace github.com/manishiitg/multi-llm-provider-go => /Users/mipl/ai-work/multi-llm-provider-go
+replace github.com/manishiitg/multi-llm-provider-go => ../multi-llm-provider-go
