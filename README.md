@@ -621,7 +621,7 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
   - Enables efficient on-demand data access via virtual tools
 - **[MCP Cache System](docs/mcp_cache_system.md)** - Server metadata caching
 - **[Folder Guard](docs/folder_guard.md)** - Fine-grained file access control
-- **[LLM Resilience](docs/llm_resilience.md)** - Error handling and fallbacks
+- **[LLM Resilience](docs/llm_resilience.md)** - Error handling and selected-model retries
 - **[Event System](docs/event_type_generation.md)** - Event architecture
 - **[Parallel Tool Execution](docs/parallel_tool_execution.md)** - Concurrent tool call execution
 - **[Token Tracking](docs/token-usage-tracking.md)** - Usage monitoring

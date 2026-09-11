@@ -116,29 +116,6 @@ func TestQuotaVsThrottlingDisambiguation(t *testing.T) {
 	}
 }
 
-func TestShouldSkipSameModelRetry(t *testing.T) {
-	tests := []struct {
-		name      string
-		provider  string
-		errorType string
-		want      bool
-	}{
-		{name: "openrouter throttle skips retry", provider: "openrouter", errorType: "throttling_error", want: true},
-		{name: "openrouter quota does NOT skip retry", provider: "openrouter", errorType: "quota_exhausted_error", want: false},
-		{name: "anthropic throttle does not skip", provider: "anthropic", errorType: "throttling_error", want: false},
-		{name: "openai throttle does not skip", provider: "openai", errorType: "throttling_error", want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := shouldSkipSameModelRetry(tt.provider, tt.errorType)
-			if got != tt.want {
-				t.Fatalf("shouldSkipSameModelRetry(%q, %q) = %v, want %v", tt.provider, tt.errorType, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestTypedErrorsClassifyWithoutStringMatching verifies the kind-first path:
 // errors classified by the provider layer (llmerrors) are recognized even
 // when their message text matches none of the legacy string patterns.
@@ -221,7 +198,7 @@ func TestAuthAndModelNotFoundClassification(t *testing.T) {
 // is on a same-model retry path. classifyLLMError returns a dedicated type, and
 // the retry loop's same-model-retry branches (zero_candidates / throttling /
 // empty_content) deliberately exclude them — so the loop breaks straight to the
-// fallback chain. This guards against a future "retry unknown errors by default"
+// caller. This guards against a future "retry unknown errors by default"
 // change silently re-retrying terminal auth failures.
 func TestAuthAndModelNotFoundAreNotSameModelRetried(t *testing.T) {
 	sameModelRetryTypes := map[string]bool{

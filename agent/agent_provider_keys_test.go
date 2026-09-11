@@ -129,20 +129,10 @@ func TestExtractAPIKeysFromLLMPreservesCodingCLIKeys(t *testing.T) {
 	}
 }
 
-func TestGetEffectiveLLMConfigAddsDefaultZAIFallback(t *testing.T) {
-	agent := &Agent{
-		provider: llm.ProviderZAI,
-		modelID:  zaiadapter.ModelGLM51,
-	}
-
+func TestGetEffectiveLLMConfigPreservesSelectedZAIModel(t *testing.T) {
+	agent := &Agent{provider: llm.ProviderZAI, modelID: zaiadapter.ModelGLM51}
 	config := agent.getEffectiveLLMConfig()
-	if len(config.Fallbacks) != 1 {
-		t.Fatalf("expected 1 fallback, got %d: %#v", len(config.Fallbacks), config.Fallbacks)
-	}
-	if config.Fallbacks[0].Provider != string(llm.ProviderZAI) {
-		t.Fatalf("expected fallback provider %q, got %q", llm.ProviderZAI, config.Fallbacks[0].Provider)
-	}
-	if config.Fallbacks[0].ModelID != zaiadapter.ModelGLM47 {
-		t.Fatalf("expected fallback model %q, got %q", zaiadapter.ModelGLM47, config.Fallbacks[0].ModelID)
+	if config.Primary.Provider != string(llm.ProviderZAI) || config.Primary.ModelID != zaiadapter.ModelGLM51 {
+		t.Fatalf("selected model changed: %+v", config.Primary)
 	}
 }

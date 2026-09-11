@@ -10,7 +10,7 @@ import (
 // sharedQuotaExhaustedModels persists quota-exhaustion state across Agent
 // instances within this process. Each chat/workflow turn builds a fresh
 // *Agent (agent_go's server does this per request), so a.quotaExhaustedModels
-// alone only protects retries WITHIN one turn's own fallback loop -- the very
+// alone only protects retries WITHIN one turn's own retry loop -- the very
 // next turn on the same session (or a different session sharing the same
 // account) rediscovers an already-known exhaustion the slow way, waiting
 // through the provider CLI's own internal backoff again. Observed live on

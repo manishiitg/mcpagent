@@ -159,18 +159,18 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 	}
 
 	// Emit retry attempt event with proper model/provider info for UI display
-	retryAttemptEvent := events.NewFallbackAttemptEvent(
+	retryAttemptEvent := events.NewRetryAttemptEvent(
 		turn, attempt+1, maxRetries,
-		a.modelID, string(a.provider), "retry", // Use "retry" phase to distinguish from actual fallbacks
+		a.modelID, string(a.provider), "retry",
 		false, delay, fmt.Sprintf("%s - retrying original model", errorType),
 	)
 	a.emitTypedEvent(ctx, retryAttemptEvent)
 
 	var logMsg string
 	if errorType == "zero_candidates_error" {
-		logMsg = fmt.Sprintf("🔄 [ZERO_CANDIDATES] Retrying original model FIRST (before fallbacks). Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
+		logMsg = fmt.Sprintf("🔄 [ZERO_CANDIDATES] Retrying selected model. Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
 	} else {
-		logMsg = fmt.Sprintf("🔄 [THROTTLING] Retrying original model FIRST (before fallbacks). Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
+		logMsg = fmt.Sprintf("🔄 [THROTTLING] Retrying selected model. Waiting %v before retry (attempt %d/%d)...", delay, attempt+1, maxRetries)
 	}
 	logger.Info(logMsg)
 
@@ -217,7 +217,7 @@ func isMaxTokenError(err error) bool {
 }
 
 // isQuotaExhaustedError checks if an error is a permanent quota exhaustion (daily/monthly limits)
-// that will NOT recover within minutes — skip same-model retries and go straight to fallback.
+// that will NOT recover within minutes — skip same-model retries and return the error.
 func isQuotaExhaustedError(err error) bool {
 	if err == nil {
 		return false
@@ -479,21 +479,6 @@ func isTmuxLossContinuationError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "coding-agent continuation retry after tmux loss failed")
-}
-
-// shouldSkipSameModelRetry prefers fast fallback for providers where same-model
-// retries are unlikely to improve UX or recover quickly.
-func shouldSkipSameModelRetry(provider, errorType string) bool {
-	if provider != string(llm.ProviderOpenRouter) {
-		return false
-	}
-
-	switch errorType {
-	case "throttling_error", "internal_error", "connection_error", "stream_error":
-		return true
-	default:
-		return false
-	}
 }
 
 // streamingManager handles streaming state and goroutine management
@@ -1010,78 +995,10 @@ func (a *Agent) getEffectiveLLMConfig() AgentLLMConfiguration {
 				// Note: API Key not easily accessible from legacy Agent struct without introspection
 				// but executeLLM will handle this by checking Agent.APIKeys if model.APIKey is nil
 			},
-			Fallbacks: []LLMModel{},
 		}
 	}
 
-	// If no explicit fallbacks were provided, apply provider defaults.
-	// This keeps behavior aligned with older initialization paths that used
-	// default same-provider and cross-provider fallback env configuration.
-	if len(config.Fallbacks) == 0 && config.Primary.Provider != "" {
-		defaultFallbackRefs := append([]string{}, llm.GetDefaultFallbackModelsForModel(llm.Provider(config.Primary.Provider), config.Primary.ModelID)...)
-		defaultFallbackRefs = append(defaultFallbackRefs, llm.GetCrossProviderFallbackModels(llm.Provider(config.Primary.Provider))...)
-
-		for _, fallbackRef := range defaultFallbackRefs {
-			if fallbackModel, ok := parseFallbackModelRef(config.Primary.Provider, fallbackRef); ok {
-				config.Fallbacks = append(config.Fallbacks, fallbackModel)
-			}
-		}
-	}
-
-	config.Fallbacks = dedupeFallbacks(config.Fallbacks)
 	return config
-}
-
-func parseFallbackModelRef(primaryProvider, fallbackRef string) (LLMModel, bool) {
-	ref := strings.TrimSpace(fallbackRef)
-	if ref == "" {
-		return LLMModel{}, false
-	}
-
-	slashIdx := strings.Index(ref, "/")
-	if slashIdx <= 0 {
-		return LLMModel{Provider: primaryProvider, ModelID: ref}, true
-	}
-
-	providerCandidate := strings.TrimSpace(ref[:slashIdx])
-	modelCandidate := strings.TrimSpace(ref[slashIdx+1:])
-	if providerCandidate == "" || modelCandidate == "" {
-		return LLMModel{Provider: primaryProvider, ModelID: ref}, true
-	}
-
-	// If the prefix is a known provider (e.g., "openai/gpt-5-mini"), treat
-	// as cross-provider fallback; otherwise keep as same-provider model ID
-	// that happens to contain "/" (e.g., OpenRouter "x-ai/grok-code-fast-1").
-	if _, err := llm.ValidateProvider(providerCandidate); err == nil {
-		return LLMModel{Provider: providerCandidate, ModelID: modelCandidate}, true
-	}
-
-	return LLMModel{Provider: primaryProvider, ModelID: ref}, true
-}
-
-func dedupeFallbacks(fallbacks []LLMModel) []LLMModel {
-	seen := make(map[string]struct{}, len(fallbacks))
-	result := make([]LLMModel, 0, len(fallbacks))
-
-	for _, fallback := range fallbacks {
-		provider := strings.TrimSpace(fallback.Provider)
-		modelID := strings.TrimSpace(fallback.ModelID)
-		if provider == "" || modelID == "" {
-			continue
-		}
-
-		key := provider + "/" + modelID
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-
-		fallback.Provider = provider
-		fallback.ModelID = modelID
-		result = append(result, fallback)
-	}
-
-	return result
 }
 
 // executeLLM creates an LLM instance and executes it.
@@ -1401,7 +1318,7 @@ func latestHumanMessageTextForProviderContinuation(messages []llmtypes.MessageCo
 	return "", false
 }
 
-// GenerateContentWithRetry handles LLM generation with robust retry logic and tiered fallback
+// GenerateContentWithRetry retries transient failures on the selected model.
 func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
 	logger := getLogger(a)
 	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry START - Messages: %d, Options: %d, Turn: %d", len(messages), len(opts), turn))
@@ -1413,7 +1330,7 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		}
 	}
 
-	maxRetriesZeroCandidates := 3 // Limit retries for zero_candidates errors to 3 before fallback
+	maxRetriesZeroCandidates := 3 // Limit retries for zero_candidates errors to 3 before returning the error
 	maxRetriesEmptyContent := 2   // Empty-content errors are partly structural; 2 retries rides out transient hiccups without burning cost when failure is permanent
 
 	baseDelaySeconds := 10
@@ -1437,65 +1354,24 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	// Get effective configuration (supports new and legacy)
 	llmConfig := a.getEffectiveLLMConfig()
 
-	// Build list of models to try: Primary + Fallbacks, skipping models whose
-	// usage window is still shut. A model whose window has since reopened is
-	// tried again rather than benched for the agent's lifetime (PLAT-101).
-	allModels := append([]LLMModel{llmConfig.Primary}, llmConfig.Fallbacks...)
-	var modelsToTry []LLMModel
-	var soonestReset time.Time
-	now := time.Now()
-	for _, m := range allModels {
-		key := m.Provider + "/" + m.ModelID
-		resetAt, exhausted := a.quotaExhaustedModels[key]
-		if !exhausted {
-			// Not learned within this turn's own retries yet -- an earlier
-			// turn (a different *Agent instance; agent_go builds one per
-			// request) may already have discovered this exhaustion. Skip it
-			// immediately instead of paying the provider's slow failure
-			// again (cursor-cli/grok-4.6 took 142s to report
-			// resource_exhausted live on RTS, 2026-09-03).
-			if sharedResetAt, sharedExhausted := sharedModelQuotaExhaustion(key); sharedExhausted {
-				resetAt, exhausted = sharedResetAt, true
-				if a.quotaExhaustedModels == nil {
-					a.quotaExhaustedModels = make(map[string]time.Time)
-				}
-				a.quotaExhaustedModels[key] = resetAt
-				logger.Info(fmt.Sprintf("⏭️ [QUOTA_SKIP] %s already known exhausted from an earlier turn; skipping without retrying", key))
-			}
-		}
-		if exhausted {
-			if !resetAt.IsZero() && !resetAt.After(now) {
-				// The window this model was waiting on has reopened.
-				delete(a.quotaExhaustedModels, key)
-				forgetSharedModelQuotaExhaustion(key)
-				logger.Info(fmt.Sprintf("♻️ [QUOTA_RESET] Usage window for %s reopened at %s; trying it again", key, resetAt.Format(time.RFC3339)))
-				modelsToTry = append(modelsToTry, m)
-				continue
-			}
-			if resetAt.IsZero() {
-				logger.Info(fmt.Sprintf("⏭️ [QUOTA_SKIP] Skipping exhausted model %s (no reset time known)", key))
-			} else {
-				logger.Info(fmt.Sprintf("⏭️ [QUOTA_SKIP] Skipping exhausted model %s until %s", key, resetAt.Format(time.RFC3339)))
-				if soonestReset.IsZero() || resetAt.Before(soonestReset) {
-					soonestReset = resetAt
-				}
-			}
-			continue
-		}
-		modelsToTry = append(modelsToTry, m)
+	model := llmConfig.Primary
+	key := model.Provider + "/" + model.ModelID
+	resetAt, exhausted := a.quotaExhaustedModels[key]
+	if !exhausted {
+		resetAt, exhausted = sharedModelQuotaExhaustion(key)
 	}
-	if len(modelsToTry) == 0 {
-		// Carry the reset time out with the failure. A caller that must decide
-		// between failing the run and suspending it until capacity returns
-		// cannot do so from a sentence; this is the whole point of the typed
-		// error (PLAT-101). soonestReset stays zero when no model stated a
-		// time, which is the explicit unknown-capacity state, never a guess.
-		return nil, usage, &llmerrors.Error{
-			Kind:     llmerrors.KindQuotaExhausted,
-			Provider: llmConfig.Primary.Provider,
-			Model:    llmConfig.Primary.ModelID,
-			RetryAt:  soonestReset,
-			Err:      fmt.Errorf("all LLMs failed (primary + %d fallbacks): all models are quota-exhausted", len(llmConfig.Fallbacks)),
+	if exhausted {
+		if !resetAt.IsZero() && !resetAt.After(time.Now()) {
+			delete(a.quotaExhaustedModels, key)
+			forgetSharedModelQuotaExhaustion(key)
+		} else {
+			return nil, usage, &llmerrors.Error{
+				Kind:     llmerrors.KindQuotaExhausted,
+				Provider: model.Provider,
+				Model:    model.ModelID,
+				RetryAt:  resetAt,
+				Err:      fmt.Errorf("selected model is quota-exhausted"),
+			}
 		}
 	}
 
@@ -1508,242 +1384,158 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		MaxRetries:    maxRetries,
 		PrimaryModel:  llmConfig.Primary.ModelID,
 		CurrentLLM:    llmConfig.Primary.ModelID,
-		// SameProviderFallbacks:  sameProviderFallbacks, // Deprecated/merged
-		// CrossProviderFallbacks: crossProviderFallbacks, // Deprecated/merged
-		Provider:  llmConfig.Primary.Provider,
-		Operation: "llm_generation_with_fallback",
-		Status:    "started",
+		Provider:      llmConfig.Primary.Provider,
+		Operation:     "llm_generation_with_retry",
+		Status:        "started",
 	})
 
-	// Iterate through models
-	for modelIndex, model := range modelsToTry {
-		isFallback := modelIndex > 0
-		if isFallback {
-			logger.Info(fmt.Sprintf("🔄 Trying fallback %d/%d: %s/%s",
-				modelIndex, len(llmConfig.Fallbacks), model.Provider, model.ModelID))
-
-			// Emit fallback model used event
-			fallbackEvent := events.NewFallbackModelUsedEvent(turn, llmConfig.Primary.ModelID, model.ModelID, model.Provider, "fallback_chain", time.Since(generationStartTime))
-			a.emitTypedEvent(ctx, fallbackEvent)
-
-			// Temporarily update agent's model ID for consistent event logging
-			// This is important because EmitTypedEvent uses a.ModelID in some places
-			// We revert it later if we fail, or keep it if we succeed and want to stick to it?
-			// The original logic kept it on success.
-			a.modelID = model.ModelID
-			a.provider = llm.Provider(model.Provider)
+	// Try executing with retries (throttling/transient error handling)
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
 		}
 
-		// Try executing with retries (throttling/transient error handling)
-		for attempt := 0; attempt < maxRetries; attempt++ {
-			if ctx.Err() != nil {
-				return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
+		// Create a copy of options for this attempt
+		currentOpts := make([]llmtypes.CallOption, len(opts))
+		copy(currentOpts, opts)
+
+		sm := a.startStreaming(ctx, attempt, turn, &currentOpts)
+
+		// Execute LLM
+		resp, err := a.executeLLM(ctx, model, messages, currentOpts)
+
+		a.finishStreaming(ctx, sm, resp)
+
+		// After finishStreaming, processChunks has fully drained — sm.CLIToolCalls is
+		// complete. Attach the collected tool calls to the response so AskWithHistory
+		// can reconstruct a proper conversation history for CLI providers (Claude Code,
+		// Claude Code, Codex CLI) where tools run inside the subprocess.
+		if sm != nil && len(sm.CLIToolCalls) > 0 && resp != nil && len(resp.Choices) > 0 {
+			choice := resp.Choices[0]
+			if choice.GenerationInfo == nil {
+				choice.GenerationInfo = &llmtypes.GenerationInfo{}
 			}
-
-			// Create a copy of options for this attempt
-			currentOpts := make([]llmtypes.CallOption, len(opts))
-			copy(currentOpts, opts)
-
-			// Start streaming (only on first attempt of primary model, or maybe disable for fallbacks?)
-			// Original logic: streaming enabled for primary, disabled for fallbacks in loop
-			// Here we can enable it if the agent supports it, but fallback logic usually disables it for simplicity
-			// For now, let's keep it enabled if it's the first model, or if we want streaming on fallbacks too
-			// The original code passed `opts` to fallback generation which might include streaming channel?
-			// Actually `startStreaming` modifies `currentOpts` to add the channel.
-			// If we are in fallback, we probably shouldn't use the SAME channel if the previous one closed?
-			// `startStreaming` creates a NEW channel every time it's called.
-			// So streaming on fallback is fine if the frontend can handle it.
-			// However, the original code used "non-streaming approach for all agents during fallback".
-			// Let's stick to that for safety: only stream on primary model (modelIndex == 0).
-			// Enable streaming for all models (primary + fallback) so tool_call events are emitted
-			sm := a.startStreaming(ctx, attempt, turn, &currentOpts)
-
-			// Execute LLM
-			resp, err := a.executeLLM(ctx, model, messages, currentOpts)
-
-			a.finishStreaming(ctx, sm, resp)
-
-			// After finishStreaming, processChunks has fully drained — sm.CLIToolCalls is
-			// complete. Attach the collected tool calls to the response so AskWithHistory
-			// can reconstruct a proper conversation history for CLI providers (Claude Code,
-			// Claude Code, Codex CLI) where tools run inside the subprocess.
-			if sm != nil && len(sm.CLIToolCalls) > 0 && resp != nil && len(resp.Choices) > 0 {
-				choice := resp.Choices[0]
-				if choice.GenerationInfo == nil {
-					choice.GenerationInfo = &llmtypes.GenerationInfo{}
-				}
-				if choice.GenerationInfo.Additional == nil {
-					choice.GenerationInfo.Additional = make(map[string]interface{})
-				}
-				if histJSON, err2 := json.Marshal(sm.CLIToolCalls); err2 == nil {
-					choice.GenerationInfo.Additional["cli_tool_call_chunks"] = string(histJSON)
-				}
+			if choice.GenerationInfo.Additional == nil {
+				choice.GenerationInfo.Additional = make(map[string]interface{})
 			}
-
-			if err == nil {
-				usage = extractUsageMetricsWithMessages(resp, messages)
-
-				if isFallback {
-					// Emit fallback success event
-					fallbackAttemptEvent := events.NewFallbackAttemptEvent(
-						turn, modelIndex, len(llmConfig.Fallbacks),
-						model.ModelID, model.Provider, "fallback_chain",
-						true, time.Since(generationStartTime), "",
-					)
-					a.emitTypedEvent(ctx, fallbackAttemptEvent)
-
-					// Emit model change event to track the permanent model change
-					modelChangeEvent := events.NewModelChangeEvent(turn, llmConfig.Primary.ModelID, model.ModelID, "fallback_success", model.Provider, time.Since(generationStartTime))
-					a.emitTypedEvent(ctx, modelChangeEvent)
-
-					// Update agent's config to use this working model as primary for future calls?
-					// The original code did: a.ModelID = fallbackModelID; a.LLM = fallbackLLM
-					// For this refactor, we are not storing the LLM instance permanently for fallbacks in the same way,
-					// but we should probably update a.ModelID and a.provider for consistency.
-					// We already did that at the start of the loop.
-					// We should also update LLMConfig.Primary to this model to avoid retrying failed primary next turn?
-					// That's a behavior change. Let's strictly follow the "permanent update" behavior of original code.
-					a.modelID = model.ModelID
-					a.provider = llm.Provider(model.Provider)
-					// Note: a.LLM is not updated here because we create it on the fly in executeLLM.
-					// If we want to persist it, we'd need to re-initialize a.LLM.
-					// But since we use executeLLM now, we don't strictly rely on a.LLM for generation anymore in this function.
-					// However, other parts of Agent might use a.LLM (e.g. token counting metadata).
-					// Ideally we should update a.LLM.
-					// For now, let's leave a.LLM as is or update it if possible.
-					// Re-initializing a.LLM here might be expensive or unnecessary if we always use executeLLM.
-				} else {
-					// Primary succeeded
-					logger.Info(fmt.Sprintf("✅ Primary LLM succeeded: %s/%s", model.Provider, model.ModelID))
-				}
-
-				return resp, usage, nil
+			if histJSON, err2 := json.Marshal(sm.CLIToolCalls); err2 == nil {
+				choice.GenerationInfo.Additional["cli_tool_call_chunks"] = string(histJSON)
 			}
+		}
 
-			// Handle context cancellation specifically
-			if isContextCanceledError(err) || ctx.Err() != nil {
-				return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
+		if err == nil {
+			usage = extractUsageMetricsWithMessages(resp, messages)
+
+			logger.Info(fmt.Sprintf("✅ LLM succeeded: %s/%s", model.Provider, model.ModelID))
+
+			return resp, usage, nil
+		}
+
+		// Handle context cancellation specifically
+		if isContextCanceledError(err) || ctx.Err() != nil {
+			return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
+		}
+
+		if llmerrors.KindOf(err) == llmerrors.KindUserInputRequired {
+			return nil, usage, err
+		}
+		errorType := classifyLLMError(err)
+		lastErr = err
+
+		// Special handling for retrying SAME model (throttling/zero candidates/internal errors)
+		// For zero_candidates errors: limit to 3 retries before returning the error
+		// For throttling/internal errors: use full 5 retries
+		shouldRetrySameModel := false
+		if errorType == "quota_exhausted_error" {
+			// Permanent quota exhaustion (daily/monthly) — retrying same model is pointless.
+			// Remember this model so future turns skip it immediately, in
+			// this turn and in every later turn regardless
+			// of which *Agent instance handles it.
+			if a.quotaExhaustedModels == nil {
+				a.quotaExhaustedModels = make(map[string]time.Time)
 			}
-
-			if llmerrors.KindOf(err) == llmerrors.KindUserInputRequired {
-				return nil, usage, err
+			key := model.Provider + "/" + model.ModelID
+			// Zero when the provider stated no reliable reset: still skipped,
+			// but never retried on a guessed schedule.
+			resetAt := llmerrors.RetryAtOrZero(err)
+			a.quotaExhaustedModels[key] = resetAt
+			markModelQuotaExhaustedShared(key, resetAt)
+			if resetAt.IsZero() {
+				logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Usage window spent for %s (no reset time stated) — skipping it on later turns", key))
+			} else {
+				logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Usage window spent for %s until %s — skipping it until then", key, resetAt.Format(time.RFC3339)))
 			}
+			break
+		} else if errorType == "auth_error" {
+			// Authentication errors require corrected credentials.
+			logger.Warn(fmt.Sprintf("🔑 [AUTH] Authentication/permission failed for %s/%s; skipping same-model retry, returning the error", model.Provider, model.ModelID))
+			break
+		} else if errorType == "model_not_found_error" {
+			// Unknown/unavailable model ID — a permanent config error. Memoize it
+			// (like quota) so future turns skip it.
+			if a.quotaExhaustedModels == nil {
+				a.quotaExhaustedModels = make(map[string]time.Time)
+			}
+			key := model.Provider + "/" + model.ModelID
+			// A missing model is a config error, not a window that reopens:
+			// the zero reset keeps it skipped permanently rather than
+			// retried on a schedule. Shared so a broken model_id learned by
+			// one turn does not get rediscovered the slow way by the next.
+			a.quotaExhaustedModels[key] = time.Time{}
+			markModelQuotaExhaustedShared(key, time.Time{})
+			logger.Warn(fmt.Sprintf("🚫 [MODEL_NOT_FOUND] Model %s is unavailable; marked to skip on future turns, returning the error", key))
+			break
+		} else if errorType == "zero_candidates_error" {
+			// Zero candidates: retry up to 3 times (attempts 0, 1, 2 = 3 retries total)
+			if attempt < maxRetriesZeroCandidates-1 {
+				shouldRetrySameModel = true
+			} else {
+				logger.Info(fmt.Sprintf("🔄 [ZERO_CANDIDATES] Reached max retries (%d) for zero_candidates error, returning the error", maxRetriesZeroCandidates))
+				// Break immediately - don't continue the loop
+				logger.Warn(fmt.Sprintf("❌ Model failed after %d retries: %s/%s - %v", maxRetriesZeroCandidates, model.Provider, model.ModelID, err))
+				break // Retry budget exhausted.
+			}
+		} else if errorType == "throttling_error" || errorType == "internal_error" || errorType == "connection_error" || errorType == "stream_error" {
+			// Throttling/internal/connection/stream errors: retry up to 5 times (transient)
+			if attempt < maxRetries-1 {
+				shouldRetrySameModel = true
+			}
+		} else if errorType == "empty_content_error" {
+			// Empty-content errors include both transient cases (coding-agent CLIs
+			// status=error mid-stream with no detail, e.g. backend 5xx) and
+			// non-transient ones (context too large, safety filter). Retry
+			// up to 2 times — enough to ride out a transient hiccup without
+			// burning extra cost when the failure is structural.
+			if attempt < maxRetriesEmptyContent-1 {
+				shouldRetrySameModel = true
+			}
+		}
 
-			errorType := classifyLLMError(err)
-			lastErr = err
-
-			// Special handling for retrying SAME model (throttling/zero candidates/internal errors)
-			// For zero_candidates errors: limit to 3 retries before fallback
-			// For throttling/internal errors: use full 5 retries
-			shouldRetrySameModel := false
-			if shouldSkipSameModelRetry(model.Provider, errorType) {
-				logger.Info(fmt.Sprintf("⏭️ [FAST_FALLBACK] Skipping same-model retry for %s/%s on %s; moving directly to fallback chain",
-					model.Provider, model.ModelID, errorType))
-			} else if errorType == "quota_exhausted_error" {
-				// Permanent quota exhaustion (daily/monthly) — retrying same model is pointless.
-				// Remember this model so future turns skip it immediately, in
-				// THIS turn's fallback loop and in every later turn regardless
-				// of which *Agent instance handles it.
-				if a.quotaExhaustedModels == nil {
-					a.quotaExhaustedModels = make(map[string]time.Time)
-				}
-				key := model.Provider + "/" + model.ModelID
-				// Zero when the provider stated no reliable reset: still skipped,
-				// but never retried on a guessed schedule.
-				resetAt := llmerrors.RetryAtOrZero(err)
-				a.quotaExhaustedModels[key] = resetAt
-				markModelQuotaExhaustedShared(key, resetAt)
-				if resetAt.IsZero() {
-					logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Usage window spent for %s (no reset time stated) — skipping it on later turns", key))
-				} else {
-					logger.Info(fmt.Sprintf("🚫 [QUOTA_EXHAUSTED] Usage window spent for %s until %s — skipping it until then", key, resetAt.Format(time.RFC3339)))
-				}
-				break
-			} else if errorType == "auth_error" {
-				// Credential/permission failure for THIS provider's key — retrying the
-				// same model cannot recover. Move straight to the fallback chain, which
-				// may use a different provider/key; do NOT abort the whole chain, since
-				// a bad primary key must not block a valid fallback.
-				logger.Warn(fmt.Sprintf("🔑 [AUTH] Authentication/permission failed for %s/%s; skipping same-model retry, trying fallback chain", model.Provider, model.ModelID))
-				break
-			} else if errorType == "model_not_found_error" {
-				// Unknown/unavailable model ID — a permanent config error. Memoize it
-				// (like quota) so future turns skip it, then move to the fallback chain.
-				if a.quotaExhaustedModels == nil {
-					a.quotaExhaustedModels = make(map[string]time.Time)
-				}
-				key := model.Provider + "/" + model.ModelID
-				// A missing model is a config error, not a window that reopens:
-				// the zero reset keeps it skipped permanently rather than
-				// retried on a schedule. Shared so a broken model_id learned by
-				// one turn does not get rediscovered the slow way by the next.
-				a.quotaExhaustedModels[key] = time.Time{}
-				markModelQuotaExhaustedShared(key, time.Time{})
-				logger.Warn(fmt.Sprintf("🚫 [MODEL_NOT_FOUND] Model %s is unavailable; marked to skip on future turns, trying fallback chain", key))
-				break
-			} else if errorType == "zero_candidates_error" {
-				// Zero candidates: retry up to 3 times (attempts 0, 1, 2 = 3 retries total)
-				if attempt < maxRetriesZeroCandidates-1 {
-					shouldRetrySameModel = true
-				} else {
-					logger.Info(fmt.Sprintf("🔄 [ZERO_CANDIDATES] Reached max retries (%d) for zero_candidates error, moving to fallback models", maxRetriesZeroCandidates))
-					// Break immediately - don't continue the loop
-					logger.Warn(fmt.Sprintf("❌ Model failed after %d retries: %s/%s - %v", maxRetriesZeroCandidates, model.Provider, model.ModelID, err))
-					break // Break retry loop, proceed to next model
-				}
-			} else if errorType == "throttling_error" || errorType == "internal_error" || errorType == "connection_error" || errorType == "stream_error" {
-				// Throttling/internal/connection/stream errors: retry up to 5 times (transient)
-				if attempt < maxRetries-1 {
-					shouldRetrySameModel = true
-				}
+		if shouldRetrySameModel && attempt < maxRetries-1 {
+			// Use error-type-specific retry caps.
+			retryLimit := maxRetries
+			if errorType == "zero_candidates_error" {
+				retryLimit = min(maxRetries, maxRetriesZeroCandidates)
 			} else if errorType == "empty_content_error" {
-				// Empty-content errors include both transient cases (coding-agent CLIs
-				// status=error mid-stream with no detail, e.g. backend 5xx) and
-				// non-transient ones (context too large, safety filter). Retry
-				// up to 2 times — enough to ride out a transient hiccup without
-				// burning extra cost when the failure is structural.
-				if attempt < maxRetriesEmptyContent-1 {
-					shouldRetrySameModel = true
-				}
+				retryLimit = min(maxRetries, maxRetriesEmptyContent)
 			}
-
-			if shouldRetrySameModel {
-				// Use error-type-specific retry caps.
-				retryLimit := maxRetries
-				if errorType == "zero_candidates_error" {
-					retryLimit = maxRetriesZeroCandidates
-				} else if errorType == "empty_content_error" {
-					retryLimit = maxRetriesEmptyContent
-				}
-				shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, retryLimit, baseDelay, maxDelay, turn, logger, usage)
-				if retryErr != nil {
-					return nil, usage, retryErr
-				}
-				if shouldRetry {
-					continue // Retry same model
-				}
+			shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, retryLimit, baseDelay, maxDelay, turn, logger, usage)
+			if retryErr != nil {
+				return nil, usage, retryErr
 			}
-
-			// If not a retryable error on same model, or max retries reached:
-			// Break inner loop to try next model in fallback list
-			logger.Warn(fmt.Sprintf("❌ Model failed: %s/%s - %v", model.Provider, model.ModelID, err))
-
-			// Emit failure event for this model
-			if isFallback {
-				failureEvent := events.NewFallbackAttemptEvent(
-					turn, modelIndex, len(llmConfig.Fallbacks),
-					model.ModelID, model.Provider, "fallback_chain",
-					false, time.Since(generationStartTime), err.Error(),
-				)
-				a.emitTypedEvent(ctx, failureEvent)
+			if shouldRetry {
+				continue // Retry same model
 			}
-
-			break // Break retry loop, proceed to next model
 		}
-	}
 
-	// If all models failed
-	return nil, usage, fmt.Errorf("all LLMs failed (primary + %d fallbacks): %w", len(llmConfig.Fallbacks), lastErr)
+		// If not a retryable error on same model, or max retries reached:
+		// Stop after the selected model exhausts its retries.
+		logger.Warn(fmt.Sprintf("❌ Model failed: %s/%s - %v", model.Provider, model.ModelID, err))
+
+		break // Retry budget exhausted.
+	}
+	// Preserve the selected provider error for callers.
+	return nil, usage, fmt.Errorf("selected LLM failed: %w", lastErr)
 }
 
 // handleContextCancellation emits cancellation event and returns the error

@@ -75,8 +75,7 @@ const (
 	EventTypeMCPServerSelection       = "mcp_server_selection"
 
 	// Error & Retry events
-	EventTypeFallbackModelUsed  = "fallback_model_used"
-	EventTypeFallbackAttempt    = "fallback_attempt"
+	EventTypeRetryAttempt       = "retry_attempt"
 	EventTypeThrottlingDetected = "throttling_detected"
 	EventTypeTokenLimitExceeded = "token_limit_exceeded" //nolint:gosec // G101: false positive
 	EventTypeMaxTurnsReached    = "max_turns_reached"
@@ -943,10 +942,8 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 		return l.handleLLMGenerationError(event)
 
 	// Error & Retry events
-	case EventTypeFallbackModelUsed:
-		return l.handleFallbackModelUsed(event)
-	case EventTypeFallbackAttempt:
-		return l.handleFallbackAttempt(event)
+	case EventTypeRetryAttempt:
+		return l.handleRetryAttempt(event)
 	case EventTypeThrottlingDetected:
 		return l.handleThrottlingDetected(event)
 	case EventTypeTokenLimitExceeded:
@@ -1905,44 +1902,15 @@ func (l *LangfuseTracer) handleLLMGenerationError(event AgentEvent) error {
 // Error & Retry Handlers
 // ============================================================================
 
-// handleFallbackModelUsed creates a span for fallback model usage
-func (l *LangfuseTracer) handleFallbackModelUsed(event AgentEvent) error {
+// handleRetryAttempt creates a span for each retry attempt
+func (l *LangfuseTracer) handleRetryAttempt(event AgentEvent) error {
 	traceID := event.GetTraceID()
 
-	spanName := "fallback_model_used"
-	var output map[string]interface{}
-	if fbEvent, ok := event.GetData().(*events.FallbackModelUsedEvent); ok {
-		spanName = fmt.Sprintf("fallback_%s_to_%s", fbEvent.OriginalModel, fbEvent.FallbackModel)
-		output = map[string]interface{}{
-			"turn":           fbEvent.Turn,
-			"original_model": fbEvent.OriginalModel,
-			"fallback_model": fbEvent.FallbackModel,
-			"provider":       fbEvent.Provider,
-			"reason":         fbEvent.Reason,
-			"duration":       fbEvent.Duration,
-		}
-	}
-
-	spanID := l.StartSpan(traceID, spanName, event.GetData())
-	l.EndSpan(spanID, output, nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Info("Langfuse: Created fallback model used span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleFallbackAttempt creates a span for each fallback attempt
-func (l *LangfuseTracer) handleFallbackAttempt(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	spanName := "fallback_attempt"
+	spanName := "retry_attempt"
 	var output map[string]interface{}
 	var err error
-	if fbEvent, ok := event.GetData().(*events.FallbackAttemptEvent); ok {
-		spanName = fmt.Sprintf("fallback_attempt_%d_%s", fbEvent.AttemptIndex, fbEvent.ModelID)
+	if fbEvent, ok := event.GetData().(*events.RetryAttemptEvent); ok {
+		spanName = fmt.Sprintf("retry_attempt_%d_%s", fbEvent.AttemptIndex, fbEvent.ModelID)
 		output = map[string]interface{}{
 			"turn":           fbEvent.Turn,
 			"attempt_index":  fbEvent.AttemptIndex,
@@ -1963,7 +1931,7 @@ func (l *LangfuseTracer) handleFallbackAttempt(event AgentEvent) error {
 	l.EndSpan(spanID, output, err)
 
 	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created fallback attempt span",
+	v2Logger.Debug("Langfuse: Created retry attempt span",
 		loggerv2.String("span_id", string(spanID)),
 		loggerv2.String("trace_id", traceID))
 

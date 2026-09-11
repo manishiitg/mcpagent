@@ -67,7 +67,7 @@ type GenericEventData struct {
 }
 
 func (e *GenericEventData) GetEventType() EventType {
-	return FallbackAttempt // Use fallback type for generic events
+	return EventType("generic")
 }
 
 const (
@@ -89,109 +89,6 @@ type BrokenPipeEvent struct {
 
 func (e *BrokenPipeEvent) GetEventType() EventType {
 	return BrokenPipe
-}
-
-// FallbackDetailEvent represents detailed fallback operation events
-// Use this for type-safe fallback tracking.
-type FallbackDetailEvent struct {
-	BaseEventData
-	Turn                  int      `json:"turn"`
-	Operation             string   `json:"operation"`       // "fallback_attempt", "fallback_success", "fallback_failure", "all_failed"
-	Stage                 string   `json:"stage,omitempty"` // "initialization", "generation"
-	FallbackIndex         int      `json:"fallback_index,omitempty"`
-	FallbackModel         string   `json:"fallback_model,omitempty"`
-	FallbackProvider      string   `json:"fallback_provider,omitempty"`
-	FallbackPhase         string   `json:"fallback_phase,omitempty"` // "same_provider", "cross_provider"
-	TotalFallbacks        int      `json:"total_fallbacks,omitempty"`
-	ErrorType             string   `json:"error_type,omitempty"` // "max_token", "throttling"
-	Success               bool     `json:"success"`
-	Error                 string   `json:"error,omitempty"`
-	Duration              string   `json:"duration,omitempty"`
-	Attempts              int      `json:"attempts,omitempty"`
-	SuccessfulLLM         string   `json:"successful_llm,omitempty"`
-	SuccessfulProvider    string   `json:"successful_provider,omitempty"`
-	SuccessfulPhase       string   `json:"successful_phase,omitempty"`
-	FailedModels          []string `json:"failed_models,omitempty"`
-	SameProviderAttempts  int      `json:"same_provider_attempts,omitempty"`
-	CrossProviderAttempts int      `json:"cross_provider_attempts,omitempty"`
-}
-
-func (e *FallbackDetailEvent) GetEventType() EventType {
-	return FallbackAttempt
-}
-
-// NewFallbackSuccessDetailEvent creates a fallback success detail event
-func NewFallbackSuccessDetailEvent(turn int, fallbackModel, provider, phase, errorType string, attempts int, duration time.Duration) *FallbackDetailEvent {
-	return &FallbackDetailEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:               turn,
-		Operation:          "fallback_success",
-		FallbackModel:      fallbackModel,
-		FallbackProvider:   provider,
-		FallbackPhase:      phase,
-		ErrorType:          errorType,
-		Success:            true,
-		Attempts:           attempts,
-		SuccessfulLLM:      fallbackModel,
-		SuccessfulProvider: provider,
-		SuccessfulPhase:    phase,
-		Duration:           duration.String(),
-	}
-}
-
-// NewFallbackAttemptDetailEvent creates a fallback attempt detail event
-func NewFallbackAttemptDetailEvent(turn, index, total int, model, provider, phase, errorType string) *FallbackDetailEvent {
-	return &FallbackDetailEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:             turn,
-		Operation:        "fallback_attempt",
-		FallbackIndex:    index,
-		FallbackModel:    model,
-		FallbackProvider: provider,
-		FallbackPhase:    phase,
-		TotalFallbacks:   total,
-		ErrorType:        errorType,
-	}
-}
-
-// NewFallbackFailureDetailEvent creates a fallback failure detail event
-func NewFallbackFailureDetailEvent(turn int, model, provider, phase, stage, errorType, errMsg string, duration time.Duration) *FallbackDetailEvent {
-	return &FallbackDetailEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:             turn,
-		Operation:        "fallback_failure",
-		Stage:            stage,
-		FallbackModel:    model,
-		FallbackProvider: provider,
-		FallbackPhase:    phase,
-		ErrorType:        errorType,
-		Success:          false,
-		Error:            errMsg,
-		Duration:         duration.String(),
-	}
-}
-
-// NewAllFallbacksFailedEvent creates an event when all fallbacks have failed
-func NewAllFallbacksFailedEvent(turn int, errorType string, sameProviderAttempts, crossProviderAttempts int, failedModels []string, finalError string) *FallbackDetailEvent {
-	return &FallbackDetailEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:                  turn,
-		Operation:             "all_failed",
-		ErrorType:             errorType,
-		Success:               false,
-		Error:                 finalError,
-		SameProviderAttempts:  sameProviderAttempts,
-		CrossProviderAttempts: crossProviderAttempts,
-		FailedModels:          failedModels,
-	}
 }
 
 // AgentStartEvent represents the start of an agent session
@@ -1476,21 +1373,6 @@ func (e *ModelChangeEvent) GetEventType() EventType {
 	return ModelChange
 }
 
-// FallbackModelUsedEvent represents when a fallback model is successfully used
-type FallbackModelUsedEvent struct {
-	BaseEventData
-	Turn          int    `json:"turn"`
-	OriginalModel string `json:"original_model"`
-	FallbackModel string `json:"fallback_model"`
-	Provider      string `json:"provider"`
-	Reason        string `json:"reason"`
-	Duration      string `json:"duration"`
-}
-
-func (e *FallbackModelUsedEvent) GetEventType() EventType {
-	return FallbackModelUsed
-}
-
 // ThrottlingDetectedEvent represents when throttling is detected
 type ThrottlingDetectedEvent struct {
 	BaseEventData
@@ -1539,21 +1421,6 @@ func NewModelChangeEvent(turn int, oldModelID, newModelID, reason, provider stri
 	}
 }
 
-// NewFallbackModelUsedEvent creates a new FallbackModelUsedEvent
-func NewFallbackModelUsedEvent(turn int, originalModel, fallbackModel, provider, reason string, duration time.Duration) *FallbackModelUsedEvent {
-	return &FallbackModelUsedEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:          turn,
-		OriginalModel: originalModel,
-		FallbackModel: fallbackModel,
-		Provider:      provider,
-		Reason:        reason,
-		Duration:      duration.String(),
-	}
-}
-
 // NewThrottlingDetectedEvent creates a new ThrottlingDetectedEvent
 // errorType can be "throttling", "empty_content", "connection_error", etc.
 // retryDelay is the wait time before retry (e.g., "22.5s"), optional
@@ -1594,25 +1461,25 @@ func NewTokenLimitExceededEvent(turn int, modelID, provider, tokenType string, c
 	}
 }
 
-type FallbackAttemptEvent struct {
+type RetryAttemptEvent struct {
 	BaseEventData
 	Turn          int    `json:"turn"`
 	AttemptIndex  int    `json:"attempt_index"`
 	TotalAttempts int    `json:"total_attempts"`
 	ModelID       string `json:"model_id"`
 	Provider      string `json:"provider"`
-	Phase         string `json:"phase"` // "same_provider" or "cross_provider"
+	Phase         string `json:"phase"` // "retry" for a scheduled attempt on the selected model
 	Error         string `json:"error,omitempty"`
 	Success       bool   `json:"success"`
 	Duration      string `json:"duration"`
 }
 
-func (e *FallbackAttemptEvent) GetEventType() EventType {
-	return FallbackAttempt
+func (e *RetryAttemptEvent) GetEventType() EventType {
+	return RetryAttempt
 }
 
-func NewFallbackAttemptEvent(turn, attemptIndex, totalAttempts int, modelID, provider, phase string, success bool, duration time.Duration, error string) *FallbackAttemptEvent {
-	return &FallbackAttemptEvent{
+func NewRetryAttemptEvent(turn, attemptIndex, totalAttempts int, modelID, provider, phase string, success bool, duration time.Duration, error string) *RetryAttemptEvent {
+	return &RetryAttemptEvent{
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
 		},
@@ -1826,18 +1693,16 @@ func (e *ToolExecutionEvent) GetEventType() EventType {
 // LLMGenerationWithRetryEvent represents LLM generation with retry logic
 type LLMGenerationWithRetryEvent struct {
 	BaseEventData
-	Turn                   int                    `json:"turn"`
-	MaxRetries             int                    `json:"max_retries"`
-	PrimaryModel           string                 `json:"primary_model"`
-	CurrentLLM             string                 `json:"current_llm"`
-	SameProviderFallbacks  []string               `json:"same_provider_fallbacks"`
-	CrossProviderFallbacks []string               `json:"cross_provider_fallbacks"`
-	Provider               string                 `json:"provider"`
-	Operation              string                 `json:"operation"`
-	FinalError             string                 `json:"final_error,omitempty"`
-	Usage                  map[string]interface{} `json:"usage,omitempty"`
-	Status                 string                 `json:"status,omitempty"`
-	Metadata               map[string]interface{} `json:"metadata,omitempty"`
+	Turn         int                    `json:"turn"`
+	MaxRetries   int                    `json:"max_retries"`
+	PrimaryModel string                 `json:"primary_model"`
+	CurrentLLM   string                 `json:"current_llm"`
+	Provider     string                 `json:"provider"`
+	Operation    string                 `json:"operation"`
+	FinalError   string                 `json:"final_error,omitempty"`
+	Usage        map[string]interface{} `json:"usage,omitempty"`
+	Status       string                 `json:"status,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (e *LLMGenerationWithRetryEvent) GetEventType() EventType {

@@ -417,9 +417,8 @@ type Config struct {
 	Temperature float64
 	Tracers     []observability.Tracer
 	TraceID     observability.TraceID
-	// Fallback configuration for rate limiting
-	FallbackModels []string
-	MaxRetries     int
+
+	MaxRetries int
 	// Logger for structured logging
 	Logger loggerv2.Logger
 	// Context for LLM initialization (optional, uses background with timeout if not provided)
@@ -511,7 +510,6 @@ func convertConfig(config Config) llmproviders.Config {
 		Temperature:         config.Temperature,
 		EventEmitter:        eventEmitter,
 		TraceID:             interfaces.TraceID(config.TraceID),
-		FallbackModels:      config.FallbackModels,
 		MaxRetries:          config.MaxRetries,
 		Logger:              logger,
 		Context:             config.Context,
@@ -824,22 +822,6 @@ func WithCodexEnableFeatures(features string) CallOption {
 // GetDefaultModel returns the default model for each provider from environment variables
 func GetDefaultModel(provider Provider) string {
 	return llmproviders.GetDefaultModel(llmproviders.Provider(provider))
-}
-
-// GetDefaultFallbackModels returns fallback models for each provider from environment variables
-func GetDefaultFallbackModels(provider Provider) []string {
-	return llmproviders.GetDefaultFallbackModels(llmproviders.Provider(provider))
-}
-
-// GetDefaultFallbackModelsForModel returns fallback models for a provider while
-// considering the current primary model when provider-specific defaults need it.
-func GetDefaultFallbackModelsForModel(provider Provider, modelID string) []string {
-	return llmproviders.GetDefaultFallbackModelsForModel(llmproviders.Provider(provider), modelID)
-}
-
-// GetCrossProviderFallbackModels returns cross-provider fallback models (e.g., OpenAI for Bedrock)
-func GetCrossProviderFallbackModels(provider Provider) []string {
-	return llmproviders.GetCrossProviderFallbackModels(llmproviders.Provider(provider))
 }
 
 // ValidateProvider checks if the provider is supported

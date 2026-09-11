@@ -1,82 +1,11 @@
-# LLM Resilience: Fallbacks & Retries
+# LLM resilience: retries on the selected model
 
-The MCP Agent includes a comprehensive resilience layer designed to handle the inherent instability of LLM APIs. This system ensures high availability and reliability even when primary models fail due to rate limits, context window exhaustion, or service outages.
+MCP Agent executes one configured model. It never switches models, coding agents, or providers after a failure, including during initialization.
 
-## 🛡️ Core Features
+Transient throttling, connection, stream, and internal errors use bounded exponential backoff on that same model. Empty-content and zero-candidate failures have shorter retry budgets. Authentication errors and unavailable models return errors. Exhausted quota retains the provider's reset time and avoids further calls until the known window reopens. Cancellation and user-input-required responses stop retries immediately.
 
-### 1. Robust Retry Logic
-The agent automatically retries failed requests with exponential backoff.
-- **Throttling Errors**: Automatically detects `429 Too Many Requests` or `ThrottlingException`.
-- **Connection Errors**: Handles network timeouts, connection resets, and broken pipes.
-- **Internal Errors**: Retries on `500`, `502`, `503`, `504` errors.
+Configure `GenerationRuntimeConfig.LLM.Primary` with the selected provider, model, credentials, and options. `AgentLLMConfiguration.Fallbacks`, `llm.Config.FallbackModels`, and provider fallback lookup helpers have been removed. Legacy JSON fallback fields are ignored and are not serialized again. Provider fallback environment variables do not affect execution.
 
-### 2. Multi-Phase Fallback System
-When a request fails permanently (e.g., context window exceeded) or after retries are exhausted, the agent triggers a multi-phase fallback system.
+`LLM_MAX_RETRIES` controls the attempt budget (default 5). `LLM_RETRY_BASE_DELAY_SECONDS` defaults to 10 and `LLM_RETRY_MAX_DELAY_SECONDS` defaults to 300. Zero-candidate failures allow at most 3 attempts and empty-content failures at most 2, bounded by the overall budget.
 
-#### Phase 1: Same-Provider Fallback
-First, the agent tries other models within the same provider. This is often faster and maintains better prompt compatibility.
-*   **Example (Bedrock)**: `anthropic.claude-3-5-sonnet-20240620-v1:0` -> `anthropic.claude-3-haiku-20240307-v1:0`
-*   **Example (OpenAI)**: `gpt-4o` -> `gpt-4o-mini`
-
-#### Phase 2: Cross-Provider Fallback
-If same-provider models fail (or if the entire provider is down), the agent switches to a completely different provider.
-*   **Example**: `Bedrock (Claude)` -> `OpenAI (GPT-4o)`
-
-### 3. Error Classification
-The system intelligently classifies errors to determine the best recovery strategy:
-- **Max Token/Context Errors**: Triggers fallback immediately (retrying won't help).
-- **Throttling**: Triggers retry with backoff, then fallback if persistent.
-- **Empty Content**: Specific handling for zero-length responses.
-
-## ⚙️ Configuration
-
-### Default Behavior
-By default, the agent uses hardcoded fallback chains based on the primary provider.
-- **Bedrock**: Sonnet -> Haiku -> Opus
-- **OpenAI**: GPT-4o -> GPT-4o-mini -> GPT-4
-
-### Custom Configuration
-Configure custom fallback chains through the unified `WithLLMConfig` option.
-
-```go
-agent, err := mcpagent.NewAgent(...,
-    mcpagent.WithLLMConfig(mcpagent.AgentLLMConfiguration{
-        Primary: mcpagent.LLMModel{
-            Provider: string(llm.ProviderAnthropic),
-            ModelID:  anthropic.ModelClaudeSonnet,
-        },
-        Fallbacks: []mcpagent.LLMModel{
-            {Provider: string(llm.ProviderOpenAI), ModelID: openai.ModelGPT4O},
-            {Provider: string(llm.ProviderOpenAI), ModelID: openai.ModelGPT4Turbo},
-        },
-    }),
-)
-```
-
-## 🧩 Implementation Details
-
-The core logic resides in `pkg/mcpagent/llm_generation.go`.
-
-### `GenerateContentWithRetry`
-This is the main entry point for all LLM calls. It wraps the standard `LLM.GenerateContent` call with the retry and fallback loop.
-
-### `isMaxTokenError` & `isThrottlingError`
-Helper functions that analyze error messages strings to classify the failure type. This is necessary because different providers return different error formats.
-
-### `createFallbackLLM`
-Dynamically instantiates a new LLM client for the fallback model. This ensures that the fallback attempt uses a fresh, clean client configuration.
-
-## 📊 Observability
-
-The resilience layer emits detailed events to track system health:
-
-- `llm_generation_with_retry`: Tracks the overall operation.
-- `fallback_attempt`: Emitted for each fallback attempt (Phase 1 & 2).
-- `model_change`: Emitted when the agent permanently switches to a fallback model for the remainder of the turn.
-- `throttling_detected`: Tracks rate limit occurrences.
-
-## 💡 Best Practices
-
-1.  **Context Management**: While fallbacks help, prevent context errors with context offloading and summarization.
-2.  **Provider Diversity**: Configure at least two different providers (e.g., AWS and OpenAI) to ensure true high availability.
-3.  **Monitoring**: Watch for `fallback_attempt` events. Frequent fallbacks indicate your primary model is undersized for the workload.
+The implementation is in `agent/llm_generation.go`. Events are `llm_generation_with_retry`, `retry_attempt`, and the existing error/cancellation events. Retry attempts do not mutate the agent's provider or model identity.

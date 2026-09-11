@@ -608,8 +608,8 @@ func withDiscoverPrompt(enabled bool) agentOption {
 	}
 }
 
-// withLLMConfig sets the full LLM configuration (primary + fallbacks).
-// This is the canonical configuration for provider and model fallback routing.
+// withLLMConfig sets the full LLM configuration (selected model).
+// This is the canonical configuration for provider and model selection.
 func withLLMConfig(config AgentLLMConfiguration) agentOption {
 	return func(a *Agent) {
 		a.llmConfig = config
@@ -753,7 +753,7 @@ func withPromptLogLabel(label string) agentOption {
 	}
 }
 
-// withAPIKeys supplies provider credentials used when constructing fallback
+// withAPIKeys supplies provider credentials used when constructing provider
 // models. The value is cloned so callers cannot mutate agent runtime state
 // after construction.
 func withAPIKeys(keys *AgentAPIKeys) agentOption {
@@ -1316,7 +1316,7 @@ type Agent struct {
 	folderGuardReadPaths  []string // Paths allowed for read operations
 	folderGuardWritePaths []string // Paths allowed for write operations
 
-	// API keys for providers (used for fallback LLM creation)
+	// API keys for providers (used for LLM creation)
 	apiKeys *AgentAPIKeys
 
 	// Cumulative token tracking for entire conversation
@@ -1391,10 +1391,9 @@ type LLMModel struct {
 	Options     map[string]interface{} `json:"options,omitempty"`     // Provider-specific options (reasoning_effort, thinking_level, etc.)
 }
 
-// AgentLLMConfiguration holds the primary and fallback LLM configurations
+// AgentLLMConfiguration holds the selected LLM configuration
 type AgentLLMConfiguration struct {
-	Primary   LLMModel   `json:"primary"`
-	Fallbacks []LLMModel `json:"fallbacks"`
+	Primary LLMModel `json:"primary"`
 }
 
 // AgentAPIKeys is an alias for llm.ProviderAPIKeys (canonical type).

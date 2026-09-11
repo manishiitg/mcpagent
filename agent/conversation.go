@@ -862,7 +862,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		// NEW: Start LLM generation for hierarchy tracking
 		a.startLLMGeneration(ctx)
 
-		// Use GenerateContentWithRetry for robust fallback handling
+		// Use GenerateContentWithRetry for bounded same-model retry handling
 		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Sending to LLM API | provider=%s model=%s",
 			turn+1, time.Since(conversationStartTime).Milliseconds(), a.provider, a.modelID)
 		resp, usage, genErr := generateContentWithRetry(a, ctx, llmMessages, opts, turn)
@@ -936,36 +936,6 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		}
 
 		if genErr != nil {
-			// Check if this is an empty content error that should trigger fallback
-			if strings.Contains(genErr.Error(), "Choice.Content is empty string") ||
-				strings.Contains(genErr.Error(), "empty content error") ||
-				strings.Contains(genErr.Error(), "choice.Content is empty") {
-
-				v2Logger.Debug("Empty content error detected, triggering fallback",
-					loggerv2.Int("turn", turn+1))
-
-				// Try fallback models by calling GenerateContentWithRetry again with fallback
-				fallbackResp, fallbackUsage, fallbackErr := generateContentWithRetry(a, ctx, llmMessages, opts, turn)
-
-				if fallbackErr == nil && fallbackResp != nil && len(fallbackResp.Choices) > 0 &&
-					fallbackResp.Choices[0].Content != "" {
-					v2Logger.Debug("Fallback succeeded", loggerv2.Int("turn", turn+1))
-					// Use the fallback response instead
-					resp = fallbackResp
-					usage = fallbackUsage
-					genErr = nil
-				} else {
-					if fallbackErr != nil {
-						v2Logger.Error("Fallback failed with error", fallbackErr, loggerv2.Int("turn", turn+1))
-					} else if fallbackResp == nil || len(fallbackResp.Choices) == 0 {
-						v2Logger.Error("Fallback failed - no response or choices", nil, loggerv2.Int("turn", turn+1))
-					} else {
-						v2Logger.Error("Fallback failed - empty content in response", nil, loggerv2.Int("turn", turn+1))
-					}
-				}
-			}
-
-			// If still have an error after fallback attempt, emit error event and return
 			if genErr != nil {
 				// Check for context cancellation FIRST - distinguish cancellations from errors
 				if isContextCanceledError(genErr) || ctx.Err() != nil {

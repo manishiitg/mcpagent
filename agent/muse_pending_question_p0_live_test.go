@@ -21,7 +21,7 @@ type museP0RetryListener struct {
 
 func (l *museP0RetryListener) Name() string { return "muse-p0-retries" }
 func (l *museP0RetryListener) HandleEvent(_ context.Context, e *events.AgentEvent) error {
-	if _, ok := e.Data.(*events.FallbackAttemptEvent); ok {
+	if _, ok := e.Data.(*events.RetryAttemptEvent); ok {
 		l.mu.Lock()
 		l.attempts++
 		l.mu.Unlock()

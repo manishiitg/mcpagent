@@ -262,7 +262,7 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	if generation.Provider != "" {
 		options = append(options, withProvider(generation.Provider))
 	}
-	if generation.LLM.Primary.Provider != "" || generation.LLM.Primary.ModelID != "" || len(generation.LLM.Fallbacks) > 0 {
+	if generation.LLM.Primary.Provider != "" || generation.LLM.Primary.ModelID != "" {
 		options = append(options, withLLMConfig(generation.LLM))
 	}
 	if generation.Temperature != 0 {

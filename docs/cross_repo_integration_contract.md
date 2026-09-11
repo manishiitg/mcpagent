@@ -27,7 +27,7 @@ mcpagent sits between the HTTP API and the LLM adapters. It owns:
 - **Provider-specific option fan-out**: per-provider option builders
   in `executeLLM()` (claude-code, codex-cli, cursor-cli,
   agy-cli, pi-cli).
-- **Fallback chain**: cross-provider fallback parsing and adapter
+- **Selected-model retries**: provider identity remains fixed during execution and adapter
   re-initialisation.
 - **Error classification**: `classifyLLMError()` → typed error events.
 
@@ -49,7 +49,7 @@ update this file when the change is purely orchestrator-internal.
 | IC-2 Streaming chunk flow | `agent/llm_generation_streaming_test.go` | 13 tests |
 | IC-4 Session ID & resume | `agent/session_resume_integration_test.go` | 18 subtests |
 | IC-5 Model metadata | `agent/llm_generation_streaming_test.go` | 2 tests |
-| IC-6 Fallback chain | `agent/fallback_parsing_test.go` | 17 subtests |
+| Selected-model execution | `agent/selected_model_test.go` | Legacy-config and quota regression tests |
 | IC-7 Error classification | `agent/error_classification_test.go` | 44 subtests |
 | IC-9 Multi-turn tool context | `agent/cli_tool_history_test.go` | 3 tests |
 | IC-10 MCP bridge config | `agent/coding_agents_bridge_test.go` | 7 tests |
@@ -61,7 +61,6 @@ update this file when the change is purely orchestrator-internal.
 - `streamingManager.processChunks()` — IC-2 chunk routing
 - `finishStreaming()` — IC-2 safe close + StreamingEndEvent with metadata
 - `classifyLLMError()` — IC-7 error type classification chain
-- `parseFallbackModelRef()` — IC-6 cross-provider fallback parsing
-- `getEffectiveLLMConfig()` — IC-1/IC-6 config promotion + fallback merge
+- `getEffectiveLLMConfig()` — selected provider/model configuration
 - `BuildBridgeMCPConfig()` — IC-10 MCP bridge config generation
 - CLI tool call ↔ JSON ↔ message reconstruction — IC-9 round-trip

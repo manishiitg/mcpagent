@@ -23,10 +23,10 @@ const (
 	LLMMessages        EventType = "llm_messages"
 
 	// Tool events
-	ToolCallStart          EventType = "tool_call_start"
-	ToolCallEnd            EventType = "tool_call_end"
-	ToolCallError          EventType = "tool_call_error"
-	ToolCallProgress       EventType = "tool_call_progress"
+	ToolCallStart    EventType = "tool_call_start"
+	ToolCallEnd      EventType = "tool_call_end"
+	ToolCallError    EventType = "tool_call_error"
+	ToolCallProgress EventType = "tool_call_progress"
 
 	// Agent events
 	AgentStart EventType = "agent_start"
@@ -70,8 +70,7 @@ const (
 	ContextEditingCompleted EventType = "context_editing_completed"
 	ContextEditingError     EventType = "context_editing_error"
 
-	// Fallback events
-	FallbackModelUsed  EventType = "fallback_model_used"
+	// Error and model events
 	ThrottlingDetected EventType = "throttling_detected"
 	//nolint:gosec // G101: This is an event type constant, not a credential
 	TokenLimitExceeded EventType = "token_limit_exceeded"
@@ -111,7 +110,7 @@ const (
 	// Additional event types from mcpagent
 	AgentProcessing                  EventType = "agent_processing"
 	ModelChange                      EventType = "model_change"
-	FallbackAttempt                  EventType = "fallback_attempt"
+	RetryAttempt                     EventType = "retry_attempt"
 	BrokenPipe                       EventType = "broken_pipe"
 	LargeToolOutputFileWriteError    EventType = "large_tool_output_file_write_error"
 	LargeToolOutputServerUnavailable EventType = "large_tool_output_server_unavailable"
