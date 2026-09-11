@@ -5,7 +5,7 @@
     "no duplicated lines or chunks",
     "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
     "human-readable — reads like an assistant working, coherent and natural",
-    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "correct text <-> tool interleaving order (narration then the tool it describes)",
     "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
     "the final answer is coherent and matches the work performed",
     "real work actually happened (e.g. the file was written to disk)",
@@ -49,7 +49,7 @@
     "tool_call_events": 4,
     "tool_calls": [
       {
-        "body": "const matches = ALL_TOOLS.filter(x =\u003e /execute_shell_command|api.bridge/i.test(x.name+\" \"+x.description));\ntext(matches);\n",
+        "body": "const matches = ALL_TOOLS.filter(x => /execute_shell_command|api.bridge/i.test(x.name+\" \"+x.description));\ntext(matches);\n",
         "body_truncated": false,
         "bridge_routed": false,
         "bridge_via": "none",
@@ -65,7 +65,7 @@
         "name": "exec"
       },
       {
-        "body": "const r = await tools.mcp__api_bridge__execute_shell_command({command:\"printf '%s\\\\n' '| Field | Value |' '|-------|-------|' '| build_id | BUILD_ID_4f419d182fb7 |' '| status | ok |' \u003e /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Ecodextmux3246506436/002/report.md\"});\ntext(r);\n",
+        "body": "const r = await tools.mcp__api_bridge__execute_shell_command({command:\"printf '%s\\\\n' '| Field | Value |' '|-------|-------|' '| build_id | BUILD_ID_4f419d182fb7 |' '| status | ok |' > /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Ecodextmux3246506436/002/report.md\"});\ntext(r);\n",
         "body_truncated": false,
         "bridge_routed": true,
         "bridge_via": "body",
@@ -99,10 +99,10 @@
   },
   "fingerprint": "a20e26ded38c0166",
   "agent_review": {
-    "verdict": "",
-    "reviewed_fingerprint": "",
-    "reviewer": "",
+    "verdict": "good",
+    "reviewed_fingerprint": "a20e26ded38c0166",
+    "reviewer": "claude-sonnet-5 (agentic P0 review)",
     "issues": null,
-    "notes": ""
+    "notes": "Codex over tmux via the real mcpbridge: same read/write/read build-id flow. 4 tool calls started and ended (4/4), narration precedes each call, report_md_on_disk matches build_id_only_via_tool exactly (BUILD_ID_4f419d182fb7). Genuinely streamed (14995ms spread across chunks, not delivered_in_one_block), thinking_event_count=0 with no thinking claimed. Usage renderable (1294 prompt / 34 completion, cache_tokens populated). Clean, coherent, no duplication."
   }
 }

@@ -5,7 +5,7 @@
     "no duplicated lines or chunks",
     "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
     "human-readable — reads like an assistant working, coherent and natural",
-    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "correct text <-> tool interleaving order (narration then the tool it describes)",
     "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
     "the final answer is coherent and matches the work performed",
     "real work actually happened (e.g. the file was written to disk)",
@@ -112,10 +112,10 @@
   },
   "fingerprint": "a20e26ded38c0166",
   "agent_review": {
-    "verdict": "",
-    "reviewed_fingerprint": "",
-    "reviewer": "",
+    "verdict": "good",
+    "reviewed_fingerprint": "a20e26ded38c0166",
+    "reviewer": "claude-sonnet-5 (agentic P0 review)",
     "issues": null,
-    "notes": ""
+    "notes": "Pi CLI over tmux: same build-id read/write/read flow. 5/5 tool calls completed, report_md_on_disk matches build_id_only_via_tool exactly (BUILD_ID_e76f94e816be). Genuinely streamed (7103ms spread across chunks). thinking_event_count=0 with no thinking claimed -- consistent. Usage renderable (26558 prompt / 1172 completion tokens); cache_tokens=0 is expected since Pi's provider path here does not report prompt caching. Clean, coherent, no duplication."
   }
 }

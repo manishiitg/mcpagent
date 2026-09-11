@@ -5,7 +5,7 @@
     "no duplicated lines or chunks",
     "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
     "human-readable — reads like an assistant working, coherent and natural",
-    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "correct text <-> tool interleaving order (narration then the tool it describes)",
     "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
     "the final answer is coherent and matches the work performed",
     "real work actually happened (e.g. the file was written to disk)",
@@ -184,7 +184,7 @@
         "name": "mcp__api-bridge__execute_shell_command"
       },
       {
-        "body": "{\"command\":\"cat \u003e /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Ecursorstructured237024543/002/report.md \u003c\u003c 'EOF'\\n| Field | Value |\\n|-------|-------|\\n| build_id | BUILD_ID_10fd10cf84c7 |\\n| status | ok |\\nEOF\"}",
+        "body": "{\"command\":\"cat > /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Ecursorstructured237024543/002/report.md << 'EOF'\\n| Field | Value |\\n|-------|-------|\\n| build_id | BUILD_ID_10fd10cf84c7 |\\n| status | ok |\\nEOF\"}",
         "body_truncated": false,
         "bridge_routed": true,
         "bridge_via": "name",
@@ -215,10 +215,10 @@
   },
   "fingerprint": "64b7dc71a392ea23",
   "agent_review": {
-    "verdict": "",
-    "reviewed_fingerprint": "",
-    "reviewer": "",
+    "verdict": "good",
+    "reviewed_fingerprint": "64b7dc71a392ea23",
+    "reviewer": "claude-sonnet-5 (agentic P0 review)",
     "issues": null,
-    "notes": ""
+    "notes": "Cursor structured transport: token-level delta streaming (clean_transcript_content shows word-by-word fragments building up to full sentences -- this is granular delta streaming, not duplication). 4/4 tool calls completed, report_md_on_disk matches build_id_only_via_tool exactly (BUILD_ID_10fd10cf84c7). thinking_event_count=29 is real reasoning content (not a false claim over a zero count) and is separate from the clean narration text. Genuinely streamed (8941ms spread, not delivered_in_one_block). Usage renderable (13736 prompt / 646 completion, cache_tokens populated). Coherent and correctly ordered."
   }
 }

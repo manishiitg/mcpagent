@@ -5,7 +5,7 @@
     "no duplicated lines or chunks",
     "proper formatting — clean segmentation, no run-on/garbled/merged text, no stray control chars or terminal escape codes",
     "human-readable — reads like an assistant working, coherent and natural",
-    "correct text \u003c-\u003e tool interleaving order (narration then the tool it describes)",
+    "correct text <-> tool interleaving order (narration then the tool it describes)",
     "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
     "the final answer is coherent and matches the work performed",
     "real work actually happened (e.g. the file was written to disk)",
@@ -57,7 +57,7 @@
         "name": "mcp__api-bridge__execute_shell_command"
       },
       {
-        "body": "{\"command\":\"cat \u003e /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Eclaudetmux2671049609/002/report.md \u003c\u003c 'EOF'\\n| Field | Value |\\n|-------|-------|\\n| build_id | BUILD_ID_ca4a2dd19377 |\\n| status | ok |\\nEOF\"}",
+        "body": "{\"command\":\"cat > /var/folders/wb/mvntwx9x2pv_5mmyg211zhk00000gn/T/TestRealBridgeStreamingE2Eclaudetmux2671049609/002/report.md << 'EOF'\\n| Field | Value |\\n|-------|-------|\\n| build_id | BUILD_ID_ca4a2dd19377 |\\n| status | ok |\\nEOF\"}",
         "body_truncated": false,
         "bridge_routed": true,
         "bridge_via": "name",
@@ -90,10 +90,10 @@
   },
   "fingerprint": "a20e26ded38c0166",
   "agent_review": {
-    "verdict": "",
-    "reviewed_fingerprint": "",
-    "reviewer": "",
+    "verdict": "good",
+    "reviewed_fingerprint": "a20e26ded38c0166",
+    "reviewer": "claude-sonnet-5 (agentic P0 review)",
     "issues": null,
-    "notes": ""
+    "notes": "Claude over tmux via the real mcpbridge: read build_id.txt, write report.md, read it back. Narration correctly precedes each of the 3 execute_shell_command calls (read → write → read), all 3 started and ended cleanly. report_md_on_disk matches build_id_only_via_tool exactly (BUILD_ID_ca4a2dd19377) -- real work confirmed, not fabricated. Genuinely streamed (delivered_in_one_block=false, 4 chunks spread over 6.5s), no false thinking claims (thinking_event_count=0, no thinking_texts), usage renderable (47503 prompt / 709 completion tokens, cache_tokens populated as expected for Claude). No duplication or garbled text."
   }
 }
