@@ -103,6 +103,10 @@ github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260906123128-62c1b6ec758a h1:YfeO+I8IfjvVXyeljeKpqvtQL8nZAIzirmZ2ZS+Sjqo=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260906123128-62c1b6ec758a/go.mod h1:KV9vGTcgA1oCkuPlFhIsmh6P+AJ3kuuotDZXheGdA8Y=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260910070301-60e7a0823795 h1:hw6wpP+MLwvGBeXf7lvVf9HYWf2VfA4MZeMCzqWO2fQ=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260910070301-60e7a0823795/go.mod h1:KV9vGTcgA1oCkuPlFhIsmh6P+AJ3kuuotDZXheGdA8Y=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260910074116-549ec1051a76 h1:EaG57zTi/eoCSEv3Ln3PEfsXXhKOfJu2qscRC0pSz/Q=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260910074116-549ec1051a76/go.mod h1:KV9vGTcgA1oCkuPlFhIsmh6P+AJ3kuuotDZXheGdA8Y=
 github.com/mark3labs/mcp-go v1.0.0 h1:CZqCzXwUiTOstkIdW1MyOZGuM+LaKMEJSu+ZYluN4DU=
 github.com/mark3labs/mcp-go v1.0.0/go.mod h1:r2fW4o3wsoJ7IMsx1Wuq5xeP8PRGXPDfNveoGAYbb/s=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=

@@ -45,6 +45,9 @@ func FinalResponse(provider llmproviders.Provider, ownerSessionID string, turnSt
 // once here instead of duplicated per provider.
 func finalResponse(messages []llmtypes.MessageContent) string {
 	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == llmtypes.ChatMessageTypeHuman {
+			return "" // A newer user query has not received an assistant reply yet.
+		}
 		if messages[i].Role != llmtypes.ChatMessageTypeAI {
 			continue
 		}
