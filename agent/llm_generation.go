@@ -421,6 +421,30 @@ func isModelNotFoundError(err error) bool {
 
 // classifyLLMError categorizes the given error into a known LLM error type
 func classifyLLMError(err error) string {
+	// Typed provider causes take precedence over diagnostic text and terminal history.
+	switch llmerrors.KindOf(err) {
+	case llmerrors.KindUserInputRequired:
+		return "user_input_required"
+	case llmerrors.KindCanceled:
+		return ""
+	case llmerrors.KindContextTooLong:
+		return "max_token_error"
+	case llmerrors.KindAuth:
+		return "auth_error"
+	case llmerrors.KindModelNotFound:
+		return "model_not_found_error"
+	case llmerrors.KindQuotaExhausted:
+		return "quota_exhausted_error"
+	case llmerrors.KindRateLimit:
+		return "throttling_error"
+	case llmerrors.KindNetwork, llmerrors.KindTimeout:
+		return "connection_error"
+	case llmerrors.KindServerError:
+		return "internal_error"
+	case llmerrors.KindInvalidRequest:
+		return ""
+	}
+
 	if isMaxTokenError(err) {
 		return "max_token_error"
 	} else if isAuthError(err) {
@@ -604,8 +628,14 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			if chunk.Content != "" {
 				sm.totalChunks++
 				if !sm.suppressEvents {
+					// Preserve presentation independently of reasoning semantics: a
+					// visible progress summary is not a final answer or completion.
+					var metadata map[string]interface{}
+					if chunk.Metadata["presentation"] == "assistant_update" {
+						metadata = map[string]interface{}{"presentation": "assistant_update"}
+					}
 					a.emitTypedEvent(ctx, &events.ConversationThinkingEvent{
-						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+						BaseEventData: events.BaseEventData{Timestamp: time.Now(), Metadata: metadata},
 						Thinking:      chunk.Content,
 						Turn:          sm.turn,
 						IsDelta:       contentChunkIsDelta(chunk),
@@ -1593,6 +1623,10 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// Handle context cancellation specifically
 			if isContextCanceledError(err) || ctx.Err() != nil {
 				return nil, usage, a.handleContextCancellation(ctx, turn, generationStartTime)
+			}
+
+			if llmerrors.KindOf(err) == llmerrors.KindUserInputRequired {
+				return nil, usage, err
 			}
 
 			errorType := classifyLLMError(err)
