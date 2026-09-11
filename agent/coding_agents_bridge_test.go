@@ -178,6 +178,57 @@ func TestBuildBridgeMCPConfigOmitsCoreToolsTheProfileExcluded(t *testing.T) {
 	}
 }
 
+func TestMuseIntegrationConfiguresBestEffortNativePolicy(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token-123")
+
+	agent := bridgeTestAgent()
+	agent.additionalBridgeTools = []string{"product_extra_tool", "read_image"}
+	if err := agent.registerDirectTool("product_extra_tool", "extra", map[string]interface{}{"type": "object"},
+		func(context.Context, map[string]interface{}) (string, error) { return "", nil }, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.registerDirectTool("read_image", "platform image analysis", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"filepath": map[string]interface{}{"type": "string"},
+			"query":    map[string]interface{}{"type": "string"},
+		},
+	}, func(context.Context, map[string]interface{}) (string, error) { return "", nil }, 0, "workspace_advanced"); err != nil {
+		t.Fatal(err)
+	}
+	opts, err := agent.appendMuseCLIIntegrationOptions(nil)
+	if err != nil {
+		t.Fatalf("append Muse options: %v", err)
+	}
+	raw, ok := metadataFromCallOptions(opts)[musecli.MetadataKeyMuseToolAllowlist]
+	if !ok {
+		t.Fatal("Muse tool allowlist option missing")
+	}
+	got, ok := raw.([]string)
+	if !ok {
+		t.Fatalf("Muse tool allowlist has type %T", raw)
+	}
+	for _, want := range []string{"web_search"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("Muse allowlist missing %q: %v", want, got)
+		}
+	}
+	for _, forbidden := range []string{"bash", "write_file", "read_image", "request_user_input", "subagent_spawn", "cron_create", "mcp__api_bridge__execute_shell_command"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("Muse native tool %q must not be allowed: %v", forbidden, got)
+		}
+	}
+	mcpConfig, ok := metadataFromCallOptions(opts)[musecli.MetadataKeyMuseMCPConfig].(string)
+	if !ok {
+		t.Fatal("Muse MCP config option missing")
+	}
+	if _, ok := bridgeToolsFromConfig(t, mcpConfig)["read_image"]; !ok {
+		t.Fatalf("Muse MCP bridge did not expose platform read_image: %s", mcpConfig)
+	}
+}
+
 func TestBuildBridgeMCPConfigStaticURLWithSessionHeader(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")

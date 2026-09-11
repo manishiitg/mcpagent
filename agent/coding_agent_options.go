@@ -288,10 +288,17 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 		return nil, fmt.Errorf("Muse CLI requires the MCP bridge: %w", bridgeErr)
 	}
 
-	// Mounts api-bridge by merging mcpServers into the user-level muse
-	// settings.json for one run (restored afterwards). Muse has no
-	// --mcp-config flag; this is the only mount mechanism.
+	// Mount the bridge in a private config root; concurrent sessions must not
+	// overwrite one another's settings or retain a stale bridge endpoint.
 	opts = append(opts, llm.WithMuseMCPConfig(bridgeConfig))
+	// Muse's PreToolUse policy denies unlisted tools that reach the hook.
+	// Keep web search only. MCP discovery and concrete MCP server tools mount
+	// separately and remain available; concrete MCP identifiers must not be
+	// added to this native allowlist. Native tools can remain visible, and
+	// internal session controls such as write_todos can bypass the hook.
+	// This is best-effort restriction, not strict bridge-only containment.
+	toolAllowlist := []string{"web_search"}
+	opts = append(opts, llm.WithMuseToolAllowlist(toolAllowlist))
 	if a.bridgeReadyFile != "" {
 		// Hold a cold session's first prompt until the bridge reports the
 		// tools connected — same cold-turn race as cursor (an unreachable
@@ -303,16 +310,8 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 			opts = append(opts, option)
 		}
 	}
-	if !a.nativeCodingToolsEnabled() && a.logger != nil {
-		// Bridge-only containment is TBD for muse: no --disallowedTools
-		// equivalent exists (--disable-shell/--disable-write/--disable-web-tools
-		// are partial, --permission-profile is unmapped). The bridge is
-		// mounted but native tools are NOT denied — do not mistake this mode
-		// for containment. Release-blocking for bridge_only_tools.
-		a.logger.Warn("🌉 [MUSE_CLI] mcp_only requested but native-tool denial is unmapped for muse; running uncontained")
-	}
 	if a.logger != nil {
-		a.logger.Info("🌉 [MUSE_CLI] Configured MCP bridge through user settings.json merge")
+		a.logger.Info("🌉 [MUSE_CLI] Configured best-effort native-tool restrictions with web search and MCP; internal session-control gaps remain")
 	}
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithMuseStructuredTransport(true))

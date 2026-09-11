@@ -35,14 +35,9 @@ type multiTurnProviderCase struct {
 	provider      llm.Provider
 	modelID       string
 	persistentOpt func(bool) agentOption
-	// strictBridgeOnly mirrors realBridgeProviderCase's field of the same name
-	// (real_bridge_streaming_e2e_test.go): false ONLY for Codex, whose native
-	// functions.exec tool cannot be disabled by any flag — a documented,
-	// pre-existing limitation, not something a test failure here should be
-	// read as a new regression in. Found live extending
-	// TestRealBridgeStreamingToolFailureRecovery/GiveUp to all 4 providers:
-	// without this, assertBridgeOrWebsearchOnly correctly but confusingly
-	// fails for Codex on every run.
+	// Strict assertions are disabled for the documented Codex execution-tool
+	// and Muse session-control exceptions. Muse has a separate live P0 proof
+	// of its best-effort native-tool restrictions in the provider adapter.
 	strictBridgeOnly bool
 }
 
@@ -51,10 +46,7 @@ var multiTurnProviderCases = []multiTurnProviderCase{
 	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", withCodexPersistentInteractiveSession, false},
 	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "auto", withCursorPersistentInteractiveSession, true},
 	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.7-flash", withPiPersistentInteractiveSession, true},
-	// Muse: strictBridgeOnly=false — muse has no native-tool denial flags
-	// (the appender warns mcp_only is uncontained), so strict bridge-only
-	// assertions would misread native-tool use as a regression, same
-	// documented rationale as the Codex row.
+	// Muse's internal session controls can bypass PreToolUse.
 	{"Muse", "muse", llm.ProviderMuseCLI, "muse-spark-1.3-contributor", withMusePersistentInteractiveSession, false},
 }
 

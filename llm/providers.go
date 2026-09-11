@@ -290,11 +290,17 @@ func WithCursorProjectConfig(config string) llmtypes.CallOption {
 	return llmproviders.WithCursorProjectConfig(config)
 }
 
-// WithMuseMCPConfig merges the document's mcpServers into the user-level muse
-// settings.json for one run (restored afterwards). Muse has no --mcp-config
-// flag; this is the only bridge mount mechanism.
+// WithMuseMCPConfig mounts the document's mcpServers in a per-launch private
+// configuration directory, leaving shared Muse settings untouched.
 func WithMuseMCPConfig(config string) llmtypes.CallOption {
 	return llmproviders.WithMuseMCPConfig(config)
+}
+
+// WithMuseToolAllowlist installs best-effort restrictions on unlisted native
+// calls reaching PreToolUse. Internal session controls may bypass that hook.
+// Separately mounted MCP tools remain available.
+func WithMuseToolAllowlist(toolNames []string) llmtypes.CallOption {
+	return llmproviders.WithMuseToolAllowlist(toolNames)
 }
 
 // WithCursorForce enables Cursor Agent CLI's --force flag.

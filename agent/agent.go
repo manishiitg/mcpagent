@@ -2168,9 +2168,8 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Auto-configure Muse CLI provider (same constraints as Cursor: the CLI
 	// manages its own agentic loop, context natively, streams for
-	// observability). The MCP bridge mounts via user settings.json merge
-	// (see appendMuseCLIIntegrationOptions); native-tool denial is unmapped,
-	// so mcp_only is NOT containment for muse yet.
+	// observability). Its isolated MCP config also installs best-effort native
+	// restrictions; internal session-control tools may bypass Muse's hook.
 	if ag.provider == llmproviders.ProviderMuseCLI {
 		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 		logger.Debug("🔧 [MUSE_CLI] Provider detected - silently disabling incompatible features")
@@ -3412,6 +3411,9 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 // names belong to bridgeRoutingExplicitInstructions, where they are filtered
 // through the same admission predicate used to build the provider manifest.
 func (a *Agent) codingAgentProviderRoutingPreamble() string {
+	if a.provider == llmproviders.ProviderMuseCLI {
+		return "IMPORTANT: Use native web_search and the declared MCP bridge tools for work. Native file, shell, memory, scheduling, goal, workflow, and subagent tools are restricted; do not attempt them even if listed. Muse internal session controls may bypass its restriction hook, but they are not a substitute for platform tools. Use platform tools for user questions and task coordination. Call only exact declared bridge tool names."
+	}
 	if a.nativeCodingToolsEnabled() {
 		return "IMPORTANT: Provider-native tools are enabled for this session. You may use them directly. Bridge tools are also available when explicitly declared; call only exact names present in this session and never invent alternate prefixes or namespaces. If an action fails, choose another genuinely available route or explain the specific blocker."
 	}
