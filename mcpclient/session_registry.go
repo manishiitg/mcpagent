@@ -91,6 +91,25 @@ func (t *httpSessionTracker) getMCPSessions(httpSessionID string) []string {
 	return result
 }
 
+// parent resolves only an unambiguous live server-owned registration.
+func (t *httpSessionTracker) parent(mcpSessionID string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, stopped := t.stoppedSessions[mcpSessionID]; stopped {
+		return ""
+	}
+	parent := ""
+	for httpID, children := range t.sessions {
+		if _, ok := children[mcpSessionID]; ok {
+			if parent != "" && parent != httpID {
+				return ""
+			}
+			parent = httpID
+		}
+	}
+	return parent
+}
+
 func (t *httpSessionTracker) remove(httpSessionID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -444,6 +463,12 @@ func (r *SessionConnectionRegistry) GetSessionStats(sessionID string) *SessionSt
 // CloseHTTPSession can close all of them when the workflow stops.
 func (r *SessionConnectionRegistry) RegisterHTTPSession(httpSessionID, mcpSessionID string) {
 	globalHTTPSessionTracker.register(httpSessionID, mcpSessionID)
+}
+
+// HTTPSessionForMCPSession resolves a live MCP child to its registered HTTP run.
+// Missing, stopped and ambiguous registrations return an empty string.
+func (r *SessionConnectionRegistry) HTTPSessionForMCPSession(mcpSessionID string) string {
+	return globalHTTPSessionTracker.parent(mcpSessionID)
 }
 
 // CloseHTTPSession closes all MCP sessions registered under the given HTTP session ID.
