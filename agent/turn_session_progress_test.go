@@ -20,6 +20,12 @@ func (c *retainedProgressCapture) HandleEvent(_ context.Context, event *events.A
 }
 
 func TestRetainedProgressStreamsWhileFinalIsPending(t *testing.T) {
+	for _, provider := range []llm.Provider{llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderMuseCLI, llm.ProviderPiCLI} {
+		t.Run(string(provider), func(t *testing.T) { testRetainedProgressStreamsWhileFinalIsPending(t, provider) })
+	}
+}
+
+func testRetainedProgressStreamsWhileFinalIsPending(t *testing.T, provider llm.Provider) {
 	capture := &retainedProgressCapture{events: make(chan *events.AgentEvent, 20)}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -42,7 +48,7 @@ func TestRetainedProgressStreamsWhileFinalIsPending(t *testing.T) {
 		},
 	}
 	lifecycle := newCanonicalTurnLifecycle("")
-	s.startRetainedCompletionWatch(lifecycle, "test login", llm.ProviderCursorCLI, llm.CodingAgentTransportTmux)
+	s.startRetainedCompletionWatch(lifecycle, "test login", provider, llm.CodingAgentTransportTmux)
 	select {
 	case e := <-capture.events:
 		chunk, ok := e.Data.(*events.StreamingChunkEvent)
@@ -69,7 +75,7 @@ func TestRetainedProgressStreamsWhileFinalIsPending(t *testing.T) {
 	s.closed = true
 	s.stateMu.Unlock()
 	index := 0
-	s.emitRetainedProgress(lifecycle, 1, llm.ProviderCursorCLI, func(llm.Provider, string) []llmtypes.MessageContent {
+	s.emitRetainedProgress(lifecycle, 1, provider, func(llm.Provider, string) []llmtypes.MessageContent {
 		t.Error("stale watcher consumed progress")
 		return nil
 	}, &index)

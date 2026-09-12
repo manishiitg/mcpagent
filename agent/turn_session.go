@@ -426,7 +426,9 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 		reader = retainedturn.FinalResponse
 	}
 	if progressReader == nil {
-		progressReader = llmproviders.ReadCodingAgentRetainedTurnProgressMessages
+		progressReader = func(provider llm.Provider, ownerSessionID string) []llmtypes.MessageContent {
+			return llmproviders.ReadCodingAgentRetainedTurnProgressMessages(provider, ownerSessionID, startedAt)
+		}
 	}
 
 	go func() {
