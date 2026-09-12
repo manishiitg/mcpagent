@@ -1,25 +1,54 @@
 package mcpagent
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"testing"
 
 	"github.com/manishiitg/mcpagent/llm"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
 
 func TestCodingAgentWorkingDirPersistenceAllProvidersP0(t *testing.T) {
-	for _, provider := range []llm.Provider{llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderPiCLI, llm.ProviderMuseCLI} {
-		for _, isolated := range []bool{false, true} {
-			t.Run(string(provider)+map[bool]string{true: "/isolated", false: "/builder"}[isolated], func(t *testing.T) {
+	contracts := llmproviders.CodingAgentProviderContracts()
+	if len(contracts) == 0 {
+		t.Fatal("coding-agent registry is empty")
+	}
+	for _, contract := range contracts {
+		provider := contract.Provider
+		keys, ok := codingAgentResumeOptionKeys[provider]
+		if !ok {
+			t.Fatalf("new provider %s has no P0 resume expectations", provider)
+		}
+		if !contract.SupportsNativeResume {
+			t.Fatalf("provider %s does not support native resume", provider)
+		}
+		for _, variant := range []struct {
+			name      string
+			isolated  bool
+			transport string
+		}{
+			{"builder/tmux", false, llmtypes.CodingProviderTransportTmux},
+			{"isolated/tmux", true, llmtypes.CodingProviderTransportTmux},
+			{"builder/structured", false, llmtypes.CodingProviderTransportStructured},
+			{"isolated/structured", true, llmtypes.CodingProviderTransportStructured},
+		} {
+			isolated := variant.isolated
+			t.Run(string(provider)+"/"+variant.name, func(t *testing.T) {
 				expected := filepath.Join(t.TempDir(), "private-runtime")
 				agent := &Agent{sessionID: "chat-a", provider: provider, codingAgentWorkingDir: expected, isolatedSessionWorkspace: isolated}
 				if isolated {
 					agent.codingAgentWorkingDir = "/workflow/shared"
 					agent.isolatedWorkspaceOnce.Do(func() { agent.isolatedWorkspacePath = expected; agent.isolatedWorkspaceStable = true })
 				}
-				partial := llmtypes.CodingProviderSessionHandle{Provider: string(provider), NativeSessionID: "native-a", Transport: llmtypes.CodingProviderTransportTmux}
+				partial := llmtypes.CodingProviderSessionHandle{Provider: string(provider), NativeSessionID: "native-a", Transport: variant.transport}
 				response := &llmtypes.ContentResponse{Choices: []*llmtypes.ContentChoice{{GenerationInfo: &llmtypes.GenerationInfo{CodingProviderSessionHandle: &partial}}}}
 				agent.updateCodingProviderSessionHandleFromResponse(response)
 				if agent.codingProviderSessionHandle.WorkingDir != expected {
@@ -44,6 +73,28 @@ func TestCodingAgentWorkingDirPersistenceAllProvidersP0(t *testing.T) {
 				if got.Provider.WorkingDir != expected || got.Provider.NativeSessionID != "native-a" {
 					t.Fatalf("restart lost identity: %+v", got.Provider)
 				}
+				continuation, ok := restored.codingProviderContinuationHandleForModel(provider, contract.ModelID)
+				if !ok {
+					t.Fatal("restored session was not resumable")
+				}
+				probe := &codingAgentResumeProbe{}
+				if _, err := llm.ContinueCodingAgentSession(context.Background(), probe, continuation, "next message"); err != nil {
+					t.Fatal(err)
+				}
+				if probe.calls != 1 {
+					t.Fatalf("adapter calls = %d, want exactly one", probe.calls)
+				}
+				if probe.options.Metadata == nil {
+					t.Fatal("missing native resume options")
+				}
+				metadata := probe.options.Metadata.Custom
+				if metadata[keys.resume] != "native-a" || metadata[keys.directory] != expected {
+					t.Fatalf("adapter received wrong resume identity: resume=%v cwd=%v", metadata[keys.resume], metadata[keys.directory])
+				}
+				if len(probe.messages) != 1 || probe.messages[0].Role != llmtypes.ChatMessageTypeHuman {
+					t.Fatal("native continuation replayed history instead of current message")
+				}
+
 			})
 		}
 	}
@@ -59,4 +110,33 @@ func TestCodingAgentWorkingDirDoesNotOverrideProviderIdentityP0(t *testing.T) {
 	if got := agent.withContinuationWorkingDir(different); got.WorkingDir != "" {
 		t.Fatal("assigned another provider's directory")
 	}
+}
+
+// Independent adapter-key expectations: adding a provider to the production
+// registry must also extend this matrix or the required P0 fails.
+var codingAgentResumeOptionKeys = map[llm.Provider]struct{ resume, directory string }{
+	llm.ProviderClaudeCode: {claudecode.MetadataKeyResumeSessionID, claudecode.MetadataKeyWorkingDir},
+	llm.ProviderCodexCLI:   {codexcli.MetadataKeyResumeSessionID, codexcli.MetadataKeyProjectDirID},
+	llm.ProviderCursorCLI:  {cursorcli.MetadataKeyResumeSessionID, cursorcli.MetadataKeyWorkingDir},
+	llm.ProviderPiCLI:      {picli.MetadataKeyResumeSessionID, picli.MetadataKeyWorkingDir},
+	llm.ProviderMuseCLI:    {musecli.MetadataKeyMuseResumeSessionID, musecli.MetadataKeyMuseWorkingDir},
+}
+
+type codingAgentResumeProbe struct {
+	calls    int
+	options  llmtypes.CallOptions
+	messages []llmtypes.MessageContent
+}
+
+func (p *codingAgentResumeProbe) GenerateContent(_ context.Context, messages []llmtypes.MessageContent, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
+	p.calls++
+	p.messages = messages
+	for _, option := range options {
+		option(&p.options)
+	}
+	return &llmtypes.ContentResponse{}, nil
+}
+func (*codingAgentResumeProbe) GetModelID() string { return "" }
+func (*codingAgentResumeProbe) GetModelMetadata(string) (*llmtypes.ModelMetadata, error) {
+	return nil, nil
 }

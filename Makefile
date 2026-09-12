@@ -1,4 +1,4 @@
-.PHONY: help lint lint-fix install-linter test build clean install-act test-ci test-ci-job list-ci-jobs proto proto-go proto-ts install-proto-tools
+.PHONY: help test-p0-resume lint lint-fix install-linter test build clean install-act test-ci test-ci-job list-ci-jobs proto proto-go proto-ts install-proto-tools
 
 # Default target
 help:
@@ -7,6 +7,7 @@ help:
 	@echo "  make lint-fix     - Run golangci-lint with auto-fix"
 	@echo "  make install-linter - Install golangci-lint"
 	@echo "  make test        - Run Go tests"
+	@echo "  make test-p0-resume - Verify all coding-agent resume directory contracts"
 	@echo "  make build       - Build the project"
 	@echo "  make clean       - Clean build artifacts"
 	@echo ""
@@ -137,3 +138,7 @@ proto-ts:
 	else \
 		echo "⚠️  sdk-node directory not found, skipping TypeScript generation"; \
 	fi
+
+# Credential-free P0 for durable directory/native-ID persistence and adapter options.
+test-p0-resume:
+	go test -race ./agent -run '^TestCodingAgentWorkingDir' -count=1 -v
