@@ -70,6 +70,7 @@ func (a *Agent) currentAgentSessionHandle() *AgentSessionHandle {
 	if providerHandle.Empty() {
 		providerHandle = a.legacyCodingProviderSessionHandle()
 	}
+	providerHandle = a.withContinuationWorkingDir(providerHandle)
 	if providerHandle.Empty() && strings.TrimSpace(a.sessionID) == "" {
 		return nil
 	}
@@ -242,9 +243,21 @@ func (a *Agent) updateCodingProviderSessionHandleFromResponse(resp *llmtypes.Con
 		return
 	}
 	if handle, ok := llmtypes.ExtractCodingProviderSessionHandleFromResponse(resp); ok {
+		handle = a.withContinuationWorkingDir(handle)
 		a.codingProviderSessionHandle = handle
 		a.applyCodingProviderSessionHandle(handle)
 	}
+}
+
+// A provider may return only the native ID and transport. Preserve the actual
+// launch directory in both response state and durable snapshots, including the
+// isolated session directory rather than its parent workflow workspace.
+func (a *Agent) withContinuationWorkingDir(handle llmtypes.CodingProviderSessionHandle) llmtypes.CodingProviderSessionHandle {
+	if a == nil || handle.Empty() || !strings.EqualFold(strings.TrimSpace(handle.Provider), string(a.provider)) {
+		return handle
+	}
+	handle.WorkingDir = a.resolveContinuationWorkingDir(handle.WorkingDir)
+	return handle
 }
 
 func (a *Agent) applyCodingProviderSessionHandle(handle llmtypes.CodingProviderSessionHandle) {
