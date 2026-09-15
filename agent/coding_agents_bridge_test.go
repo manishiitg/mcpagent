@@ -961,8 +961,8 @@ func TestHybridCodingProviderAutoOptions(t *testing.T) {
 		if _, disabled := got[codexcli.MetadataKeyDisableShellTool]; disabled {
 			t.Fatalf("hybrid must retain Codex native shell: %#v", got)
 		}
-		if got[codexcli.MetadataKeyApprovalPolicy] != "untrusted" {
-			t.Fatalf("approval policy = %#v, want untrusted", got[codexcli.MetadataKeyApprovalPolicy])
+		if got[codexcli.MetadataKeyApprovalPolicy] != "on-request" {
+			t.Fatalf("approval policy = %#v, want on-request", got[codexcli.MetadataKeyApprovalPolicy])
 		}
 		overrides, _ := got[codexcli.MetadataKeyConfigOverrides].([]string)
 		if !strings.Contains(strings.Join(overrides, "\n"), `approvals_reviewer="auto_review"`) {

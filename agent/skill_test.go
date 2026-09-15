@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	llm "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -121,6 +122,20 @@ func TestEnsureSystemPromptAppendsAttachedSkills(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in system prompt:\n%s", want, got)
 		}
+	}
+}
+
+func TestCodingCLISystemPromptDoesNotDuplicateNativeSkillListing(t *testing.T) {
+	a := &Agent{systemPrompt: "BASE PROMPT", provider: llm.ProviderMuseCLI, modelID: "muse-spark-1.3-contributor"}
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "work-dashboard", Description: "Build dashboards"})
+
+	out := ensureSystemPrompt(a, nil)
+	got := out[0].Parts[0].(llmtypes.TextContent).Text
+	if strings.Contains(got, "## Available Skills") || strings.Contains(got, "- **work-dashboard**") {
+		t.Fatalf("coding CLI prompt duplicated native skill projection:\n%s", got)
+	}
+	if !strings.Contains(got, "BASE PROMPT") {
+		t.Fatalf("coding CLI prompt lost base instructions:\n%s", got)
 	}
 }
 

@@ -155,16 +155,16 @@ func (a *Agent) Definition() AgentDefinitionView {
 	if a.definition != nil {
 		instructions = a.definition.Instructions
 	}
+	extensions := make([]string, 0, len(a.appendedSystemPrompts))
+	composed := instructions
 	for _, supplement := range a.appendedSystemPrompts {
-		if strings.TrimSpace(supplement) == "" || strings.Contains(instructions, supplement) {
+		if strings.TrimSpace(supplement) == "" || strings.Contains(composed, supplement) {
 			continue
 		}
-		if strings.TrimSpace(instructions) == "" {
-			instructions = supplement
-		} else {
-			instructions += "\n\n" + supplement
-		}
+		extensions = append(extensions, supplement)
+		composed = composeInstructionExtensions(composed, supplement)
 	}
+	instructions = composeInstructionExtensions(instructions, extensions...)
 	view := AgentDefinitionView{Instructions: instructions}
 	for _, skill := range a.attachedSkills {
 		if skill != nil && skill.Name != "" {
@@ -363,10 +363,14 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		}
 		s.stateMu.Unlock()
 	}
+	intent := UserMessageDeliveryIntentAuto
+	if wasActive {
+		intent = UserMessageDeliveryIntentLiveInput
+	}
 	delivery, err := s.agent.deliverUserMessage(ctx, UserMessageDeliveryRequest{
 		SessionID: s.agent.sessionID,
 		Message:   input,
-		Intent:    UserMessageDeliveryIntentAuto,
+		Intent:    intent,
 	})
 	turnID := ""
 	if lifecycle != nil {

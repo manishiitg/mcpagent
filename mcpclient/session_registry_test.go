@@ -29,3 +29,17 @@ func TestDeprecatedBrowserSessionCompatibilityShimsAreNoOps(t *testing.T) {
 		t.Fatalf("compatibility shims must preserve global connection pooling, got %q", got)
 	}
 }
+
+func TestHTTPSessionForMCPSessionTracksOnlyLiveRelationship(t *testing.T) {
+	registry := GetSessionRegistry()
+	httpSessionID := "reverse-http-session-test"
+	mcpSessionID := "reverse-mcp-session-test"
+	registry.RegisterHTTPSession(httpSessionID, mcpSessionID)
+	if got := registry.HTTPSessionForMCPSession(mcpSessionID); got != httpSessionID {
+		t.Fatalf("HTTPSessionForMCPSession() = %q, want %q", got, httpSessionID)
+	}
+	registry.CloseHTTPSession(httpSessionID)
+	if got := registry.HTTPSessionForMCPSession(mcpSessionID); got != "" {
+		t.Fatalf("closed relationship still resolves to %q", got)
+	}
+}

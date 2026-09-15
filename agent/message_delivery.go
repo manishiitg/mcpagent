@@ -141,7 +141,13 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 	// mirrors SupportsSteering() (coding_session.go). Without this a structured
 	// coding-agent turn would try to tmux-inject into a one-shot process.
 	if isCodingAgent && contract.SupportsLiveInput && !a.usesStructuredTransport() {
-		if err := llm.SendCodingAgentLiveInput(ctx, provider, a.modelID, req.SessionID, message); err != nil {
+		var err error
+		if req.Intent == UserMessageDeliveryIntentLiveInput {
+			err = llm.SendCodingAgentLiveInput(ctx, provider, a.modelID, req.SessionID, message)
+		} else {
+			err = llm.SendCodingAgentRetainedInput(ctx, provider, a.modelID, req.SessionID, message)
+		}
+		if err != nil {
 			return result, fmt.Errorf("failed to submit live input to %s: %w", provider, err)
 		}
 		result.DeliveryStatus = UserMessageDeliveryStatusSentToCLI

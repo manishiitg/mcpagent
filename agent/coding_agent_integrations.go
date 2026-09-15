@@ -153,9 +153,10 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	} else if a.approveAllCodingTools() {
 		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
 	} else {
-		// Current Codex supports a stable approval reviewer. Keep the standard
-		// workspace sandbox; do not use dangerous bypass, which would remove it.
-		opts = append(opts, llm.WithCodexApprovalPolicy("untrusted"))
+		// Current Codex uses on-request for its guarded approval reviewer. Keep
+		// the standard workspace sandbox; do not use dangerous bypass, which
+		// would remove it. (Codex 0.154 removed the old untrusted spelling.)
+		opts = append(opts, llm.WithCodexApprovalPolicy("on-request"))
 	}
 	// Shell/exec containment: WithCodexDisableShellTool above turns OFF codex's
 	// built-in shell_tool + the other native code-exec features (unified_exec,

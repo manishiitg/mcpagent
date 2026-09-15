@@ -99,3 +99,24 @@ func TestNonCodeExecutionPromptDoesNotGainManifest(t *testing.T) {
 		t.Fatalf("non-code prompt should only strip the placeholder, got %q", got)
 	}
 }
+
+func TestMCPAgentExtensionsNeverReplaceProductBasePrompt(t *testing.T) {
+	a := codeExecutionPromptAgent()
+	a.setInstructions("PRODUCT BASE: You are the Work assistant.")
+	a.appendInstructions("MCP EXTENSION: connected tools")
+	a.appendInstructions("RUNTIME EXTENSION: native CLI routing")
+	addDirectToolFixture(t, a, directToolFixture("query_records", "database"))
+
+	got := a.instructions()
+	if !strings.HasPrefix(got, "PRODUCT BASE: You are the Work assistant.") {
+		t.Fatalf("mcpagent replaced or moved the product base prompt:\n%s", got)
+	}
+	for _, want := range []string{"MCP EXTENSION", "RUNTIME EXTENSION", "query_records"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("effective prompt omitted %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "PRODUCT BASE") > strings.Index(got, "MCP EXTENSION") {
+		t.Fatal("an mcpagent extension appeared before the product base prompt")
+	}
+}

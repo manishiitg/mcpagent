@@ -129,6 +129,10 @@ func SendCodingAgentLiveInput(ctx context.Context, provider Provider, modelID, o
 	return llmproviders.SendCodingAgentLiveInput(ctx, provider, modelID, ownerSessionID, message)
 }
 
+func SendCodingAgentRetainedInput(ctx context.Context, provider Provider, modelID, ownerSessionID, message string) error {
+	return llmproviders.SendCodingAgentRetainedInput(ctx, provider, modelID, ownerSessionID, message)
+}
+
 // SendCodingAgentControlKey injects a tmux control key (e.g. "Escape", "C-c")
 // into a currently running tmux-based coding-agent session. Mirrors
 // SendCodingAgentLiveInput but sends a raw key instead of text.

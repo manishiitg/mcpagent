@@ -475,7 +475,7 @@ func (a *Agent) deliver(ctx context.Context, conversationID, message string, sto
 		if _, err := a.deliverUserMessage(ctx, UserMessageDeliveryRequest{
 			SessionID: strings.TrimSpace(conversationID),
 			Message:   message,
-			Intent:    UserMessageDeliveryIntentAuto,
+			Intent:    UserMessageDeliveryIntentLiveInput,
 		}); err != nil {
 			return Delivered{}, err
 		}
