@@ -385,7 +385,7 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 	}
 	refreshRetainedWatcher := !runWasActive && providerRefreshesRetainedWatcher(delivery.Provider)
 	if (!wasActive || refreshRetainedWatcher) && delivery.DeliveryStatus == UserMessageDeliveryStatusSentToCLI && delivery.Transport == llm.CodingAgentTransportTmux {
-		// Cursor and Muse queue follow-ups behind the current reply. Refresh the
+		// Claude, Cursor, and Muse can queue follow-ups behind the current reply. Refresh the
 		// watcher so the previous final cannot complete the newly submitted request.
 		s.startRetainedCompletionWatch(lifecycle, input, delivery.Provider, delivery.Transport)
 	} else if !wasActive {
@@ -395,7 +395,7 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 }
 
 func providerRefreshesRetainedWatcher(provider llm.Provider) bool {
-	return provider == llm.ProviderCursorCLI || provider == llm.ProviderMuseCLI
+	return provider == llm.ProviderClaudeCode || provider == llm.ProviderCursorCLI || provider == llm.ProviderMuseCLI
 }
 
 const retainedCompletionPollInterval = 100 * time.Millisecond

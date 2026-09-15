@@ -177,6 +177,14 @@ func TestSessionRunRejectsWhileRetainedTurnIsActive(t *testing.T) {
 }
 
 func TestRetainedFollowupReplacesInFlightCompletionRead(t *testing.T) {
+	for _, provider := range []llm.Provider{llm.ProviderClaudeCode, llm.ProviderCursorCLI, llm.ProviderMuseCLI} {
+		t.Run(string(provider), func(t *testing.T) {
+			testRetainedFollowupReplacesInFlightCompletionRead(t, provider)
+		})
+	}
+}
+
+func testRetainedFollowupReplacesInFlightCompletionRead(t *testing.T, provider llm.Provider) {
 	capture := &retainedCompletionCapture{ready: make(chan struct{}, 2)}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -210,7 +218,7 @@ func TestRetainedFollowupReplacesInFlightCompletionRead(t *testing.T) {
 		},
 	}
 	lifecycle := newCanonicalTurnLifecycle("")
-	session.startRetainedCompletionWatch(lifecycle, "change schedule", llm.ProviderCursorCLI, llm.CodingAgentTransportTmux)
+	session.startRetainedCompletionWatch(lifecycle, "change schedule", provider, llm.CodingAgentTransportTmux)
 	select {
 	case <-entered:
 	case <-time.After(2 * time.Second):
@@ -220,7 +228,7 @@ func TestRetainedFollowupReplacesInFlightCompletionRead(t *testing.T) {
 	// being delivered, and must lose ownership before it can emit completion.
 	session.sendMu.Lock()
 	close(oldReply)
-	session.startRetainedCompletionWatch(lifecycle, "fix Slack readability", llm.ProviderCursorCLI, llm.CodingAgentTransportTmux)
+	session.startRetainedCompletionWatch(lifecycle, "fix Slack readability", provider, llm.CodingAgentTransportTmux)
 	session.sendMu.Unlock()
 	select {
 	case <-capture.ready:
@@ -245,7 +253,7 @@ func TestRetainedFollowupReplacesInFlightCompletionRead(t *testing.T) {
 }
 
 func TestProvidersThatQueueRetainedFollowupsRefreshTheirWatcher(t *testing.T) {
-	for _, provider := range []llm.Provider{llm.ProviderCursorCLI, llm.ProviderMuseCLI} {
+	for _, provider := range []llm.Provider{llm.ProviderClaudeCode, llm.ProviderCursorCLI, llm.ProviderMuseCLI} {
 		if !providerRefreshesRetainedWatcher(provider) {
 			t.Errorf("providerRefreshesRetainedWatcher(%s) = false, want true", provider)
 		}
