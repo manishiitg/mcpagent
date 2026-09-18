@@ -335,19 +335,7 @@ func LoadMergedConfig(configPath string, logger loggerv2.Logger) (*MCPConfig, er
 		logger.Debug("Starting merge operation")
 	}
 	mergeStartTime := time.Now()
-	mergedConfig := &MCPConfig{
-		MCPServers: make(map[string]MCPServerConfig),
-	}
-
-	// Add base servers first
-	for name, server := range baseConfig.MCPServers {
-		mergedConfig.MCPServers[name] = server
-	}
-
-	// Add user servers (these will override base servers with same name)
-	for name, server := range userConfig.MCPServers {
-		mergedConfig.MCPServers[name] = server
-	}
+	mergedConfig := MergeMCPConfigs(baseConfig, userConfig)
 	mergeDuration := time.Since(mergeStartTime)
 	if logger != nil {
 		logger.Debug("Merge operation completed",
@@ -450,4 +438,39 @@ func (c *MCPConfig) ReloadConfig(configPath string, logger loggerv2.Logger) erro
 	}
 	c.MCPServers = newConfig.MCPServers
 	return nil
+}
+
+// MergeMCPConfigs preserves separately authenticated connections instead of
+// silently hiding a base account behind an overlay account. Existing names
+// retain overlay precedence so persisted selections keep their meaning.
+func MergeMCPConfigs(base, overlay *MCPConfig) *MCPConfig {
+	result := &MCPConfig{MCPServers: make(map[string]MCPServerConfig)}
+	if base != nil {
+		for name, cfg := range base.MCPServers {
+			result.MCPServers[name] = cfg
+		}
+	}
+	if overlay == nil {
+		return result
+	}
+	for name, cfg := range overlay.MCPServers {
+		original, exists := result.MCPServers[name]
+		if exists && original.OAuth != nil && cfg.OAuth != nil &&
+			strings.TrimSpace(original.OAuth.TokenFile) != "" && strings.TrimSpace(cfg.OAuth.TokenFile) != "" &&
+			original.OAuth.TokenFile != cfg.OAuth.TokenFile {
+			alias := name + "-base"
+			for index := 2; ; index++ {
+				_, inBase := result.MCPServers[alias]
+				_, inOverlay := overlay.MCPServers[alias]
+				if !inBase && !inOverlay {
+					break
+				}
+				alias = fmt.Sprintf("%s-base-%d", name, index)
+			}
+			original.Description += " Separate base connection for " + name + "; account/workspace identity must be verified using this connection's read-only tools."
+			result.MCPServers[alias] = original
+		}
+		result.MCPServers[name] = cfg
+	}
+	return result
 }
