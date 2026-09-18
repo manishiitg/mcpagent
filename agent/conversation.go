@@ -152,7 +152,6 @@ func finalAssistantTextFromCodingTrail(messages []llmtypes.MessageContent) strin
 func isVirtualTool(toolName string) bool {
 	// Check hardcoded virtual tools (includes all possible virtual tools)
 	virtualTools := []string{
-		"get_prompt", "get_resource",
 		"search_large_output",
 		"get_api_spec", // Code execution mode tool
 	}
@@ -425,11 +424,9 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		serverStatus := make(map[string]mcpcache.ServerCacheStatus)
 		for serverName := range a.clients {
 			serverStatus[serverName] = mcpcache.ServerCacheStatus{
-				ServerName:     serverName,
-				Status:         "validation",
-				ToolsCount:     len(a.tools),
-				PromptsCount:   0, // Will be populated if available
-				ResourcesCount: 0, // Will be populated if available
+				ServerName: serverName,
+				Status:     "validation",
+				ToolsCount: len(a.tools),
 			}
 		}
 
@@ -1195,7 +1192,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						v2Logger.Warn(fmt.Sprintf("[AGENT DEBUG] AskWithHistory Turn %d: Tool '%s' not mapped to any server. Providing feedback to LLM.", turn+1, tc.FunctionCall.Name))
 
 						// Generate helpful feedback instead of failing
-						feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- search_large_output (read/search/query operations for offloaded files)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
+						feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- search_large_output (read/search/query operations for offloaded files)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
 
 						// Emit tool call error event for observability
 						v2Logger.Error(toolerr.Marker+" tool not found", nil,

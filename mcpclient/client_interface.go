@@ -30,18 +30,6 @@ type ClientInterface interface {
 	// CallTool calls a tool with arguments
 	CallTool(ctx context.Context, name string, arguments map[string]interface{}) (*mcp.CallToolResult, error)
 
-	// ListResources lists all available resources
-	ListResources(ctx context.Context) ([]mcp.Resource, error)
-
-	// GetResource gets a specific resource by URI
-	GetResource(ctx context.Context, uri string) (*mcp.ReadResourceResult, error)
-
-	// ListPrompts lists all available prompts
-	ListPrompts(ctx context.Context) ([]mcp.Prompt, error)
-
-	// GetPrompt gets a specific prompt by name
-	GetPrompt(ctx context.Context, name string) (*mcp.GetPromptResult, error)
-
 	// Ping checks if the connection is still alive
 	Ping(ctx context.Context) error
 

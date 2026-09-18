@@ -239,8 +239,8 @@ func TestComprehensiveFilterScenarios(log loggerv2.Logger) error {
 		tf := mcpagent.NewToolFilter(selectedTools, []string{}, mockClients, []string{}, log)
 
 		testCases := []ToolFilterTestCase{
-			{"virtual tool", "virtual_tools", "get_prompt", false, true, true, "virtual tools always included"},
-			{"virtual tool", "virtual_tools", "get_resource", false, true, true, "virtual tools always included"},
+			{"virtual tool", "virtual_tools", "get_api_spec", false, true, true, "virtual tools always included"},
+			{"virtual tool", "virtual_tools", "get_api_spec", false, true, true, "virtual tools always included"},
 			{"virtual tool", "virtual_tools", "get_api_spec", false, true, true, "virtual tools always included"},
 			{"virtual tool", "virtual_tools", "execute_shell_command", false, true, true, "virtual tools always included"},
 		}
@@ -471,7 +471,7 @@ func TestDiscoverySimulation(log loggerv2.Logger) error {
 		{"human_tools", "human", true, false, "human_feedback", "human_tools", true}, // System category default
 
 		// Virtual tools
-		{"virtual_tools", "virtual", true, true, "get_prompt", "virtual_tools", true},
+		{"virtual_tools", "virtual", true, true, "get_api_spec", "virtual_tools", true},
 		{"virtual_tools", "virtual", true, true, "execute_shell_command", "virtual_tools", true},
 	}
 
@@ -818,7 +818,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, log loggerv2
 	for _, tool := range normalTools {
 		// Count non-virtual tools
 		name := tool.Name
-		if name != "get_prompt" && name != "get_resource" && name != "discover_code_structure" &&
+		if name != "discover_code_structure" &&
 			name != "get_api_spec" && name != "execute_shell_command" {
 			normalMCPToolCount++
 		}

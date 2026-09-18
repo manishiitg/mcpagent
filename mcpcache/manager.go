@@ -18,8 +18,6 @@ import (
 	"github.com/manishiitg/mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // CacheEntry represents a cached MCP server connection and its metadata
@@ -29,8 +27,6 @@ type CacheEntry struct {
 
 	// Connection data
 	Tools        []llmtypes.Tool `json:"tools"`
-	Prompts      []mcp.Prompt    `json:"prompts"`
-	Resources    []mcp.Resource  `json:"resources"`
 	SystemPrompt string          `json:"system_prompt"`
 
 	// Metadata
@@ -427,18 +423,6 @@ func (cm *CacheManager) GetAllEntries() map[string]*CacheEntry {
 		if entry.Tools != nil {
 			entryCopy.Tools = make([]llmtypes.Tool, len(entry.Tools))
 			copy(entryCopy.Tools, entry.Tools)
-		}
-
-		// Deep copy Prompts slice
-		if entry.Prompts != nil {
-			entryCopy.Prompts = make([]mcp.Prompt, len(entry.Prompts))
-			copy(entryCopy.Prompts, entry.Prompts)
-		}
-
-		// Deep copy Resources slice
-		if entry.Resources != nil {
-			entryCopy.Resources = make([]mcp.Resource, len(entry.Resources))
-			copy(entryCopy.Resources, entry.Resources)
 		}
 
 		// Deep copy ServerInfo map if it exists

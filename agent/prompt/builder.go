@@ -1,13 +1,10 @@
 package prompt
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // GetCodeExecutionInstructions returns the code execution mode instructions section.
@@ -92,27 +89,8 @@ func BuildAvailableToolsSection(toolStructureJSON string) string {
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 // toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
-func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
-	// Build prompts section with previews (only if discoverPrompt is true and NOT in code execution mode)
-	// In code execution mode, prompts/resources are not accessible via get_prompt/get_resource
-	var promptsSection string
-	if discoverPrompt && !useCodeExecutionMode {
-		promptsSection = buildPromptsSectionWithPreviews(prompts, logger)
-	} else {
-		promptsSection = "" // Empty prompts section when discovery is disabled or in code execution mode
-	}
-
-	// Build resources section (only if discoverResource is true and NOT in code execution mode)
-	// In code execution mode, resources are not accessible via get_resource
-	var resourcesSection string
-	if discoverResource && !useCodeExecutionMode {
-		resourcesSection = buildResourcesSection(resources)
-	} else {
-		resourcesSection = "" // Empty resources section when discovery is disabled or in code execution mode
-	}
-
-	// Build virtual tools section (only mention tools that are actually available)
-	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode, prompts, resources)
+func BuildSystemPromptWithoutTools(mode interface{}, useCodeExecutionMode bool, toolStructureJSON string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
+	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode)
 
 	// Get current date and time
 	now := time.Now()
@@ -170,7 +148,7 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 		toolUsageSection = `<tool_usage>
 **Guidelines:**
 - Use tools when they can help answer the question
-- Use virtual tools for detailed prompts/resources when relevant
+- Use tool discovery for detailed API contracts when relevant
 - Provide clear responses based on tool results` + parallelToolHint + `
 
 **Best Practices:**
@@ -198,8 +176,6 @@ Use 'search_large_output' with operation='read', operation='search', or operatio
 	// Replace all placeholders
 	prompt = strings.ReplaceAll(prompt, CorePrinciplesPlaceholder, corePrinciplesSection)
 	prompt = strings.ReplaceAll(prompt, ToolUsagePlaceholder, toolUsageSection)
-	prompt = strings.ReplaceAll(prompt, PromptsSectionPlaceholder, promptsSection)
-	prompt = strings.ReplaceAll(prompt, ResourcesSectionPlaceholder, resourcesSection)
 	prompt = strings.ReplaceAll(prompt, VirtualToolsSectionPlaceholder, virtualToolsSection)
 	prompt = strings.ReplaceAll(prompt, LargeOutputHandlingPlaceholder, largeOutputHandlingSection)
 	prompt = strings.ReplaceAll(prompt, CurrentDatePlaceholder, currentDate)
@@ -208,136 +184,8 @@ Use 'search_large_output' with operation='read', operation='search', or operatio
 	return prompt
 }
 
-// buildPromptsSectionWithPreviews builds the prompts section with previews
-func buildPromptsSectionWithPreviews(prompts map[string][]mcp.Prompt, logger loggerv2.Logger) string {
-
-	// Count total prompts across all servers
-	totalPrompts := 0
-	for _, serverPrompts := range prompts {
-		totalPrompts += len(serverPrompts)
-	}
-
-	if totalPrompts == 0 {
-		logger.Debug("No prompts found for preview generation - skipping prompts section")
-		return ""
-	}
-
-	logger.Debug("Building prompts section with previews",
-		loggerv2.Int("server_count", len(prompts)),
-		loggerv2.Int("total_prompts", totalPrompts))
-
-	var promptsList []string
-	for serverName, serverPrompts := range prompts {
-		if len(serverPrompts) == 0 {
-			// Skip servers with no prompts
-			continue
-		}
-
-		logger.Debug("Processing server prompts",
-			loggerv2.String("server_name", serverName),
-			loggerv2.Int("prompt_count", len(serverPrompts)))
-
-		promptsList = append(promptsList, fmt.Sprintf("%s:", serverName))
-		for _, prompt_item := range serverPrompts {
-			name := prompt_item.Name
-			description := prompt_item.Description
-
-			logger.Debug("Processing prompt",
-				loggerv2.String("server_name", serverName),
-				loggerv2.String("prompt_name", name),
-				loggerv2.Int("description_length", len(description)))
-
-			// Extract preview (first 10 lines) from the description
-			preview := extractPromptPreview(description)
-
-			// Format as preview with name and first few lines
-			promptsList = append(promptsList, fmt.Sprintf("  - %s: %s", name, preview))
-		}
-	}
-
-	// Double-check: if no prompts were actually added, return empty
-	if len(promptsList) == 0 {
-		logger.Debug("No actual prompts found after processing - skipping prompts section")
-		return ""
-	}
-
-	promptsText := strings.Join(promptsList, "\n")
-	logger.Debug("Prompts section built",
-		loggerv2.Int("total_length", len(promptsText)),
-		loggerv2.Int("prompt_lines", len(promptsList)))
-
-	return strings.ReplaceAll(PromptsSectionTemplate, PromptsListPlaceholder, promptsText)
-}
-
-// extractPromptPreview extracts the first 10 lines from prompt content
-func extractPromptPreview(description string) string {
-	// If description contains "Content:", extract the content part (legacy format)
-	if strings.Contains(description, "\n\nContent:\n") {
-		parts := strings.Split(description, "\n\nContent:\n")
-		if len(parts) > 1 {
-			content := parts[1]
-
-			// Split into lines and take first 10 lines
-			lines := strings.Split(content, "\n")
-			previewLines := lines
-			if len(lines) > 10 {
-				previewLines = lines[:10]
-			}
-
-			preview := strings.Join(previewLines, "\n")
-			if len(lines) > 10 {
-				preview += "\n... (use 'get_prompt' tool for full content)"
-			}
-
-			return preview
-		}
-	}
-
-	// If description contains full content (new format), extract preview
-	if len(description) > 100 && !strings.Contains(description, "Prompt loaded from") {
-		// Split into lines and take first 10 lines
-		lines := strings.Split(description, "\n")
-		previewLines := lines
-		if len(lines) > 10 {
-			previewLines = lines[:10]
-		}
-
-		preview := strings.Join(previewLines, "\n")
-		if len(lines) > 10 {
-			preview += "\n... (use 'get_prompt' tool for full content)"
-		}
-
-		return preview
-	}
-
-	// If no content section or short description, return the description as is
-	return description
-}
-
-// buildResourcesSection builds the resources section
-func buildResourcesSection(resources map[string][]mcp.Resource) string {
-	if len(resources) == 0 {
-		return ""
-	}
-
-	var resourcesList []string
-	for serverName, serverResources := range resources {
-		resourcesList = append(resourcesList, fmt.Sprintf("%s:", serverName))
-		for _, resource := range serverResources {
-			name := resource.Name
-			uri := resource.URI
-			description := resource.Description
-			resourcesList = append(resourcesList, fmt.Sprintf("  - %s (%s): %s", name, uri, description))
-		}
-	}
-
-	resourcesText := strings.Join(resourcesList, "\n")
-	return strings.ReplaceAll(ResourcesSectionTemplate, ResourcesListPlaceholder, resourcesText)
-}
-
 // buildVirtualToolsSection builds the virtual tools section
-// Only mentions tools that are actually available (prompts/resources must exist)
-func buildVirtualToolsSection(useCodeExecutionMode bool, prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource) string {
+func buildVirtualToolsSection(useCodeExecutionMode bool) string {
 	if useCodeExecutionMode {
 		return `AVAILABLE FUNCTIONS:
 
@@ -347,45 +195,5 @@ func buildVirtualToolsSection(useCodeExecutionMode bool, prompts map[string][]mc
   Optional disambiguation for a real MCP-server collision: server_name="<server>"`
 	}
 
-	// Check if prompts actually exist
-	hasPrompts := false
-	if prompts != nil {
-		totalPrompts := 0
-		for _, serverPrompts := range prompts {
-			totalPrompts += len(serverPrompts)
-		}
-		hasPrompts = totalPrompts > 0
-	}
-
-	// Check if resources actually exist
-	hasResources := false
-	if resources != nil {
-		totalResources := 0
-		for _, serverResources := range resources {
-			totalResources += len(serverResources)
-		}
-		hasResources = totalResources > 0
-	}
-
-	// Build virtual tools list based on what's actually available
-	var toolsList []string
-	if hasPrompts {
-		toolsList = append(toolsList, "- **get_prompt**: Fetch full prompt content (server + name) from an mcp server")
-	}
-	if hasResources {
-		toolsList = append(toolsList, "- **get_resource**: Fetch resource content (server + uri) from an mcp server")
-	}
-
-	// If no tools are available, return empty string (section will be empty)
-	if len(toolsList) == 0 {
-		return ""
-	}
-
-	// Build the section with only available tools
-	toolsText := strings.Join(toolsList, "\n")
-	return `🔧 VIRTUAL TOOLS:
-
-` + toolsText + `
-
-These are internal tools - just specify server and identifier.`
+	return ""
 }

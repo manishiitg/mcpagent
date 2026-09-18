@@ -11,54 +11,15 @@ const SystemPromptTemplate = `<session_info>
 
 {{TOOL_USAGE}}
 
-{{PROMPTS_SECTION}}
-
-{{RESOURCES_SECTION}}
-
 <virtual_tools>
 {{VIRTUAL_TOOLS_SECTION}}
 {{LARGE_OUTPUT_HANDLING}}
 </virtual_tools>`
 
-// PromptsSectionTemplate is the template for the prompts section with purpose instructions
-const PromptsSectionTemplate = `
-<prompts_section>
-## 📚 KNOWLEDGE RESOURCES (PROMPTS)
-
-These are prompts which mcp servers have which you get access to know how to use a mcp server better.
-
-{{PROMPTS_LIST}}
-
-**IMPORTANT**: Before using any MCP server, read its prompts using 'get_prompt' to understand how to use it effectively and avoid errors.
-</prompts_section>`
-
-// ResourcesSectionTemplate is the template for the resources section with purpose instructions
-const ResourcesSectionTemplate = `
-<resources_section>
-## 📁 EXTERNAL RESOURCES
-
-{{RESOURCES_LIST}}
-
-Use 'get_resource' tool to access content when needed.
-</resources_section>`
-
-// VirtualToolsSectionTemplate is the template for virtual tool instructions
-const VirtualToolsSectionTemplate = `
-🔧 VIRTUAL TOOLS:
-
-- **get_prompt**: Fetch full prompt content (server + name) from an mcp server
-- **get_resource**: Fetch resource content (server + uri) from an mcp server
-
-These are internal tools - just specify server and identifier.`
-
 // Placeholder constants for easy replacement
 const (
 	ToolsPlaceholder               = "{{TOOLS}}"
-	PromptsSectionPlaceholder      = "{{PROMPTS_SECTION}}"
-	ResourcesSectionPlaceholder    = "{{RESOURCES_SECTION}}"
 	VirtualToolsSectionPlaceholder = "{{VIRTUAL_TOOLS_SECTION}}"
-	PromptsListPlaceholder         = "{{PROMPTS_LIST}}"
-	ResourcesListPlaceholder       = "{{RESOURCES_LIST}}"
 	CurrentDatePlaceholder         = "{{CURRENT_DATE}}"
 	CurrentTimePlaceholder         = "{{CURRENT_TIME}}"
 	ToolStructurePlaceholder       = "{{TOOL_STRUCTURE}}"

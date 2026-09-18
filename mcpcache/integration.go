@@ -14,7 +14,6 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/sirupsen/logrus"
 )
 
@@ -30,8 +29,6 @@ type CachedConnectionResult struct {
 	Clients      map[string]mcpclient.ClientInterface
 	ToolToServer map[string]string
 	Tools        []llmtypes.Tool
-	Prompts      map[string][]mcp.Prompt
-	Resources    map[string][]mcp.Resource
 	SystemPrompt string
 
 	// DuplicateTools contains tools that were skipped during dedup because another
@@ -112,10 +109,8 @@ type ComprehensiveCacheEvent struct {
 	FreshFallback bool   `json:"fresh_fallback"` // Whether fresh connections were used
 
 	// Server details
-	ServersCount   int `json:"servers_count"`
-	TotalTools     int `json:"total_tools"`
-	TotalPrompts   int `json:"total_prompts"`
-	TotalResources int `json:"total_resources"`
+	ServersCount int `json:"servers_count"`
+	TotalTools   int `json:"total_tools"`
 
 	// Individual server cache status
 	ServerStatus map[string]ServerCacheStatus `json:"server_status"`
@@ -136,15 +131,13 @@ type ComprehensiveCacheEvent struct {
 
 // ServerCacheStatus represents the cache status for a specific server
 type ServerCacheStatus struct {
-	ServerName     string `json:"server_name"`
-	Status         string `json:"status"` // "hit", "miss", "write", "error"
-	CacheKey       string `json:"cache_key,omitempty"`
-	ToolsCount     int    `json:"tools_count"`
-	PromptsCount   int    `json:"prompts_count"`
-	ResourcesCount int    `json:"resources_count"`
-	Age            string `json:"age,omitempty"`    // For cache hits
-	Reason         string `json:"reason,omitempty"` // For cache misses
-	Error          string `json:"error,omitempty"`  // For cache errors
+	ServerName string `json:"server_name"`
+	Status     string `json:"status"` // "hit", "miss", "write", "error"
+	CacheKey   string `json:"cache_key,omitempty"`
+	ToolsCount int    `json:"tools_count"`
+	Age        string `json:"age,omitempty"`    // For cache hits
+	Reason     string `json:"reason,omitempty"` // For cache misses
+	Error      string `json:"error,omitempty"`  // For cache errors
 }
 
 // DuplicateToolFields represents typed fields for duplicate tool warning logs
@@ -218,8 +211,6 @@ func GetCachedOrFreshConnection(
 	result := &CachedConnectionResult{
 		Clients:      make(map[string]mcpclient.ClientInterface),
 		ToolToServer: make(map[string]string),
-		Prompts:      make(map[string][]mcp.Prompt),
-		Resources:    make(map[string][]mcp.Resource),
 	}
 
 	// If cache is disabled, skip cache lookup and go directly to fresh connection
@@ -275,8 +266,6 @@ func GetCachedOrFreshConnection(
 			result.Clients = make(map[string]mcpclient.ClientInterface)
 			result.ToolToServer = make(map[string]string)
 			result.Tools = []llmtypes.Tool{}
-			result.Prompts = make(map[string][]mcp.Prompt)
-			result.Resources = make(map[string][]mcp.Resource)
 			result.SystemPrompt = ""
 
 			// Emit comprehensive cache event
@@ -313,8 +302,6 @@ func GetCachedOrFreshConnection(
 		result.Clients = freshResult.Clients
 		result.ToolToServer = freshResult.ToolToServer
 		result.Tools = freshResult.Tools
-		result.Prompts = freshResult.Prompts
-		result.Resources = freshResult.Resources
 		result.SystemPrompt = freshResult.SystemPrompt
 		result.CacheUsed = false
 		result.FreshFallback = true
@@ -408,8 +395,6 @@ func GetCachedOrFreshConnection(
 		result.Clients = make(map[string]mcpclient.ClientInterface)
 		result.ToolToServer = make(map[string]string)
 		// Note: result.Tools is intentionally left empty - workspace tools are added separately
-		result.Prompts = make(map[string][]mcp.Prompt)
-		result.Resources = make(map[string][]mcp.Resource)
 		// Note: result.SystemPrompt is intentionally left empty - agent will get proper system prompt from agent creation
 
 		return result, nil
@@ -448,13 +433,11 @@ func GetCachedOrFreshConnection(
 
 			// Track cache hit status (no individual event emission)
 			serverStatus[srvName] = ServerCacheStatus{
-				ServerName:     srvName,
-				Status:         "hit",
-				CacheKey:       cacheKey,
-				ToolsCount:     len(entry.Tools),
-				PromptsCount:   len(entry.Prompts),
-				ResourcesCount: len(entry.Resources),
-				Age:            age.String(),
+				ServerName: srvName,
+				Status:     "hit",
+				CacheKey:   cacheKey,
+				ToolsCount: len(entry.Tools),
+				Age:        age.String(),
 			}
 
 			// Store cached data for later processing
@@ -488,13 +471,11 @@ func GetCachedOrFreshConnection(
 				// Use the reloaded entry
 				age := time.Since(reloadedEntry.CreatedAt)
 				serverStatus[srvName] = ServerCacheStatus{
-					ServerName:     srvName,
-					Status:         "hit",
-					CacheKey:       cacheKey,
-					ToolsCount:     len(reloadedEntry.Tools),
-					PromptsCount:   len(reloadedEntry.Prompts),
-					ResourcesCount: len(reloadedEntry.Resources),
-					Age:            age.String(),
+					ServerName: srvName,
+					Status:     "hit",
+					CacheKey:   cacheKey,
+					ToolsCount: len(reloadedEntry.Tools),
+					Age:        age.String(),
 				}
 
 				// Store cached data for later processing
@@ -514,13 +495,11 @@ func GetCachedOrFreshConnection(
 
 			// Track cache miss status (no individual event emission)
 			serverStatus[srvName] = ServerCacheStatus{
-				ServerName:     srvName,
-				Status:         "miss",
-				CacheKey:       cacheKey,
-				ToolsCount:     0,
-				PromptsCount:   0,
-				ResourcesCount: 0,
-				Reason:         "not_found",
+				ServerName: srvName,
+				Status:     "miss",
+				CacheKey:   cacheKey,
+				ToolsCount: 0,
+				Reason:     "not_found",
 			}
 
 			missedServers = append(missedServers, srvName)
@@ -575,8 +554,6 @@ func GetCachedOrFreshConnection(
 			result.Clients = cachedResult.Clients
 			result.ToolToServer = cachedResult.ToolToServer
 			result.Tools = cachedResult.Tools
-			result.Prompts = cachedResult.Prompts
-			result.Resources = cachedResult.Resources
 			result.SystemPrompt = cachedResult.SystemPrompt
 		}
 
@@ -598,12 +575,6 @@ func GetCachedOrFreshConnection(
 			result.ToolToServer[toolName] = serverName
 		}
 		result.Tools = append(result.Tools, freshResult.Tools...)
-		for serverName, prompts := range freshResult.Prompts {
-			result.Prompts[serverName] = prompts
-		}
-		for serverName, resources := range freshResult.Resources {
-			result.Resources[serverName] = resources
-		}
 
 		// Cache the fresh connection data for missed servers (synchronous to ensure all servers are cached)
 		// Use a timeout context to prevent hanging
@@ -653,8 +624,6 @@ func GetCachedOrFreshConnection(
 	result.Clients = freshResult.Clients
 	result.ToolToServer = freshResult.ToolToServer
 	result.Tools = freshResult.Tools
-	result.Prompts = freshResult.Prompts
-	result.Resources = freshResult.Resources
 	result.SystemPrompt = freshResult.SystemPrompt
 
 	// Cache the fresh connection data (synchronous to ensure all servers are cached)
@@ -696,8 +665,6 @@ func processCachedData(
 	result := &CachedConnectionResult{
 		Clients:      make(map[string]mcpclient.ClientInterface), // Will be populated with actual connections
 		ToolToServer: make(map[string]string),
-		Prompts:      make(map[string][]mcp.Prompt),
-		Resources:    make(map[string][]mcp.Resource),
 		CacheUsed:    true,
 	}
 
@@ -773,12 +740,6 @@ func processCachedData(
 			result.ToolToServer[toolName] = srvName
 			result.Tools = append(result.Tools, t)
 		}
-		if entry.Prompts != nil {
-			result.Prompts[srvName] = entry.Prompts
-		}
-		if entry.Resources != nil {
-			result.Resources[srvName] = entry.Resources
-		}
 
 		logger.Info("Cached data loaded",
 			loggerv2.String("server", srvName),
@@ -800,30 +761,14 @@ func processCachedData(
 		loggerv2.Any("servers", servers))
 
 	// Create live connections while retaining the cached tool definitions.
-	clients, _, _, _, prompts, resources, _, err := connectMCPServersFresh(ctx, llm, strings.Join(servers, ","), configPath, logger, runtimeOverrides)
+	clients, _, _, _, _, err := connectMCPServersFresh(ctx, llm, strings.Join(servers, ","), configPath, logger, runtimeOverrides)
 	if err != nil {
 		logger.Warn("Failed to create connections, but continuing with cached data", loggerv2.Error(err))
 		// Continue with cached data even if connections fail
 	} else {
 		// Use the actual connections
 		result.Clients = clients
-		// Merge discovered prompts and resources with cached ones
-		for serverName, serverPrompts := range prompts {
-			if existing, exists := result.Prompts[serverName]; exists {
-				// Merge prompts (cached + fresh)
-				result.Prompts[serverName] = append(existing, serverPrompts...)
-			} else {
-				result.Prompts[serverName] = serverPrompts
-			}
-		}
-		for serverName, serverResources := range resources {
-			if existing, exists := result.Resources[serverName]; exists {
-				// Merge resources (cached + fresh)
-				result.Resources[serverName] = append(existing, serverResources...)
-			} else {
-				result.Resources[serverName] = serverResources
-			}
-		}
+
 	}
 
 	logger.Info("Cached data processing complete with connections",
@@ -846,7 +791,7 @@ func performFreshConnection(
 	performStartTime := time.Now()
 
 	logger.Info("🔍 [DEBUG] performFreshConnection: About to call connectMCPServersFresh")
-	clients, toolToServer, tools, _, prompts, resources, systemPrompt, err := connectMCPServersFresh(ctx, llm, serverName, configPath, logger, runtimeOverrides)
+	clients, toolToServer, tools, _, systemPrompt, err := connectMCPServersFresh(ctx, llm, serverName, configPath, logger, runtimeOverrides)
 	performDuration := time.Since(performStartTime)
 	if err != nil {
 		logger.Error("❌ [DEBUG] performFreshConnection: connectMCPServersFresh failed", err, loggerv2.String("duration", performDuration.String()))
@@ -858,8 +803,6 @@ func performFreshConnection(
 		Clients:      clients,
 		ToolToServer: toolToServer,
 		Tools:        tools,
-		Prompts:      prompts,
-		Resources:    resources,
 		SystemPrompt: systemPrompt,
 	}
 
@@ -873,14 +816,14 @@ func connectMCPServersFresh(
 	serverName, configPath string,
 	logger loggerv2.Logger,
 	runtimeOverrides mcpclient.RuntimeOverrides,
-) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, string, error) {
 
 	// Load merged MCP server configuration (base + user)
 	logger.Info("Loading merged MCP config", loggerv2.String("config_path", configPath))
 	cfg, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
 		logger.Error("Failed to load merged MCP config", err)
-		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("load merged config: %w", err)
+		return nil, nil, nil, nil, "", fmt.Errorf("load merged config: %w", err)
 	}
 	logger.Info("Merged MCP config loaded", loggerv2.Int("server_count", len(cfg.MCPServers)))
 
@@ -1030,7 +973,7 @@ func connectMCPServersFresh(
 		if len(serverErrors) > 0 {
 			errorMsg += "; individual server errors: " + strings.Join(serverErrors, "; ")
 		}
-		return nil, nil, nil, nil, nil, nil, "", errors.New(errorMsg)
+		return nil, nil, nil, nil, "", errors.New(errorMsg)
 	}
 
 	logger.Info("Aggregated tools",
@@ -1039,143 +982,12 @@ func connectMCPServersFresh(
 		loggerv2.Int("total_servers_attempted", len(parallelResults)),
 		loggerv2.String("connection_type", "direct"))
 
-	// Discover prompts and resources from all connected servers
-	allPrompts := make(map[string][]mcp.Prompt)
-	allResources := make(map[string][]mcp.Resource)
-
-	logger.Info("Discovering prompts and resources",
-		loggerv2.Int("server_count", len(clients)))
-	for serverName, client := range clients {
-		logger.Info("Checking prompts from server",
-			loggerv2.String("server_name", serverName))
-
-		// For SSE connections, use the stored context from the client
-		// For other protocols, use the parent context
-		var discoveryCtx context.Context
-		if client.GetContext() != nil {
-			// Use stored context if available (SSE connections)
-			discoveryCtx = client.GetContext()
-			logger.Info("Using stored context for discovery", loggerv2.String("server_name", serverName))
-		} else {
-			// Fallback to parent context
-			discoveryCtx = ctx
-			logger.Info("Using parent context for discovery", loggerv2.String("server_name", serverName))
-		}
-
-		// Discover prompts
-		prompts, err := client.ListPrompts(discoveryCtx)
-		if err != nil {
-			logger.Error("Error listing prompts", err, loggerv2.String("server", serverName))
-		} else if len(prompts) > 0 {
-			// Fetch full content for each prompt
-			var fullPrompts []mcp.Prompt
-			for _, prompt := range prompts {
-				// Try to get the full content
-				promptResult, err := client.GetPrompt(discoveryCtx, prompt.Name)
-				if err != nil {
-					logger.Warn("Failed to get full content for prompt",
-						loggerv2.Error(err),
-						loggerv2.String("prompt", prompt.Name),
-						loggerv2.String("server", serverName))
-					// Use the metadata prompt if full content fetch fails
-					fullPrompts = append(fullPrompts, prompt)
-				} else if promptResult != nil && len(promptResult.Messages) > 0 {
-					// Extract content from messages
-					var contentBuilder strings.Builder
-					for _, msg := range promptResult.Messages {
-						if textContent, ok := msg.Content.(*mcp.TextContent); ok {
-							contentBuilder.WriteString(textContent.Text)
-						} else if textContent, ok := msg.Content.(mcp.TextContent); ok {
-							contentBuilder.WriteString(textContent.Text)
-						}
-					}
-					fullContent := contentBuilder.String()
-					if fullContent != "" {
-						logger.Info("Fetched full content for prompt",
-							loggerv2.String("prompt", prompt.Name),
-							loggerv2.String("server", serverName),
-							loggerv2.Int("chars", len(fullContent)))
-
-						// Store full content in Description field (this will be used by virtual tools)
-						// The system prompt builder will extract previews from this content
-						fullPrompt := mcp.Prompt{
-							Name:        prompt.Name,
-							Description: fullContent, // Full content for virtual tools
-						}
-						fullPrompts = append(fullPrompts, fullPrompt)
-					} else {
-						// Fallback to metadata if content extraction fails
-						fullPrompts = append(fullPrompts, prompt)
-					}
-				} else {
-					// Fallback to metadata if prompt result is empty
-					fullPrompts = append(fullPrompts, prompt)
-				}
-			}
-			allPrompts[serverName] = fullPrompts
-		}
-
-		// Discover resources
-		logger.Info("Starting resource discovery", loggerv2.String("server", serverName))
-		resources, err := client.ListResources(discoveryCtx)
-		if err != nil {
-			logger.Error("Error listing resources", err, loggerv2.String("server", serverName))
-			// Check if it's a "method not found" error (server doesn't support resources)
-			if strings.Contains(err.Error(), "method not found") || strings.Contains(err.Error(), "Method not found") {
-				logger.Info("Server does not support resources (method not found)", loggerv2.String("server", serverName))
-			} else {
-				logger.Warn("Unexpected error listing resources", loggerv2.Error(err), loggerv2.String("server", serverName))
-			}
-		} else {
-			resourceCount := len(resources)
-			logger.Info("ListResources completed successfully",
-				loggerv2.String("server", serverName),
-				loggerv2.Int("resource_count", resourceCount))
-
-			if resourceCount > 0 {
-				allResources[serverName] = resources
-				logger.Info("Found resources",
-					loggerv2.String("server", serverName),
-					loggerv2.Int("count", resourceCount))
-
-				// Log each resource for debugging
-				for i, resource := range resources {
-					logger.Info("Resource details",
-						loggerv2.String("server", serverName),
-						loggerv2.Int("index", i),
-						loggerv2.String("uri", resource.URI),
-						loggerv2.String("name", resource.Name),
-						loggerv2.String("description", resource.Description),
-						loggerv2.String("mime_type", resource.MIMEType))
-				}
-			} else {
-				logger.Info("ListResources returned empty slice (no resources available)",
-					loggerv2.String("server", serverName))
-			}
-		}
-	}
-
-	// Calculate total resource count across all servers
-	totalResources := 0
-	for serverName, serverResources := range allResources {
-		totalResources += len(serverResources)
-		logger.Debug("Server resource count",
-			loggerv2.String("server", serverName),
-			loggerv2.Int("count", len(serverResources)))
-	}
-
-	logger.Info("Summary: prompts and resources discovered",
-		loggerv2.Int("prompts", len(allPrompts)),
-		loggerv2.Int("servers_with_resources", len(allResources)),
-		loggerv2.Int("total_resources", totalResources))
-
 	// Log detailed discovery completion (events handled by connection.go)
 
 	// Build minimal system prompt (will be enhanced in agent creation)
 	systemPrompt := fmt.Sprintf("Connected to %d MCP servers with %d tools available.",
 		len(clients), len(allLLMTools))
-
-	return clients, toolToServer, allLLMTools, servers, allPrompts, allResources, systemPrompt, nil
+	return clients, toolToServer, allLLMTools, servers, systemPrompt, nil
 }
 
 // cacheFreshConnectionData caches the results of a fresh connection
@@ -1270,37 +1082,10 @@ func cacheFreshConnectionData(
 				}
 			}
 
-			// Get resources for this server
-			serverResources := result.Resources[srvName]
-			resourceCount := 0
-			if serverResources != nil {
-				resourceCount = len(serverResources)
-			}
-
-			logger.Debug("Preparing cache entry",
-				loggerv2.String("server", srvName),
-				loggerv2.Int("tools_count", len(serverTools)),
-				loggerv2.Int("prompts_count", len(result.Prompts[srvName])),
-				loggerv2.Int("resources_count", resourceCount),
-				loggerv2.String("resources_nil", fmt.Sprintf("%v", serverResources == nil)))
-
-			// Log resource details if present
-			if resourceCount > 0 {
-				for i, resource := range serverResources {
-					logger.Debug("Resource in cache entry",
-						loggerv2.String("server", srvName),
-						loggerv2.Int("index", i),
-						loggerv2.String("uri", resource.URI),
-						loggerv2.String("name", resource.Name))
-				}
-			}
-
 			// Create cache entry with pre-normalized tools and ownership info
 			entry := &CacheEntry{
 				ServerName:    srvName,
 				Tools:         serverTools, // Already normalized
-				Prompts:       result.Prompts[srvName],
-				Resources:     serverResources,
 				SystemPrompt:  result.SystemPrompt,
 				CreatedAt:     time.Now(),
 				TTLMinutes:    cacheManager.GetTTL(), // Use configured TTL instead of hardcoded 30 minutes
@@ -1321,9 +1106,7 @@ func cacheFreshConnectionData(
 			} else {
 				logger.Info("Successfully cached connection data",
 					loggerv2.String("server", srvName),
-					loggerv2.Int("tools_count", len(serverTools)),
-					loggerv2.Int("prompts_count", len(result.Prompts[srvName])),
-					loggerv2.Int("resources_count", len(result.Resources[srvName])))
+					loggerv2.Int("tools_count", len(serverTools)))
 			}
 
 			logger.Debug("Completed cache save for server", loggerv2.String("server", srvName))
@@ -1552,14 +1335,12 @@ func GetCacheStatus(configPath string, tracers []observability.Tracer, logger lo
 			isValid := age < ttl
 
 			serverStatus[serverName] = map[string]interface{}{
-				"cached":          true,
-				"cache_key":       cacheKey,
-				"age":             age.String(),
-				"ttl":             ttl.String(),
-				"is_valid":        isValid,
-				"tools_count":     len(entry.Tools),
-				"prompts_count":   len(entry.Prompts),
-				"resources_count": len(entry.Resources),
+				"cached":      true,
+				"cache_key":   cacheKey,
+				"age":         age.String(),
+				"ttl":         ttl.String(),
+				"is_valid":    isValid,
+				"tools_count": len(entry.Tools),
 			}
 		} else {
 			serverStatus[serverName] = map[string]interface{}{
@@ -1611,17 +1392,10 @@ func EmitComprehensiveCacheEvent(
 
 	// Calculate totals
 	totalTools := 0
-	totalPrompts := 0
-	totalResources := 0
 
 	if result != nil {
 		totalTools = len(result.Tools)
-		for _, prompts := range result.Prompts {
-			totalPrompts += len(prompts)
-		}
-		for _, resources := range result.Resources {
-			totalResources += len(resources)
-		}
+
 	}
 
 	event := &ComprehensiveCacheEvent{
@@ -1634,8 +1408,6 @@ func EmitComprehensiveCacheEvent(
 		FreshFallback:  result != nil && result.FreshFallback,
 		ServersCount:   len(servers),
 		TotalTools:     totalTools,
-		TotalPrompts:   totalPrompts,
-		TotalResources: totalResources,
 		ServerStatus:   serverStatus,
 		CacheHits:      cacheHits,
 		CacheMisses:    cacheMisses,

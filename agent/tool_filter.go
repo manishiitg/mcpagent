@@ -246,7 +246,7 @@ func (tf *ToolFilter) IsVirtualToolsDirectory(dirName string) bool {
 //   - packageOrServer: the server name (for MCP tools) or package name (for custom tools)
 //   - toolName: the tool/function name
 //   - isCustomTool: true if this is a custom tool (workspace, human_tools, etc.), false for MCP tools
-//   - isVirtualTool: true if this is a virtual tool (get_prompt, get_resource, etc.)
+//   - isVirtualTool: true if this is a virtual tool (get_api_spec, etc.)
 //
 // Returns true if the tool should be included
 func (tf *ToolFilter) ShouldIncludeTool(packageOrServer string, toolName string, isCustomTool bool, isVirtualTool bool) bool {

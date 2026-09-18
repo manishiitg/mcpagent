@@ -14,8 +14,6 @@ import (
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	"github.com/mark3labs/mcp-go/mcp"
-
 	"github.com/manishiitg/mcpagent/agent/codeexec"
 	"github.com/manishiitg/mcpagent/agent/convrecord"
 	"github.com/manishiitg/mcpagent/agent/prompt"
@@ -584,30 +582,6 @@ func withAdditionalBridgeTools(names ...string) agentOption {
 	}
 }
 
-// withDiscoverResource enables/disables automatic resource discovery.
-//
-// If enabled, the agent will query all connected MCP servers for their available resources
-// and include them in the system prompt.
-//
-// Default: true
-func withDiscoverResource(enabled bool) agentOption {
-	return func(a *Agent) {
-		a.discoverResource = enabled
-	}
-}
-
-// withDiscoverPrompt enables/disables automatic prompt discovery.
-//
-// If enabled, the agent will query all connected MCP servers for their available prompts
-// and include them in the system prompt.
-//
-// Default: true
-func withDiscoverPrompt(enabled bool) agentOption {
-	return func(a *Agent) {
-		a.discoverPrompt = enabled
-	}
-}
-
 // withLLMConfig sets the full LLM configuration (selected model).
 // This is the canonical configuration for provider and model selection.
 func withLLMConfig(config AgentLLMConfiguration) agentOption {
@@ -1127,10 +1101,6 @@ type Agent struct {
 	toolAllowList   map[string]bool // nil = no restriction (all tools allowed)
 	toolAllowListMu sync.RWMutex
 
-	// Store prompts and resources for system prompt rebuilding
-	prompts   map[string][]mcp.Prompt
-	resources map[string][]mcp.Resource
-
 	// Flag to track if a custom system prompt was provided
 	hasCustomSystemPrompt bool
 
@@ -1247,12 +1217,6 @@ type Agent struct {
 	// Hierarchy tracking fields for event tree structure
 	currentParentEventID  string // Track current parent event ID
 	currentHierarchyLevel int    // Track current hierarchy level (0=root, 1=child, etc.)
-
-	// Resource discovery configuration
-	discoverResource bool // If true, include resource details in system prompt (default: true)
-
-	// Prompt discovery configuration
-	discoverPrompt bool // If true, include prompt details in system prompt (default: true)
 
 	// Code execution mode configuration
 	// When enabled: Custom tools + get_api_spec virtual tool are exposed to the LLM
@@ -1615,12 +1579,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		currentParentEventID:  "", // Start with no parent
 		currentHierarchyLevel: 0,  // Start at root level
 
-		// Initialize resource discovery (default: true - include resources in system prompt)
-		discoverResource: true,
-
-		// Initialize prompt discovery (default: true - include prompts in system prompt)
-		discoverPrompt: true,
-
 		// Initialize cache (default: false - caching enabled by default)
 		disableCache: false,
 
@@ -1700,8 +1658,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	var toolToServer map[string]string
 	var allLLMTools []llmtypes.Tool
 	var servers []string
-	var prompts map[string][]mcp.Prompt
-	var resources map[string][]mcp.Resource
 	var systemPrompt string
 
 	// SessionID is mandatory for connection management via the session registry.
@@ -1713,7 +1669,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.sessionID))
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err =
+	clients, toolToServer, allLLMTools, servers, systemPrompt, err =
 		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.sessionID, string(ag.traceID), ag.tracers, logger, ag.disableCache, ag.runtimeOverrides, ag.userID)
 
 	connectionDuration := time.Since(connectionStartTime)
@@ -1764,8 +1720,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 	ag.servers = servers
 	ag.toolOutputHandler = toolOutputHandler
-	ag.prompts = prompts
-	ag.resources = resources
 	ag.configPath = configPath
 
 	// Start periodic cleanup routine for tool output files
@@ -2032,7 +1986,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts
 	// In code execution mode, tool structure is automatically included
 	if !ag.hasCustomSystemPrompt {
-		ag.systemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.agentMode), ag.discoverResource, ag.discoverPrompt, ag.useCodeExecutionMode, toolStructureJSON, ag.logger, ag.enableParallelToolExecution)
+		ag.systemPrompt = prompt.BuildSystemPromptWithoutTools(string(ag.agentMode), ag.useCodeExecutionMode, toolStructureJSON, ag.logger, ag.enableParallelToolExecution)
 	}
 
 	// Initialize the filtered-tool set used by the outgoing LLM call.

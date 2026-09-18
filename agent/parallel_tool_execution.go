@@ -635,11 +635,7 @@ func executeToolCall(
 // unknownToolFeedback builds the correction returned when the model calls a tool
 // that does not exist.
 //
-// This text used to be a literal that always advertised "get_prompt,
-// get_resource (virtual tools)". Both are registered only when a connected MCP
-// server actually advertises prompts or resources, so for every NoServers agent
-// — which is every Pulse reviewer, fixer, and background agent — the correction
-// named tools that were not there.
+// Feedback lists the tools actually available to this agent.
 //
 // Recovery text is not documentation. The model acts on it, so a wrong hint
 // turns one failed call into several: this is the same shape as get_api_spec

@@ -35,8 +35,6 @@ type serverConnectionResult struct {
 	client     mcpclient.ClientInterface
 	tools      []llmtypes.Tool
 	toolNames  []string // tool names in order, for toolToServer mapping
-	prompts    []mcp.Prompt
-	resources  []mcp.Resource
 	wasCreated bool
 	isLazy     bool // true = tools loaded from cache, connection deferred until first tool call
 	mcpCount   int  // number of MCP tools discovered (for logging)
@@ -69,8 +67,6 @@ type serverConnectionResult struct {
 //   - toolToServer: Map of tool name to server name
 //   - tools: List of LLM tools
 //   - servers: List of server names
-//   - prompts: Map of server name to prompts
-//   - resources: Map of server name to resources
 //   - systemPrompt: Combined system prompt from servers
 //   - error: Error if connection failed
 func NewAgentConnectionWithSession(
@@ -84,7 +80,7 @@ func NewAgentConnectionWithSession(
 	disableCache bool,
 	runtimeOverrides mcpclient.RuntimeOverrides,
 	userID string,
-) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, string, error) {
 
 	connectionStartTime := time.Now()
 
@@ -116,7 +112,7 @@ func NewAgentConnectionWithSession(
 	// Load merged MCP configuration
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("failed to load merged MCP config: %w", err)
+		return nil, nil, nil, nil, "", fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
 
 	// Determine which servers to connect to
@@ -141,7 +137,7 @@ func NewAgentConnectionWithSession(
 	// Handle special case: no servers requested
 	if len(servers) == 0 {
 		logger.Info("No servers requested, returning empty result")
-		return make(map[string]mcpclient.ClientInterface), make(map[string]string), nil, servers, make(map[string][]mcp.Prompt), make(map[string][]mcp.Resource), "", nil
+		return make(map[string]mcpclient.ClientInterface), make(map[string]string), nil, servers, "", nil
 	}
 
 	registry := mcpclient.GetSessionRegistry()
@@ -212,7 +208,6 @@ func NewAgentConnectionWithSession(
 						result.tools = append(result.tools, llmTool)
 						result.toolNames = append(result.toolNames, toolName)
 					}
-					result.prompts = cachedEntry.Prompts
 					result.isLazy = true
 					// Store config so on-demand connect knows how to spawn the server
 					registry.StoreServerConfig(sessionID, srvName, serverConfig)
@@ -295,15 +290,6 @@ func NewAgentConnectionWithSession(
 			}
 			result.mcpCount = len(mcpTools)
 
-			// Discover prompts using ListPrompts (correct interface method)
-			if serverPrompts, err := client.ListPrompts(ctx); err == nil && len(serverPrompts) > 0 {
-				result.prompts = serverPrompts
-			}
-
-			// Discover resources using ListResources (correct interface method)
-			if serverResources, err := client.ListResources(ctx); err == nil && len(serverResources) > 0 {
-				result.resources = serverResources
-			}
 		}(i, srvName)
 	}
 
@@ -313,8 +299,6 @@ func NewAgentConnectionWithSession(
 	clients := make(map[string]mcpclient.ClientInterface)
 	toolToServer := make(map[string]string)
 	var allTools []llmtypes.Tool
-	prompts := make(map[string][]mcp.Prompt)
-	resources := make(map[string][]mcp.Resource)
 	var connectedServers []string
 	seenTools := make(map[string]bool)
 
@@ -345,13 +329,6 @@ func NewAgentConnectionWithSession(
 			toolToServer[toolName] = result.serverName
 		}
 
-		if len(result.prompts) > 0 {
-			prompts[result.serverName] = result.prompts
-		}
-		if len(result.resources) > 0 {
-			resources[result.serverName] = result.resources
-		}
-
 		if result.isLazy {
 			logger.Info(fmt.Sprintf("💤 Lazy server %s (session=%s): %d tools registered, connection deferred",
 				result.serverName, sessionID, len(result.tools)))
@@ -375,11 +352,9 @@ func NewAgentConnectionWithSession(
 		eventData.ConfigPath = configPath
 		eventData.Operation = "connection_complete_with_session"
 		eventData.ServerInfo = map[string]interface{}{
-			"session_id":      sessionID,
-			"servers_count":   len(clients),
-			"tools_count":     len(allTools),
-			"prompts_count":   len(prompts),
-			"resources_count": len(resources),
+			"session_id":    sessionID,
+			"servers_count": len(clients),
+			"tools_count":   len(allTools),
 		}
 		eventData.Timestamp = time.Now()
 
@@ -402,7 +377,7 @@ func NewAgentConnectionWithSession(
 		loggerv2.Int("tools_count", len(allTools)),
 		loggerv2.String("duration", connectionDuration.String()))
 
-	return clients, toolToServer, allTools, connectedServers, prompts, resources, systemPrompt, nil
+	return clients, toolToServer, allTools, connectedServers, systemPrompt, nil
 }
 
 // canonicalizeRequestedServers resolves sanitized aliases to their configured

@@ -84,9 +84,8 @@ type ToolRuntimeConfig struct {
 	ParallelExecution bool
 	Timeout           time.Duration
 	DisableCache      bool
-	DiscoverResources *bool
-	DiscoverPrompts   *bool
-	AdditionalBridge  []string
+
+	AdditionalBridge []string
 }
 
 type ContextRuntimeConfig struct {
@@ -297,12 +296,7 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	if tools.DisableCache {
 		options = append(options, withDisableCache(true))
 	}
-	if tools.DiscoverResources != nil {
-		options = append(options, withDiscoverResource(*tools.DiscoverResources))
-	}
-	if tools.DiscoverPrompts != nil {
-		options = append(options, withDiscoverPrompt(*tools.DiscoverPrompts))
-	}
+
 	if len(tools.AdditionalBridge) > 0 {
 		options = append(options, withAdditionalBridgeTools(tools.AdditionalBridge...))
 	}
