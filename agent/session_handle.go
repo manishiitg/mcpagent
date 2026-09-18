@@ -13,6 +13,7 @@ import (
 // may persist it as opaque JSON; provider-native fields remain nested inside the
 // provider handle.
 type AgentSessionHandle struct {
+	ConnectionID  string                               `json:"connection_id,omitempty"`
 	AgentID       string                               `json:"agent_id,omitempty"`
 	SessionID     string                               `json:"session_id,omitempty"`
 	OwnerID       string                               `json:"owner_id,omitempty"`
@@ -75,6 +76,7 @@ func (a *Agent) currentAgentSessionHandle() *AgentSessionHandle {
 		return nil
 	}
 	handle := &AgentSessionHandle{
+		ConnectionID:  a.getLLMModelConfig().ConnectionID,
 		SessionID:     strings.TrimSpace(a.sessionID),
 		OwnerID:       strings.TrimSpace(a.sessionID),
 		CorrelationID: string(a.traceID),
@@ -91,6 +93,17 @@ func (a *Agent) currentAgentSessionHandle() *AgentSessionHandle {
 // generation call uses the restored state to construct provider options.
 func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
 	if a == nil || handle == nil {
+		return
+	}
+	currentID := a.getLLMModelConfig().ConnectionID
+	savedID := handle.ConnectionID
+	if currentID == "global:"+string(a.provider) {
+		currentID = ""
+	}
+	if savedID == "global:"+string(a.provider) {
+		savedID = ""
+	}
+	if currentID != savedID {
 		return
 	}
 	configuredProvider := a.provider

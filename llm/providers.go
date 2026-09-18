@@ -422,11 +422,12 @@ func WithPiStatuslineExtension(source string) llmtypes.CallOption {
 // Config holds configuration for LLM initialization (agent_go version)
 // This is kept for backward compatibility and converted to llm-providers Config internally
 type Config struct {
-	Provider    Provider
-	ModelID     string
-	Temperature float64
-	Tracers     []observability.Tracer
-	TraceID     observability.TraceID
+	ConnectionID string
+	Provider     Provider
+	ModelID      string
+	Temperature  float64
+	Tracers      []observability.Tracer
+	TraceID      observability.TraceID
 
 	MaxRetries int
 	// Logger for structured logging
@@ -515,6 +516,7 @@ func convertConfig(config Config) llmproviders.Config {
 	providerAPIKeys := config.APIKeys.Clone()
 
 	return llmproviders.Config{
+		ConnectionID:        config.ConnectionID,
 		Provider:            llmproviders.Provider(config.Provider),
 		ModelID:             config.ModelID,
 		Temperature:         config.Temperature,

@@ -1117,6 +1117,7 @@ func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, mess
 	}
 
 	llmInstance, err := llm.InitializeLLM(llm.Config{
+		ConnectionID:        model.ConnectionID,
 		Provider:            modelProvider,
 		ModelID:             model.ModelID,
 		Temperature:         temperature,
