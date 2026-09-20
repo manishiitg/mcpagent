@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
@@ -164,10 +165,24 @@ func SendClaudeCodeInput(ctx context.Context, sessionID, message string) error {
 	return llmproviders.SendClaudeCodeInput(ctx, sessionID, message)
 }
 
+// AwaitClaudeInputDurable waits for the transcript proof that a previous
+// live input reached the Claude Code CLI. Host applications call it after
+// the fast pane ack; a zero timeout selects the adapter's env-tuned budget.
+func AwaitClaudeInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
+	return llmproviders.AwaitClaudeInputDurable(ctx, sessionID, message, timeout)
+}
+
 // SendCodexCLIInteractiveInput sends user input to a live Codex CLI interactive
 // session registered for the owning application session.
 func SendCodexCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
 	return llmproviders.SendCodexCLIInteractiveInput(ctx, sessionID, message)
+}
+
+// AwaitCodexInputDurable waits for the rollout proof that a previous live
+// input reached the Codex CLI. Host applications call it after the fast
+// pane ack; a zero timeout selects the adapter's env-tuned budget.
+func AwaitCodexInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
+	return llmproviders.AwaitCodexInputDurable(ctx, sessionID, message, timeout)
 }
 
 // SendCursorCLIInteractiveInput sends user input to a live Cursor CLI
@@ -176,10 +191,31 @@ func SendCursorCLIInteractiveInput(ctx context.Context, sessionID, message strin
 	return llmproviders.SendCursorCLIInteractiveInput(ctx, sessionID, message)
 }
 
+// AwaitCursorInputDurable waits for the store proof that a previous live
+// input reached the Cursor CLI. Host applications call it after the fast
+// pane ack; a zero timeout selects the adapter's env-tuned budget.
+func AwaitCursorInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
+	return llmproviders.AwaitCursorInputDurable(ctx, sessionID, message, timeout)
+}
+
 // SendPiCLIInteractiveInput sends user input to a live Pi CLI interactive
 // session registered for the owning application session.
 func SendPiCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
 	return llmproviders.SendPiCLIInteractiveInput(ctx, sessionID, message)
+}
+
+// AwaitPiInputDurable waits for the marker proof that a previous live
+// input reached the Pi CLI. Host applications call it after the fast
+// pane ack; a zero timeout selects the adapter's env-tuned budget.
+func AwaitPiInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
+	return llmproviders.AwaitPiInputDurable(ctx, sessionID, message, timeout)
+}
+
+// AwaitMuseInputDurable waits for the transcript proof that a previous
+// live input reached the Muse CLI. Host applications call it after the
+// fast pane ack; a zero timeout selects the adapter's env-tuned budget.
+func AwaitMuseInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
+	return llmproviders.AwaitMuseInputDurable(ctx, sessionID, message, timeout)
 }
 
 // CleanupPiCLIInteractiveSessions closes all tracked Pi CLI interactive

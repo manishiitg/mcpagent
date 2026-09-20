@@ -37,6 +37,13 @@ const (
 	SystemPrompt EventType = "system_prompt"
 	UserMessage  EventType = "user_message"
 
+	// Delivery receipt events: two-stage confirmation for live input
+	// into retained coding CLIs. The HTTP ack is the fast pane
+	// confirmation (single tick); this event is the durable
+	// rollout/transcript proof (double tick), matched to the user
+	// message row by metadata.message_id.
+	LiveInputConfirmed EventType = "live_input_confirmed"
+
 	// Additional tool events
 	ToolOutput   EventType = "tool_output"
 	ToolResponse EventType = "tool_response"

@@ -607,6 +607,46 @@ func (e *UserMessageEvent) GetEventType() EventType {
 	return UserMessage
 }
 
+// LiveInputConfirmedEvent upgrades a live-input user message row from
+// fast pane confirmation to durable CLI-record proof. Outcome is one
+// of "confirmed", "accepted_but_unflushed", or "failed".
+type LiveInputConfirmedEvent struct {
+	BaseEventData
+	MessageID   string `json:"message_id"`
+	Outcome     string `json:"outcome"`
+	ProofSource string `json:"proof_source,omitempty"`
+	LatencyMs   int64  `json:"latency_ms,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+}
+
+func (e *LiveInputConfirmedEvent) GetEventType() EventType {
+	return LiveInputConfirmed
+}
+
+// NewLiveInputConfirmedEvent creates a new LiveInputConfirmedEvent.
+// Metadata mirrors the user_message row so either envelope shape
+// resolves the confirmed message by metadata.message_id.
+func NewLiveInputConfirmedEvent(messageID, outcome, proofSource, provider string, latencyMs int64) *LiveInputConfirmedEvent {
+	return &LiveInputConfirmedEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+			Metadata: map[string]interface{}{
+				"source":       "coding_agent_live_input",
+				"message_id":   messageID,
+				"confirmation": outcome,
+				"proof_source": proofSource,
+				"latency_ms":   latencyMs,
+				"provider":     provider,
+			},
+		},
+		MessageID:   messageID,
+		Outcome:     outcome,
+		ProofSource: proofSource,
+		LatencyMs:   latencyMs,
+		Provider:    provider,
+	}
+}
+
 // NewUserMessageEvent creates a new UserMessageEvent
 func NewUserMessageEvent(turn int, content, role string) *UserMessageEvent {
 	return &UserMessageEvent{
