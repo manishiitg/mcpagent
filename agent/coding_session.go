@@ -472,12 +472,16 @@ func (a *Agent) deliver(ctx context.Context, conversationID, message string, sto
 
 	switch decideDelivery(true, a.supportsSteering()) {
 	case decideSteer:
-		if _, err := a.deliverUserMessage(ctx, UserMessageDeliveryRequest{
+		steered, err := a.deliverUserMessage(ctx, UserMessageDeliveryRequest{
 			SessionID: strings.TrimSpace(conversationID),
 			Message:   message,
 			Intent:    UserMessageDeliveryIntentLiveInput,
-		}); err != nil {
+		})
+		if err != nil {
 			return Delivered{}, err
+		}
+		if steered.DeliveryStatus == UserMessageDeliveryStatusQueuedForInjection {
+			return Delivered{Mode: DeliveryModeQueued}, nil
 		}
 		return Delivered{Mode: DeliveryModeSteered}, nil
 	default: // decideQueue

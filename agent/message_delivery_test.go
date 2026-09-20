@@ -3,6 +3,7 @@ package mcpagent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -44,6 +45,52 @@ func TestDeliverUserMessageRejectsEmptyMessage(t *testing.T) {
 	}
 	if deliveryErr.Kind != DeliveryErrorKindEmptyMessage {
 		t.Fatalf("error kind = %q, want %q", deliveryErr.Kind, DeliveryErrorKindEmptyMessage)
+	}
+}
+
+func TestDeliverUserMessageQueuesWhenTurnInFlightButNoInteractiveSession(t *testing.T) {
+	// API-continuation turn (tmux contract, no pooled TUI): the interactive
+	// send misses the adapter pool before any I/O. With a turn running its
+	// conversation loop, the message must queue for the next LLM-call
+	// boundary instead of failing a send no CLI ever saw.
+	agent := &Agent{provider: llm.ProviderMuseCLI, modelID: "muse-spark-1.3-contributor"}
+	agent.setTurnInFlight(true)
+	result, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
+		SessionID: "muse-api-turn-no-tui",
+		Message:   "steer while API turn runs",
+		Intent:    UserMessageDeliveryIntentLiveInput,
+	})
+	if err != nil {
+		t.Fatalf("deliverUserMessage() error = %v, want queue fallback", err)
+	}
+	if result.DeliveryStatus != UserMessageDeliveryStatusQueuedForInjection {
+		t.Fatalf("status = %q, want %q", result.DeliveryStatus, UserMessageDeliveryStatusQueuedForInjection)
+	}
+	got := agent.drainSteerMessages()
+	if len(got) != 1 || got[0] != "steer while API turn runs" {
+		t.Fatalf("queued messages = %#v", got)
+	}
+}
+
+func TestDeliverUserMessageStillErrorsWithoutTurnInFlight(t *testing.T) {
+	// No running turn means nothing drains the steer queue, so a pool miss
+	// must keep erroring (the backend starts a new turn instead of stalling
+	// an accepted message). This also pins the fixture onto the interactive
+	// branch: only it can produce the pool-miss error.
+	agent := &Agent{provider: llm.ProviderMuseCLI, modelID: "muse-spark-1.3-contributor"}
+	_, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
+		SessionID: "muse-idle-no-tui",
+		Message:   "nobody drains",
+		Intent:    UserMessageDeliveryIntentLiveInput,
+	})
+	if err == nil {
+		t.Fatal("expected not-registered error when no turn drains the steer queue")
+	}
+	if !strings.Contains(err.Error(), "interactive session registered") {
+		t.Fatalf("error = %v, want pool-miss error", err)
+	}
+	if got := agent.drainSteerMessages(); len(got) != 0 {
+		t.Fatalf("queued messages = %#v, want none", got)
 	}
 }
 

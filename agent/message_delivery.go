@@ -32,6 +32,19 @@ func (e *CodingAgentDeliveryError) Error() string {
 	return fmt.Sprintf("coding agent delivery error (%s, %s): %s", e.Provider, e.Kind, e.Reason)
 }
 
+// isInteractiveSessionNotRegistered reports whether err is a provider
+// adapter's pre-I/O pool miss ("no active X interactive session registered
+// for owner session ..."). Every tmux adapter emits that shape from its
+// pooled-session lookup before touching tmux, so it proves nothing was sent
+// — unlike mid-send failures, which keep their own messages and stay
+// uncertain.
+func isInteractiveSessionNotRegistered(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "interactive session registered")
+}
+
 type UserMessageDeliveryIntent string
 
 const (
@@ -148,6 +161,19 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 			err = llm.SendCodingAgentRetainedInput(ctx, provider, a.modelID, req.SessionID, message)
 		}
 		if err != nil {
+			if isInteractiveSessionNotRegistered(err) && a.isTurnInFlight() {
+				// No pooled TUI while a turn runs: an API-continuation turn,
+				// or a TUI turn whose pane is still booting. Either way the
+				// outer conversation loop is running, so queue for its next
+				// boundary (AskWithHistory drains after tool execution and
+				// after the final response) instead of failing a send no CLI
+				// ever saw. Without a running turn nothing drains the queue,
+				// so idle sessions keep the error and the caller starts a
+				// new turn.
+				a.addSteerMessage(message)
+				result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
+				return result, nil
+			}
 			return result, fmt.Errorf("failed to submit live input to %s: %w", provider, err)
 		}
 		result.DeliveryStatus = UserMessageDeliveryStatusSentToCLI
