@@ -16,6 +16,24 @@ import (
 
 type codingAgentIntegrationAppender func(*Agent, []llmtypes.CallOption, LLMModel) ([]llmtypes.CallOption, error)
 
+// applyCodingAgentIntegrationOptions runs the provider's MCP bridge
+// integration binding. Non-coding providers and providers without bridge
+// config pass through untouched. A coding provider whose contract
+// requires bridge config but has no registered binding fails here —
+// before launch — instead of silently starting without its
+// orchestration context.
+func applyCodingAgentIntegrationOptions(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
+	provider := llmproviders.Provider(model.Provider)
+	appender, ok := codingAgentIntegrationAppenders[provider]
+	if !ok {
+		if contract, cok := llm.GetCodingAgentProviderContract(provider, model.ModelID); cok && contract.RequiresMCPBridgeConfig {
+			return opts, fmt.Errorf("coding agent provider %s requires an MCP bridge integration binding: none registered", provider)
+		}
+		return opts, nil
+	}
+	return appender(a, opts, model)
+}
+
 var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentIntegrationAppender{
 	llmproviders.ProviderClaudeCode: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 		return a.appendClaudeCodeIntegrationOptions(opts, model)

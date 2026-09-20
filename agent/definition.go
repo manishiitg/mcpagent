@@ -216,6 +216,8 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 		return nil, cause
 	}
 	if runtime.ResumeHandle != nil && !runtime.ResumeHandle.Empty() {
+		// A rejected handle leaves the agent without native state; the
+		// turn then falls back to history replay instead of resuming.
 		agent.applyAgentSessionHandle(runtime.ResumeHandle)
 	}
 	agent.setFolderGuardPaths(

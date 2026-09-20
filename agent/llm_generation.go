@@ -1132,12 +1132,10 @@ func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, mess
 		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
-	if appender, ok := codingAgentIntegrationAppenders[llmproviders.Provider(model.Provider)]; ok {
-		var integrationErr error
-		opts, integrationErr = appender(a, opts, model)
-		if integrationErr != nil {
-			return nil, integrationErr
-		}
+	var integrationErr error
+	opts, integrationErr = applyCodingAgentIntegrationOptions(a, opts, model)
+	if integrationErr != nil {
+		return nil, integrationErr
 	}
 
 	// Apply model options for all providers (reasoning_effort, thinking_level, etc.)

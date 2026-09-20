@@ -3,6 +3,7 @@ package mcpagent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -278,6 +279,54 @@ func TestCodingAgentIntegrationAppenderCoverage(t *testing.T) {
 		}
 		if !contract.UsesMCPBridge {
 			t.Errorf("integration appender has %s but contract does not use MCP bridge", provider)
+		}
+	}
+	// Reverse direction: every contract that requires bridge config must
+	// have a registered binding. Iterating only the map cannot detect a
+	// missing entry for a newly onboarded provider.
+	for _, contract := range llm.CodingAgentProviderContracts() {
+		if !contract.RequiresMCPBridgeConfig {
+			continue
+		}
+		if _, ok := codingAgentIntegrationAppenders[contract.Provider]; !ok {
+			t.Errorf("contract requires MCP bridge config for %s but no integration appender is registered", contract.Provider)
+		}
+	}
+}
+
+func TestApplyCodingAgentIntegrationOptionsRejectsMissingBinding(t *testing.T) {
+	// A bridge-required provider without a registered binding must fail
+	// before launch, not start without its orchestration context.
+	codex, ok := codingAgentIntegrationAppenders[llm.ProviderCodexCLI]
+	if !ok {
+		t.Fatal("test requires a registered codex-cli appender to remove")
+	}
+	delete(codingAgentIntegrationAppenders, llm.ProviderCodexCLI)
+	defer func() { codingAgentIntegrationAppenders[llm.ProviderCodexCLI] = codex }()
+
+	_, err := applyCodingAgentIntegrationOptions(nil, nil, LLMModel{Provider: "codex-cli", ModelID: "gpt-5.3-codex-spark"})
+	if err == nil || !strings.Contains(err.Error(), "requires an MCP bridge integration binding") {
+		t.Fatalf("err = %v, want a missing-binding rejection", err)
+	}
+	// Non-coding providers pass through untouched.
+	if _, err := applyCodingAgentIntegrationOptions(nil, nil, LLMModel{Provider: "openai", ModelID: "gpt-5"}); err != nil {
+		t.Fatalf("non-coding provider err = %v, want nil", err)
+	}
+}
+
+func TestCodingAgentNativeSessionBindingsCoverResumeContracts(t *testing.T) {
+	// Every contract claiming native resume must have native session ID
+	// getter/setter bindings. Missing entries would silently drop the
+	// provider's native identity on restore.
+	for _, contract := range llm.CodingAgentProviderContracts() {
+		if !contract.SupportsNativeResume {
+			continue
+		}
+		if _, ok := codingAgentNativeSessionIDSetters[contract.Provider]; !ok {
+			t.Errorf("contract claims native resume for %s but no native session ID setter is registered", contract.Provider)
+		}
+		if _, ok := codingAgentNativeSessionIDGetters[contract.Provider]; !ok {
+			t.Errorf("contract claims native resume for %s but no native session ID getter is registered", contract.Provider)
 		}
 	}
 }

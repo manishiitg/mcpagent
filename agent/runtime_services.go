@@ -141,8 +141,13 @@ func SnapshotAgentSession(agent *Agent) *AgentSessionHandle {
 	return agent.currentAgentSessionHandle()
 }
 
-func ApplyAgentResumeHandle(agent *Agent, handle *AgentSessionHandle) {
-	if agent != nil {
-		agent.applyAgentSessionHandle(handle)
+// ApplyAgentResumeHandle restores provider-native continuation state from a
+// persisted handle. It reports whether the handle was accepted; on false
+// no agent state was mutated and the caller must replay history rather
+// than assume native context.
+func ApplyAgentResumeHandle(agent *Agent, handle *AgentSessionHandle) bool {
+	if agent == nil {
+		return false
 	}
+	return agent.applyAgentSessionHandle(handle)
 }

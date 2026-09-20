@@ -91,9 +91,11 @@ func (a *Agent) currentAgentSessionHandle() *AgentSessionHandle {
 // ApplyAgentSessionHandle restores provider-native continuation state from a
 // persisted handle. It intentionally does not restart providers itself; the next
 // generation call uses the restored state to construct provider options.
-func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
+// It reports whether the handle was accepted; on false no agent state was
+// mutated, and the caller must replay history rather than assume native context.
+func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) bool {
 	if a == nil || handle == nil {
-		return
+		return false
 	}
 	currentID := a.getLLMModelConfig().ConnectionID
 	savedID := handle.ConnectionID
@@ -104,7 +106,19 @@ func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
 		savedID = ""
 	}
 	if currentID != savedID {
-		return
+		return false
+	}
+	// Provider compatibility before ANY mutation: a handle naming another
+	// provider must never import its native session ID and working
+	// directory here — the relabel below would otherwise present the
+	// foreign native conversation as this agent's own and the
+	// continuation check would accept it. Handles that name no provider
+	// (session-only restores) keep the legacy import path; models may
+	// always change within the same provider.
+	if savedProvider := strings.TrimSpace(handle.Provider.Provider); savedProvider != "" {
+		if configured := strings.TrimSpace(string(a.provider)); configured != "" && !strings.EqualFold(savedProvider, configured) {
+			return false
+		}
 	}
 	configuredProvider := a.provider
 	configuredModel := strings.TrimSpace(a.modelID)
@@ -114,7 +128,7 @@ func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
 		a.sessionID = ownerID
 	}
 	if handle.Provider.Empty() {
-		return
+		return true
 	}
 	if a.logger != nil {
 		a.logger.Debug(fmt.Sprintf("Applying coding-agent session handle: session=%q provider=%q nativeSessionID=%q workingDir=%q isolated=%v", a.sessionID, handle.Provider.Provider, handle.Provider.NativeSessionID, handle.Provider.WorkingDir, a.isolatedSessionWorkspace))
@@ -131,6 +145,7 @@ func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) {
 		a.codingProviderSessionHandle.Provider = string(configuredProvider)
 		a.codingProviderSessionHandle.Model = configuredModel
 	}
+	return true
 }
 
 // ContinueAgentSessionWithHistory applies the handle and runs the normal agent
