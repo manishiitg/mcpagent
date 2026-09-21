@@ -32,6 +32,7 @@ var structuredTransportProviderCases = []structuredTransportProviderCase{
 	{"Pi", "pi", llm.ProviderPiCLI, "pi-cli", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
 	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
 	{"Muse", "muse", llm.ProviderMuseCLI, "muse-spark-1.3-contributor", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Agy", "agy", llm.ProviderAgyCLI, "gemini-3.8-flash-high", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
 }
 
 // TestStructuredTransportSystemPromptSurvivesNewAgent is the mcpagent-layer
@@ -65,6 +66,9 @@ func TestStructuredTransportSystemPromptSurvivesNewAgent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := exec.LookPath(tc.binary); err != nil {
 				t.Skipf("%s CLI required", tc.binary)
+			}
+			if tc.provider == llm.ProviderAgyCLI {
+				t.Skip("agy excluded from system_prompt.json (see cert note): the row's secret-adoption proof is refused by model trust policy on folded system text; benign survival is proven at Layer-1")
 			}
 
 			canary := "PROMPT_SURVIVAL_" + realBridgeRandHex(6)

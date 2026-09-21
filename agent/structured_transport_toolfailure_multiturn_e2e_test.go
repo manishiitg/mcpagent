@@ -130,7 +130,19 @@ func TestStructuredTransportToolFailureRecovery(t *testing.T) {
 			workDir := t.TempDir()
 			codeWord := "BUILD_ID_" + realBridgeRandHex(6)
 			buildIDPath := filepath.Join(workDir, "build_id.txt")
-			if err := os.WriteFile(buildIDPath, []byte(codeWord), 0o600); err != nil {
+			isAgy := tc.provider == llm.ProviderAgyCLI
+			if isAgy {
+				// Agy has no bridge-only knob (unlike Codex's
+				// WithCodexDisableShellTool): a mounted turn keeps native
+				// read/shell tools live — Layer-1 BestEffortToolRestrictions
+				// pins only that unmounted native WRITES are auto-denied.
+				// A build_id.txt on disk would let the model bypass the
+				// bridge tool, answer correctly, and pass this row with
+				// zero calls (observed live). Keep the codeword obtainable
+				// ONLY via a real tool run: no file; the handler reveals it.
+				// The prompt still says "run exactly: cat <path>" — a native
+				// attempt finds nothing and the tool remains the only source.
+			} else if err := os.WriteFile(buildIDPath, []byte(codeWord), 0o600); err != nil {
 				t.Fatal(err)
 			}
 
@@ -139,6 +151,9 @@ func TestStructuredTransportToolFailureRecovery(t *testing.T) {
 				func(ctx context.Context, args map[string]interface{}, shellEnv []string) (string, error) {
 					if atomic.AddInt32(&calls, 1) == 1 {
 						return "", fmt.Errorf("TRANSIENT_TOOL_FAILURE: the tool backend was briefly unavailable; retry the same command")
+					}
+					if isAgy {
+						return codeWord, nil
 					}
 					return shellfixture.ExecuteShellCommand(ctx, args, shellEnv)
 				})
@@ -219,7 +234,15 @@ func TestStructuredTransportToolFailureGiveUp(t *testing.T) {
 			workDir := t.TempDir()
 			unreachable := "BUILD_ID_" + realBridgeRandHex(6)
 			buildIDPath := filepath.Join(workDir, "build_id.txt")
-			if err := os.WriteFile(buildIDPath, []byte(unreachable), 0o600); err != nil {
+			if tc.provider == llm.ProviderAgyCLI {
+				// Agy counterpart of the recovery-row branch above: a
+				// mounted agy turn keeps native read/shell tools live with
+				// no bridge-only knob, so a build_id.txt on disk would let
+				// the model read the "unreachable" id natively and fail
+				// this row without any fabrication. Withhold the file: the
+				// id is then obtainable only via the tool, which always
+				// fails, so the give-up assertion is deterministic.
+			} else if err := os.WriteFile(buildIDPath, []byte(unreachable), 0o600); err != nil {
 				t.Fatal(err)
 			}
 
@@ -234,9 +257,19 @@ func TestStructuredTransportToolFailureGiveUp(t *testing.T) {
 			listener := &recordingAgentEventListener{}
 			agent.addEventListener(listener)
 
-			answer, err := agent.ask(ctx, fmt.Sprintf(
+			prompt := fmt.Sprintf(
 				"You are a build assistant with one tool: execute_shell_command. Write one short sentence, then run exactly:\ncat %s\n"+
-					"If the tool call keeps failing, do NOT retry more than once — reply that the build id could NOT be read and stop.", buildIDPath))
+					"If the tool call keeps failing, do NOT retry more than once — reply that the build id could NOT be read and stop.", buildIDPath)
+			if tc.provider == llm.ProviderAgyCLI {
+				// The shared verdict ("could NOT be read") is reachable via
+				// a native read of the withheld file, which lets the model
+				// give up without ever attempting the tool (observed live:
+				// calls=0). Close that path: only the TOOL's result counts.
+				prompt = fmt.Sprintf(
+					"You are a build assistant with one tool: execute_shell_command. Call that tool with exactly:\ncat %s\n"+
+						"Do NOT read files yourself — only the tool's result counts. If the TOOL call fails, do NOT retry more than once — reply that the build id could NOT be read and stop.", buildIDPath)
+			}
+			answer, err := agent.ask(ctx, prompt)
 			if err != nil {
 				t.Fatalf("structured turn errored on a permanent tool failure (must give up gracefully, not error): %v", err)
 			}

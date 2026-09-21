@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -120,6 +121,7 @@ var codingAgentResumeOptionKeys = map[llm.Provider]struct{ resume, directory str
 	llm.ProviderCursorCLI:  {cursorcli.MetadataKeyResumeSessionID, cursorcli.MetadataKeyWorkingDir},
 	llm.ProviderPiCLI:      {picli.MetadataKeyResumeSessionID, picli.MetadataKeyWorkingDir},
 	llm.ProviderMuseCLI:    {musecli.MetadataKeyMuseResumeSessionID, musecli.MetadataKeyMuseWorkingDir},
+	llm.ProviderAgyCLI:     {agycli.MetadataKeyResumeSessionID, agycli.MetadataKeyWorkingDir},
 }
 
 type codingAgentResumeProbe struct {

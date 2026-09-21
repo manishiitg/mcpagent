@@ -33,6 +33,7 @@ var codingAgentNativeSessionIDSetters = map[llm.Provider]func(*Agent, string){
 	llm.ProviderCursorCLI: func(a *Agent, id string) { a.cursorSessionID = id },
 	llm.ProviderPiCLI:     func(a *Agent, id string) { a.piSessionID = id },
 	llm.ProviderMuseCLI:   func(a *Agent, id string) { a.museSessionID = id },
+	llm.ProviderAgyCLI:    func(a *Agent, id string) { a.agySessionID = id },
 }
 
 var codingAgentProjectDirIDSetters = map[llm.Provider]func(*Agent, string){
@@ -45,6 +46,7 @@ var codingAgentNativeSessionIDGetters = map[llm.Provider]func(*Agent) string{
 	llm.ProviderCursorCLI:  func(a *Agent) string { return a.cursorSessionID },
 	llm.ProviderPiCLI:      func(a *Agent) string { return a.piSessionID },
 	llm.ProviderMuseCLI:    func(a *Agent) string { return a.museSessionID },
+	llm.ProviderAgyCLI:     func(a *Agent) string { return a.agySessionID },
 }
 
 var codingAgentProjectDirIDGetters = map[llm.Provider]func(*Agent) string{

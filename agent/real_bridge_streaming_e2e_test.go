@@ -23,6 +23,7 @@ import (
 	"github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/mcpagent/internal/agentreview"
 	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 )
 
 // cleanChunk is one Source!=terminal content chunk plus the delta marker that
@@ -357,6 +358,13 @@ func realBridgeProviderCases() []realBridgeProviderCase {
 		// muse: strictBridgeOnly=false — native session controls can bypass the hook,
 		// with best-effort coverage in TestMuseCLIRealBestEffortToolRestrictions.
 		{name: "muse", provider: llm.ProviderMuseCLI, modelID: "muse-spark-1.3-contributor", cliBin: "muse", strictBridgeOnly: false},
+		// agy: strictBridgeOnly=false — a mounted turn approves natives
+		// alongside the bridge (the only tool switch is
+		// --dangerously-skip-permissions). The tmux legs run the TUI
+		// sidecar (session id + persistent flag, like the multi-turn
+		// table); the structured leg is skipped (the exec lane is owned
+		// by the Layer-2 json rows, and exec streams no tool events).
+		{name: "agy", provider: llm.ProviderAgyCLI, modelID: "gemini-3.8-flash-high", cliBin: "agy", strictBridgeOnly: false},
 	}
 }
 
@@ -387,6 +395,12 @@ func TestRealBridgeStreamingE2E(t *testing.T) {
 		}
 		for _, tr := range realBridgeTransports() {
 			if onlyTransport != "" && onlyTransport != tr.name {
+				continue
+			}
+			if pc.provider == llm.ProviderAgyCLI && tr.name == "structured" {
+				// Agy's exec lane is owned by the Layer-2 json rows (which
+				// assert its single-chunk shape); this matrix leg demands
+				// streamed tool events exec never emits.
 				continue
 			}
 			t.Run(pc.name+"/"+tr.name, func(t *testing.T) { runRealBridgeStreaming(t, pc, bridgeBin, tr) })
@@ -477,6 +491,26 @@ func newRealBridgeTestAgent(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 		// to keep this containment actually tested rather than silently
 		// untested once the default changed.
 		agentOpts = append(agentOpts, withCodexSandbox("read-only"))
+	}
+	if pc.provider == llm.ProviderAgyCLI {
+		// Agy's tmux legs run the TUI sidecar: without a session id + the
+		// persistent flag this builder's agent would silently run exec.
+		sid := "rb-" + realBridgeRandHex(4)
+		agentOpts = append(agentOpts, withSessionID(sid), withAgyPersistentInteractiveSession(true))
+		untrust, terr := trustAgyWorkdirForTmuxRow(workDir)
+		if terr != nil {
+			t.Fatal(terr)
+		}
+		keyed, keyErr := agyKeyModeForTmuxRow(untrust)
+		if keyErr != nil {
+			untrust()
+			t.Fatal(keyErr)
+		}
+		untrust = keyed
+		t.Cleanup(func() {
+			agycli.CloseAgyCLIInteractiveSessionForOwner(sid, "test done")
+			untrust()
+		})
 	}
 	agentOpts = append(agentOpts, extraOpts...)
 	agent, err = newAgent(ctx, llmModel, configPath, agentOpts...)
@@ -812,7 +846,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 // never that a 706-char leak was ABSENT).
 //
 // Gated by the same RUN_MCPAGENT_REAL_BRIDGE_E2E=1 / MCPAGENT_REAL_BRIDGE_ONLY
-// convention as TestRealBridgeStreamingE2E; runs across all 4 CLI providers.
+// convention as TestRealBridgeStreamingE2E; runs across all CLI providers.
 func TestRealBridgeMarkdownFidelityE2E(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
 		t.Skip("set RUN_MCPAGENT_REAL_BRIDGE_E2E=1 to run the real-bridge markdown fidelity e2e")
@@ -963,14 +997,14 @@ func runRealBridgeMarkdownFidelity(t *testing.T, pc realBridgeProviderCase, brid
 
 	rec := agentreview.Write(t, "TestRealBridgeMarkdownFidelity_"+strings.ToUpper(pc.name[:1])+pc.name[1:],
 		pc.name+" via the REAL mcpbridge → executor → real execute_shell_command: write+read back a markdown table AND a nested code fence, byte-exact, no duplication, streamed at the mcpagent layer",
-		map[string]any{
+		agyReviewFacts(pc.provider, map[string]any{
 			"clean_transcript_content": cleanTexts,
 			"tool_names":               toolNames,
 			"answer":                   strings.TrimSpace(answer),
 			"report_md_on_disk":        reportStr,
 			"expected_template":        template,
 			"build_id_only_via_tool":   codeWord,
-		},
+		}),
 		map[string]any{
 			"byte_exact_on_disk":       strings.TrimSpace(reportStr) == strings.TrimSpace(expected),
 			"no_duplication_on_disk":   strings.Count(reportStr, codeWord) == 2,

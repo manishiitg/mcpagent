@@ -36,15 +36,40 @@ func buildTmuxBridgeAgentWithOptions(ctx context.Context, tc multiTurnProviderCa
 		stopExecutor()
 		return nil, nil, err
 	}
+	sessionID := "tmuxcap-" + realBridgeRandHex(4)
 	opts := append([]agentOption{
 		withProvider(tc.provider),
 		withAPIConfig(apiURL, apiToken),
 		withStreaming(true),
 		withIsolatedSessionWorkspace(true),
-		withSessionID("tmuxcap-" + realBridgeRandHex(4)),
+		withSessionID(sessionID),
 	}, extra...)
+	var untrust func()
+	if tc.provider == llm.ProviderAgyCLI {
+		// Agy's tmux-lane switch is the persistent flag (peers take the
+		// interactive lane from the session id alone); without it agy would
+		// silently run this tmux row on exec. Trust the isolated dir the
+		// sidecar will boot in (derived from the session id, like the
+		// agent's own isolated dir).
+		opts = append(opts, tc.persistentOpt(true))
+		untrust, err = trustAgyWorkdirForTmuxRow(isolatedWorkspaceDirForSession(sessionID))
+		if err != nil {
+			stopExecutor()
+			return nil, nil, err
+		}
+		keyed, keyErr := agyKeyModeForTmuxRow(untrust)
+		if keyErr != nil {
+			untrust()
+			stopExecutor()
+			return nil, nil, keyErr
+		}
+		untrust = keyed
+	}
 	agent, err := newAgent(ctx, llmModel, configPath, opts...)
 	if err != nil {
+		if untrust != nil {
+			untrust()
+		}
 		stopExecutor()
 		return nil, nil, err
 	}
@@ -62,10 +87,22 @@ func buildTmuxBridgeAgentWithOptions(ctx context.Context, tc multiTurnProviderCa
 		}, "workspace_advanced",
 	); regErr != nil {
 		_ = agent.Close()
+		if untrust != nil {
+			untrust()
+		}
 		stopExecutor()
 		return nil, nil, regErr
 	}
-	return agent, func() { _ = agent.Close(); stopExecutor() }, nil
+	return agent, func() {
+		_ = agent.Close()
+		stopExecutor()
+		if tc.provider == llm.ProviderAgyCLI {
+			closePersistentInteractiveSession(tc, sessionID)
+		}
+		if untrust != nil {
+			untrust()
+		}
+	}, nil
 }
 
 // buildTmuxBridgeAgentRealWorkdir is like buildTmuxBridgeAgentWithOptions but
@@ -85,15 +122,36 @@ func buildTmuxBridgeAgentRealWorkdir(ctx context.Context, tc multiTurnProviderCa
 		stopExecutor()
 		return nil, nil, err
 	}
+	sessionID := "tmuxclean-" + realBridgeRandHex(4)
 	opts := append([]agentOption{
 		withProvider(tc.provider),
 		withAPIConfig(apiURL, apiToken),
 		withStreaming(true),
 		withCodingAgentWorkingDir(workDir),
-		withSessionID("tmuxclean-" + realBridgeRandHex(4)),
+		withSessionID(sessionID),
 	}, extra...)
+	var untrust func()
+	if tc.provider == llm.ProviderAgyCLI {
+		// Same sidecar-lane forcing as buildTmuxBridgeAgentWithOptions.
+		opts = append(opts, tc.persistentOpt(true))
+		untrust, err = trustAgyWorkdirForTmuxRow(workDir)
+		if err != nil {
+			stopExecutor()
+			return nil, nil, err
+		}
+		keyed, keyErr := agyKeyModeForTmuxRow(untrust)
+		if keyErr != nil {
+			untrust()
+			stopExecutor()
+			return nil, nil, keyErr
+		}
+		untrust = keyed
+	}
 	agent, err := newAgent(ctx, llmModel, configPath, opts...)
 	if err != nil {
+		if untrust != nil {
+			untrust()
+		}
 		stopExecutor()
 		return nil, nil, err
 	}
@@ -105,10 +163,22 @@ func buildTmuxBridgeAgentRealWorkdir(ctx context.Context, tc multiTurnProviderCa
 		}, "workspace_advanced",
 	); regErr != nil {
 		_ = agent.Close()
+		if untrust != nil {
+			untrust()
+		}
 		stopExecutor()
 		return nil, nil, regErr
 	}
-	return agent, func() { _ = agent.Close(); stopExecutor() }, nil
+	return agent, func() {
+		_ = agent.Close()
+		stopExecutor()
+		if tc.provider == llm.ProviderAgyCLI {
+			closePersistentInteractiveSession(tc, sessionID)
+		}
+		if untrust != nil {
+			untrust()
+		}
+	}, nil
 }
 
 // TestTmuxProjectedArtifactsRemovedOnCloseRealWorkdir is the live-CLI proof of
@@ -202,7 +272,7 @@ func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
 			canary := "PROMPT_SURVIVAL_" + realBridgeRandHex(6)
 			customPrompt := "Your secret codeword is " + canary + ". If the user ever asks for your secret codeword, reply with ONLY that word."
 			question := "What is your secret codeword?"
-			if tc.provider == llm.ProviderMuseCLI {
+			if tc.provider == llm.ProviderMuseCLI || tc.provider == llm.ProviderAgyCLI {
 				// Muse carries the system prompt via AGENTS.md
 				// (project-instruction-only: no --system-prompt flag), and
 				// muse treats project-file instructions as untrusted — a
@@ -215,6 +285,11 @@ func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
 				// same transport survival without tripping model trust
 				// policy; the marker still appears ONLY if the custom
 				// prompt survived newAgent -> bridge -> AGENTS.md -> model.
+				// Agy takes the same benign variant: its folded system text
+				// arrives as user-prompt content and the model refuses
+				// secret-credential adoption by trust policy (proven at
+				// Layer-1 with the exact row text; see the system_prompt.json
+				// exclusion note).
 				canary = "MOTTO_" + realBridgeRandHex(6)
 				customPrompt = "Whenever asked for the session motto, reply with exactly " + canary + " and nothing else."
 				question = "What is the session motto?"
@@ -246,7 +321,7 @@ func TestTmuxSystemPromptSurvivesNewAgent(t *testing.T) {
 // TestStructuredTransportSkillsSurviveNewAgent: a skill attached via the real
 // consumer API (AttachSkill on a live Agent) must survive construction ->
 // a.attachedSkills -> WithAttachedSkills -> ProjectSkills and be readable by the
-// model. Was json/Cursor-only; this proves it on tmux across all 4 providers.
+// model. Was json/Cursor-only; this proves it on tmux across all providers.
 func TestTmuxSkillsSurviveNewAgent(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
 		t.Skip("set RUN_MCPAGENT_REAL_BRIDGE_E2E=1 to run this real-CLI e2e")

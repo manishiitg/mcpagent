@@ -127,13 +127,28 @@ func TestStructuredTransportDeliverQueuesMidTurn(t *testing.T) {
 
 			// Wait until the turn is provably mid-tool, then let it settle into the
 			// blocking sleep before delivering.
-			select {
-			case <-signal.ch:
-			case <-time.After(5 * time.Minute):
-				t.Fatalf("timed out waiting for the first tool call to start the structured turn")
-			}
-			if !agent.isTurnInFlight() {
-				t.Fatalf("turn is not marked in flight at the tool-call boundary")
+			if tc.provider == llm.ProviderAgyCLI {
+				// Agy's exec lane streams no tool events at all (one content
+				// chunk per turn), so the tool-call signal can never fire.
+				// Mid-turn is proven by the in-flight flag instead; the
+				// sleep-25 tool keeps the turn open with wide margin after
+				// it, and the row needs mid-TURN, not mid-tool.
+				inFlightDeadline := time.Now().Add(5 * time.Minute)
+				for !agent.isTurnInFlight() {
+					if time.Now().After(inFlightDeadline) {
+						t.Fatalf("timed out waiting for the agy structured turn to go in flight")
+					}
+					time.Sleep(500 * time.Millisecond)
+				}
+			} else {
+				select {
+				case <-signal.ch:
+				case <-time.After(5 * time.Minute):
+					t.Fatalf("timed out waiting for the first tool call to start the structured turn")
+				}
+				if !agent.isTurnInFlight() {
+					t.Fatalf("turn is not marked in flight at the tool-call boundary")
+				}
 			}
 			time.Sleep(2 * time.Second)
 
