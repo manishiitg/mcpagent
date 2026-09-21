@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
-	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,15 +18,12 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// registryLockDebug attempts to acquire registryMu with logging.
-// If the lock is not acquired within 10s, it logs a warning (potential deadlock).
+// registryLockDebug stays silent for the normal uncontended path and reports
+// only a lock that remains blocked long enough to be operationally meaningful.
 func registryLockDebug(caller string) {
 	if registryMu.TryLock() {
-		log.Printf("[REGISTRY_LOCK] %s: acquired lock immediately", caller)
 		return
 	}
-	// Lock is contended — log and wait
-	log.Printf("[REGISTRY_LOCK] ⚠️ %s: lock contended, waiting... (goroutine %d)", caller, goroutineID())
 	start := time.Now()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -40,32 +35,15 @@ func registryLockDebug(caller string) {
 	for {
 		select {
 		case <-done:
-			log.Printf("[REGISTRY_LOCK] %s: acquired lock after %v (goroutine %d)", caller, time.Since(start), goroutineID())
 			return
 		case <-ticker.C:
-			log.Printf("[REGISTRY_LOCK] ⚠️ %s: STILL waiting for lock after %v — possible deadlock! (goroutine %d)", caller, time.Since(start), goroutineID())
+			log.Printf("[REGISTRY_LOCK] %s still waiting after %v — possible deadlock", caller, time.Since(start))
 		}
 	}
 }
 
-func registryUnlockDebug(caller string) {
-	log.Printf("[REGISTRY_LOCK] %s: releasing lock (goroutine %d)", caller, goroutineID())
+func registryUnlockDebug(_ string) {
 	registryMu.Unlock()
-}
-
-func goroutineID() uint64 {
-	var buf [64]byte
-	n := runtime.Stack(buf[:], false)
-	// Parse "goroutine 123 [running]:" from stack trace
-	s := string(buf[:n])
-	s = strings.TrimPrefix(s, "goroutine ")
-	if idx := strings.IndexByte(s, ' '); idx > 0 {
-		id, err := strconv.ParseUint(s[:idx], 10, 64)
-		if err == nil {
-			return id
-		}
-	}
-	return 0
 }
 
 // GoBuildError is a custom error type for Go build/compilation errors
@@ -84,8 +62,11 @@ type ToolRegistry struct {
 	customTools  map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 	virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 	toolToServer map[string]string
-	mu           sync.RWMutex
-	logger       loggerv2.Logger
+	// Expected cross-session mapping conflicts are reported once per mapping,
+	// not on every registry refresh.
+	reportedToolMappingConflicts map[string]struct{}
+	mu                           sync.RWMutex
+	logger                       loggerv2.Logger
 
 	// Session-scoped custom tools to prevent cross-workflow contamination
 	// Key: sessionID, Value: map of toolName -> executor
@@ -139,14 +120,15 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 	if globalRegistry == nil {
 		// First initialization - create new registry
 		globalRegistry = &ToolRegistry{
-			mcpClients:                  make(map[string]mcpclient.ClientInterface),
-			customTools:                 make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			virtualTools:                make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			toolToServer:                make(map[string]string),
-			sessionCustomTools:          make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			sessionVirtualTools:         make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			latestVirtualScopeBySession: make(map[string]string),
-			logger:                      logger,
+			mcpClients:                   make(map[string]mcpclient.ClientInterface),
+			customTools:                  make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:                 make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:                 make(map[string]string),
+			reportedToolMappingConflicts: make(map[string]struct{}),
+			sessionCustomTools:           make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			sessionVirtualTools:          make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			latestVirtualScopeBySession:  make(map[string]string),
+			logger:                       logger,
 		}
 		logger.Debug("Creating new tool registry")
 	} else {
@@ -203,10 +185,17 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 	for toolName, serverName := range toolToServer {
 		if existing, exists := globalRegistry.toolToServer[toolName]; exists {
 			if existing != serverName {
-				logger.Warn("Tool already mapped to different server, new mapping will be ignored",
-					loggerv2.String("tool", toolName),
-					loggerv2.String("existing_server", existing),
-					loggerv2.String("new_server", serverName))
+				if globalRegistry.reportedToolMappingConflicts == nil {
+					globalRegistry.reportedToolMappingConflicts = make(map[string]struct{})
+				}
+				conflictKey := toolName + "\x00" + existing + "\x00" + serverName
+				if _, reported := globalRegistry.reportedToolMappingConflicts[conflictKey]; !reported {
+					globalRegistry.reportedToolMappingConflicts[conflictKey] = struct{}{}
+					logger.Warn("Tool already mapped to different server, new mapping will be ignored",
+						loggerv2.String("tool", toolName),
+						loggerv2.String("existing_server", existing),
+						loggerv2.String("new_server", serverName))
+				}
 			}
 		} else {
 			globalRegistry.toolToServer[toolName] = serverName
