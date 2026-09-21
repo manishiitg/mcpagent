@@ -16,6 +16,7 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/internal/agentreview"
 	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -26,7 +27,7 @@ import (
 // multiTurnProviderCase is one provider's real-CLI binary, mcpagent.Provider,
 // model ID, and persistent-session option — generalized from the
 // Claude-only helper this file originally had, so multi-turn and
-// concurrency isolation get proven against all 5 real coding-agent CLIs, not
+// concurrency isolation get proven against every real coding-agent CLI, not
 // just Claude (see docs/layer_test_coverage.html §matrix — this was the
 // single largest "Claude only" gap in mcpagent's real e2e coverage).
 type multiTurnProviderCase struct {
@@ -48,6 +49,10 @@ var multiTurnProviderCases = []multiTurnProviderCase{
 	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.7-flash", withPiPersistentInteractiveSession, true},
 	// Muse's internal session controls can bypass PreToolUse.
 	{"Muse", "muse", llm.ProviderMuseCLI, "muse-spark-1.3-contributor", withMusePersistentInteractiveSession, false},
+	// Agy runs its tmux rows in the TUI sidecar (persistent interactive);
+	// strictBridgeOnly=false: a mounted turn approves natives alongside the
+	// bridge (--dangerously-skip-permissions is the only tool switch).
+	{"Agy", "agy", llm.ProviderAgyCLI, "gemini-3.8-flash-high", withAgyPersistentInteractiveSession, false},
 }
 
 // closePersistentInteractiveSession tears down the provider's persistent tmux
@@ -72,7 +77,46 @@ func closePersistentInteractiveSession(tc multiTurnProviderCase, sessionID strin
 		picli.ClosePiCLIInteractiveSessionForOwner(sessionID, "test cleanup")
 	case llm.ProviderMuseCLI:
 		musecli.KillMusePersistentSession(sessionID)
+	case llm.ProviderAgyCLI:
+		agycli.CloseAgyCLIInteractiveSessionForOwner(sessionID, "test cleanup")
 	}
+}
+
+// trustAgyWorkdirForTmuxRow grants agy's caller-duty workspace trust for a
+// tmux row's workdir and returns the restore func for the row's cleanup. A
+// sidecar booted in an untrusted cwd fails loudly on the trust gate, so
+// every tmux-row builder calls this for agy (peers need no trust).
+func trustAgyWorkdirForTmuxRow(workDir string) (func(), error) {
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return nil, err
+	}
+	return agycli.TrustAgyWorkspaceDir(workDir)
+}
+
+// agyKeyModeForTmuxRow chains the AGY_P0_KEY_MODE provider flip onto untrust,
+// so existing cleanup paths restore both. Without the flag it is a pass-
+// through (stored-login truth preserved).
+func agyKeyModeForTmuxRow(untrust func()) (func(), error) {
+	restore, err := agycli.AgyEnsureKeyMode()
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		restore()
+		if untrust != nil {
+			untrust()
+		}
+	}, nil
+}
+
+// agyReviewFacts stamps the auth mode under test onto an agy row's review
+// facts (peers pass through untouched): a key-mode proof must say so on its
+// own artifact.
+func agyReviewFacts(provider llm.Provider, facts map[string]any) map[string]any {
+	if provider == llm.ProviderAgyCLI {
+		facts["auth_mode"] = agycli.AgyTestAuthMode()
+	}
+	return facts
 }
 
 // buildRealBridgeAgent stands up an Agent for the given provider, wired to
@@ -94,6 +138,40 @@ func buildRealBridgeAgent(ctx context.Context, tc multiTurnProviderCase, tmpBase
 		stopExecutor()
 		return nil, nil, err
 	}
+	if tc.provider == llm.ProviderAgyCLI {
+		// Agy has no non-persistent interactive mode: the persistent flag
+		// IS its tmux-lane switch, so a tmux row passing persistent=false
+		// would silently drop agy to the exec lane — the bypass this
+		// contract forbids. Force the sidecar lane on every tmux row.
+		persistent = true
+	}
+	var untrust func()
+	if tc.provider == llm.ProviderAgyCLI {
+		// Trust both the real workdir and the session-derived isolated dir:
+		// callers may flip isolatedSessionWorkspace post-build (the
+		// isolated-resume test does), moving the sidecar's cwd. Entries are
+		// exact-path and restored on cleanup, so an unused one is harmless.
+		var untrustWorkdir, untrustIsolated func()
+		untrustWorkdir, err = trustAgyWorkdirForTmuxRow(workDir)
+		if err != nil {
+			stopExecutor()
+			return nil, nil, err
+		}
+		untrustIsolated, err = trustAgyWorkdirForTmuxRow(isolatedWorkspaceDirForSession(sessionID))
+		if err != nil {
+			untrustWorkdir()
+			stopExecutor()
+			return nil, nil, err
+		}
+		untrust = func() { untrustIsolated(); untrustWorkdir() }
+		keyed, keyErr := agyKeyModeForTmuxRow(untrust)
+		if keyErr != nil {
+			untrust()
+			stopExecutor()
+			return nil, nil, keyErr
+		}
+		untrust = keyed
+	}
 	opts := []agentOption{
 		withProvider(tc.provider),
 		withAPIConfig(apiURL, apiToken),
@@ -106,6 +184,9 @@ func buildRealBridgeAgent(ctx context.Context, tc multiTurnProviderCase, tmpBase
 	}
 	agent, err := newAgent(ctx, llmModel, configPath, opts...)
 	if err != nil {
+		if untrust != nil {
+			untrust()
+		}
 		stopExecutor()
 		return nil, nil, err
 	}
@@ -117,6 +198,9 @@ func buildRealBridgeAgent(ctx context.Context, tc multiTurnProviderCase, tmpBase
 		}, "workspace_advanced",
 	); regErr != nil {
 		_ = agent.Close()
+		if untrust != nil {
+			untrust()
+		}
 		stopExecutor()
 		return nil, nil, regErr
 	}
@@ -125,6 +209,9 @@ func buildRealBridgeAgent(ctx context.Context, tc multiTurnProviderCase, tmpBase
 		stopExecutor()
 		if persistent {
 			closePersistentInteractiveSession(tc, sessionID)
+		}
+		if untrust != nil {
+			untrust()
 		}
 	}, nil
 }
@@ -294,7 +381,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 
 			rec := agentreview.Write(t, "TestRealBridgeStreamingMultiTurn_"+tc.name,
 				tc.name+" persistent multi-turn through the REAL bridge: turn 1 reads a build id, turn 2 reuses the session and writes it into report.md",
-				map[string]any{
+				agyReviewFacts(tc.provider, map[string]any{
 					"provider":              tc.name,
 					"reused_tmux_session":   tmux1 == tmux2,
 					"turn1_answer":          strings.TrimSpace(ans1),
@@ -305,7 +392,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 					"turn2_content_chunks":  t2content,
 					"report_md_on_disk":     string(report),
 					"build_id_only_in_file": codeWord,
-				},
+				}),
 				map[string]any{"reused": tmux1 == tmux2, "turn1_streamed": t1tools > 0 && t1content > 0, "turn2_streamed": t2tools > 0 && t2content > 0},
 			)
 			agentreview.RequireReviewed(t, rec)
@@ -316,7 +403,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 // TestRealBridgeStreamingConcurrent proves parallel coding-agent sessions
 // through the real bridge stay ISOLATED, on every provider: each session
 // reads its OWN build id and neither its answer nor its stream leaks the
-// other session's build id. Table-driven across all 4 providers — was
+// other session's build id. Table-driven across all providers — was
 // Claude-only (see docs/layer_test_coverage.html §matrix).
 func TestRealBridgeStreamingConcurrent(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
@@ -421,14 +508,14 @@ func TestRealBridgeStreamingConcurrent(t *testing.T) {
 
 			rec := agentreview.Write(t, "TestRealBridgeStreamingConcurrent_"+tc.name,
 				fmt.Sprintf("%d parallel %s sessions through the REAL bridge, each reading its own build id — stream isolation", n, tc.name),
-				map[string]any{
+				agyReviewFacts(tc.provider, map[string]any{
 					"provider":         tc.name,
 					"worker0_answer":   strings.TrimSpace(results[0].answer),
 					"worker0_build_id": workers[0].codeWord,
 					"worker1_answer":   strings.TrimSpace(results[1].answer),
 					"worker1_build_id": workers[1].codeWord,
 					"no_cross_leak":    true,
-				},
+				}),
 				map[string]any{"workers": n, "isolated": true},
 			)
 			agentreview.RequireReviewed(t, rec)

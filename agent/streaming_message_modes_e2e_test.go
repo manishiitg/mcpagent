@@ -12,6 +12,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/internal/agentreview"
+	"github.com/manishiitg/mcpagent/llm"
 )
 
 // buildMessageModes reconstructs the three user-facing message modes from a turn's
@@ -67,7 +68,7 @@ func buildMessageModes(evs []*events.AgentEvent) (rawTerminal, streamingMessage 
 // TestRealBridgeMessageModes proves the three consumer message modes can be
 // built from a REAL turn's mcpagent events (through the real bridge), using
 // Source + IsDelta — the fields those modes were designed around, on every
-// provider. Table-driven across all 4 providers — was Claude-only (see
+// provider. Table-driven across all providers — was Claude-only (see
 // docs/layer_test_coverage.html §matrix). It replaces the earlier
 // workbench-stand-in draft that faked mode2 == mode3.
 //
@@ -86,6 +87,13 @@ func TestRealBridgeMessageModes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := exec.LookPath(tc.binary); err != nil {
 				t.Skipf("%s CLI required", tc.binary)
+			}
+			if tc.provider == llm.ProviderAgyCLI {
+				// Excluded from message_modes.tmux (see the Layer-2 row
+				// note): the sidecar emits one content chunk per turn with
+				// no pane stream, so mode1 (raw terminal reconstruction)
+				// is unrepresentable on this lane.
+				t.Skip("agy sidecar has no terminal stream; message modes do not apply")
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 			defer cancel()
@@ -125,7 +133,7 @@ func TestRealBridgeMessageModes(t *testing.T) {
 			if strings.Contains(mode3Streaming, "\x1b") {
 				t.Fatalf("mode3 streaming message leaked raw terminal ANSI: %q", mode3Streaming)
 			}
-			// NOTE (found live extending this to all 4 providers): Pi's default
+			// NOTE (found live extending this to every provider): Pi's default
 			// narration style is more technical/verbose than Claude/Codex/Cursor's
 			// and can legitimately SAY a raw tool/API name as part of its own
 			// prose (observed: "...retrieve the parameters for

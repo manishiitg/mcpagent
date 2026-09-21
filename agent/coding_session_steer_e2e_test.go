@@ -12,6 +12,8 @@ import (
 
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/internal/agentreview"
+	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 )
 
 // firstToolCallSignal is a thread-safe listener that closes a channel the moment
@@ -46,7 +48,7 @@ func (l *firstToolCallSignal) Name() string { return "first-tool-call-signal" }
 // the REAL bridge, on every provider: while a turn is in flight (blocked in a
 // long tool call), Deliver injects a live instruction into the RUNNING turn,
 // and the model obeys it in the same turn's final reply. Table-driven across
-// all 4 providers — was Claude-only (see docs/layer_test_coverage.html
+// all providers — was Claude-only (see docs/layer_test_coverage.html
 // §matrix).
 //
 // The turn is pinned open by a `sleep` tool call so the steer provably arrives
@@ -105,10 +107,35 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 
 			// Wait until the turn is provably mid-tool, then give it a moment to settle
 			// into the blocking sleep before steering.
-			select {
-			case <-signal.ch:
-			case <-time.After(3 * time.Minute):
-				t.Fatalf("timed out waiting for the first tool call to start the turn")
+			if tc.provider == llm.ProviderAgyCLI {
+				// Agy's sidecar emits tool events post-hoc (after the turn),
+				// so no tool signal can mark the mid-turn point. Wait for the
+				// turn to be provably in flight, then steer into the 25s sleep
+				// window: mid-turn is proven by TurnInFlight, mid-tool is not
+				// observable on this lane.
+				deadline := time.Now().Add(3 * time.Minute)
+				for !agent.isTurnInFlight() {
+					if time.Now().After(deadline) {
+						t.Fatalf("timed out waiting for the agy turn to go in flight")
+					}
+					time.Sleep(500 * time.Millisecond)
+				}
+				// TurnInFlight fires at turn start (mount phase), well before
+				// the sidecar exists — also wait for sidecar registration,
+				// else Deliver has nobody to steer.
+				for !agycli.AgyInteractiveSessionActive(convID) {
+					if time.Now().After(deadline) {
+						t.Fatalf("timed out waiting for the agy sidecar to register")
+					}
+					time.Sleep(500 * time.Millisecond)
+				}
+				time.Sleep(2 * time.Second)
+			} else {
+				select {
+				case <-signal.ch:
+				case <-time.After(3 * time.Minute):
+					t.Fatalf("timed out waiting for the first tool call to start the turn")
+				}
 			}
 			if !agent.isTurnInFlight() {
 				t.Fatalf("turn is not marked in flight at the tool-call boundary")
@@ -148,7 +175,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 
 			rec := agentreview.Write(t, "TestCodingSessionDeliverSteerMidTurn_"+tc.name,
 				tc.name+": Deliver steers a live instruction into a RUNNING turn (pinned open by a sleep tool): the model obeys the mid-turn word in the same turn's reply",
-				map[string]any{
+				agyReviewFacts(tc.provider, map[string]any{
 					"provider":            tc.name,
 					"conversation_id":     convID,
 					"delivery_mode":       string(delivered.Mode),
@@ -157,7 +184,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 					"tool_completed":      strings.Contains(answer, "COMMAND_DONE"),
 					"steer_word_obeyed":   strings.Contains(answer, steerWord),
 					"steer_reached_model": "steered word only appears if the mid-turn live input reached the model",
-				},
+				}),
 				map[string]any{"steered_mid_turn": strings.Contains(answer, steerWord), "tool_ran": strings.Contains(answer, "COMMAND_DONE")},
 			)
 			agentreview.RequireReviewed(t, rec)

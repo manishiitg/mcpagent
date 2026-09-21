@@ -15,7 +15,7 @@ import (
 // TestCodingSessionContinuityAfterLoss proves the library's continuity
 // contract end-to-end through the REAL bridge, on every provider: a fact
 // stated in turn 1 is recalled in turn 2 EVEN AFTER the live tmux session is
-// destroyed between turns. Table-driven across all 4 providers — was
+// destroyed between turns. Table-driven across all providers — was
 // Claude-only (see docs/layer_test_coverage.html §matrix). Native --resume
 // support may genuinely differ per provider, so this is exactly the kind of
 // gap worth closing rather than assuming Claude's behavior generalizes.
@@ -102,7 +102,7 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 
 			rec := agentreview.Write(t, "TestCodingSessionContinuityAfterLoss_"+tc.name,
 				tc.name+": ContinueConversation continuity survives live-session loss: a code word stated in turn 1 is recalled in turn 2 after the tmux session is killed, via native --resume off the persisted handle",
-				map[string]any{
+				agyReviewFacts(tc.provider, map[string]any{
 					"provider":              tc.name,
 					"conversation_id":       convID,
 					"code_word":             codeWord,
@@ -112,7 +112,7 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 					"turn2_recall":          recall,
 					"recalled_after_loss":   strings.Contains(recall, codeWord),
 					"code_word_only_spoken": "never written to disk — recall proves provider-native resume",
-				},
+				}),
 				map[string]any{"resumed_after_loss": strings.Contains(recall, codeWord)},
 			)
 			agentreview.RequireReviewed(t, rec)

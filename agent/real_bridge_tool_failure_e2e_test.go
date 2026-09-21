@@ -45,11 +45,34 @@ func newRealBridgeAgentWithShell(t *testing.T, ctx context.Context, tc multiTurn
 	if err != nil {
 		t.Fatalf("InitializeLLM: %v", err)
 	}
-	agent, err := newAgent(ctx, llmModel, configPath,
+	sessionID := "toolfail-" + realBridgeRandHex(4)
+	agentOpts := []agentOption{
 		withProvider(tc.provider), withAPIConfig(apiURL, apiToken),
 		withStreaming(true), withCodingAgentWorkingDir(workDir),
-		withSessionID("toolfail-"+realBridgeRandHex(4)))
+		withSessionID(sessionID),
+	}
+	var untrust func()
+	if tc.provider == llm.ProviderAgyCLI {
+		// Peers take the interactive lane from the session id alone; agy's
+		// lane switch is the persistent flag, so without it this tmux row
+		// would silently run agy on exec. Force the sidecar lane + trust.
+		agentOpts = append(agentOpts, tc.persistentOpt(true))
+		untrust, err = trustAgyWorkdirForTmuxRow(workDir)
+		if err != nil {
+			t.Fatalf("trust agy workdir: %v", err)
+		}
+		keyed, keyErr := agyKeyModeForTmuxRow(untrust)
+		if keyErr != nil {
+			untrust()
+			t.Fatalf("agy key mode: %v", keyErr)
+		}
+		untrust = keyed
+	}
+	agent, err := newAgent(ctx, llmModel, configPath, agentOpts...)
 	if err != nil {
+		if untrust != nil {
+			untrust()
+		}
 		t.Fatalf("newAgent: %v", err)
 	}
 	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
@@ -61,16 +84,27 @@ func newRealBridgeAgentWithShell(t *testing.T, ctx context.Context, tc multiTurn
 		"workspace_advanced",
 	); regErr != nil {
 		_ = agent.Close()
+		if untrust != nil {
+			untrust()
+		}
 		t.Fatalf("RegisterCustomTool: %v", regErr)
 	}
-	return agent, func() { _ = agent.Close() }
+	return agent, func() {
+		_ = agent.Close()
+		if tc.provider == llm.ProviderAgyCLI {
+			closePersistentInteractiveSession(tc, sessionID)
+		}
+		if untrust != nil {
+			untrust()
+		}
+	}
 }
 
 // TestRealBridgeStreamingToolFailureRecovery proves the stream + turn degrade
 // GRACEFULLY when a tool fails MID-STREAM, on every provider: the bridge tool
 // fails its first call, the error reaches the model, the model retries the
 // SAME command, the stream keeps flowing, and the turn recovers and
-// completes. Table-driven across all 4 providers — was Claude-only (see
+// completes. Table-driven across all providers — was Claude-only (see
 // docs/layer_test_coverage.html §matrix).
 func TestRealBridgeStreamingToolFailureRecovery(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
@@ -149,7 +183,7 @@ func TestRealBridgeStreamingToolFailureRecovery(t *testing.T) {
 
 			rec := agentreview.Write(t, "TestRealBridgeStreamingToolFailureRecovery_"+tc.name,
 				tc.name+" recovers from a MID-STREAM bridge tool failure: first call fails, model retries the same command, stream continues, turn completes with the build id",
-				map[string]any{
+				agyReviewFacts(tc.provider, map[string]any{
 					"provider":               tc.name,
 					"tool_handler_calls":     nCalls,
 					"streamed_tool_events":   len(toolNames),
@@ -159,7 +193,7 @@ func TestRealBridgeStreamingToolFailureRecovery(t *testing.T) {
 					"answer":                 strings.TrimSpace(answer),
 					"recovered_build_id":     codeWord,
 					"injected_first_failure": "TRANSIENT_TOOL_FAILURE on call #1",
-				},
+				}),
 				map[string]any{"retried": nCalls >= 2, "recovered": strings.Contains(answer, codeWord), "streamed": contentChunks > 0},
 			)
 			agentreview.RequireReviewed(t, rec)
@@ -251,7 +285,7 @@ func TestRealBridgeStreamingToolFailureGiveUp(t *testing.T) {
 
 			rec := agentreview.Write(t, "TestRealBridgeStreamingToolFailureGiveUp_"+tc.name,
 				tc.name+" gives up gracefully on a PERMANENTLY failing bridge tool: bounded retry, stream stays clean, turn ends without fabricating the build id",
-				map[string]any{
+				agyReviewFacts(tc.provider, map[string]any{
 					"provider":             tc.name,
 					"tool_handler_calls":   nCalls,
 					"streamed_tool_events": len(toolNames),
@@ -261,7 +295,7 @@ func TestRealBridgeStreamingToolFailureGiveUp(t *testing.T) {
 					"answer":               strings.TrimSpace(answer),
 					"unreachable_build_id": codeWord,
 					"injected_failure":     "PERMANENT_TOOL_FAILURE on every call",
-				},
+				}),
 				map[string]any{"completed_no_hang": true, "no_fabricated_success": !strings.Contains(answer, codeWord), "streamed": contentChunks > 0},
 			)
 			agentreview.RequireReviewed(t, rec)

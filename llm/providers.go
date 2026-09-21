@@ -31,6 +31,7 @@ const (
 	ProviderCursorCLI         = llmproviders.ProviderCursorCLI
 	ProviderPiCLI             = llmproviders.ProviderPiCLI
 	ProviderMuseCLI           = llmproviders.ProviderMuseCLI
+	ProviderAgyCLI            = llmproviders.ProviderAgyCLI
 	ProviderMiniMax           = llmproviders.ProviderMiniMax
 	ProviderMiniMaxCodingPlan = llmproviders.ProviderMiniMaxCodingPlan
 	ProviderElevenLabs        = llmproviders.ProviderElevenLabs
@@ -334,6 +335,14 @@ func WithCursorProjectConfig(config string) llmtypes.CallOption {
 // configuration directory, leaving shared Muse settings untouched.
 func WithMuseMCPConfig(config string) llmtypes.CallOption {
 	return llmproviders.WithMuseMCPConfig(config)
+}
+
+// WithAgyMCPConfig mounts the document's stdio mcpServers for one agy turn
+// via `agy mcp add` (global user config: agy offers no scoped mount) and
+// removes them afterwards. A mounted turn is tool-capable via
+// --dangerously-skip-permissions, natives included.
+func WithAgyMCPConfig(config string) llmtypes.CallOption {
+	return llmproviders.WithAgyMCPConfig(config)
 }
 
 // WithMuseToolAllowlist installs best-effort restrictions on unlisted native

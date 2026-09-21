@@ -113,6 +113,7 @@ type CodingRuntimeConfig struct {
 	PersistentCursor     bool
 	PersistentPi         bool
 	PersistentMuse       bool
+	PersistentAgy        bool
 	CursorBridgeTools    bool
 	// AgentToolsMode selects whether coding-provider native tools are available:
 	// mcp_only (default) or hybrid.
@@ -362,6 +363,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if coding.PersistentMuse {
 		options = append(options, withMusePersistentInteractiveSession(true))
+	}
+	if coding.PersistentAgy {
+		options = append(options, withAgyPersistentInteractiveSession(true))
 	}
 	if coding.CursorBridgeTools {
 		options = append(options, withCursorBridgeToolsMode(true))

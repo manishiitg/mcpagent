@@ -19,6 +19,7 @@ var codingAgentPersistentInteractiveEnabledByProvider = map[llm.Provider]func(*A
 	llm.ProviderCursorCLI:  func(a *Agent) bool { return a.cursorPersistentInteractiveSession },
 	llm.ProviderPiCLI:      func(a *Agent) bool { return a.piPersistentInteractiveSession },
 	llm.ProviderMuseCLI:    func(a *Agent) bool { return a.musePersistentInteractiveSession },
+	llm.ProviderAgyCLI:     func(a *Agent) bool { return a.agyPersistentInteractiveSession },
 }
 
 func (a *Agent) appendCodingAgentInteractiveOptions(opts []llmtypes.CallOption) []llmtypes.CallOption {
@@ -326,6 +327,39 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 		opts = append(opts, llm.WithMuseStreamTranscript(true))
 		opts = append(opts, llm.WithMuseStreamTmuxScreen(true))
 	}
+	return opts, nil
+}
+
+func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
+	bridgeConfig, bridgeErr := a.buildBridgeMCPConfig()
+	if bridgeErr != nil {
+		return nil, fmt.Errorf("Agy CLI requires the MCP bridge: %w", bridgeErr)
+	}
+
+	// Mount the bridge through the adapter (`agy mcp add` for the turn,
+	// removed after). agy offers no scoped mount and no selective tool
+	// containment: a mounted turn runs with --dangerously-skip-permissions
+	// (natives approved alongside the bridge) and mounted turns serialize
+	// process-wide. See the contract's ToolRestrictionGaps.
+	opts = append(opts, llm.WithAgyMCPConfig(bridgeConfig))
+	if a.bridgeReadyFile != "" {
+		// Hold a cold session's first prompt until the bridge reports the
+		// tools connected — same cold-turn race as cursor/muse.
+		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
+	}
+	if sessionID := strings.TrimSpace(a.agySessionID); sessionID != "" {
+		if option := llm.NativeResumeOption(llm.ProviderAgyCLI, sessionID); option != nil {
+			opts = append(opts, option)
+		}
+	}
+	if a.logger != nil {
+		a.logger.Info("🌉 [AGY_CLI] Configured MCP bridge mount (global add/remove, all-tools approval, serialized turns)")
+	}
+	// No structured-transport option: the exec lane is agy's default, and the
+	// persistent-interactive option (attached by the shared interactive path,
+	// like every tmux provider) selects the TUI-sidecar lane instead. Both
+	// lanes emit one content chunk per turn; the sidecar lane additionally
+	// synthesizes post-hoc tool events from the conversation .db.
 	return opts, nil
 }
 

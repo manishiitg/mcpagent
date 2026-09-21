@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/manishiitg/mcpagent/llm"
 )
 
 // TestLayer2P0RegistryConsistent is the drift guard on the registry itself:
@@ -31,10 +34,84 @@ func TestLayer2P0RegistryConsistent(t *testing.T) {
 		}
 		seen[c.ID] = true
 		for _, p := range c.Providers {
-			switch p {
-			case "Claude", "Codex", "Cursor", "Pi", "Muse":
-			default:
+			if !layer2KnownShortName(p) {
 				t.Errorf("cert %q lists unknown provider %q", c.ID, p)
+			}
+		}
+	}
+	for name, reason := range layer2MessageModesTmuxExclusions {
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("message_modes.tmux exclusion %q has no documented reason", name)
+		}
+	}
+	for name, reason := range layer2SystemPromptJSONExclusions {
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("system_prompt.json exclusion %q has no documented reason", name)
+		}
+	}
+}
+
+// TestLayer2ProviderSetsDerived is the future-CLI enforcement gate: the
+// Layer-2 provider sets derive from the Layer-1 SDK contracts, so a new
+// coding CLI is auto-enrolled in every derived row the moment it joins
+// layer2ProviderOrder + layer2ShortName — and this test fails until it
+// does. No tmux contract may silently lack Layer-2 coverage.
+func TestLayer2ProviderSetsDerived(t *testing.T) {
+	for _, contract := range llm.CodingAgentProviderContracts() {
+		if layer2ShortName(contract.Provider) == "" {
+			t.Errorf("provider %q has a Layer-1 coding contract but no layer2ShortName case — add it (and join layer2ProviderOrder) so Layer-2 rows cover the new CLI", contract.Provider)
+		}
+	}
+	inOrder := map[llm.Provider]bool{}
+	for _, p := range layer2ProviderOrder {
+		inOrder[p] = true
+	}
+	for _, contract := range llm.CodingAgentProviderContracts() {
+		if !inOrder[contract.Provider] {
+			t.Errorf("provider %q has a Layer-1 coding contract but is missing from layer2ProviderOrder — append it so Layer-2 rows cover the new CLI", contract.Provider)
+		}
+	}
+	for _, p := range layer2ProviderOrder {
+		if _, ok := llm.GetCodingAgentProviderContract(p, ""); !ok {
+			t.Errorf("layer2ProviderOrder lists %q but no Layer-1 coding contract resolves for it (empty-model lookup) — remove it or fix the contract", p)
+		}
+		if layer2ShortName(p) == "" {
+			t.Errorf("layer2ProviderOrder lists %q but layer2ShortName has no case for it", p)
+		}
+	}
+	// The derivation must reproduce the curated sets: every tmux contract
+	// enrolled in the tmux rows, every coding contract in the json rows.
+	var wantTmux, wantJSON []string
+	for _, p := range layer2ProviderOrder {
+		contract, ok := llm.GetCodingAgentProviderContract(p, "")
+		if !ok {
+			continue
+		}
+		wantJSON = append(wantJSON, layer2ShortName(p))
+		if contract.Transport == llm.CodingAgentTransportTmux {
+			wantTmux = append(wantTmux, layer2ShortName(p))
+		}
+	}
+	if strings.Join(layer2TmuxProviders(), ",") != strings.Join(wantTmux, ",") {
+		t.Errorf("layer2TmuxProviders() = %q, want derived %q", layer2TmuxProviders(), wantTmux)
+	}
+	if strings.Join(layer2JSONProviders(), ",") != strings.Join(wantJSON, ",") {
+		t.Errorf("layer2JSONProviders() = %q, want derived %q", layer2JSONProviders(), wantJSON)
+	}
+	// Every row's providers must come from the derived base (no stale or
+	// hand-typed names drifting from the contracts).
+	for _, c := range Layer2P0Certifications {
+		base := layer2TmuxProviders()
+		if c.Transport == Layer2TransportJSON {
+			base = layer2JSONProviders()
+		}
+		inBase := map[string]bool{}
+		for _, p := range base {
+			inBase[p] = true
+		}
+		for _, p := range c.Providers {
+			if !inBase[p] {
+				t.Errorf("cert %q lists %q, outside its derived transport base %q", c.ID, p, base)
 			}
 		}
 	}

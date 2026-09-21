@@ -156,7 +156,7 @@ func historyContains(history []llmtypes.MessageContent, sub string) bool {
 }
 
 // TestConversationRecordingWritesRealTurnData proves convrecord end to end on
-// TMUX across all 4 providers (was Claude-only): real token/cost/billing-basis
+// TMUX across all providers (was Claude-only): real token/cost/billing-basis
 // recorded by WriteTurn, and genuine resume via LoadHistory.
 func TestConversationRecordingWritesRealTurnData(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
@@ -166,6 +166,28 @@ func TestConversationRecordingWritesRealTurnData(t *testing.T) {
 	for _, tc := range multiTurnProviderCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.provider == llm.ProviderAgyCLI {
+				// Peers run this row one-shot (no session id); agy needs a
+				// session id + the persistent flag for the sidecar lane.
+				sessionID := "convrec-" + realBridgeRandHex(4)
+				untrust, err := trustAgyWorkdirForTmuxRow(isolatedWorkspaceDirForSession(sessionID))
+				if err != nil {
+					t.Fatalf("trust agy workdir: %v", err)
+				}
+				keyed, keyErr := agyKeyModeForTmuxRow(untrust)
+				if keyErr != nil {
+					untrust()
+					t.Fatalf("agy key mode: %v", keyErr)
+				}
+				untrust = keyed
+				t.Cleanup(func() {
+					closePersistentInteractiveSession(tc, sessionID)
+					untrust()
+				})
+				runConversationRecordingCase(t, tc.provider, tc.modelID, tc.binary,
+					withSessionID(sessionID), tc.persistentOpt(true))
+				return
+			}
 			runConversationRecordingCase(t, tc.provider, tc.modelID, tc.binary)
 		})
 	}

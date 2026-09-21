@@ -251,6 +251,15 @@ func withMusePersistentInteractiveSession(enabled bool) agentOption {
 	}
 }
 
+// withAgyPersistentInteractiveSession keeps agy CLI tmux sessions alive
+// across completed chat turns. Use only for interactive chat; workflow steps
+// should keep the default per-turn lifecycle.
+func withAgyPersistentInteractiveSession(enabled bool) agentOption {
+	return func(a *Agent) {
+		a.agyPersistentInteractiveSession = enabled
+	}
+}
+
 // withCursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 // The flag is retained for API compatibility but no longer sets --mode ask:
 // that mode hard-refuses natural-language writes with "Switch to Agent mode",
@@ -988,9 +997,18 @@ type Agent struct {
 	// starting fresh.
 	museSessionID string
 
+	// Agy CLI native conversation ID for --conversation resume on
+	// subsequent turns. Populated from the exec lane's session handle
+	// (conversation_id), so a restored chat picks up agy's native
+	// conversation instead of starting fresh.
+	agySessionID string
+
 	// Muse CLI persistent tmux mode for interactive chat (consumed when the
 	// provider's interactive adapter lands).
 	musePersistentInteractiveSession bool
+
+	// Agy CLI persistent tmux mode for interactive chat.
+	agyPersistentInteractiveSession bool
 
 	// CursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 	// Retained for API compatibility; no longer sets --mode ask (that mode
