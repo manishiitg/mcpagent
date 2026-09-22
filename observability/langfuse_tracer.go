@@ -70,33 +70,22 @@ const (
 	// MCP Server connection events
 	EventTypeMCPServerConnectionStart = "mcp_server_connection_start"
 	EventTypeMCPServerConnectionEnd   = "mcp_server_connection_end"
-	EventTypeMCPServerConnectionError = "mcp_server_connection_error"
-	EventTypeMCPServerDiscovery       = "mcp_server_discovery"
 	EventTypeMCPServerSelection       = "mcp_server_selection"
 
 	// Error & Retry events
-	EventTypeRetryAttempt       = "retry_attempt"
-	EventTypeThrottlingDetected = "throttling_detected"
-	EventTypeTokenLimitExceeded = "token_limit_exceeded" //nolint:gosec // G101: false positive
-	EventTypeMaxTurnsReached    = "max_turns_reached"
+	EventTypeRetryAttempt    = "retry_attempt"
+	EventTypeMaxTurnsReached = "max_turns_reached"
 
 	// Context summarization events
 	EventTypeContextSummarizationStarted   = "context_summarization_started"
 	EventTypeContextSummarizationCompleted = "context_summarization_completed"
 	EventTypeContextSummarizationError     = "context_summarization_error"
-	EventTypeContextEditingCompleted       = "context_editing_completed"
 
 	// Streaming events
 	EventTypeStreamingStart          = "streaming_start"
 	EventTypeStreamingEnd            = "streaming_end"
 	EventTypeStreamingError          = "streaming_error"
 	EventTypeStreamingConnectionLost = "streaming_connection_lost"
-
-	// Cache events
-	EventTypeCacheHit   = "cache_hit"
-	EventTypeCacheMiss  = "cache_miss"
-	EventTypeCacheWrite = "cache_write"
-	EventTypeCacheError = "cache_error"
 )
 
 // LangfuseTracer implements the Tracer interface using Langfuse v2 API patterns.
@@ -930,10 +919,6 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 		return l.handleMCPServerConnectionStart(event)
 	case EventTypeMCPServerConnectionEnd:
 		return l.handleMCPServerConnectionEnd(event)
-	case EventTypeMCPServerConnectionError:
-		return l.handleMCPServerConnectionError(event)
-	case EventTypeMCPServerDiscovery:
-		return l.handleMCPServerDiscovery(event)
 	case EventTypeMCPServerSelection:
 		return l.handleMCPServerSelection(event)
 
@@ -944,10 +929,6 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 	// Error & Retry events
 	case EventTypeRetryAttempt:
 		return l.handleRetryAttempt(event)
-	case EventTypeThrottlingDetected:
-		return l.handleThrottlingDetected(event)
-	case EventTypeTokenLimitExceeded:
-		return l.handleTokenLimitExceeded(event)
 	case EventTypeMaxTurnsReached:
 		return l.handleMaxTurnsReached(event)
 
@@ -958,8 +939,6 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 		return l.handleContextSummarizationEnd(event)
 	case EventTypeContextSummarizationError:
 		return l.handleContextSummarizationError(event)
-	case EventTypeContextEditingCompleted:
-		return l.handleContextEditingCompleted(event)
 
 	// Streaming events
 	case EventTypeStreamingStart:
@@ -970,16 +949,6 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 		return l.handleStreamingError(event)
 	case EventTypeStreamingConnectionLost:
 		return l.handleStreamingConnectionLost(event)
-
-	// Cache events
-	case EventTypeCacheHit:
-		return l.handleCacheHit(event)
-	case EventTypeCacheMiss:
-		return l.handleCacheMiss(event)
-	case EventTypeCacheWrite:
-		return l.handleCacheWrite(event)
-	case EventTypeCacheError:
-		return l.handleCacheError(event)
 
 	default:
 		v2Logger.Debug("Langfuse: Unhandled event type", loggerv2.String("type", event.GetType()))
@@ -1775,68 +1744,6 @@ func (l *LangfuseTracer) handleMCPServerConnectionEnd(event AgentEvent) error {
 	return nil
 }
 
-// handleMCPServerConnectionError creates a new span for MCP server connection error
-func (l *LangfuseTracer) handleMCPServerConnectionError(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	// Create a new span for MCP server connection error
-	spanID := l.StartSpan(traceID, "mcp_server_connection_error", event.GetData())
-
-	// End the span immediately since connection error is a point-in-time event
-	l.EndSpan(spanID, event.GetData(), nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created MCP server connection error span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleMCPServerDiscovery creates a new span for MCP server discovery
-func (l *LangfuseTracer) handleMCPServerDiscovery(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	// Get agent span as parent for proper hierarchy
-	l.mu.RLock()
-	parentSpanID := l.agentSpans[traceID]
-	l.mu.RUnlock()
-	if parentSpanID == "" {
-		parentSpanID = traceID
-	}
-
-	// Extract discovery info for informative span name and output
-	spanName := "mcp_discovery"
-	var output map[string]interface{}
-	if discEvent, ok := event.GetData().(*events.MCPServerDiscoveryEvent); ok {
-		spanName = fmt.Sprintf("mcp_discovery_%d_servers_%d_tools",
-			discEvent.ConnectedServers, discEvent.ToolCount)
-		output = map[string]interface{}{
-			"total_servers":     discEvent.TotalServers,
-			"connected_servers": discEvent.ConnectedServers,
-			"failed_servers":    discEvent.FailedServers,
-			"tool_count":        discEvent.ToolCount,
-			"discovery_time":    discEvent.DiscoveryTime.String(),
-		}
-		if discEvent.ServerName != "" {
-			output["server_name"] = discEvent.ServerName
-		}
-	}
-
-	// Create span with agent as parent
-	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
-
-	// End the span immediately since discovery is a point-in-time event
-	l.EndSpan(spanID, output, nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created MCP server discovery span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
 // handleMCPServerSelection creates a new span for MCP server selection
 func (l *LangfuseTracer) handleMCPServerSelection(event AgentEvent) error {
 	traceID := event.GetTraceID()
@@ -1932,36 +1839,6 @@ func (l *LangfuseTracer) handleRetryAttempt(event AgentEvent) error {
 
 	v2Logger := l.getV2Logger()
 	v2Logger.Debug("Langfuse: Created retry attempt span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleThrottlingDetected creates a span for throttling events
-func (l *LangfuseTracer) handleThrottlingDetected(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	spanID := l.StartSpan(traceID, "throttling_detected", event.GetData())
-	l.EndSpan(spanID, event.GetData(), nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Info("Langfuse: Created throttling detected span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleTokenLimitExceeded creates a span for token limit exceeded events
-func (l *LangfuseTracer) handleTokenLimitExceeded(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	spanID := l.StartSpan(traceID, "token_limit_exceeded", event.GetData())
-	l.EndSpan(spanID, event.GetData(), nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Info("Langfuse: Created token limit exceeded span",
 		loggerv2.String("span_id", string(spanID)),
 		loggerv2.String("trace_id", traceID))
 
@@ -2094,21 +1971,6 @@ func (l *LangfuseTracer) handleContextSummarizationError(event AgentEvent) error
 	return nil
 }
 
-// handleContextEditingCompleted creates a span for context editing completion
-func (l *LangfuseTracer) handleContextEditingCompleted(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	spanID := l.StartSpan(traceID, "context_editing_completed", event.GetData())
-	l.EndSpan(spanID, event.GetData(), nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created context editing completed span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
 // ============================================================================
 // Streaming Handlers
 // ============================================================================
@@ -2225,96 +2087,3 @@ func (l *LangfuseTracer) handleStreamingConnectionLost(event AgentEvent) error {
 // ============================================================================
 // Cache Handlers
 // ============================================================================
-
-// handleCacheHit creates a span for cache hits
-func (l *LangfuseTracer) handleCacheHit(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	var output map[string]interface{}
-	if cacheEvent, ok := event.GetData().(*events.CacheHitEvent); ok {
-		output = map[string]interface{}{
-			"cache_key":     cacheEvent.CacheKey,
-			"cache_type":    cacheEvent.CacheType,
-			"ttl_remaining": cacheEvent.TTLRemaining,
-		}
-	}
-
-	spanID := l.StartSpan(traceID, "cache_hit", event.GetData())
-	l.EndSpan(spanID, output, nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created cache hit span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleCacheMiss creates a span for cache misses
-func (l *LangfuseTracer) handleCacheMiss(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	var output map[string]interface{}
-	if cacheEvent, ok := event.GetData().(*events.CacheMissEvent); ok {
-		output = map[string]interface{}{
-			"cache_key":  cacheEvent.CacheKey,
-			"cache_type": cacheEvent.CacheType,
-			"reason":     cacheEvent.Reason,
-		}
-	}
-
-	spanID := l.StartSpan(traceID, "cache_miss", event.GetData())
-	l.EndSpan(spanID, output, nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created cache miss span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleCacheWrite creates a span for cache writes
-func (l *LangfuseTracer) handleCacheWrite(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	var output map[string]interface{}
-	if cacheEvent, ok := event.GetData().(*events.CacheWriteEvent); ok {
-		output = map[string]interface{}{
-			"cache_key":  cacheEvent.CacheKey,
-			"cache_type": cacheEvent.CacheType,
-			"ttl":        cacheEvent.TTL,
-			"size":       cacheEvent.Size,
-		}
-	}
-
-	spanID := l.StartSpan(traceID, "cache_write", event.GetData())
-	l.EndSpan(spanID, output, nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Created cache write span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleCacheError creates a span for cache errors
-func (l *LangfuseTracer) handleCacheError(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	var err error
-	if cacheEvent, ok := event.GetData().(*events.CacheErrorEvent); ok {
-		err = fmt.Errorf("%s", cacheEvent.Error)
-	}
-
-	spanID := l.StartSpan(traceID, "cache_error", event.GetData())
-	l.EndSpan(spanID, event.GetData(), err)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Info("Langfuse: Created cache error span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}

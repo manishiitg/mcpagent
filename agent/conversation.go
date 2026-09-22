@@ -615,66 +615,6 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		// Use the current messages that include tool results from previous turns
 		llmMessages := messages
 
-		// Check if context editing should be applied (compact stale tool responses)
-		if a.enableContextEditing {
-			// Log messages BEFORE compaction for verification
-			beforeMessageCount := len(llmMessages)
-			toolResponseCountBefore := 0
-			for _, msg := range llmMessages {
-				if msg.Role == llmtypes.ChatMessageTypeTool {
-					toolResponseCountBefore++
-				}
-			}
-
-			var err error
-			llmMessages, err = compactStaleToolResponses(a, ctx, llmMessages, turn+1)
-			if err != nil {
-				v2Logger.Warn("Failed to compact stale tool responses, continuing with original messages",
-					loggerv2.Error(err))
-				// Continue with original messages if compaction fails
-			} else {
-				// Messages may have been modified (content replaced with file paths)
-				// Update the messages slice to use the compacted version
-				messages = llmMessages
-
-				// Log messages AFTER compaction for verification
-				afterMessageCount := len(llmMessages)
-				toolResponseCountAfter := 0
-				compactedSampleCount := 0
-				for _, msg := range llmMessages {
-					if msg.Role == llmtypes.ChatMessageTypeTool {
-						toolResponseCountAfter++
-						// Check if this message was compacted (contains file path reference)
-						for _, part := range msg.Parts {
-							if tr, ok := part.(llmtypes.ToolCallResponse); ok {
-								if strings.Contains(tr.Content, "has been saved to:") || strings.Contains(tr.Content, "tool_output_folder") {
-									compactedSampleCount++
-									// Log a sample of compacted content (first 200 chars)
-									if compactedSampleCount == 1 {
-										sampleContent := tr.Content
-										if len(sampleContent) > 200 {
-											sampleContent = sampleContent[:200] + "..."
-										}
-										v2Logger.Info("✅ [CONTEXT_EDITING] Sample compacted message content",
-											loggerv2.String("tool_name", tr.Name),
-											loggerv2.String("sample_content", sampleContent))
-									}
-								}
-							}
-						}
-					}
-				}
-
-				v2Logger.Info("📊 [CONTEXT_EDITING] Messages before LLM call - VERIFICATION",
-					loggerv2.Int("turn", turn+1),
-					loggerv2.Int("before_message_count", beforeMessageCount),
-					loggerv2.Int("after_message_count", afterMessageCount),
-					loggerv2.Int("before_tool_responses", toolResponseCountBefore),
-					loggerv2.Int("after_tool_responses", toolResponseCountAfter),
-					loggerv2.Int("compacted_samples_found", compactedSampleCount))
-			}
-		}
-
 		// Check if token-based summarization should be triggered
 		// Support both percentage-based and fixed token thresholds (OR logic)
 		if a.enableContextSummarization && (a.summarizeOnTokenThreshold || a.summarizeOnFixedTokenThreshold) {

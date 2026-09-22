@@ -100,9 +100,6 @@ type ContextRuntimeConfig struct {
 	FixedTokenThreshold           int
 	SummaryKeepLastMessages       int
 	SummarizationCooldownTurns    int
-	EditingEnabled                bool
-	EditingThreshold              int
-	EditingTurnThreshold          int
 }
 
 type CodingRuntimeConfig struct {
@@ -330,15 +327,6 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if contextConfig.SummarizationCooldownTurns > 0 {
 		options = append(options, withSummarizationCooldown(contextConfig.SummarizationCooldownTurns))
-	}
-	if contextConfig.EditingEnabled {
-		options = append(options, withContextEditing(true))
-	}
-	if contextConfig.EditingThreshold > 0 {
-		options = append(options, withContextEditingThreshold(contextConfig.EditingThreshold))
-	}
-	if contextConfig.EditingTurnThreshold > 0 {
-		options = append(options, withContextEditingTurnThreshold(contextConfig.EditingTurnThreshold))
 	}
 
 	coding := runtime.Coding

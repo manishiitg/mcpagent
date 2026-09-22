@@ -73,35 +73,23 @@ const (
 	ContextSummarizationCompleted EventType = "context_summarization_completed"
 	ContextSummarizationError     EventType = "context_summarization_error"
 
-	// Context editing events
-	ContextEditingCompleted EventType = "context_editing_completed"
-	ContextEditingError     EventType = "context_editing_error"
-
 	// Error and model events
-	ThrottlingDetected EventType = "throttling_detected"
-	//nolint:gosec // G101: This is an event type constant, not a credential
-	TokenLimitExceeded EventType = "token_limit_exceeded"
-	MaxTurnsReached    EventType = "max_turns_reached"
-	ContextCancelled   EventType = "context_cancelled"
+	MaxTurnsReached  EventType = "max_turns_reached"
+	ContextCancelled EventType = "context_cancelled"
 
 	// MCP server events
+	// NOTE: MCPServerConnection is the nominal type of a payload-carrier
+	// struct; live code always re-types it to ConnectionStart/End before
+	// emit, so the bare wire type is never produced.
 	MCPServerConnection      EventType = "mcp_server_connection"
-	MCPServerDiscovery       EventType = "mcp_server_discovery"
 	MCPServerSelection       EventType = "mcp_server_selection"
 	MCPServerConnectionStart EventType = "mcp_server_connection_start"
 	MCPServerConnectionEnd   EventType = "mcp_server_connection_end"
-	MCPServerConnectionError EventType = "mcp_server_connection_error"
 
-	// Cache events
-	CacheHit            EventType = "cache_hit"
-	CacheMiss           EventType = "cache_miss"
-	CacheWrite          EventType = "cache_write"
-	CacheExpired        EventType = "cache_expired"
-	CacheCleanup        EventType = "cache_cleanup"
-	CacheError          EventType = "cache_error"
-	CacheOperationStart EventType = "cache_operation_start"
-	ComprehensiveCache  EventType = "comprehensive_cache"
-	GenericCache        EventType = "cache_event"
+	// Cache events: only the generic carrier is ever emitted (all cache
+	// constructors return this type); the per-operation wire strings were
+	// removed on 2026-09-22 (no emitters, no readers).
+	GenericCache EventType = "cache_event"
 
 	JSONValidationStart EventType = "json_validation_start"
 	JSONValidationEnd   EventType = "json_validation_end"
@@ -109,18 +97,11 @@ const (
 	// Tool execution events
 	ToolExecution          EventType = "tool_execution"
 	LLMGenerationWithRetry EventType = "llm_generation_with_retry"
-	StepExecutionStart     EventType = "step_execution_start"
-	StepExecutionEnd       EventType = "step_execution_end"
-	StepExecutionFailed    EventType = "step_execution_failed"
-	PrerequisiteNavigation EventType = "prerequisite_navigation"
 
 	// Additional event types from mcpagent
-	AgentProcessing                  EventType = "agent_processing"
-	ModelChange                      EventType = "model_change"
-	RetryAttempt                     EventType = "retry_attempt"
-	BrokenPipe                       EventType = "broken_pipe"
-	LargeToolOutputFileWriteError    EventType = "large_tool_output_file_write_error"
-	LargeToolOutputServerUnavailable EventType = "large_tool_output_server_unavailable"
+	RetryAttempt                  EventType = "retry_attempt"
+	BrokenPipe                    EventType = "broken_pipe"
+	LargeToolOutputFileWriteError EventType = "large_tool_output_file_write_error"
 
 	// Unified completion event
 	EventTypeUnifiedCompletion EventType = "unified_completion"
@@ -128,10 +109,8 @@ const (
 
 // Orchestrator Event Types (from orchestrator/events/events.go)
 const (
-	// Orchestrator events
-	OrchestratorStart EventType = "orchestrator_start"
-	OrchestratorEnd   EventType = "orchestrator_end"
-	OrchestratorError EventType = "orchestrator_error"
+	// Orchestrator events (only End is emitted; Start/Error never were)
+	OrchestratorEnd EventType = "orchestrator_end"
 
 	// Orchestrator Agent lifecycle events
 	OrchestratorAgentStart EventType = "orchestrator_agent_start"
@@ -142,16 +121,7 @@ const (
 	IndependentStepsSelected EventType = "independent_steps_selected"
 
 	// Todo planning events
-	TodoStepsExtracted  EventType = "todo_steps_extracted"
-	VariablesExtracted  EventType = "variables_extracted"
-	StepProgressUpdated EventType = "step_progress_updated"
-
-	// Batch execution events (for variable groups)
-	BatchExecutionStart    EventType = "batch_execution_start"
-	BatchGroupStart        EventType = "batch_group_start"
-	BatchGroupEnd          EventType = "batch_group_end"
-	BatchExecutionEnd      EventType = "batch_execution_end"
-	BatchExecutionCanceled EventType = "batch_execution_canceled"
+	VariablesExtracted EventType = "variables_extracted"
 
 	// Human Verification events
 	HumanVerificationResponse EventType = "human_verification_response"
@@ -160,12 +130,6 @@ const (
 
 	// Step token usage event
 	StepTokenUsage EventType = "step_token_usage"
-
-	// Learning events
-	LearningSkipped EventType = "learning_skipped"
-
-	// Decision step evaluation events
-	DecisionEvaluated EventType = "decision_evaluated"
 
 	// Pre-validation events
 	PreValidationCompleted EventType = "pre_validation_completed"
@@ -227,13 +191,10 @@ func (b *BaseEventData) GetBaseEventData() *BaseEventData {
 func GetComponentFromEventType(eventType EventType) string {
 	switch eventType {
 	case JSONValidationStart, JSONValidationEnd,
-		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
-		StepTokenUsage, StepProgressUpdated,
-		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,
+		IndependentStepsSelected, VariablesExtracted,
+		StepTokenUsage,
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback,
-		LearningSkipped,
-		DecisionEvaluated, PreValidationCompleted,
-		StepExecutionStart, StepExecutionEnd, StepExecutionFailed:
+		PreValidationCompleted:
 		return "orchestrator"
 	case AgentStart, AgentEnd, AgentError:
 		return "agent"
@@ -243,10 +204,6 @@ func GetComponentFromEventType(eventType EventType) string {
 		return "tool"
 	case ConversationStart, ConversationEnd, ConversationError, ConversationTurn, ConversationThinking:
 		return "conversation"
-	case CacheHit, CacheMiss, CacheWrite,
-		CacheExpired, CacheCleanup, CacheError,
-		CacheOperationStart, ComprehensiveCache:
-		return "cache"
 	case SystemPrompt, UserMessage:
 		return "system"
 	default:

@@ -457,43 +457,6 @@ func withParallelToolExecution(enabled bool) agentOption {
 	}
 }
 
-// withContextEditing enables dynamic context reduction.
-//
-// Unlike summarization (which compresses history), context editing targets specific
-// large tool outputs in the history and replaces them with references if they become
-// too old or too large, optimizing the context window.
-//
-// Default: false (Disabled)
-func withContextEditing(enabled bool) agentOption {
-	return func(a *Agent) {
-		a.enableContextEditing = enabled
-	}
-}
-
-// withContextEditingThreshold sets the size threshold for context editing.
-//
-// Tool outputs larger than this token count are candidates for compaction when they
-// become "stale" (old).
-//
-// Default: 1000 tokens
-func withContextEditingThreshold(threshold int) agentOption {
-	return func(a *Agent) {
-		a.contextEditingThreshold = threshold
-	}
-}
-
-// withContextEditingTurnThreshold sets the age threshold for context editing.
-//
-// Tool outputs must be at least this many turns old before they are compacted.
-// This ensures recent tool outputs stay in context for immediate reference.
-//
-// Default: 10 turns
-func withContextEditingTurnThreshold(turns int) agentOption {
-	return func(a *Agent) {
-		a.contextEditingTurnThreshold = turns
-	}
-}
-
 // withToolTimeout sets a global timeout for tool execution.
 //
 // If a tool takes longer than this duration, it will be cancelled.
@@ -1062,11 +1025,6 @@ type Agent struct {
 	summarizationCooldownTurns     int     // Number of turns to wait after summarization before allowing another (0 = use default: 3)
 	lastSummarizationTurn          int     // Track when last summarization occurred (turn number)
 
-	// Context editing configuration (see context_editing.go)
-	enableContextEditing        bool // Enable context editing (dynamic context reduction)
-	contextEditingThreshold     int  // Token threshold for context editing (0 = use default: 1000)
-	contextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 10)
-
 	// Parallel tool execution configuration
 	// When enabled and LLM returns multiple tool calls in a single response,
 	// tool calls execute concurrently using goroutines (fork-join pattern).
@@ -1570,9 +1528,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		summaryKeepLastMessages:       0,                                // Default: 0 means use default (4 messages)
 		summarizationCooldownTurns:    0,                                // Default: 0 means use default (3 turns)
 		lastSummarizationTurn:         -1,                               // Default: -1 means never summarized
-		enableContextEditing:          false,                            // Default to disabled
-		contextEditingThreshold:       0,                                // Default: 0 means use default threshold (1000)
-		contextEditingTurnThreshold:   0,                                // Default: 0 means use default (10 turns)
 		logger:                        loggerv2.NewDefault(),            // Default logger
 
 		// Initialize hierarchy tracking fields
@@ -2018,11 +1973,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Warn("[BRIDGE_DEBUG] CLAUDE_CODE: UseCodeExecutionMode was not pre-set — enforcing now (safety net)")
 		}
 
-		if ag.enableContextEditing {
-			ag.enableContextEditing = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Editing (handled natively by CLI)")
-		}
-
 		if ag.enableContextSummarization {
 			ag.enableContextSummarization = false
 			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Summarization (handled natively by CLI)")
@@ -2049,11 +1999,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.useCodeExecutionMode {
 			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [CODEX_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.enableContextEditing {
-			ag.enableContextEditing = false
-			logger.Debug("🔧 [CODEX_CLI] Disabled Context Editing (handled natively by CLI)")
 		}
 
 		if ag.enableContextSummarization {
@@ -2100,11 +2045,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.enableContextEditing {
-			ag.enableContextEditing = false
-			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-
 		if ag.enableContextSummarization {
 			ag.enableContextSummarization = false
 			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Summarization (handled natively by CLI)")
@@ -2134,11 +2074,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Debug("🔧 [MUSE_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.enableContextEditing {
-			ag.enableContextEditing = false
-			logger.Debug("🔧 [MUSE_CLI] Disabled Context Editing (handled natively by CLI)")
-		}
-
 		if ag.enableContextSummarization {
 			ag.enableContextSummarization = false
 			logger.Debug("🔧 [MUSE_CLI] Disabled Context Summarization (handled natively by CLI)")
@@ -2165,11 +2100,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.useCodeExecutionMode {
 			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [PI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.enableContextEditing {
-			ag.enableContextEditing = false
-			logger.Debug("🔧 [PI_CLI] Disabled Context Editing (handled natively by CLI)")
 		}
 
 		if ag.enableContextSummarization {

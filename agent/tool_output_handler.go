@@ -262,8 +262,8 @@ func replaceAll(s, old, new string) string {
 
 // CreateToolOutputMessageWithPreview creates a message for the LLM with file path, first characters up to threshold, and instructions
 // previewPercent: percentage of threshold to use for preview (e.g., 50 for 50%, 10 for 10%)
-// isContextEditing: if true, creates a concise message for stale responses (context editing); if false, creates detailed message for new offloading
-func (h *ToolOutputHandler) CreateToolOutputMessageWithPreview(toolCallID, filePath, content string, previewPercent int, isContextEditing bool) string {
+// concise: if true, creates a concise message for stale responses; if false, creates detailed message for new offloading
+func (h *ToolOutputHandler) CreateToolOutputMessageWithPreview(toolCallID, filePath, content string, previewPercent int, concise bool) string {
 	// Extract actual content from prefixed tool result
 	actualContent := ExtractActualContent(content)
 
@@ -278,8 +278,8 @@ func (h *ToolOutputHandler) CreateToolOutputMessageWithPreview(toolCallID, fileP
 	fullRelativePath = strings.ReplaceAll(fullRelativePath, "\\", "/")
 
 	var instructions string
-	if isContextEditing {
-		// Concise message for context editing (stale responses) - LLM already knows how to use tools
+	if concise {
+		// Concise message for stale responses - LLM already knows how to use tools
 		instructions = fmt.Sprintf(`Tool output saved to: %s
 
 Preview (%d chars): %s

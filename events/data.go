@@ -401,23 +401,6 @@ func (e *MCPServerConnectionEvent) GetEventType() EventType {
 	return MCPServerConnectionStart
 }
 
-// MCPServerDiscoveryEvent represents MCP server discovery
-type MCPServerDiscoveryEvent struct {
-	BaseEventData
-	ServerName       string        `json:"server_name,omitempty"`
-	Operation        string        `json:"operation,omitempty"`
-	TotalServers     int           `json:"total_servers"`
-	ConnectedServers int           `json:"connected_servers"`
-	FailedServers    int           `json:"failed_servers"`
-	DiscoveryTime    time.Duration `json:"discovery_time"`
-	ToolCount        int           `json:"tool_count,omitempty"`
-	Error            string        `json:"error,omitempty"`
-}
-
-func (e *MCPServerDiscoveryEvent) GetEventType() EventType {
-	return MCPServerDiscovery
-}
-
 // MCPServerSelectionEvent represents MCP server selection for a query
 type MCPServerSelectionEvent struct {
 	BaseEventData
@@ -973,19 +956,6 @@ func NewMCPServerConnectionEvent(serverName, status string, toolsCount int, conn
 	}
 }
 
-// NewMCPServerDiscoveryEvent creates a new MCPServerDiscoveryEvent
-func NewMCPServerDiscoveryEvent(totalServers, connectedServers, failedServers int, discoveryTime time.Duration) *MCPServerDiscoveryEvent {
-	return &MCPServerDiscoveryEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		TotalServers:     totalServers,
-		ConnectedServers: connectedServers,
-		FailedServers:    failedServers,
-		DiscoveryTime:    discoveryTime,
-	}
-}
-
 // NewMCPServerSelectionEvent creates a new MCPServerSelectionEvent
 func NewMCPServerSelectionEvent(turn int, selectedServers []string, totalServers int, source, query string) *MCPServerSelectionEvent {
 	return &MCPServerSelectionEvent{
@@ -1158,20 +1128,6 @@ func (e *LargeToolOutputFileWriteErrorEvent) GetEventType() EventType {
 	return LargeToolOutputFileWriteError
 }
 
-// LargeToolOutputServerUnavailableEvent represents when server is not available for large tool output handling
-type LargeToolOutputServerUnavailableEvent struct {
-	BaseEventData
-	ToolName   string `json:"tool_name"`
-	OutputSize int    `json:"output_size"`
-	Threshold  int    `json:"threshold"`
-	ServerName string `json:"server_name"`
-	Reason     string `json:"reason"`
-}
-
-func (e *LargeToolOutputServerUnavailableEvent) GetEventType() EventType {
-	return LargeToolOutputServerUnavailable
-}
-
 // Constructor functions for large tool output events
 func NewLargeToolOutputDetectedEvent(toolName string, outputSize int, outputFolder string) *LargeToolOutputDetectedEvent {
 	return &LargeToolOutputDetectedEvent{
@@ -1307,200 +1263,6 @@ func NewContextSummarizationErrorEvent(err string, originalCount, keepLast int) 
 	}
 }
 
-// Context editing events
-
-// ToolResponseEvaluation represents evaluation details for a single tool response
-type ToolResponseEvaluation struct {
-	ToolName            string `json:"tool_name"`
-	TokenCount          int    `json:"token_count"`
-	TurnAge             int    `json:"turn_age"`
-	MeetsTokenThreshold bool   `json:"meets_token_threshold"`
-	MeetsTurnThreshold  bool   `json:"meets_turn_threshold"`
-	WasCompacted        bool   `json:"was_compacted"`
-	SkipReason          string `json:"skip_reason,omitempty"`  // Why it wasn't compacted (if applicable)
-	TokensSaved         int    `json:"tokens_saved,omitempty"` // Tokens saved if compacted
-}
-
-// ContextEditingCompletedEvent represents completion of context editing (even if nothing was compacted)
-type ContextEditingCompletedEvent struct {
-	BaseEventData
-	TotalMessages         int                      `json:"total_messages"`
-	ToolResponseCount     int                      `json:"tool_response_count"` // Total tool responses found
-	CompactedCount        int                      `json:"compacted_count"`     // Number actually compacted
-	TotalTokensSaved      int                      `json:"total_tokens_saved"`  // Total tokens saved
-	TokenThreshold        int                      `json:"token_threshold"`
-	TurnThreshold         int                      `json:"turn_threshold"`
-	CurrentTurn           int                      `json:"current_turn"`
-	Evaluations           []ToolResponseEvaluation `json:"evaluations,omitempty"`   // Detailed evaluation of each tool response
-	AlreadyCompactedCount int                      `json:"already_compacted_count"` // Count of responses already compacted
-}
-
-func (e *ContextEditingCompletedEvent) GetEventType() EventType {
-	return ContextEditingCompleted
-}
-
-// ContextEditingErrorEvent represents an error during context editing
-type ContextEditingErrorEvent struct {
-	BaseEventData
-	Error          string `json:"error"`
-	TotalMessages  int    `json:"total_messages"`
-	TokenThreshold int    `json:"token_threshold"`
-	TurnThreshold  int    `json:"turn_threshold"`
-}
-
-func (e *ContextEditingErrorEvent) GetEventType() EventType {
-	return ContextEditingError
-}
-
-// Constructor functions for context editing events
-func NewContextEditingCompletedEvent(
-	totalMessages, toolResponseCount, compactedCount, totalTokensSaved, tokenThreshold, turnThreshold, currentTurn, alreadyCompactedCount int,
-	evaluations []ToolResponseEvaluation,
-) *ContextEditingCompletedEvent {
-	return &ContextEditingCompletedEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		TotalMessages:         totalMessages,
-		ToolResponseCount:     toolResponseCount,
-		CompactedCount:        compactedCount,
-		TotalTokensSaved:      totalTokensSaved,
-		TokenThreshold:        tokenThreshold,
-		TurnThreshold:         turnThreshold,
-		CurrentTurn:           currentTurn,
-		Evaluations:           evaluations,
-		AlreadyCompactedCount: alreadyCompactedCount,
-	}
-}
-
-func NewContextEditingErrorEvent(err string, totalMessages, tokenThreshold, turnThreshold int) *ContextEditingErrorEvent {
-	return &ContextEditingErrorEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Error:          err,
-		TotalMessages:  totalMessages,
-		TokenThreshold: tokenThreshold,
-		TurnThreshold:  turnThreshold,
-	}
-}
-
-func NewLargeToolOutputServerUnavailableEvent(toolName string, outputSize int, serverName, reason string) *LargeToolOutputServerUnavailableEvent {
-	return &LargeToolOutputServerUnavailableEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		ToolName:   toolName,
-		OutputSize: outputSize,
-		Threshold:  DefaultLargeToolOutputThreshold, // Default threshold
-		ServerName: serverName,
-		Reason:     reason,
-	}
-}
-
-// ModelChangeEvent represents a model change event
-type ModelChangeEvent struct {
-	BaseEventData
-	Turn       int    `json:"turn"`
-	OldModelID string `json:"old_model_id"`
-	NewModelID string `json:"new_model_id"`
-	Reason     string `json:"reason"`
-	Provider   string `json:"provider"`
-	Duration   string `json:"duration"`
-}
-
-func (e *ModelChangeEvent) GetEventType() EventType {
-	return ModelChange
-}
-
-// ThrottlingDetectedEvent represents when throttling is detected
-type ThrottlingDetectedEvent struct {
-	BaseEventData
-	Turn        int    `json:"turn"`
-	ModelID     string `json:"model_id"`
-	Provider    string `json:"provider"`
-	Attempt     int    `json:"attempt"`
-	MaxAttempts int    `json:"max_attempts"`
-	Duration    string `json:"duration"`
-	ErrorType   string `json:"error_type,omitempty"`  // "throttling", "empty_content", "connection_error", etc.
-	RetryDelay  string `json:"retry_delay,omitempty"` // Wait time before retry (e.g., "22.5s")
-}
-
-func (e *ThrottlingDetectedEvent) GetEventType() EventType {
-	return ThrottlingDetected
-}
-
-// TokenLimitExceededEvent represents when token limits are exceeded
-type TokenLimitExceededEvent struct {
-	BaseEventData
-	Turn          int    `json:"turn"`
-	ModelID       string `json:"model_id"`
-	Provider      string `json:"provider"`
-	TokenType     string `json:"token_type"` // "input", "output", "total"
-	CurrentTokens int    `json:"current_tokens"`
-	MaxTokens     int    `json:"max_tokens"`
-	Duration      string `json:"duration"`
-}
-
-func (e *TokenLimitExceededEvent) GetEventType() EventType {
-	return TokenLimitExceeded
-}
-
-// NewModelChangeEvent creates a new ModelChangeEvent
-func NewModelChangeEvent(turn int, oldModelID, newModelID, reason, provider string, duration time.Duration) *ModelChangeEvent {
-	return &ModelChangeEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       turn,
-		OldModelID: oldModelID,
-		NewModelID: newModelID,
-		Reason:     reason,
-		Provider:   provider,
-		Duration:   duration.String(),
-	}
-}
-
-// NewThrottlingDetectedEvent creates a new ThrottlingDetectedEvent
-// errorType can be "throttling", "empty_content", "connection_error", etc.
-// retryDelay is the wait time before retry (e.g., "22.5s"), optional
-func NewThrottlingDetectedEvent(turn int, modelID, provider string, attempt, maxAttempts int, duration time.Duration, errorType string, retryDelay time.Duration) *ThrottlingDetectedEvent {
-	event := &ThrottlingDetectedEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:        turn,
-		ModelID:     modelID,
-		Provider:    provider,
-		Attempt:     attempt,
-		MaxAttempts: maxAttempts,
-		Duration:    duration.String(),
-	}
-	if errorType != "" {
-		event.ErrorType = errorType
-	}
-	if retryDelay > 0 {
-		event.RetryDelay = retryDelay.String()
-	}
-	return event
-}
-
-// NewTokenLimitExceededEvent creates a new TokenLimitExceededEvent
-func NewTokenLimitExceededEvent(turn int, modelID, provider, tokenType string, currentTokens, maxTokens int, duration time.Duration) *TokenLimitExceededEvent {
-	return &TokenLimitExceededEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:          turn,
-		ModelID:       modelID,
-		Provider:      provider,
-		TokenType:     tokenType,
-		CurrentTokens: currentTokens,
-		MaxTokens:     maxTokens,
-		Duration:      duration.String(),
-	}
-}
-
 type RetryAttemptEvent struct {
 	BaseEventData
 	Turn          int    `json:"turn"`
@@ -1624,76 +1386,6 @@ func NewCacheHitEvent(serverName, cacheKey, configPath string, toolsCount int, a
 		ConfigPath: configPath,
 		ToolsCount: toolsCount,
 		Age:        age.String(),
-	}
-}
-
-func NewCacheMissEvent(serverName, cacheKey, configPath, reason string) *CacheEvent {
-	return &CacheEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Operation:  "miss",
-		ServerName: serverName,
-		CacheKey:   cacheKey,
-		ConfigPath: configPath,
-		Reason:     reason,
-	}
-}
-
-func NewCacheWriteEvent(serverName, cacheKey, configPath string, toolsCount int, dataSize int64, ttl time.Duration) *CacheEvent {
-	return &CacheEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Operation:  "write",
-		ServerName: serverName,
-		CacheKey:   cacheKey,
-		ConfigPath: configPath,
-		ToolsCount: toolsCount,
-		DataSize:   dataSize,
-		TTL:        ttl.String(),
-	}
-}
-
-func NewCacheExpiredEvent(serverName, cacheKey, configPath string, age, ttl time.Duration) *CacheEvent {
-	return &CacheEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Operation:  "expired",
-		ServerName: serverName,
-		CacheKey:   cacheKey,
-		ConfigPath: configPath,
-		Age:        age.String(),
-		TTL:        ttl.String(),
-	}
-}
-
-func NewCacheCleanupEvent(cleanupType string, entriesRemoved, entriesTotal int, spaceFreed int64) *CacheEvent {
-	return &CacheEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Operation:      "cleanup",
-		ServerName:     "all-servers",
-		CleanupType:    cleanupType,
-		EntriesRemoved: entriesRemoved,
-		EntriesTotal:   entriesTotal,
-		SpaceFreed:     spaceFreed,
-	}
-}
-
-func NewCacheErrorEvent(serverName, cacheKey, configPath, operation, errorMsg, errorType string) *CacheEvent {
-	return &CacheEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Operation:  "error",
-		ServerName: serverName,
-		CacheKey:   cacheKey,
-		ConfigPath: configPath,
-		Error:      errorMsg,
-		ErrorType:  errorType,
 	}
 }
 
@@ -1935,92 +1627,6 @@ func (e *StreamingStatusLineEvent) GetEventType() EventType {
 	return StreamingStatusLine
 }
 
-// CacheHitEvent represents a cache hit
-type CacheHitEvent struct {
-	BaseEventData
-	CacheKey     string `json:"cache_key"`
-	CacheType    string `json:"cache_type,omitempty"` // "prompt", "response", "tool", etc.
-	TTLRemaining string `json:"ttl_remaining,omitempty"`
-}
-
-func (e *CacheHitEvent) GetEventType() EventType {
-	return CacheHit
-}
-
-// CacheMissEvent represents a cache miss
-type CacheMissEvent struct {
-	BaseEventData
-	CacheKey  string `json:"cache_key"`
-	CacheType string `json:"cache_type,omitempty"`
-	Reason    string `json:"reason,omitempty"` // "not_found", "expired", "invalidated"
-}
-
-func (e *CacheMissEvent) GetEventType() EventType {
-	return CacheMiss
-}
-
-// CacheWriteEvent represents a cache write operation
-type CacheWriteEvent struct {
-	BaseEventData
-	CacheKey  string `json:"cache_key"`
-	CacheType string `json:"cache_type,omitempty"`
-	TTL       string `json:"ttl,omitempty"`
-	Size      int    `json:"size,omitempty"` // Size in bytes
-}
-
-func (e *CacheWriteEvent) GetEventType() EventType {
-	return CacheWrite
-}
-
-// CacheExpiredEvent represents an expired cache entry
-type CacheExpiredEvent struct {
-	BaseEventData
-	CacheKey  string `json:"cache_key"`
-	CacheType string `json:"cache_type,omitempty"`
-	Age       string `json:"age,omitempty"` // How long the entry was cached
-}
-
-func (e *CacheExpiredEvent) GetEventType() EventType {
-	return CacheExpired
-}
-
-// CacheCleanupEvent represents a cache cleanup operation
-type CacheCleanupEvent struct {
-	BaseEventData
-	EntriesRemoved int    `json:"entries_removed"`
-	BytesFreed     int    `json:"bytes_freed,omitempty"`
-	Duration       string `json:"duration,omitempty"`
-	Reason         string `json:"reason,omitempty"` // "scheduled", "memory_pressure", "manual"
-}
-
-func (e *CacheCleanupEvent) GetEventType() EventType {
-	return CacheCleanup
-}
-
-// CacheErrorEvent represents an error during cache operation
-type CacheErrorEvent struct {
-	BaseEventData
-	Operation string `json:"operation"` // "read", "write", "delete", "cleanup"
-	CacheKey  string `json:"cache_key,omitempty"`
-	Error     string `json:"error"`
-}
-
-func (e *CacheErrorEvent) GetEventType() EventType {
-	return CacheError
-}
-
-// CacheOperationStartEvent represents the start of a cache operation
-type CacheOperationStartEvent struct {
-	BaseEventData
-	Operation string `json:"operation"` // "read", "write", "delete", "cleanup"
-	CacheKey  string `json:"cache_key,omitempty"`
-	CacheType string `json:"cache_type,omitempty"`
-}
-
-func (e *CacheOperationStartEvent) GetEventType() EventType {
-	return CacheOperationStart
-}
-
 // =============================================================================
 // MCP SERVER CONNECTION EVENTS
 // =============================================================================
@@ -2048,19 +1654,6 @@ type MCPServerConnectionEndEvent struct {
 
 func (e *MCPServerConnectionEndEvent) GetEventType() EventType {
 	return MCPServerConnectionEnd
-}
-
-// MCPServerConnectionErrorEvent represents an MCP server connection error
-type MCPServerConnectionErrorEvent struct {
-	BaseEventData
-	ServerName string `json:"server_name"`
-	Error      string `json:"error"`
-	Retryable  bool   `json:"retryable"`
-	RetryCount int    `json:"retry_count,omitempty"`
-}
-
-func (e *MCPServerConnectionErrorEvent) GetEventType() EventType {
-	return MCPServerConnectionError
 }
 
 // =============================================================================
@@ -2190,46 +1783,4 @@ type LLMTokenUsageEvent struct {
 
 func (e *LLMTokenUsageEvent) GetEventType() EventType {
 	return LLMTokenUsage
-}
-
-// AgentProcessingEvent represents agent processing status
-type AgentProcessingEvent struct {
-	BaseEventData
-	Status      string `json:"status"` // "thinking", "planning", "executing", "waiting"
-	Turn        int    `json:"turn"`
-	Message     string `json:"message,omitempty"`
-	ElapsedTime string `json:"elapsed_time,omitempty"`
-}
-
-func (e *AgentProcessingEvent) GetEventType() EventType {
-	return AgentProcessing
-}
-
-// PrerequisiteNavigationEvent represents navigation back to a prerequisite step due to prerequisite failure
-// Note: This is a library event (tool execution), not an orchestrator-specific event
-type PrerequisiteNavigationEvent struct {
-	BaseEventData
-	FromStepIndex int    `json:"from_step_index"` // 0-based index of step that failed
-	ToStepIndex   int    `json:"to_step_index"`   // 0-based index of step to navigate to
-	FromStepID    string `json:"from_step_id"`    // Step ID of step that failed
-	ToStepID      string `json:"to_step_id"`      // Step ID of step to navigate to
-	Reason        string `json:"reason"`          // Reason for navigation
-	FailureType   string `json:"failure_type"`    // "prerequisite" or "execution"
-}
-
-func (e *PrerequisiteNavigationEvent) GetEventType() EventType {
-	return PrerequisiteNavigation
-}
-
-// NewPrerequisiteNavigationEvent creates a new PrerequisiteNavigationEvent
-func NewPrerequisiteNavigationEvent(fromStep, toStep int, reason, failureType string) *PrerequisiteNavigationEvent {
-	return &PrerequisiteNavigationEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		FromStepIndex: fromStep,
-		ToStepIndex:   toStep,
-		Reason:        reason,
-		FailureType:   failureType,
-	}
 }

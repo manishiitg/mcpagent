@@ -77,7 +77,6 @@ func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 		"CloseHTTPSession",
 		"CloseSession",
 		"CloseSessionServer",
-		"CompactStaleToolResponses",
 		"ConvertToolChoice",
 		"DeliverAgentControlKey",
 		"DeliverAgentInput",
@@ -150,7 +149,6 @@ func TestAgentFacadeFunctionSurface(t *testing.T) {
 	want := []string{
 		"AgentSupportsSteering",
 		"ApplyAgentResumeHandle",
-		"CompactStaleToolResponses",
 		"DeliverAgentControlKey",
 		"DeliverAgentInput",
 		"HandleLoopDetection",

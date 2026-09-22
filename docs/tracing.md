@@ -345,7 +345,6 @@ echo "✅ All tracing checks passed"
    - `ToolCallStartEvent` / `ToolCallEndEvent` / `ToolCallErrorEvent`
      - `ToolCallStartEvent.IsParallel` is `true` when the tool call is part of a parallel execution batch (multiple tool calls running concurrently via goroutines), `false` for sequential execution
    - `MCPServerConnectionStartEvent` / `MCPServerConnectionEndEvent`
-   - `MCPServerDiscoveryEvent`
 
 2. **Tracers process events** in `EmitEvent()`:
    - Each tracer (Langfuse, LangSmith) receives the event independently

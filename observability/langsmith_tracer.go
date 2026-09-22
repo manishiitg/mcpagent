@@ -989,10 +989,6 @@ func (l *LangsmithTracer) EmitEvent(event AgentEvent) error {
 		return l.handleMCPServerConnectionStart(event)
 	case EventTypeMCPServerConnectionEnd:
 		return l.handleMCPServerConnectionEnd(event)
-	case EventTypeMCPServerConnectionError:
-		return l.handleMCPServerConnectionError(event)
-	case EventTypeMCPServerDiscovery:
-		return l.handleMCPServerDiscovery(event)
 
 	default:
 		l.logger.Debug("LangSmith: Unhandled event type",
@@ -1496,44 +1492,6 @@ func (l *LangsmithTracer) handleMCPServerConnectionEnd(event AgentEvent) error {
 	}
 
 	l.EndRun(SpanID(mcpRunID), event.GetData(), nil)
-
-	return nil
-}
-
-func (l *LangsmithTracer) handleMCPServerConnectionError(event AgentEvent) error {
-	var serverName, errMsg string
-	switch data := event.GetData().(type) {
-	case *events.MCPServerConnectionEvent:
-		serverName = data.ServerName
-		errMsg = data.Error
-	}
-
-	l.mu.RLock()
-	mcpRunID := l.mcpConnectionRuns[serverName]
-	l.mu.RUnlock()
-
-	if mcpRunID == "" {
-		return nil
-	}
-
-	l.EndRun(SpanID(mcpRunID), nil, fmt.Errorf("%s", errMsg))
-
-	return nil
-}
-
-func (l *LangsmithTracer) handleMCPServerDiscovery(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	var connectedServers, toolCount int
-	switch data := event.GetData().(type) {
-	case *events.MCPServerDiscoveryEvent:
-		connectedServers = data.ConnectedServers
-		toolCount = data.ToolCount
-	}
-
-	runName := fmt.Sprintf("mcp_discovery_%d_servers_%d_tools", connectedServers, toolCount)
-	runID := l.StartRun(traceID, "chain", runName, event.GetData())
-	l.EndRun(runID, event.GetData(), nil)
 
 	return nil
 }
