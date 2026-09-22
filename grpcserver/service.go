@@ -321,18 +321,17 @@ func (s *AgentService) convertAgentConfig(pbConfig *pb.AgentConfig) (AgentConfig
 	}
 
 	return AgentConfig{
-		Provider:                   pbConfig.Provider,
-		ModelID:                    pbConfig.ModelId,
-		Temperature:                temp,
-		MaxTurns:                   int(pbConfig.MaxTurns),
-		MCPConfigPath:              pbConfig.McpConfigPath,
-		SelectedServers:            pbConfig.SelectedServers,
-		SelectedTools:              pbConfig.SelectedTools,
-		SystemPrompt:               pbConfig.SystemPrompt,
-		EnableContextSummarization: pbConfig.EnableContextSummarization,
-		EnableContextOffloading:    pbConfig.EnableContextOffloading,
-		EnableStreaming:            pbConfig.EnableStreaming,
-		CustomTools:                customTools,
+		Provider:                pbConfig.Provider,
+		ModelID:                 pbConfig.ModelId,
+		Temperature:             temp,
+		MaxTurns:                int(pbConfig.MaxTurns),
+		MCPConfigPath:           pbConfig.McpConfigPath,
+		SelectedServers:         pbConfig.SelectedServers,
+		SelectedTools:           pbConfig.SelectedTools,
+		SystemPrompt:            pbConfig.SystemPrompt,
+		EnableContextOffloading: pbConfig.EnableContextOffloading,
+		EnableStreaming:         pbConfig.EnableStreaming,
+		CustomTools:             customTools,
 	}, nil
 }
 

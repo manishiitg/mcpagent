@@ -113,7 +113,6 @@ func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 		"SnapshotAgentSession",
 		"StartAgentTransportSession",
 		"SubscribeAgentEvents",
-		"SummarizeConversationHistory",
 	}
 	fset := token.NewFileSet()
 	packages, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
@@ -160,7 +159,6 @@ func TestAgentFacadeFunctionSurface(t *testing.T) {
 		"SnapshotAgentSession",
 		"StartAgentTransportSession",
 		"SubscribeAgentEvents",
-		"SummarizeConversationHistory",
 	}
 
 	fset := token.NewFileSet()

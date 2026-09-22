@@ -20,13 +20,11 @@ const (
 	LLMGenerationStart EventType = "llm_generation_start"
 	LLMGenerationEnd   EventType = "llm_generation_end"
 	LLMGenerationError EventType = "llm_generation_error"
-	LLMMessages        EventType = "llm_messages"
 
 	// Tool events
-	ToolCallStart    EventType = "tool_call_start"
-	ToolCallEnd      EventType = "tool_call_end"
-	ToolCallError    EventType = "tool_call_error"
-	ToolCallProgress EventType = "tool_call_progress"
+	ToolCallStart EventType = "tool_call_start"
+	ToolCallEnd   EventType = "tool_call_end"
+	ToolCallError EventType = "tool_call_error"
 
 	// Agent events
 	AgentStart EventType = "agent_start"
@@ -44,34 +42,18 @@ const (
 	// message row by metadata.message_id.
 	LiveInputConfirmed EventType = "live_input_confirmed"
 
-	// Additional tool events
-	ToolOutput   EventType = "tool_output"
-	ToolResponse EventType = "tool_response"
-
 	// Streaming events
-	StreamingStart          EventType = "streaming_start"
-	StreamingChunk          EventType = "streaming_chunk"
-	StreamingEnd            EventType = "streaming_end"
-	StreamingError          EventType = "streaming_error"
-	StreamingProgress       EventType = "streaming_progress"
-	StreamingConnectionLost EventType = "streaming_connection_lost"
-	StreamingStatusLine     EventType = "status_line"
+	StreamingStart      EventType = "streaming_start"
+	StreamingChunk      EventType = "streaming_chunk"
+	StreamingEnd        EventType = "streaming_end"
+	StreamingStatusLine EventType = "status_line"
 
 	// Debug events
-	Debug         EventType = "debug"
-	Performance   EventType = "performance"
-	TokenUsage    EventType = "token_usage"
-	LLMTokenUsage EventType = "llm_token_usage" //nolint:gosec // Per-call token usage (advanced mode only) - false positive, not a credential
-	ErrorDetail   EventType = "error_detail"
+	TokenUsage EventType = "token_usage"
 
 	// Large output events
 	LargeToolOutputDetected    EventType = "large_tool_output_detected"
 	LargeToolOutputFileWritten EventType = "large_tool_output_file_written"
-
-	// Context summarization events
-	ContextSummarizationStarted   EventType = "context_summarization_started"
-	ContextSummarizationCompleted EventType = "context_summarization_completed"
-	ContextSummarizationError     EventType = "context_summarization_error"
 
 	// Error and model events
 	MaxTurnsReached  EventType = "max_turns_reached"
@@ -80,7 +62,9 @@ const (
 	// MCP server events
 	// NOTE: MCPServerConnection is the nominal type of a payload-carrier
 	// struct; live code always re-types it to ConnectionStart/End before
-	// emit, so the bare wire type is never produced.
+	// emit, so the bare wire type is never produced. Batch 4 removed the
+	// bare name from schemas/generated/UI; the const stays as the payload
+	// tag for GetEventType.
 	MCPServerConnection      EventType = "mcp_server_connection"
 	MCPServerSelection       EventType = "mcp_server_selection"
 	MCPServerConnectionStart EventType = "mcp_server_connection_start"
@@ -90,9 +74,6 @@ const (
 	// constructors return this type); the per-operation wire strings were
 	// removed on 2026-09-22 (no emitters, no readers).
 	GenericCache EventType = "cache_event"
-
-	JSONValidationStart EventType = "json_validation_start"
-	JSONValidationEnd   EventType = "json_validation_end"
 
 	// Tool execution events
 	ToolExecution          EventType = "tool_execution"
@@ -117,16 +98,12 @@ const (
 	OrchestratorAgentEnd   EventType = "orchestrator_agent_end"
 	OrchestratorAgentError EventType = "orchestrator_agent_error"
 
-	// Parallel execution events
-	IndependentStepsSelected EventType = "independent_steps_selected"
-
 	// Todo planning events
 	VariablesExtracted EventType = "variables_extracted"
 
 	// Human Verification events
-	HumanVerificationResponse EventType = "human_verification_response"
-	RequestHumanFeedback      EventType = "request_human_feedback"
-	BlockingHumanFeedback     EventType = "blocking_human_feedback"
+	RequestHumanFeedback  EventType = "request_human_feedback"
+	BlockingHumanFeedback EventType = "blocking_human_feedback"
 
 	// Step token usage event
 	StepTokenUsage EventType = "step_token_usage"
@@ -190,10 +167,9 @@ func (b *BaseEventData) GetBaseEventData() *BaseEventData {
 // Helper function to get component from event type
 func GetComponentFromEventType(eventType EventType) string {
 	switch eventType {
-	case JSONValidationStart, JSONValidationEnd,
-		IndependentStepsSelected, VariablesExtracted,
+	case VariablesExtracted,
 		StepTokenUsage,
-		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback,
+		RequestHumanFeedback, BlockingHumanFeedback,
 		PreValidationCompleted:
 		return "orchestrator"
 	case AgentStart, AgentEnd, AgentError:

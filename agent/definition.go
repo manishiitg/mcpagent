@@ -93,13 +93,6 @@ type ContextRuntimeConfig struct {
 	LargeOutputThreshold          int
 	ToolOutputRetentionPeriod     time.Duration
 	CleanupToolOutputOnSessionEnd bool
-	SummarizationEnabled          bool
-	SummarizeOnTokenThreshold     bool
-	TokenThresholdPercent         float64
-	SummarizeOnFixedThreshold     bool
-	FixedTokenThreshold           int
-	SummaryKeepLastMessages       int
-	SummarizationCooldownTurns    int
 }
 
 type CodingRuntimeConfig struct {
@@ -312,21 +305,6 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if contextConfig.CleanupToolOutputOnSessionEnd {
 		options = append(options, withCleanupToolOutputOnSessionEnd(true))
-	}
-	if contextConfig.SummarizationEnabled {
-		options = append(options, withContextSummarization(true))
-	}
-	if contextConfig.SummarizeOnTokenThreshold {
-		options = append(options, withSummarizeOnTokenThreshold(true, contextConfig.TokenThresholdPercent))
-	}
-	if contextConfig.SummarizeOnFixedThreshold {
-		options = append(options, withSummarizeOnFixedTokenThreshold(true, contextConfig.FixedTokenThreshold))
-	}
-	if contextConfig.SummaryKeepLastMessages > 0 {
-		options = append(options, withSummaryKeepLastMessages(contextConfig.SummaryKeepLastMessages))
-	}
-	if contextConfig.SummarizationCooldownTurns > 0 {
-		options = append(options, withSummarizationCooldown(contextConfig.SummarizationCooldownTurns))
 	}
 
 	coding := runtime.Coding

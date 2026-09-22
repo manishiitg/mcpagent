@@ -76,16 +76,9 @@ const (
 	EventTypeRetryAttempt    = "retry_attempt"
 	EventTypeMaxTurnsReached = "max_turns_reached"
 
-	// Context summarization events
-	EventTypeContextSummarizationStarted   = "context_summarization_started"
-	EventTypeContextSummarizationCompleted = "context_summarization_completed"
-	EventTypeContextSummarizationError     = "context_summarization_error"
-
 	// Streaming events
-	EventTypeStreamingStart          = "streaming_start"
-	EventTypeStreamingEnd            = "streaming_end"
-	EventTypeStreamingError          = "streaming_error"
-	EventTypeStreamingConnectionLost = "streaming_connection_lost"
+	EventTypeStreamingStart = "streaming_start"
+	EventTypeStreamingEnd   = "streaming_end"
 )
 
 // LangfuseTracer implements the Tracer interface using Langfuse v2 API patterns.
@@ -932,23 +925,11 @@ func (l *LangfuseTracer) EmitEvent(event AgentEvent) error {
 	case EventTypeMaxTurnsReached:
 		return l.handleMaxTurnsReached(event)
 
-	// Context summarization events
-	case EventTypeContextSummarizationStarted:
-		return l.handleContextSummarizationStart(event)
-	case EventTypeContextSummarizationCompleted:
-		return l.handleContextSummarizationEnd(event)
-	case EventTypeContextSummarizationError:
-		return l.handleContextSummarizationError(event)
-
 	// Streaming events
 	case EventTypeStreamingStart:
 		return l.handleStreamingStart(event)
 	case EventTypeStreamingEnd:
 		return l.handleStreamingEnd(event)
-	case EventTypeStreamingError:
-		return l.handleStreamingError(event)
-	case EventTypeStreamingConnectionLost:
-		return l.handleStreamingConnectionLost(event)
 
 	default:
 		v2Logger.Debug("Langfuse: Unhandled event type", loggerv2.String("type", event.GetType()))
@@ -1861,117 +1842,6 @@ func (l *LangfuseTracer) handleMaxTurnsReached(event AgentEvent) error {
 }
 
 // ============================================================================
-// Context Summarization Handlers
-// ============================================================================
-
-// handleContextSummarizationStart creates a span for context summarization start
-func (l *LangfuseTracer) handleContextSummarizationStart(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	// Get conversation span as parent
-	l.mu.RLock()
-	parentSpanID := l.conversationSpans[traceID]
-	l.mu.RUnlock()
-	if parentSpanID == "" {
-		parentSpanID = traceID
-	}
-
-	spanName := "context_summarization"
-	if sumEvent, ok := event.GetData().(*events.ContextSummarizationStartedEvent); ok {
-		spanName = fmt.Sprintf("context_summarization_%d_messages", sumEvent.OriginalMessageCount)
-	}
-
-	spanID := l.StartSpan(parentSpanID, spanName, event.GetData())
-
-	// Store for later completion
-	l.mu.Lock()
-	l.mcpConnectionSpans["context_summarization_"+traceID] = string(spanID)
-	l.mu.Unlock()
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Debug("Langfuse: Started context summarization span",
-		loggerv2.String("span_id", string(spanID)),
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleContextSummarizationEnd ends the context summarization span
-func (l *LangfuseTracer) handleContextSummarizationEnd(event AgentEvent) error {
-	traceID := event.GetTraceID()
-	v2Logger := l.getV2Logger()
-
-	// Find the existing span
-	spanKey := "context_summarization_" + traceID
-	l.mu.RLock()
-	spanID := l.mcpConnectionSpans[spanKey]
-	l.mu.RUnlock()
-
-	var output map[string]interface{}
-	if sumEvent, ok := event.GetData().(*events.ContextSummarizationCompletedEvent); ok {
-		output = map[string]interface{}{
-			"original_message_count": sumEvent.OriginalMessageCount,
-			"new_message_count":      sumEvent.NewMessageCount,
-			"summary_length":         sumEvent.SummaryLength,
-			"prompt_tokens":          sumEvent.PromptTokens,
-			"completion_tokens":      sumEvent.CompletionTokens,
-			"total_tokens":           sumEvent.TotalTokens,
-		}
-	}
-
-	if spanID != "" {
-		l.EndSpan(SpanID(spanID), output, nil)
-		l.mu.Lock()
-		delete(l.mcpConnectionSpans, spanKey)
-		l.mu.Unlock()
-		v2Logger.Info("Langfuse: Ended context summarization span",
-			loggerv2.String("span_id", spanID),
-			loggerv2.String("trace_id", traceID))
-	} else {
-		// Create point-in-time span
-		newSpanID := l.StartSpan(traceID, "context_summarization_completed", event.GetData())
-		l.EndSpan(newSpanID, output, nil)
-		v2Logger.Info("Langfuse: Created context summarization completed span",
-			loggerv2.String("span_id", string(newSpanID)),
-			loggerv2.String("trace_id", traceID))
-	}
-
-	return nil
-}
-
-// handleContextSummarizationError handles context summarization errors
-func (l *LangfuseTracer) handleContextSummarizationError(event AgentEvent) error {
-	traceID := event.GetTraceID()
-	v2Logger := l.getV2Logger()
-
-	// Find and end the existing span with error
-	spanKey := "context_summarization_" + traceID
-	l.mu.RLock()
-	spanID := l.mcpConnectionSpans[spanKey]
-	l.mu.RUnlock()
-
-	var err error
-	if errEvent, ok := event.GetData().(*events.ContextSummarizationErrorEvent); ok {
-		err = fmt.Errorf("%s", errEvent.Error)
-	}
-
-	if spanID != "" {
-		l.EndSpan(SpanID(spanID), event.GetData(), err)
-		l.mu.Lock()
-		delete(l.mcpConnectionSpans, spanKey)
-		l.mu.Unlock()
-	} else {
-		newSpanID := l.StartSpan(traceID, "context_summarization_error", event.GetData())
-		l.EndSpan(newSpanID, event.GetData(), err)
-	}
-
-	v2Logger.Info("Langfuse: Created context summarization error span",
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// ============================================================================
 // Streaming Handlers
 // ============================================================================
 
@@ -2033,52 +1903,6 @@ func (l *LangfuseTracer) handleStreamingEnd(event AgentEvent) error {
 	}
 
 	v2Logger.Debug("Langfuse: Ended streaming span",
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleStreamingError handles streaming errors
-func (l *LangfuseTracer) handleStreamingError(event AgentEvent) error {
-	traceID := event.GetTraceID()
-	v2Logger := l.getV2Logger()
-
-	spanKey := "streaming_" + traceID
-	l.mu.RLock()
-	spanID := l.mcpConnectionSpans[spanKey]
-	l.mu.RUnlock()
-
-	var err error
-	if errEvent, ok := event.GetData().(*events.StreamingErrorEvent); ok {
-		err = fmt.Errorf("%s", errEvent.Error)
-	}
-
-	if spanID != "" {
-		l.EndSpan(SpanID(spanID), event.GetData(), err)
-		l.mu.Lock()
-		delete(l.mcpConnectionSpans, spanKey)
-		l.mu.Unlock()
-	} else {
-		newSpanID := l.StartSpan(traceID, "streaming_error", event.GetData())
-		l.EndSpan(newSpanID, event.GetData(), err)
-	}
-
-	v2Logger.Info("Langfuse: Created streaming error span",
-		loggerv2.String("trace_id", traceID))
-
-	return nil
-}
-
-// handleStreamingConnectionLost handles streaming connection lost events
-func (l *LangfuseTracer) handleStreamingConnectionLost(event AgentEvent) error {
-	traceID := event.GetTraceID()
-
-	spanID := l.StartSpan(traceID, "streaming_connection_lost", event.GetData())
-	l.EndSpan(spanID, event.GetData(), nil)
-
-	v2Logger := l.getV2Logger()
-	v2Logger.Info("Langfuse: Created streaming connection lost span",
-		loggerv2.String("span_id", string(spanID)),
 		loggerv2.String("trace_id", traceID))
 
 	return nil

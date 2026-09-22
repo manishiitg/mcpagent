@@ -614,7 +614,6 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 - **[OAuth Authentication](docs/oauth.md)** - OAuth 2.0 authentication for MCP servers
 - **[Code Execution Agent](docs/code_execution_agent.md)** - Execute code in any language via OpenAPI spec
 - **[Tool-Use Agent](docs/tool_use_agent.md)** - Standard tool calling mode
-- **[Context Summarization](docs/context_summarization.md)** - Automatic history summarization
 - **[Context Offloading](docs/large_output_handling.md)** - Offload large tool outputs to filesystem (offload context pattern)
   - Implements the "offload context" strategy from [Manus's context engineering approach](https://rlancemartin.github.io/2025/10/15/manus/)
   - Prevents context window overflow and reduces token costs

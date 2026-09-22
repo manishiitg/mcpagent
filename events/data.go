@@ -509,25 +509,6 @@ func (e *TokenUsageEvent) GetEventType() EventType {
 	return TokenUsage
 }
 
-// ErrorDetailEvent represents detailed error information
-type ErrorDetailEvent struct {
-	BaseEventData
-	Turn        int           `json:"turn"`
-	Error       string        `json:"error"`
-	ErrorType   string        `json:"error_type"`
-	Component   string        `json:"component"`
-	Operation   string        `json:"operation"`
-	Context     string        `json:"context"`
-	Stack       string        `json:"stack,omitempty"`
-	Duration    time.Duration `json:"duration"`
-	Recoverable bool          `json:"recoverable"`
-	RetryCount  int           `json:"retry_count,omitempty"`
-}
-
-func (e *ErrorDetailEvent) GetEventType() EventType {
-	return ErrorDetail
-}
-
 // ToolContext represents tool information for LLM context
 type ToolContext struct {
 	ToolName   string `json:"tool_name"`
@@ -547,35 +528,6 @@ type SystemPromptEvent struct {
 
 func (e *SystemPromptEvent) GetEventType() EventType {
 	return SystemPrompt
-}
-
-// ToolOutputEvent represents tool output data
-type ToolOutputEvent struct {
-	BaseEventData
-	Turn       int    `json:"turn"`
-	ToolName   string `json:"tool_name"`
-	Output     string `json:"output"`
-	ServerName string `json:"server_name"`
-	Size       int    `json:"size"`
-}
-
-func (e *ToolOutputEvent) GetEventType() EventType {
-	return ToolOutput
-}
-
-// ToolResponseEvent represents a tool response
-type ToolResponseEvent struct {
-	BaseEventData
-	Turn       int    `json:"turn"`
-	ToolName   string `json:"tool_name"`
-	Response   string `json:"response"`
-	ServerName string `json:"server_name"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
-}
-
-func (e *ToolResponseEvent) GetEventType() EventType {
-	return ToolResponse
 }
 
 // UserMessageEvent represents a user message
@@ -1015,24 +967,6 @@ func (e *TokenUsageEvent) SetAgentMode(agentMode string, useCodeExecutionMode bo
 	e.UseCodeExecutionMode = useCodeExecutionMode
 }
 
-// NewErrorDetailEvent creates a new ErrorDetailEvent
-func NewErrorDetailEvent(turn int, error, errorType, component, operation, context string, duration time.Duration, recoverable bool, retryCount int) *ErrorDetailEvent {
-	return &ErrorDetailEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:        turn,
-		Error:       error,
-		ErrorType:   errorType,
-		Component:   component,
-		Operation:   operation,
-		Context:     context,
-		Duration:    duration,
-		Recoverable: recoverable,
-		RetryCount:  retryCount,
-	}
-}
-
 // NewSystemPromptEvent creates a new SystemPromptEvent
 func NewSystemPromptEvent(content string, turn int) *SystemPromptEvent {
 	return &SystemPromptEvent{
@@ -1054,34 +988,6 @@ func NewSystemPromptEventWithTokens(content string, turn int, tokenCount int) *S
 		Content:    content,
 		Turn:       turn,
 		TokenCount: tokenCount,
-	}
-}
-
-// NewToolOutputEvent creates a new ToolOutputEvent
-func NewToolOutputEvent(turn int, toolName, output, serverName string, size int) *ToolOutputEvent {
-	return &ToolOutputEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       turn,
-		ToolName:   toolName,
-		Output:     output,
-		ServerName: serverName,
-		Size:       size,
-	}
-}
-
-// NewToolResponseEvent creates a new ToolResponseEvent
-func NewToolResponseEvent(turn int, toolName, response, serverName, status string) *ToolResponseEvent {
-	return &ToolResponseEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       turn,
-		ToolName:   toolName,
-		Response:   response,
-		ServerName: serverName,
-		Status:     status,
 	}
 }
 
@@ -1166,100 +1072,6 @@ func NewLargeToolOutputFileWriteErrorEvent(toolName, error string, outputSize in
 		OutputSize:   outputSize,
 		OutputFolder: "tool_output_folder", // Default
 		FallbackUsed: true,
-	}
-}
-
-// =============================================================================
-// CONTEXT SUMMARIZATION EVENTS
-// =============================================================================
-
-// ContextSummarizationStartedEvent represents when context summarization begins
-type ContextSummarizationStartedEvent struct {
-	BaseEventData
-	OriginalMessageCount int `json:"original_message_count"`
-	KeepLastMessages     int `json:"keep_last_messages"`
-	DesiredSplitIndex    int `json:"desired_split_index"`
-}
-
-func (e *ContextSummarizationStartedEvent) GetEventType() EventType {
-	return ContextSummarizationStarted
-}
-
-// ContextSummarizationCompletedEvent represents successful completion of context summarization
-type ContextSummarizationCompletedEvent struct {
-	BaseEventData
-	OriginalMessageCount int    `json:"original_message_count"`
-	NewMessageCount      int    `json:"new_message_count"`
-	OldMessagesCount     int    `json:"old_messages_count"`
-	RecentMessagesCount  int    `json:"recent_messages_count"`
-	SummaryLength        int    `json:"summary_length"`
-	SafeSplitIndex       int    `json:"safe_split_index"`
-	DesiredSplitIndex    int    `json:"desired_split_index"`
-	Summary              string `json:"summary,omitempty"`       // Optional: include summary in event
-	PromptTokens         int    `json:"prompt_tokens,omitempty"` // Token usage for summarization
-	CompletionTokens     int    `json:"completion_tokens,omitempty"`
-	TotalTokens          int    `json:"total_tokens,omitempty"`
-	CacheTokens          int    `json:"cache_tokens,omitempty"`     // Cached tokens used
-	ReasoningTokens      int    `json:"reasoning_tokens,omitempty"` // Reasoning tokens (for models like gpt-5.1)
-}
-
-func (e *ContextSummarizationCompletedEvent) GetEventType() EventType {
-	return ContextSummarizationCompleted
-}
-
-// ContextSummarizationErrorEvent represents an error during context summarization
-type ContextSummarizationErrorEvent struct {
-	BaseEventData
-	Error                string `json:"error"`
-	OriginalMessageCount int    `json:"original_message_count"`
-	KeepLastMessages     int    `json:"keep_last_messages"`
-}
-
-func (e *ContextSummarizationErrorEvent) GetEventType() EventType {
-	return ContextSummarizationError
-}
-
-// Constructor functions for context summarization events
-func NewContextSummarizationStartedEvent(originalCount, keepLast, desiredSplit int) *ContextSummarizationStartedEvent {
-	return &ContextSummarizationStartedEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		OriginalMessageCount: originalCount,
-		KeepLastMessages:     keepLast,
-		DesiredSplitIndex:    desiredSplit,
-	}
-}
-
-func NewContextSummarizationCompletedEvent(originalCount, newCount, oldCount, recentCount, summaryLength, safeSplit, desiredSplit int, summary string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int) *ContextSummarizationCompletedEvent {
-	return &ContextSummarizationCompletedEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		OriginalMessageCount: originalCount,
-		NewMessageCount:      newCount,
-		OldMessagesCount:     oldCount,
-		RecentMessagesCount:  recentCount,
-		SummaryLength:        summaryLength,
-		SafeSplitIndex:       safeSplit,
-		DesiredSplitIndex:    desiredSplit,
-		Summary:              summary,
-		PromptTokens:         promptTokens,
-		CompletionTokens:     completionTokens,
-		TotalTokens:          totalTokens,
-		CacheTokens:          cacheTokens,
-		ReasoningTokens:      reasoningTokens,
-	}
-}
-
-func NewContextSummarizationErrorEvent(err string, originalCount, keepLast int) *ContextSummarizationErrorEvent {
-	return &ContextSummarizationErrorEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Error:                err,
-		OriginalMessageCount: originalCount,
-		KeepLastMessages:     keepLast,
 	}
 }
 
@@ -1567,44 +1379,6 @@ func (e *StreamingEndEvent) GetEventType() EventType {
 	return StreamingEnd
 }
 
-// StreamingErrorEvent represents an error during streaming
-type StreamingErrorEvent struct {
-	BaseEventData
-	Error       string `json:"error"`
-	ChunkIndex  int    `json:"chunk_index,omitempty"` // Index where error occurred
-	Recoverable bool   `json:"recoverable"`           // Whether the error is recoverable
-}
-
-func (e *StreamingErrorEvent) GetEventType() EventType {
-	return StreamingError
-}
-
-// StreamingProgressEvent represents progress during streaming
-type StreamingProgressEvent struct {
-	BaseEventData
-	ChunksReceived int    `json:"chunks_received"`
-	TotalChunks    int    `json:"total_chunks,omitempty"`
-	Progress       string `json:"progress,omitempty"` // e.g., "50%"
-}
-
-func (e *StreamingProgressEvent) GetEventType() EventType {
-	return StreamingProgress
-}
-
-// StreamingConnectionLostEvent represents a lost connection during streaming
-type StreamingConnectionLostEvent struct {
-	BaseEventData
-	Error          string `json:"error"`
-	ChunksReceived int    `json:"chunks_received"` // Chunks received before connection loss
-	WillRetry      bool   `json:"will_retry"`
-	RetryAttempt   int    `json:"retry_attempt,omitempty"`
-	MaxRetries     int    `json:"max_retries,omitempty"`
-}
-
-func (e *StreamingConnectionLostEvent) GetEventType() EventType {
-	return StreamingConnectionLost
-}
-
 // StreamingStatusLineEvent represents a statusline telemetry snapshot.
 // It carries the full StatusLine payload so no provider telemetry is dropped
 // between the adapter and the UI.
@@ -1656,35 +1430,6 @@ func (e *MCPServerConnectionEndEvent) GetEventType() EventType {
 	return MCPServerConnectionEnd
 }
 
-// =============================================================================
-// JSON VALIDATION EVENTS
-// =============================================================================
-
-// JSONValidationStartEvent represents the start of JSON validation
-type JSONValidationStartEvent struct {
-	BaseEventData
-	SchemaName string `json:"schema_name,omitempty"`
-	InputSize  int    `json:"input_size,omitempty"` // Size of input in bytes
-}
-
-func (e *JSONValidationStartEvent) GetEventType() EventType {
-	return JSONValidationStart
-}
-
-// JSONValidationEndEvent represents the end of JSON validation
-type JSONValidationEndEvent struct {
-	BaseEventData
-	SchemaName string   `json:"schema_name,omitempty"`
-	Valid      bool     `json:"valid"`
-	Errors     []string `json:"errors,omitempty"` // Validation errors if not valid
-	Duration   string   `json:"duration,omitempty"`
-}
-
-func (e *JSONValidationEndEvent) GetEventType() EventType {
-	return JSONValidationEnd
-}
-
-// =============================================================================
 // OTHER MISSING EVENTS
 // =============================================================================
 
@@ -1703,84 +1448,4 @@ type ConversationThinkingEvent struct {
 
 func (e *ConversationThinkingEvent) GetEventType() EventType {
 	return ConversationThinking
-}
-
-// LLMMessage represents a single message in the LLM conversation
-type LLMMessage struct {
-	Role    string `json:"role"`              // "system", "user", "assistant", "tool"
-	Content string `json:"content,omitempty"` // Message content
-}
-
-// LLMMessagesEvent represents the messages sent to/from the LLM
-type LLMMessagesEvent struct {
-	BaseEventData
-	Messages     []LLMMessage `json:"messages"`               // The messages
-	MessageCount int          `json:"message_count"`          // Total message count
-	Direction    string       `json:"direction,omitempty"`    // "request" or "response"
-	TotalTokens  int          `json:"total_tokens,omitempty"` // Estimated token count
-}
-
-func (e *LLMMessagesEvent) GetEventType() EventType {
-	return LLMMessages
-}
-
-// ToolCallProgressEvent represents progress during a tool call
-type ToolCallProgressEvent struct {
-	BaseEventData
-	ToolName    string `json:"tool_name"`
-	ToolCallID  string `json:"tool_call_id,omitempty"`
-	Progress    int    `json:"progress"` // 0-100 percentage
-	Status      string `json:"status"`   // "running", "waiting", "processing"
-	Message     string `json:"message,omitempty"`
-	ElapsedTime string `json:"elapsed_time,omitempty"`
-}
-
-func (e *ToolCallProgressEvent) GetEventType() EventType {
-	return ToolCallProgress
-}
-
-// DebugEvent represents debug information
-type DebugEvent struct {
-	BaseEventData
-	Level     string                 `json:"level"`     // "debug", "trace", "verbose"
-	Component string                 `json:"component"` // Which component generated this
-	Message   string                 `json:"message"`
-	Details   map[string]interface{} `json:"details,omitempty"`
-}
-
-func (e *DebugEvent) GetEventType() EventType {
-	return Debug
-}
-
-// PerformanceEvent represents performance metrics
-type PerformanceEvent struct {
-	BaseEventData
-	Operation  string  `json:"operation"`             // What operation was measured
-	Duration   string  `json:"duration"`              // Duration as string (e.g., "1.5s")
-	DurationMs float64 `json:"duration_ms"`           // Duration in milliseconds
-	MemoryUsed int64   `json:"memory_used,omitempty"` // Memory used in bytes
-	CPUPercent float64 `json:"cpu_percent,omitempty"` // CPU percentage
-	Component  string  `json:"component,omitempty"`   // Which component
-}
-
-func (e *PerformanceEvent) GetEventType() EventType {
-	return Performance
-}
-
-// LLMTokenUsageEvent represents detailed per-call token usage (advanced mode)
-type LLMTokenUsageEvent struct {
-	BaseEventData
-	Model        string  `json:"model"`
-	Provider     string  `json:"provider"`
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	TotalTokens  int     `json:"total_tokens"`
-	CachedTokens int     `json:"cached_tokens,omitempty"`
-	Cost         float64 `json:"cost,omitempty"`
-	Turn         int     `json:"turn,omitempty"`
-	CallType     string  `json:"call_type,omitempty"` // "generation" or "tool_call"
-}
-
-func (e *LLMTokenUsageEvent) GetEventType() EventType {
-	return LLMTokenUsage
 }

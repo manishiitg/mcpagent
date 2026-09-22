@@ -382,68 +382,6 @@ func withCleanupToolOutputOnSessionEnd(enabled bool) agentOption {
 	}
 }
 
-// withContextSummarization enables automatic conversation summarization.
-//
-// When the context window fills up (based on TokenThresholdPercent), the agent will
-// summarize older messages to free up space while retaining context.
-//
-// Default: false (Disabled)
-func withContextSummarization(enabled bool) agentOption {
-	return func(a *Agent) {
-		a.enableContextSummarization = enabled
-	}
-}
-
-// withSummarizeOnTokenThreshold configures the trigger for summarization.
-//
-// Parameters:
-//   - enabled: Whether to use token-based triggering.
-//   - thresholdPercent: The percentage of the model's context window (0.0 - 1.0)
-//     that triggers summarization.
-//
-// Default: 0.8 (80%) if enabled.
-func withSummarizeOnTokenThreshold(enabled bool, thresholdPercent float64) agentOption {
-	return func(a *Agent) {
-		a.summarizeOnTokenThreshold = enabled
-		if thresholdPercent > 0 && thresholdPercent <= 1.0 {
-			a.tokenThresholdPercent = thresholdPercent
-		} else {
-			a.tokenThresholdPercent = 0.8 // Default to 80%
-		}
-	}
-}
-
-// withSummarizeOnFixedTokenThreshold enables fixed token-based summarization triggering
-// When enabled, summarization triggers when token usage exceeds the fixed threshold
-// (e.g., 200000 = 200k tokens, regardless of context window size)
-// Requires EnableContextSummarization to be true
-// Can be used together with withSummarizeOnTokenThreshold (OR logic: either threshold can trigger)
-func withSummarizeOnFixedTokenThreshold(enabled bool, thresholdTokens int) agentOption {
-	return func(a *Agent) {
-		a.summarizeOnFixedTokenThreshold = enabled
-		if thresholdTokens > 0 {
-			a.fixedTokenThreshold = thresholdTokens
-		}
-	}
-}
-
-// withSummaryKeepLastMessages sets the number of recent messages to keep when summarizing
-// Default is 4 messages (roughly 2 turns)
-func withSummaryKeepLastMessages(count int) agentOption {
-	return func(a *Agent) {
-		a.summaryKeepLastMessages = count
-	}
-}
-
-// withSummarizationCooldown sets the number of turns to wait after summarization before allowing another
-// This prevents repeated summarization loops when the summarized context is still large
-// Default is 3 turns
-func withSummarizationCooldown(turns int) agentOption {
-	return func(a *Agent) {
-		a.summarizationCooldownTurns = turns
-	}
-}
-
 // withParallelToolExecution enables concurrent execution of multiple tool calls.
 //
 // When the LLM returns multiple tool calls in a single response, they will be
@@ -1015,16 +953,6 @@ type Agent struct {
 	cleanupTicker                 *time.Ticker  // Ticker for periodic cleanup of old tool output files
 	cleanupDone                   chan struct{} // Closed to signal the cleanup routine to stop
 
-	// Context summarization configuration (see context_summarization.go)
-	enableContextSummarization     bool    // Enable context summarization feature
-	summaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default)
-	summarizeOnTokenThreshold      bool    // Enable token-based summarization trigger (percentage-based)
-	tokenThresholdPercent          float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	summarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
-	fixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
-	summarizationCooldownTurns     int     // Number of turns to wait after summarization before allowing another (0 = use default: 3)
-	lastSummarizationTurn          int     // Track when last summarization occurred (turn number)
-
 	// Parallel tool execution configuration
 	// When enabled and LLM returns multiple tool calls in a single response,
 	// tool calls execute concurrently using goroutines (fork-join pattern).
@@ -1266,8 +1194,7 @@ type Agent struct {
 
 	// Context window usage tracking
 	// currentContextWindowUsage represents the actual tokens currently in the context window.
-	// This is reset after summarization to reflect only the tokens in the current context
-	// (system + summary + recent messages), and is used for percentage calculation.
+	// This reflects only the tokens in the current context and is used for percentage calculation.
 	// Note: This is separate from cumulativePromptTokens which is truly cumulative across
 	// all conversation phases (never reset) for accurate pricing and overall usage reporting.
 	// Context window is based on input tokens only, not output tokens.
@@ -1522,12 +1449,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		largeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
 		toolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
 		cleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
-		enableContextSummarization:    false,                            // Default to disabled
-		summarizeOnTokenThreshold:     false,                            // Default to disabled
-		tokenThresholdPercent:         0.8,                              // Default to 80% if enabled
-		summaryKeepLastMessages:       0,                                // Default: 0 means use default (4 messages)
-		summarizationCooldownTurns:    0,                                // Default: 0 means use default (3 turns)
-		lastSummarizationTurn:         -1,                               // Default: -1 means never summarized
 		logger:                        loggerv2.NewDefault(),            // Default logger
 
 		// Initialize hierarchy tracking fields
@@ -1973,11 +1894,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Warn("[BRIDGE_DEBUG] CLAUDE_CODE: UseCodeExecutionMode was not pre-set — enforcing now (safety net)")
 		}
 
-		if ag.enableContextSummarization {
-			ag.enableContextSummarization = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Summarization (handled natively by CLI)")
-		}
-
 		if ag.enableContextOffloading {
 			ag.enableContextOffloading = false
 			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Offloading (handled natively by CLI)")
@@ -1999,11 +1915,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.useCodeExecutionMode {
 			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [CODEX_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.enableContextSummarization {
-			ag.enableContextSummarization = false
-			logger.Debug("🔧 [CODEX_CLI] Disabled Context Summarization (handled natively by CLI)")
 		}
 
 		if ag.enableContextOffloading {
@@ -2045,11 +1956,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.enableContextSummarization {
-			ag.enableContextSummarization = false
-			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-
 		if ag.enableContextOffloading {
 			ag.enableContextOffloading = false
 			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Offloading (handled natively by CLI)")
@@ -2074,11 +1980,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Debug("🔧 [MUSE_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.enableContextSummarization {
-			ag.enableContextSummarization = false
-			logger.Debug("🔧 [MUSE_CLI] Disabled Context Summarization (handled natively by CLI)")
-		}
-
 		if ag.enableContextOffloading {
 			ag.enableContextOffloading = false
 			logger.Debug("🔧 [MUSE_CLI] Disabled Context Offloading (handled natively by CLI)")
@@ -2100,11 +2001,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.useCodeExecutionMode {
 			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [PI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.enableContextSummarization {
-			ag.enableContextSummarization = false
-			logger.Debug("🔧 [PI_CLI] Disabled Context Summarization (handled natively by CLI)")
 		}
 
 		if ag.enableContextOffloading {
@@ -2443,15 +2339,10 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 
 	// Calculate context window usage percentage
 	var contextUsagePercent float64
-	var fixedThresholdPercent float64
 	a.tokenTrackingMutex.RLock()
 	currentUsage := a.currentContextWindowUsage
 	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
-	}
-	// Calculate fixed threshold percentage if enabled
-	if a.contextWindowUsageKnown && a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
-		fixedThresholdPercent = (float64(currentUsage) / float64(a.fixedTokenThreshold)) * 100.0
 	}
 	a.tokenTrackingMutex.RUnlock()
 
@@ -2465,10 +2356,6 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 	llmEndEvent.Metadata["context_usage_percent"] = contextUsagePercent
 	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		llmEndEvent.Metadata["model_context_window"] = a.modelContextWindow
-	}
-	if fixedThresholdPercent > 0 {
-		llmEndEvent.Metadata["fixed_threshold_percent"] = fixedThresholdPercent
-		llmEndEvent.Metadata["fixed_threshold_tokens"] = a.fixedTokenThreshold
 	}
 
 	// accumulateTokenUsage computes a per-turn token estimate from the active
@@ -2512,14 +2399,9 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 
 	// Calculate context window usage percentage
 	var contextUsagePercent float64
-	var fixedThresholdPercent float64
 	currentUsage := a.currentContextWindowUsage
 	if a.contextWindowUsageKnown && a.modelContextWindow > 0 {
 		contextUsagePercent = (float64(currentUsage) / float64(a.modelContextWindow)) * 100.0
-	}
-	// Calculate fixed threshold percentage if enabled
-	if a.contextWindowUsageKnown && a.summarizeOnFixedTokenThreshold && a.fixedTokenThreshold > 0 {
-		fixedThresholdPercent = (float64(currentUsage) / float64(a.fixedTokenThreshold)) * 100.0
 	}
 
 	// Create generation info map with cumulative cache information and pricing
@@ -2564,10 +2446,6 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 		generationInfo["current_context_window_usage"] = currentUsage
 		generationInfo["model_context_window"] = a.modelContextWindow
 		generationInfo["context_usage_percent"] = contextUsagePercent
-	}
-	if fixedThresholdPercent > 0 {
-		generationInfo["fixed_threshold_percent"] = fixedThresholdPercent
-		generationInfo["fixed_threshold_tokens"] = a.fixedTokenThreshold
 	}
 
 	// Emit total token usage event

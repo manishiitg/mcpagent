@@ -321,7 +321,7 @@ func (m *AgentManager) buildRuntimeConfig(config AgentConfig, sessionID string, 
 		Model: model, MCPConfigPath: configPath,
 		Generation:    mcpagent.GenerationRuntimeConfig{Provider: provider, MaxTurns: config.MaxTurns},
 		Tools:         mcpagent.ToolRuntimeConfig{SelectedServers: config.SelectedServers, SelectedTools: config.SelectedTools},
-		Context:       mcpagent.ContextRuntimeConfig{SummarizationEnabled: config.EnableContextSummarization},
+		Context:       mcpagent.ContextRuntimeConfig{},
 		MCP:           mcpagent.MCPRuntimeConfig{SessionID: sessionID},
 		Observability: mcpagent.ObservabilityRuntimeConfig{Logger: m.logger, Streaming: config.EnableStreaming},
 	}

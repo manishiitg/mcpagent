@@ -14,19 +14,18 @@ type CreateAgentRequest struct {
 
 // AgentConfig holds the configuration for creating an agent
 type AgentConfig struct {
-	Provider                   string                 `json:"provider,omitempty"`
-	ModelID                    string                 `json:"model_id,omitempty"`
-	Temperature                *float64               `json:"temperature,omitempty"`
-	MaxTurns                   int                    `json:"max_turns,omitempty"`
-	MCPConfigPath              string                 `json:"mcp_config_path,omitempty"`
-	SelectedServers            []string               `json:"selected_servers,omitempty"`
-	SelectedTools              []string               `json:"selected_tools,omitempty"`
-	SystemPrompt               string                 `json:"system_prompt,omitempty"`
-	EnableContextSummarization bool                   `json:"enable_context_summarization,omitempty"`
-	EnableContextOffloading    bool                   `json:"enable_context_offloading,omitempty"`
-	EnableStreaming            bool                   `json:"enable_streaming,omitempty"`
-	CustomTools                []CustomToolDefinition `json:"custom_tools,omitempty"`
-	APIKeys                    *ProviderAPIKeys       `json:"api_keys,omitempty"`
+	Provider                string                 `json:"provider,omitempty"`
+	ModelID                 string                 `json:"model_id,omitempty"`
+	Temperature             *float64               `json:"temperature,omitempty"`
+	MaxTurns                int                    `json:"max_turns,omitempty"`
+	MCPConfigPath           string                 `json:"mcp_config_path,omitempty"`
+	SelectedServers         []string               `json:"selected_servers,omitempty"`
+	SelectedTools           []string               `json:"selected_tools,omitempty"`
+	SystemPrompt            string                 `json:"system_prompt,omitempty"`
+	EnableContextOffloading bool                   `json:"enable_context_offloading,omitempty"`
+	EnableStreaming         bool                   `json:"enable_streaming,omitempty"`
+	CustomTools             []CustomToolDefinition `json:"custom_tools,omitempty"`
+	APIKeys                 *ProviderAPIKeys       `json:"api_keys,omitempty"`
 }
 
 // ProviderAPIKeys holds API keys for different providers
