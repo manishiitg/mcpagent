@@ -609,7 +609,8 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 	for chunk := range sm.streamChan {
 		switch chunk.Type {
 		case llmtypes.StreamChunkTypeReasoning:
-			if chunk.Content != "" {
+			thinkingActive, _ := chunk.Metadata["thinking_active"].(bool)
+			if chunk.Content != "" || thinkingActive {
 				sm.totalChunks++
 				if !sm.suppressEvents {
 					// Preserve presentation independently of reasoning semantics: a
@@ -617,6 +618,12 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					var metadata map[string]interface{}
 					if chunk.Metadata["presentation"] == "assistant_update" {
 						metadata = map[string]interface{}{"presentation": "assistant_update"}
+					}
+					if thinkingActive {
+						if metadata == nil {
+							metadata = make(map[string]interface{})
+						}
+						metadata["thinking_active"] = true
 					}
 					a.emitTypedEvent(ctx, &events.ConversationThinkingEvent{
 						BaseEventData: events.BaseEventData{Timestamp: time.Now(), Metadata: metadata},
