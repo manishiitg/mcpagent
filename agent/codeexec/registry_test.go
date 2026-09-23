@@ -266,6 +266,41 @@ func TestCallCustomToolWithSessionUsesRegisteredParentRegistry(t *testing.T) {
 	}
 }
 
+// Resolving a child to its parent must never make a call fail that used to
+// resolve: a tool the parent never registered keeps the legacy lookup, and the
+// parent chat's per-turn allow list does not govern the step script.
+func TestCallCustomToolWithSessionParentResolutionIsConservative(t *testing.T) {
+	resetRegistryForTest(t)
+
+	parent := "http-parent-" + t.Name()
+	child := "session-group-default-" + t.Name()
+	sessions := mcpclient.GetSessionRegistry()
+	sessions.RegisterHTTPSession(parent, child)
+	t.Cleanup(func() { sessions.CloseHTTPSession(parent) })
+
+	InitRegistry(nil, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"record_goal_observations": func(context.Context, map[string]interface{}) (string, error) {
+			return "legacy", nil
+		},
+	}, nil, nil)
+	InitRegistryForSession(parent, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"query_workflow_db": func(context.Context, map[string]interface{}) (string, error) {
+			return "parent-run", nil
+		},
+	}, nil)
+	// The parent chat's turn policy allows nothing the step script calls.
+	SetSessionToolAllowList(parent, map[string]bool{"read_skill": true})
+
+	got, err := CallCustomToolWithSession(context.Background(), child, "record_goal_observations", nil)
+	if err != nil || got != "legacy" {
+		t.Fatalf("tool missing from parent = %q, %v; want legacy lookup", got, err)
+	}
+	got, err = CallCustomToolWithSession(context.Background(), child, "query_workflow_db", nil)
+	if err != nil || got != "parent-run" {
+		t.Fatalf("parent allow list applied to child = %q, %v; want parent-run", got, err)
+	}
+}
+
 func TestCallCustomToolWithSessionKeepsLegacyFallbackWithoutSessionRegistry(t *testing.T) {
 	resetRegistryForTest(t)
 

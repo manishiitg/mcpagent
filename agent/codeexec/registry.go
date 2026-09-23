@@ -827,30 +827,38 @@ func toolNotAllowedError(toolName string, allowed map[string]bool, exists bool) 
 }
 
 // registryScopeForSession returns the session whose registry should serve a
-// call: the session itself when it has a registry, otherwise the live parent
-// run it was registered under via mcpclient.RegisterHTTPSession, if that parent
-// has one. Unregistered, stopped and ambiguous children resolve to themselves.
-func (r *ToolRegistry) registryScopeForSession(sessionID string) string {
+// call to toolName: the session itself when it has a registry, otherwise the
+// live parent run it was registered under via mcpclient.RegisterHTTPSession,
+// but only when that parent registered toolName (custom or virtual). Anything
+// else resolves to the session itself and keeps the legacy lookup, so this
+// never turns a call that used to resolve into a "not registered" failure.
+// Unregistered, stopped and ambiguous children never resolve to a parent.
+func (r *ToolRegistry) registryScopeForSession(sessionID, toolName string) string {
 	if sessionID == "" {
 		return sessionID
 	}
-	hasRegistry := func(id string) bool {
-		r.mu.RLock()
-		defer r.mu.RUnlock()
-		_, ok := r.sessionCustomTools[id]
-		return ok
-	}
-	if hasRegistry(sessionID) {
+	r.mu.RLock()
+	_, own := r.sessionCustomTools[sessionID]
+	r.mu.RUnlock()
+	if own {
 		return sessionID
 	}
 	parent := mcpclient.GetSessionRegistry().HTTPSessionForMCPSession(sessionID)
-	if parent == "" || parent == sessionID || !hasRegistry(parent) {
+	if parent == "" || parent == sessionID {
+		return sessionID
+	}
+	r.mu.RLock()
+	_, custom := r.sessionCustomTools[parent][toolName]
+	_, virtual := r.sessionVirtualTools[parent][toolName]
+	r.mu.RUnlock()
+	if !custom && !virtual {
 		return sessionID
 	}
 	if r.logger != nil {
 		r.logger.Debug("Resolved child session to its parent run's tool registry",
 			loggerv2.String("session_id", sessionID),
-			loggerv2.String("parent_session_id", parent))
+			loggerv2.String("parent_session_id", parent),
+			loggerv2.String("tool", toolName))
 	}
 	return parent
 }
@@ -863,15 +871,15 @@ func (r *ToolRegistry) registryScopeForSession(sessionID string) string {
 //
 // A workflow's scripted-step bridge session (session-group-*) never gets a
 // registry of its own. When mcpclient knows it as the live child of a parent
-// run that does have one, the parent's registry and allow list are used, so
-// the call cannot land on another run's global executor.
+// run whose registry has the tool, the parent's executor serves the call, so it
+// cannot land on another run's global executor. The allow list is checked
+// against the calling session before that resolution: the parent chat's
+// per-turn ToolPolicy governs the parent's agent, not a step script.
 func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName string, args map[string]interface{}) (string, error) {
 	registry := GetRegistry()
 	if registry == nil {
 		return "", fmt.Errorf("tool registry not initialized")
 	}
-	sessionID = registry.registryScopeForSession(sessionID)
-
 	// Check session-scoped tool allow list first (uses allowListMu, independent of registry.mu)
 	if sessionID != "" {
 		registry.allowListMu.RLock()
@@ -893,6 +901,8 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 			return "", toolNotAllowedError(toolName, allowed, registry.toolNameExists(sessionID, toolName))
 		}
 	}
+
+	sessionID = registry.registryScopeForSession(sessionID, toolName)
 
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
