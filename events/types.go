@@ -41,6 +41,8 @@ const (
 	// rollout/transcript proof (double tick), matched to the user
 	// message row by metadata.message_id.
 	LiveInputConfirmed EventType = "live_input_confirmed"
+	// Muse task lifecycle continues after its foreground run completes.
+	CodingAgentBackgroundTask EventType = "coding_agent_background_task"
 
 	// Streaming events
 	StreamingStart      EventType = "streaming_start"

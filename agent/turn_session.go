@@ -14,6 +14,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 )
 
 type turnPolicyContextKey struct{}
@@ -105,13 +106,14 @@ type Session struct {
 	// between turns. retainedActive covers a directly-injected warm tmux turn:
 	// it has no Session.Run caller, but it still owns one canonical completion
 	// lifecycle and accepts later messages as steering into that same turn.
-	runActive        bool
-	retainedStarting bool
-	retainedActive   bool
-	retainedSeq      uint64
-	activeTurn       *canonicalTurnLifecycle
-	watchCtx         context.Context
-	watchCancel      context.CancelFunc
+	runActive              bool
+	retainedStarting       bool
+	retainedActive         bool
+	retainedSeq            uint64
+	activeTurn             *canonicalTurnLifecycle
+	watchCtx               context.Context
+	watchCancel            context.CancelFunc
+	museBackgroundWatching bool
 
 	// Tests replace this on an individual Session. Production always reads the
 	// provider adapter's authoritative retained transcript/sidecar.
@@ -132,6 +134,14 @@ func (a *Agent) Start(context.Context) (*Session, error) {
 		retainedFinalResponse: retainedturn.FinalResponse,
 	}
 	registerTurnSession(a.sessionID, session)
+	// A restored Muse session may have task rows committed while this server
+	// was down. Re-scan its native journal on attach; stable native event IDs
+	// let the durable event store discard rows already published before restart.
+	if a.provider == llm.ProviderMuseCLI {
+		if handle := a.currentAgentSessionHandle(); handle != nil {
+			session.startMuseBackgroundWatcher(handle.Provider.NativeSessionID, 0)
+		}
+	}
 	return session, nil
 }
 
@@ -219,6 +229,8 @@ func (s *Session) Run(ctx context.Context, turn Turn) (result Result, err error)
 	s.stateMu.Lock()
 	s.activeTurn = lifecycle
 	s.stateMu.Unlock()
+	var museBackgroundSessionID string
+	var museBackgroundBaseline int64
 	defer func() {
 		result.TurnID = lifecycle.id
 		if !lifecycle.isTerminal() {
@@ -242,6 +254,9 @@ func (s *Session) Run(ctx context.Context, turn Turn) (result Result, err error)
 			s.activeTurn = nil
 		}
 		s.stateMu.Unlock()
+		if museBackgroundSessionID != "" {
+			s.startMuseBackgroundWatcher(museBackgroundSessionID, museBackgroundBaseline)
+		}
 	}()
 	policy, err := normalizeToolPolicy(turn.ToolPolicy)
 	if err != nil {
@@ -279,6 +294,9 @@ func (s *Session) Run(ctx context.Context, turn Turn) (result Result, err error)
 	nativeSessionID := ""
 	if handleBeforeTurn != nil {
 		nativeSessionID = handleBeforeTurn.Provider.NativeSessionID
+	}
+	if s.agent.provider == llm.ProviderMuseCLI && nativeSessionID != "" {
+		museBackgroundBaseline = musecli.LatestNativeSequenceForOwner(s.agent.sessionID, nativeSessionID)
 	}
 	providerStartedAt := time.Now()
 	if s.agent.logger != nil {
@@ -328,7 +346,58 @@ func (s *Session) Run(ctx context.Context, turn Turn) (result Result, err error)
 			ContextUsagePercent:  contextUsage,
 		},
 	}
+	if result.Handle != nil && s.agent.provider == llm.ProviderMuseCLI {
+		museBackgroundSessionID = result.Handle.Provider.NativeSessionID
+	}
 	return result, err
+}
+
+// startMuseBackgroundWatcher observes the native journal under the Session
+// lifetime. It never writes to a turn's StreamChan, which closes on return.
+func (s *Session) startMuseBackgroundWatcher(nativeSessionID string, baseline int64) {
+	if nativeSessionID == "" {
+		return
+	}
+	s.stateMu.Lock()
+	if s.closed || s.museBackgroundWatching {
+		s.stateMu.Unlock()
+		return
+	}
+	s.museBackgroundWatching = true
+	s.stateMu.Unlock()
+	reader := musecli.NewBackgroundTaskReaderForOwner(s.agent.sessionID, nativeSessionID, baseline)
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		readFailureReported := false
+		for {
+			rows, readErr := reader.Poll()
+			if readErr != nil {
+				if !readFailureReported && s.agent.logger != nil {
+					s.agent.logger.Warn(fmt.Sprintf("Muse background task journal read failed: %v", readErr))
+				}
+				readFailureReported = true
+			} else {
+				readFailureReported = false
+			}
+			for _, row := range rows {
+				if s.watchCtx.Err() != nil {
+					return
+				}
+				s.agent.emitTypedEvent(context.Background(), &events.CodingAgentBackgroundTaskEvent{
+					BaseEventData: events.BaseEventData{EventID: fmt.Sprintf("muse:%s:%d", nativeSessionID, row.Sequence)},
+					Provider:      "muse-cli", NativeSessionID: nativeSessionID,
+					RunID: row.RunID, TaskID: row.TaskID, NativeSequence: row.Sequence,
+					Kind: row.Kind, Message: row.Message,
+				})
+			}
+			select {
+			case <-s.watchCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 // Send submits input to the durable provider conversation. During Session.Run
