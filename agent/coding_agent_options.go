@@ -11,7 +11,6 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 )
 
 var codingAgentPersistentInteractiveEnabledByProvider = map[llm.Provider]func(*Agent) bool{
@@ -283,15 +282,6 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	return opts, nil
 }
 
-// museWaitsForUserChoice reports whether a Muse native question should wait
-// for the user's answer instead of being auto-answered. That needs both a
-// retained pane to answer in and a person attending the chat. Persistence alone
-// is not enough: scheduled runs keep the native session alive too, and there a
-// question must be auto-answered or the run waits forever (PLAT-354).
-func (a *Agent) museWaitsForUserChoice() bool {
-	return a.musePersistentInteractiveSession && a.userAnswersNativeQuestions && !a.wantsStructuredTransport()
-}
-
 func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
 	bridgeConfig, bridgeErr := a.buildBridgeMCPConfig()
 	if bridgeErr != nil {
@@ -309,9 +299,6 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 	// This is best-effort restriction, not strict bridge-only containment.
 	toolAllowlist := []string{"web_search"}
 	opts = append(opts, llm.WithMuseToolAllowlist(toolAllowlist))
-	if a.museWaitsForUserChoice() {
-		opts = append(opts, musecli.WithUserChoice(true))
-	}
 	if a.bridgeReadyFile != "" {
 		// Hold a cold session's first prompt until the bridge reports the
 		// tools connected — same cold-turn race as cursor (an unreachable
