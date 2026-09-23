@@ -242,6 +242,15 @@ func withPiPersistentInteractiveSession(enabled bool) agentOption {
 	}
 }
 
+// withUserAnswersNativeQuestions lets a native CLI question wait for the
+// attending user's answer instead of being auto-answered. See
+// CodingRuntimeConfig.UserAnswersNativeQuestions.
+func withUserAnswersNativeQuestions(enabled bool) agentOption {
+	return func(a *Agent) {
+		a.userAnswersNativeQuestions = enabled
+	}
+}
+
 // withMusePersistentInteractiveSession keeps Muse CLI tmux sessions alive
 // across completed chat turns. Use only for interactive chat; workflow steps
 // should keep the default per-turn lifecycle.
@@ -892,6 +901,7 @@ type Agent struct {
 	// Muse CLI persistent tmux mode for interactive chat (consumed when the
 	// provider's interactive adapter lands).
 	musePersistentInteractiveSession bool
+	userAnswersNativeQuestions       bool
 
 	// CursorBridgeToolsMode marks a chat as preferring MCP bridge tools.
 	// Retained for API compatibility; no longer sets --mode ask (that mode
