@@ -210,9 +210,24 @@ func TestMuseIntegrationConfiguresBestEffortNativePolicy(t *testing.T) {
 	if !ok {
 		t.Fatalf("Muse tool allowlist has type %T", raw)
 	}
+	// Default mcp_only is pure bridge: native web search only.
+	if !slices.Equal(got, []string{"web_search"}) {
+		t.Fatalf("mcp_only Muse allowlist = %v, want only web_search", got)
+	}
+	agent.codingAgentToolsMode = codingAgentToolsHybrid
+	hybridOpts, err := agent.appendMuseCLIIntegrationOptions(nil)
+	if err != nil {
+		t.Fatalf("append hybrid Muse options: %v", err)
+	}
+	hybrid, _ := metadataFromCallOptions(hybridOpts)[musecli.MetadataKeyMuseToolAllowlist].([]string)
 	for _, want := range []string{"web_search", "read_skill", "read_file", "search", "subagent_spawn"} {
-		if !slices.Contains(got, want) {
-			t.Fatalf("Muse allowlist missing %q: %v", want, got)
+		if !slices.Contains(hybrid, want) {
+			t.Fatalf("hybrid Muse allowlist missing %q: %v", want, hybrid)
+		}
+	}
+	for _, forbidden := range []string{"bash", "write_file"} {
+		if slices.Contains(hybrid, forbidden) {
+			t.Fatalf("hybrid Muse allowlist must not include %q: %v", forbidden, hybrid)
 		}
 	}
 	for _, forbidden := range []string{"bash", "write_file", "read_image", "request_user_input", "cron_create", "mcp__api_bridge__execute_shell_command"} {

@@ -282,6 +282,11 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	return opts, nil
 }
 
+// museHybridNativeTools are the Muse built-ins added in hybrid coding-tools
+// mode on top of web_search.
+var museHybridNativeTools = []string{"read_skill", "read_file", "search",
+	"subagent_spawn", "subagent_wait", "subagent_send_message", "subagent_read_result", "subagent_input", "subagent_cancel"}
+
 func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llmtypes.CallOption, error) {
 	bridgeConfig, bridgeErr := a.buildBridgeMCPConfig()
 	if bridgeErr != nil {
@@ -292,21 +297,20 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 	// overwrite one another's settings or retain a stale bridge endpoint.
 	opts = append(opts, llm.WithMuseMCPConfig(bridgeConfig))
 	// Muse's PreToolUse policy denies unlisted tools that reach the hook.
-	// Allowed natively: web search, Muse's own skill reader (its bundled
-	// skills), and read-only file reading/search -- the tools models reached
-	// for most and lost turns on (2026-09-23 log audit: read_file 28,
-	// read_skill 16, search 12 denials). Shell and writes stay bridge-only
-	// (grants + history; --disable-shell/--disable-write back this up).
-	// Native reads are NOT limited to the step's granted folders -- accepted
-	// by the user 2026-09-23 for model quality. MCP discovery and concrete MCP
-	// server tools mount separately; concrete MCP identifiers must not be added
-	// here. Internal controls such as write_todos bypass the hook.
-	// Native subagents (user decision 2026-09-23: Muse uses background
-	// agents and todos well on long tasks): allowlisting subagent_spawn turns
-	// delegation on; children inherit the hook and --disable-shell/-write
-	// (TestMuseCLIRealSubagentContainment).
-	toolAllowlist := []string{"web_search", "read_skill", "read_file", "search",
-		"subagent_spawn", "subagent_wait", "subagent_send_message", "subagent_read_result", "subagent_input", "subagent_cancel"}
+	// mcp_only (default) is pure bridge: native web search only. hybrid adds
+	// the native tools models reached for most (2026-09-23 log audit:
+	// read_file 28, read_skill 16, search 12 denials) plus subagents, which Muse
+	// uses well on long tasks; allowlisting subagent_spawn turns delegation on
+	// and children inherit the hook and --disable-shell/--disable-write
+	// (TestMuseCLIRealSubagentContainment). Native reads are not limited to the
+	// step's granted folders. Shell and writes stay bridge-only in both modes.
+	// MCP discovery and concrete MCP server tools mount separately; concrete
+	// MCP identifiers must not be added here. Internal controls such as
+	// write_todos bypass the hook in both modes.
+	toolAllowlist := []string{"web_search"}
+	if a.nativeCodingToolsEnabled() {
+		toolAllowlist = append(toolAllowlist, museHybridNativeTools...)
+	}
 	opts = append(opts, llm.WithMuseToolAllowlist(toolAllowlist))
 	if a.bridgeReadyFile != "" {
 		// Hold a cold session's first prompt until the bridge reports the
