@@ -170,12 +170,7 @@ func (s *Session) startMuseQuestionWatcher() {
 				if s.watchCtx.Err() != nil {
 					return
 				}
-				s.agent.emitTypedEvent(context.Background(), &events.MuseQuestionEvent{
-					BaseEventData: events.BaseEventData{EventID: fmt.Sprintf("muse:question:%s:%d", row.NativeSessionID, row.Sequence)},
-					Provider:      "muse-cli", NativeSessionID: row.NativeSessionID,
-					RunID: row.RunID, NativeSequence: row.Sequence, PromptID: row.PromptID,
-					Kind: row.Kind, Questions: row.Questions, Answers: row.Answers, Outcome: row.Outcome,
-				})
+				s.agent.emitTypedEvent(context.Background(), codingAgentQuestionFromMuse(row))
 			}
 			select {
 			case <-s.watchCtx.Done():
@@ -184,6 +179,31 @@ func (s *Session) startMuseQuestionWatcher() {
 			}
 		}
 	}()
+}
+
+func codingAgentQuestionFromMuse(row musecli.QuestionEvent) *events.CodingAgentQuestionEvent {
+	kind := "requested"
+	if row.Kind == "user_input_prompt_settled" {
+		kind = "settled"
+	}
+	questions := make([]events.CodingAgentQuestionPrompt, 0, len(row.Questions))
+	for _, question := range row.Questions {
+		options := make([]events.CodingAgentQuestionOption, 0, len(question.Options))
+		for _, option := range question.Options {
+			options = append(options, events.CodingAgentQuestionOption{Label: option.Label, Description: option.Description})
+		}
+		questions = append(questions, events.CodingAgentQuestionPrompt{ID: question.ID, Header: question.Header, Question: question.Question, Options: options})
+	}
+	answers := make([]events.CodingAgentQuestionAnswer, 0, len(row.Answers))
+	for _, answer := range row.Answers {
+		answers = append(answers, events.CodingAgentQuestionAnswer{ID: answer.ID, SelectedLabels: []string{answer.SelectedLabel}})
+	}
+	return &events.CodingAgentQuestionEvent{
+		BaseEventData: events.BaseEventData{EventID: fmt.Sprintf("muse:question:%s:%d", row.NativeSessionID, row.Sequence)},
+		Provider:      "muse-cli", NativeSessionID: row.NativeSessionID,
+		RunID: row.RunID, NativeSequence: row.Sequence, PromptID: row.PromptID,
+		Kind: kind, Questions: questions, Answers: answers, Outcome: row.Outcome,
+	}
 }
 
 // Run is the one-turn convenience API. Use Start when history must persist
