@@ -292,12 +292,16 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 	// overwrite one another's settings or retain a stale bridge endpoint.
 	opts = append(opts, llm.WithMuseMCPConfig(bridgeConfig))
 	// Muse's PreToolUse policy denies unlisted tools that reach the hook.
-	// Keep web search only. MCP discovery and concrete MCP server tools mount
-	// separately and remain available; concrete MCP identifiers must not be
-	// added to this native allowlist. Native tools can remain visible, and
-	// internal session controls such as write_todos can bypass the hook.
-	// This is best-effort restriction, not strict bridge-only containment.
-	toolAllowlist := []string{"web_search"}
+	// Allowed natively: web search, Muse's own skill reader (its bundled
+	// skills), and read-only file reading/search -- the tools models reached
+	// for most and lost turns on (2026-09-23 log audit: read_file 28,
+	// read_skill 16, search 12 denials). Shell and writes stay bridge-only
+	// (grants + history; --disable-shell/--disable-write back this up).
+	// Native reads are NOT limited to the step's granted folders -- accepted
+	// by the user 2026-09-23 for model quality. MCP discovery and concrete MCP
+	// server tools mount separately; concrete MCP identifiers must not be added
+	// here. Internal controls such as write_todos bypass the hook.
+	toolAllowlist := []string{"web_search", "read_skill", "read_file", "search"}
 	opts = append(opts, llm.WithMuseToolAllowlist(toolAllowlist))
 	if a.bridgeReadyFile != "" {
 		// Hold a cold session's first prompt until the bridge reports the

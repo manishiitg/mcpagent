@@ -210,7 +210,7 @@ func TestMuseIntegrationConfiguresBestEffortNativePolicy(t *testing.T) {
 	if !ok {
 		t.Fatalf("Muse tool allowlist has type %T", raw)
 	}
-	for _, want := range []string{"web_search"} {
+	for _, want := range []string{"web_search", "read_skill", "read_file", "search"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("Muse allowlist missing %q: %v", want, got)
 		}
