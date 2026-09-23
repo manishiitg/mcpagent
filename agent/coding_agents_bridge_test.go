@@ -210,12 +210,12 @@ func TestMuseIntegrationConfiguresBestEffortNativePolicy(t *testing.T) {
 	if !ok {
 		t.Fatalf("Muse tool allowlist has type %T", raw)
 	}
-	for _, want := range []string{"web_search", "read_skill", "read_file", "search"} {
+	for _, want := range []string{"web_search", "read_skill", "read_file", "search", "subagent_spawn"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("Muse allowlist missing %q: %v", want, got)
 		}
 	}
-	for _, forbidden := range []string{"bash", "write_file", "read_image", "request_user_input", "subagent_spawn", "cron_create", "mcp__api_bridge__execute_shell_command"} {
+	for _, forbidden := range []string{"bash", "write_file", "read_image", "request_user_input", "cron_create", "mcp__api_bridge__execute_shell_command"} {
 		if slices.Contains(got, forbidden) {
 			t.Fatalf("Muse native tool %q must not be allowed: %v", forbidden, got)
 		}

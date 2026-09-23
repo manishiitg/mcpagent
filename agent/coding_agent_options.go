@@ -301,7 +301,12 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 	// by the user 2026-09-23 for model quality. MCP discovery and concrete MCP
 	// server tools mount separately; concrete MCP identifiers must not be added
 	// here. Internal controls such as write_todos bypass the hook.
-	toolAllowlist := []string{"web_search", "read_skill", "read_file", "search"}
+	// Native subagents (user decision 2026-09-23: Muse uses background
+	// agents and todos well on long tasks): allowlisting subagent_spawn turns
+	// delegation on; children inherit the hook and --disable-shell/-write
+	// (TestMuseCLIRealSubagentContainment).
+	toolAllowlist := []string{"web_search", "read_skill", "read_file", "search",
+		"subagent_spawn", "subagent_wait", "subagent_send_message", "subagent_read_result", "subagent_input", "subagent_cancel"}
 	opts = append(opts, llm.WithMuseToolAllowlist(toolAllowlist))
 	if a.bridgeReadyFile != "" {
 		// Hold a cold session's first prompt until the bridge reports the
