@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 func resetRegistryForTest(t *testing.T) {
@@ -218,6 +220,49 @@ func TestCallCustomToolWithSessionDoesNotBorrowGlobalExecutor(t *testing.T) {
 	}
 	if globalCalls != 0 {
 		t.Fatalf("global executor calls = %d, want 0", globalCalls)
+	}
+}
+
+// A scripted workflow step calls tools through a session-group-* bridge child
+// that has no registry of its own. It must reach its parent run's executor, not
+// whichever run last wrote the global map (a concurrent schedule, 2026-09-23:
+// "query_workflow_db caller does not own this tool session").
+func TestCallCustomToolWithSessionUsesRegisteredParentRegistry(t *testing.T) {
+	resetRegistryForTest(t)
+
+	parent := "http-parent-" + t.Name()
+	child := "session-group-default-" + t.Name()
+	lookalike := "session-group-other-" + t.Name()
+	sessions := mcpclient.GetSessionRegistry()
+	sessions.RegisterHTTPSession(parent, child)
+	t.Cleanup(func() { sessions.CloseHTTPSession(parent) })
+
+	InitRegistry(nil, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"query_workflow_db": func(context.Context, map[string]interface{}) (string, error) {
+			return "other-run", nil
+		},
+	}, nil, nil)
+	InitRegistryForSession(parent, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"query_workflow_db": func(context.Context, map[string]interface{}) (string, error) {
+			return "parent-run", nil
+		},
+	}, nil)
+
+	got, err := CallCustomToolWithSession(context.Background(), child, "query_workflow_db", nil)
+	if err != nil {
+		t.Fatalf("child call error = %v", err)
+	}
+	if got != "parent-run" {
+		t.Fatalf("child call = %q, want parent-run", got)
+	}
+
+	// An unregistered child keeps the legacy path; it is not adopted by name.
+	got, err = CallCustomToolWithSession(context.Background(), lookalike, "query_workflow_db", nil)
+	if err != nil {
+		t.Fatalf("lookalike call error = %v", err)
+	}
+	if got != "other-run" {
+		t.Fatalf("lookalike call = %q, want legacy other-run", got)
 	}
 }
 

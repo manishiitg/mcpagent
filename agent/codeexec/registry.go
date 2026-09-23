@@ -826,16 +826,51 @@ func toolNotAllowedError(toolName string, allowed map[string]bool, exists bool) 
 	return errors.New(b.String())
 }
 
+// registryScopeForSession returns the session whose registry should serve a
+// call: the session itself when it has a registry, otherwise the live parent
+// run it was registered under via mcpclient.RegisterHTTPSession, if that parent
+// has one. Unregistered, stopped and ambiguous children resolve to themselves.
+func (r *ToolRegistry) registryScopeForSession(sessionID string) string {
+	if sessionID == "" {
+		return sessionID
+	}
+	hasRegistry := func(id string) bool {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		_, ok := r.sessionCustomTools[id]
+		return ok
+	}
+	if hasRegistry(sessionID) {
+		return sessionID
+	}
+	parent := mcpclient.GetSessionRegistry().HTTPSessionForMCPSession(sessionID)
+	if parent == "" || parent == sessionID || !hasRegistry(parent) {
+		return sessionID
+	}
+	if r.logger != nil {
+		r.logger.Debug("Resolved child session to its parent run's tool registry",
+			loggerv2.String("session_id", sessionID),
+			loggerv2.String("parent_session_id", parent))
+	}
+	return parent
+}
+
 // CallCustomToolWithSession calls a custom tool with session scoping.
 // Once a session registry exists it is authoritative: a missing tool must fail
 // instead of borrowing the most recently registered global executor, which may
 // belong to another concurrently running workflow. Global fallback is retained
 // only for callers that do not yet have a session registry.
+//
+// A workflow's scripted-step bridge session (session-group-*) never gets a
+// registry of its own. When mcpclient knows it as the live child of a parent
+// run that does have one, the parent's registry and allow list are used, so
+// the call cannot land on another run's global executor.
 func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName string, args map[string]interface{}) (string, error) {
 	registry := GetRegistry()
 	if registry == nil {
 		return "", fmt.Errorf("tool registry not initialized")
 	}
+	sessionID = registry.registryScopeForSession(sessionID)
 
 	// Check session-scoped tool allow list first (uses allowListMu, independent of registry.mu)
 	if sessionID != "" {
