@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -118,5 +119,114 @@ func TestRetainedCompletionFlushesProgressCommittedAfterPoll(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("missing progress or completion")
 		}
+	}
+}
+
+// transcriptFixture replays Claude transcript commits through an incremental
+// cursor, like the provider's retained progress reader.
+type transcriptFixture struct {
+	mu     sync.Mutex
+	rows   []llmtypes.MessageContent
+	cursor int
+}
+
+func (f *transcriptFixture) commit(rows ...llmtypes.MessageContent) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rows = append(f.rows, rows...)
+}
+
+func (f *transcriptFixture) read(llm.Provider, string) []llmtypes.MessageContent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rows := append([]llmtypes.MessageContent(nil), f.rows[f.cursor:]...)
+	f.cursor = len(f.rows)
+	return rows
+}
+
+func nextProgressText(t *testing.T, capture *retainedProgressCapture, within time.Duration) string {
+	t.Helper()
+	select {
+	case e := <-capture.events:
+		chunk, ok := e.Data.(*events.StreamingChunkEvent)
+		if !ok || chunk.Source != "transcript" || chunk.IsDelta {
+			t.Fatalf("expected a whole transcript message, got %#v", e.Data)
+		}
+		return chunk.Content
+	case <-time.After(within):
+		t.Fatal("assistant text was not emitted")
+	}
+	return ""
+}
+
+func assertNoProgress(t *testing.T, capture *retainedProgressCapture, within time.Duration) {
+	t.Helper()
+	select {
+	case e := <-capture.events:
+		t.Fatalf("unexpected event (duplicate or early completion): %#v", e.Data)
+	case <-time.After(within):
+	}
+}
+
+// Replays the RTS SDE crew turn: text, a tool_use that ran for two minutes,
+// its tool_result, then more text. A steer sent meanwhile keeps Send inside
+// delivery (Claude queues it until the tool returns); the narration written
+// before the tool must still reach the chat while the tool runs.
+func TestRetainedProgressIsNotHeldBehindPendingSteer(t *testing.T) {
+	capture := &retainedProgressCapture{events: make(chan *events.AgentEvent, 20)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fixture := &transcriptFixture{}
+	s := &Session{
+		agent:                    &Agent{sessionID: t.Name(), listeners: []AgentEventListener{capture}},
+		watchCtx:                 ctx,
+		retainedFinalResponse:    func(llm.Provider, string, time.Time) string { return "" },
+		retainedProgressMessages: fixture.read,
+	}
+	s.startRetainedCompletionWatch(newCanonicalTurnLifecycle(""), "redeploy", llm.ProviderClaudeCode, llm.CodingAgentTransportTmux)
+
+	// A steer is being delivered for the whole tool call.
+	s.sendMu.Lock()
+	fixture.commit(
+		llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "Re-triggered the failed deploy; watching it now."),
+		llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.ToolCall{ID: "deploy-watch"}}},
+	)
+	if got := nextProgressText(t, capture, 2*time.Second); got != "Re-triggered the failed deploy; watching it now." {
+		t.Fatalf("first text = %q", got)
+	}
+	assertNoProgress(t, capture, 600*time.Millisecond)
+
+	// Tool returns; Claude takes the queued steer and keeps narrating.
+	fixture.commit(
+		llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeTool, Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: "deploy-watch", Content: "ok"}}},
+		llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "Deploy is green."),
+	)
+	s.sendMu.Unlock()
+	if got := nextProgressText(t, capture, 2*time.Second); got != "Deploy is green." {
+		t.Fatalf("second text = %q", got)
+	}
+
+	// One message with two text blocks, then a message cut off by an interrupt:
+	// every block once, in order, and no completion is inferred.
+	fixture.commit(llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{
+		llmtypes.TextContent{Text: "Summary first."},
+		llmtypes.TextContent{Text: "Then the details."},
+	}})
+	if got := nextProgressText(t, capture, 2*time.Second); got != "Summary first." {
+		t.Fatalf("first block = %q", got)
+	}
+	if got := nextProgressText(t, capture, time.Second); got != "Then the details." {
+		t.Fatalf("second block = %q", got)
+	}
+	fixture.commit(llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "Starting the rollback"))
+	if got := nextProgressText(t, capture, 2*time.Second); got != "Starting the rollback" {
+		t.Fatalf("interrupted text = %q", got)
+	}
+	assertNoProgress(t, capture, 600*time.Millisecond)
+	s.stateMu.Lock()
+	active := s.retainedActive
+	s.stateMu.Unlock()
+	if !active {
+		t.Fatal("progress settled the turn")
 	}
 }

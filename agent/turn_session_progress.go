@@ -14,17 +14,21 @@ import (
 // committed narration through the same transcript events used by normal turns.
 // The final-response reader remains the only authority for completion.
 func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq uint64, provider llm.Provider, reader func(llm.Provider, string) []llmtypes.MessageContent, chunkIndex *int) {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
+	// Check and read under stateMu, never sendMu. Send holds sendMu while a
+	// busy CLI has not yet taken a steered message (Claude queues it until the
+	// running tool returns), so waiting on it held narration written before a
+	// long tool call until that tool finished. stateMu still orders the read
+	// against the watcher replacement in startRetainedCompletionWatch: the
+	// provider cursor is keyed by turn start, so a stale watcher must not read
+	// after a new one exists. Emit after unlocking; listeners may re-enter.
 	s.stateMu.Lock()
 	current := !s.closed && s.retainedActive && s.retainedSeq == seq
-	s.stateMu.Unlock()
-	if !current {
-		return
+	var messages []llmtypes.MessageContent
+	if current {
+		messages = reader(provider, s.agent.sessionID)
 	}
-	// Read only after checking the watcher under sendMu. The provider shares
-	// an incremental cursor with the normal stream, so stale reads lose data.
-	for _, message := range reader(provider, s.agent.sessionID) {
+	s.stateMu.Unlock()
+	for _, message := range messages {
 		if message.Role != llmtypes.ChatMessageTypeAI {
 			continue
 		}
