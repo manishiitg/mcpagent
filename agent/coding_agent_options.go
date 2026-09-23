@@ -11,6 +11,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 )
 
 var codingAgentPersistentInteractiveEnabledByProvider = map[llm.Provider]func(*Agent) bool{
@@ -299,6 +300,9 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 	// This is best-effort restriction, not strict bridge-only containment.
 	toolAllowlist := []string{"web_search"}
 	opts = append(opts, llm.WithMuseToolAllowlist(toolAllowlist))
+	if a.musePersistentInteractiveSession && !a.wantsStructuredTransport() {
+		opts = append(opts, musecli.WithUserChoice(true))
+	}
 	if a.bridgeReadyFile != "" {
 		// Hold a cold session's first prompt until the bridge reports the
 		// tools connected — same cold-turn race as cursor (an unreachable

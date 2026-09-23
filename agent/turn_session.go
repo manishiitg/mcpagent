@@ -114,6 +114,7 @@ type Session struct {
 	watchCtx               context.Context
 	watchCancel            context.CancelFunc
 	museBackgroundWatching bool
+	museQuestionWatching   bool
 
 	// Tests replace this on an individual Session. Production always reads the
 	// provider adapter's authoritative retained transcript/sidecar.
@@ -138,11 +139,51 @@ func (a *Agent) Start(context.Context) (*Session, error) {
 	// was down. Re-scan its native journal on attach; stable native event IDs
 	// let the durable event store discard rows already published before restart.
 	if a.provider == llm.ProviderMuseCLI {
+		session.startMuseQuestionWatcher()
 		if handle := a.currentAgentSessionHandle(); handle != nil {
 			session.startMuseBackgroundWatcher(handle.Provider.NativeSessionID, 0)
 		}
 	}
 	return session, nil
+}
+
+// startMuseQuestionWatcher emits requested and settled records directly from
+// the native journal, independently of the foreground turn stream.
+func (s *Session) startMuseQuestionWatcher() {
+	s.stateMu.Lock()
+	if s.closed || s.museQuestionWatching {
+		s.stateMu.Unlock()
+		return
+	}
+	s.museQuestionWatching = true
+	s.stateMu.Unlock()
+	reader := musecli.NewQuestionReaderForOwner(s.agent.sessionID)
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			rows, err := reader.Poll()
+			if err != nil && s.agent.logger != nil {
+				s.agent.logger.Warn(fmt.Sprintf("Muse question journal read failed: %v", err))
+			}
+			for _, row := range rows {
+				if s.watchCtx.Err() != nil {
+					return
+				}
+				s.agent.emitTypedEvent(context.Background(), &events.MuseQuestionEvent{
+					BaseEventData: events.BaseEventData{EventID: fmt.Sprintf("muse:question:%s:%d", row.NativeSessionID, row.Sequence)},
+					Provider:      "muse-cli", NativeSessionID: row.NativeSessionID,
+					RunID: row.RunID, NativeSequence: row.Sequence, PromptID: row.PromptID,
+					Kind: row.Kind, Questions: row.Questions, Answers: row.Answers, Outcome: row.Outcome,
+				})
+			}
+			select {
+			case <-s.watchCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 // Run is the one-turn convenience API. Use Start when history must persist
