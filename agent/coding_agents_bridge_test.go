@@ -917,11 +917,12 @@ func TestAppendCodexCLIIntegrationOptionsSandboxDefault(t *testing.T) {
 		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
 	}
 	got := metadataFromCallOptions(opts)
-	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "workspace-write" {
-		t.Fatalf("default sandbox = %q, want %q", sandbox, "workspace-write")
+	// Native writes are never allowed (2026-09-24): read-only is the only mode.
+	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "read-only" {
+		t.Fatalf("default sandbox = %q, want %q", sandbox, "read-only")
 	}
 	if _, ok := got[codexcli.MetadataKeyConfigOverrides]; ok {
-		t.Fatalf("default sandbox must not set network-access config overrides unless CodexNetworkAccess is also set: %#v", got[codexcli.MetadataKeyConfigOverrides])
+		t.Fatalf("read-only sandbox must not set network-access config overrides: %#v", got[codexcli.MetadataKeyConfigOverrides])
 	}
 }
 
@@ -978,9 +979,12 @@ func TestHybridCodingProviderAutoOptions(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := metadataFromCallOptions(opts)
-		// Codex reads only through its shell: no read-only hybrid, shell off.
-		if got[codexcli.MetadataKeyDisableShellTool] != true {
-			t.Fatalf("hybrid Codex must keep its native shell disabled: %#v", got)
+		// Codex hybrid: native shell on, inside the read-only sandbox.
+		if _, disabled := got[codexcli.MetadataKeyDisableShellTool]; disabled {
+			t.Fatalf("hybrid Codex must keep its native shell for reads: %#v", got)
+		}
+		if got[codexcli.MetadataKeySandbox] != "read-only" {
+			t.Fatalf("hybrid Codex sandbox = %#v, want read-only (no native writes)", got[codexcli.MetadataKeySandbox])
 		}
 	})
 }
@@ -1035,9 +1039,9 @@ func TestHybridCodingApproveAllOptions(t *testing.T) {
 	})
 }
 
-// TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess proves a caller that
-// also wants native network under the default workspace-write sandbox can opt
-// in via withCodexNetworkAccess, without needing to also set withCodexSandbox.
+// TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess proves neither a
+// network request nor a workspace-write sandbox request can widen Codex's
+// read-only sandbox: native writes are never allowed (2026-09-24).
 func TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
@@ -1045,17 +1049,18 @@ func TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess(t *testing.T) {
 
 	agent := bridgeTestAgent()
 	agent.codexNetworkAccess = true
+	agent.codexSandboxMode = "workspace-write"
 	opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
 	if err != nil {
 		t.Fatalf("appendCodexCLIIntegrationOptions() error = %v", err)
 	}
 	got := metadataFromCallOptions(opts)
-	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "workspace-write" {
-		t.Fatalf("sandbox = %q, want %q", sandbox, "workspace-write")
+	if sandbox, _ := got[codexcli.MetadataKeySandbox].(string); sandbox != "read-only" {
+		t.Fatalf("sandbox = %q, want read-only regardless of requests", sandbox)
 	}
-	overrides, ok := got[codexcli.MetadataKeyConfigOverrides].([]string)
-	if !ok || !strings.Contains(strings.Join(overrides, "\n"), "sandbox_workspace_write.network_access=true") {
-		t.Fatalf("config overrides = %#v, want sandbox_workspace_write.network_access=true", overrides)
+	overrides, _ := got[codexcli.MetadataKeyConfigOverrides].([]string)
+	if strings.Contains(strings.Join(overrides, "\n"), "network_access=true") {
+		t.Fatalf("config overrides = %#v must not re-open network or writes", overrides)
 	}
 }
 

@@ -828,6 +828,12 @@ func WithCodexReasoningEffort(effort string) CallOption {
 	return llmproviders.WithCodexReasoningEffort(effort)
 }
 
+// WithCodexReadOnlyHybridTools keeps Codex's shell and subagents and disables
+// its other native features (hybrid mode, with the read-only sandbox).
+func WithCodexReadOnlyHybridTools() CallOption {
+	return llmproviders.WithCodexReadOnlyHybridTools()
+}
+
 // WithCodexDisableShellTool disables the built-in shell tool in Codex CLI.
 func WithCodexDisableShellTool() CallOption {
 	return llmproviders.WithCodexDisableShellTool()

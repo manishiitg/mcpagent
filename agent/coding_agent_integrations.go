@@ -68,9 +68,9 @@ const claudeHybridNativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,T
 
 // nativeCodingToolsEnabled reports hybrid mode: native READ tools, todos and
 // subagents for CLIs with a proven read-only restriction (Claude Code, Muse).
-// Native shell and writes are never enabled in any mode. Codex (no read tool
-// without its shell), Cursor and Pi stay bridge-only until each has its own
-// read-only restriction and live test.
+// Native writes are never enabled in any mode. Cursor and Pi stay
+// bridge-only until each has its own read-only restriction and live test. Codex's hybrid is its native shell
+// inside its OS-enforced read-only sandbox.
 func (a *Agent) nativeCodingToolsEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(a.codingAgentToolsMode)) {
 	case codingAgentToolsHybrid:
@@ -182,9 +182,20 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 }
 
 func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
-	// Codex reads files only through its shell, so it has no read-only hybrid:
-	// shell stays disabled in every mode (native writes/shell are never on).
-	opts = append(opts, llm.WithCodexDisableShellTool())
+	// Codex reads files only through its shell. Hybrid ("Native agent tools")
+	// therefore keeps the shell ON but forces Codex's OS-enforced read-only
+	// sandbox (below): native reads/search work, every native write is refused
+	// by the sandbox, and shell writes/product APIs go through the bridge's
+	// execute_shell_command, which runs outside Codex's sandbox
+	// (TestCodexCLIRealReadOnlyHybridP0). mcp_only keeps the shell disabled.
+	hybrid := a.nativeCodingToolsEnabled()
+	if hybrid {
+		// Shell (reads) and subagents only; browser/computer use, apps,
+		// plugins, hooks, image generation etc. stay disabled.
+		opts = append(opts, llm.WithCodexReadOnlyHybridTools())
+	} else {
+		opts = append(opts, llm.WithCodexDisableShellTool())
+	}
 	opts = append(opts, llm.WithCodexApprovalPolicy("never"))
 	// Shell/exec containment: WithCodexDisableShellTool above turns OFF codex's
 	// built-in shell_tool + the other native code-exec features (unified_exec,
@@ -209,27 +220,16 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	// the sandbox mode below still governs whether codex can mutate the host
 	// directly vs. having to route writes through the bridge.
 	//
-	// DEFAULT is WORKSPACE-WRITE (native writes + no network unless requested):
-	// this matches how codex ran for most of this project's life and is right
-	// for the common case — an interactive session, or one where the bridge
-	// already grants shell access anyway (native write containment buys nothing
-	// there; the bridge can already write). Only a session that deliberately
-	// restricts its tool set (e.g. "web_search only, no shell on the bridge") or
-	// needs every action to hit an audit trail that native exec would bypass
-	// needs the stronger guarantee — that caller opts INTO "read-only" via
-	// Agent.CodexSandboxMode / withCodexSandbox. Under read-only, native exec can
-	// read but CANNOT write or mutate the host, so every state change is forced
-	// through the MCP bridge (execute_shell_command runs in the executor
-	// process, not codex's sandbox, so bridge writes still work) — but note
-	// there is no read-only+network mode (network is unconditionally off), and
-	// codex tends to disengage from tools entirely when its own preamble says
-	// "read-only, no network", so read-only is a deliberate, narrow opt-in, not
-	// something to reach for casually. See TestRealBridgeStreamingE2E (codex
-	// case), which explicitly opts into read-only to keep that guarantee tested.
-	sandboxMode := a.codexSandboxMode
-	if strings.TrimSpace(sandboxMode) == "" {
-		sandboxMode = "workspace-write"
-	}
+	// SANDBOX is always READ-ONLY (2026-09-24): native exec can read but can
+	// never write or mutate the host, so every state change goes through the
+	// MCP bridge (execute_shell_command runs in the executor process, not in
+	// Codex's sandbox, so bridge writes still work). Read-only has no network;
+	// product APIs are reached through the bridge too.
+	// Native writes are never allowed (user decision 2026-09-24), and
+	// disabling shell_tool does not remove every mutating Codex tool (e.g.
+	// apply_patch), so Codex always runs in its read-only sandbox. Writes go
+	// through the bridge, whose execute_shell_command runs outside it.
+	sandboxMode := "read-only"
 	opts = append(opts, llm.WithCodexSandbox(sandboxMode))
 	configOverrides := make([]string, 0, 2)
 	if sandboxMode == "workspace-write" && a.codexNetworkAccess {
