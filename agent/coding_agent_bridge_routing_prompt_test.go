@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"strings"
 	"testing"
 )
@@ -122,10 +123,17 @@ func TestWithBridgeRoutingInstructionsOptionSetsOverride(t *testing.T) {
 }
 
 func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.T) {
-	hybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid}
-	hybridPrompt := hybrid.codingAgentProviderRoutingPreamble()
-	if !strings.Contains(hybridPrompt, "Provider-native tools are enabled") || strings.Contains(hybridPrompt, "tools are disabled") {
-		t.Fatalf("hybrid routing preamble contradicts hybrid mode: %s", hybridPrompt)
+	for _, provider := range []llmproviders.Provider{llmproviders.ProviderClaudeCode, llmproviders.ProviderMuseCLI} {
+		hybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid, provider: provider}
+		hybridPrompt := hybrid.codingAgentProviderRoutingPreamble()
+		if !strings.Contains(hybridPrompt, "native read-only tools") || !strings.Contains(hybridPrompt, "Native shell and file writes are disabled") {
+			t.Fatalf("%s hybrid routing preamble must describe read-only native tools with shell/writes on the bridge: %s", provider, hybridPrompt)
+		}
+	}
+	// Providers without a read-only hybrid restriction stay bridge-only.
+	codexHybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid, provider: llmproviders.ProviderCodexCLI}
+	if got := codexHybrid.codingAgentProviderRoutingPreamble(); !strings.Contains(got, "tools are disabled") {
+		t.Fatalf("codex hybrid preamble must stay bridge-only: %s", got)
 	}
 
 	mcpOnly := &Agent{codingAgentToolsMode: codingAgentToolsMCPOnly}

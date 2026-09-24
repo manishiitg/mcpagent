@@ -64,7 +64,7 @@ func TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool(t *testing.T) {
 		t.Skip("python3 required to execute the generated hook script")
 	}
 
-	hookPath, err := writeClaudeHTTPRoutingHook([]string{"my_custom_tool"}, nil)
+	hookPath, err := writeClaudeHTTPRoutingHook([]string{"my_custom_tool"}, nil, []string{"WebSearch"})
 	if err != nil {
 		t.Fatalf("writeClaudeHTTPRoutingHook: %v", err)
 	}
@@ -119,11 +119,11 @@ func TestClaudeHTTPRoutingHookAllowsAdditionalBridgeTool(t *testing.T) {
 // allowlist should safely share one (no needless growth, and no possibility
 // of one clobbering the other since the bytes are identical either way).
 func TestClaudeHTTPRoutingHookPathIsContentAddressed(t *testing.T) {
-	pathA, err := writeClaudeHTTPRoutingHook([]string{"tool_a"}, nil)
+	pathA, err := writeClaudeHTTPRoutingHook([]string{"tool_a"}, nil, []string{"WebSearch"})
 	if err != nil {
 		t.Fatalf("writeClaudeHTTPRoutingHook(tool_a): %v", err)
 	}
-	pathB, err := writeClaudeHTTPRoutingHook([]string{"tool_b"}, nil)
+	pathB, err := writeClaudeHTTPRoutingHook([]string{"tool_b"}, nil, []string{"WebSearch"})
 	if err != nil {
 		t.Fatalf("writeClaudeHTTPRoutingHook(tool_b): %v", err)
 	}
@@ -131,7 +131,7 @@ func TestClaudeHTTPRoutingHookPathIsContentAddressed(t *testing.T) {
 		t.Fatalf("two DIFFERENT allowlists produced the SAME hook path — a concurrent agent race would silently overwrite the other's allowlist: %s", pathA)
 	}
 
-	pathA2, err := writeClaudeHTTPRoutingHook([]string{"tool_a"}, nil)
+	pathA2, err := writeClaudeHTTPRoutingHook([]string{"tool_a"}, nil, []string{"WebSearch"})
 	if err != nil {
 		t.Fatalf("writeClaudeHTTPRoutingHook(tool_a) again: %v", err)
 	}

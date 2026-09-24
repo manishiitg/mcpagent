@@ -3174,11 +3174,12 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 // names belong to bridgeRoutingExplicitInstructions, where they are filtered
 // through the same admission predicate used to build the provider manifest.
 func (a *Agent) codingAgentProviderRoutingPreamble() string {
-	if a.provider == llmproviders.ProviderMuseCLI {
+	hybrid := a.nativeCodingToolsEnabled() && (a.provider == llmproviders.ProviderMuseCLI || a.provider == llmproviders.ProviderClaudeCode)
+	if a.provider == llmproviders.ProviderMuseCLI && !hybrid {
 		return "IMPORTANT: Use native web_search and the declared MCP bridge tools for work. Native file, shell, memory, scheduling, goal, workflow, and subagent tools are restricted; do not attempt them even if listed. Muse internal session controls may bypass its restriction hook, but they are not a substitute for platform tools. Use platform tools for user questions and task coordination. Call only exact declared bridge tool names."
 	}
-	if a.nativeCodingToolsEnabled() {
-		return "IMPORTANT: Provider-native tools are enabled for this session. You may use them directly. Bridge tools are also available when explicitly declared; call only exact names present in this session and never invent alternate prefixes or namespaces. If an action fails, choose another genuinely available route or explain the specific blocker."
+	if hybrid {
+		return "IMPORTANT: Your native read-only tools (read files, search, list/glob), skills, todo list, subagents and web search are enabled; use them directly. Native shell and file writes are disabled: run commands and create or change files only through the declared bridge tools (execute_shell_command, write/edit tools). Call only exact declared bridge tool names; never invent alternate prefixes or namespaces. If an action fails, choose another genuinely available route or explain the specific blocker."
 	}
 	return "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Use only bridge tools explicitly declared in this session, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
 }

@@ -53,13 +53,13 @@ func claudeHTTPRoutingHooksEnabled() bool {
 // withAdditionalBridgeTools. Previously this was a hardcoded 4-tool literal,
 // which silently denied any additional bridge tool once enforcement was on,
 // even though the caller had explicitly registered it.
-func writeClaudeHTTPRoutingHook(additional []string, admits func(name, toolType string) bool) (string, error) {
+func writeClaudeHTTPRoutingHook(additional []string, admits func(name, toolType string) bool, nativeAllowed []string) (string, error) {
 	hooksDir := filepath.Join(os.TempDir(), "claude-code-hooks")
 	if err := os.MkdirAll(hooksDir, 0750); err != nil {
 		return "", fmt.Errorf("create claude hooks dir: %w", err)
 	}
 
-	allowedIdentifiers := append(claudeBridgeAllowedToolIdentifiers(additional, admits), "WebSearch")
+	allowedIdentifiers := append(claudeBridgeAllowedToolIdentifiers(additional, admits), nativeAllowed...)
 	allowedJSON, err := json.Marshal(allowedIdentifiers)
 	if err != nil {
 		return "", fmt.Errorf("marshal claude hook allowlist: %w", err)
@@ -1032,7 +1032,9 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 		// Hardcoding bridge-only here made AgentToolsMode provider-dependent:
 		// a caller selecting hybrid got native tools everywhere except Pi,
 		// silently, with no error to explain the difference.
-		bridgeOnly := !a.nativeCodingToolsEnabled()
+		// Pi stays bridge-only in every mode: native writes/shell are never
+		// enabled and Pi has no read-only hybrid restriction yet.
+		bridgeOnly := true
 		opts = append(opts,
 			llm.WithPiMCPConfig(bridgeConfig),
 			llm.WithPiBridgeOnlyTools(bridgeOnly),

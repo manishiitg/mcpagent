@@ -251,16 +251,12 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 		// cursor's first bridge call fails and it falls back to its Shell tool.
 		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
 	}
-	if !a.nativeCodingToolsEnabled() {
-		// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
-		// that denies Cursor's built-in Shell/Read/Edit/Write/etc. tools at the
-		// hook layer, forcing the agent to route tool calls through the bridge.
-		opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
-	} else if a.approveAllCodingTools() {
-		opts = append(opts, llm.WithCursorForce())
-	} else {
-		opts = append(opts, llm.WithCursorAutoReview())
-	}
+	// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
+	// that denies Cursor's built-in Shell/Read/Edit/Write/etc. tools at the
+	// hook layer, forcing the agent to route tool calls through the bridge.
+	// Applied in every mode: native writes/shell are never enabled, and Cursor
+	// has no read-only hybrid restriction yet.
+	opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
 	if a.logger != nil {
 		a.logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
 		a.logger.Info("⏱️ [CURSOR_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")

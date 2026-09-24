@@ -938,8 +938,15 @@ func TestHybridCodingProviderAutoOptions(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := metadataFromCallOptions(opts)
-		if got[claudecode.MetadataKeyTools] != "default" {
-			t.Fatalf("tools = %#v, want default", got[claudecode.MetadataKeyTools])
+		if got[claudecode.MetadataKeyTools] != claudeHybridNativeTools {
+			t.Fatalf("tools = %#v, want the read/todo/subagent set %q", got[claudecode.MetadataKeyTools], claudeHybridNativeTools)
+		}
+		for _, forbidden := range []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "default"} {
+			for _, tool := range strings.Split(claudeHybridNativeTools, ",") {
+				if tool == forbidden {
+					t.Fatalf("hybrid must never enable native %s", forbidden)
+				}
+			}
 		}
 		if got["claude_code_permission_mode"] != "auto" {
 			t.Fatalf("permission mode = %#v, want auto", got["claude_code_permission_mode"])
@@ -957,11 +964,9 @@ func TestHybridCodingProviderAutoOptions(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := metadataFromCallOptions(opts)
-		if got["cursor_auto_review"] != true {
-			t.Fatalf("auto review = %#v, want true", got["cursor_auto_review"])
-		}
-		if got[cursorcli.MetadataKeyDenyBuiltinTools] != nil || got[cursorcli.MetadataKeyForce] != nil {
-			t.Fatalf("hybrid provider_auto must not deny builtins or force Cursor: %#v", got)
+		// No read-only hybrid for Cursor yet: builtins stay denied.
+		if got[cursorcli.MetadataKeyDenyBuiltinTools] != true {
+			t.Fatalf("hybrid Cursor must keep builtins denied: %#v", got)
 		}
 	})
 
@@ -973,15 +978,9 @@ func TestHybridCodingProviderAutoOptions(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := metadataFromCallOptions(opts)
-		if _, disabled := got[codexcli.MetadataKeyDisableShellTool]; disabled {
-			t.Fatalf("hybrid must retain Codex native shell: %#v", got)
-		}
-		if got[codexcli.MetadataKeyApprovalPolicy] != "on-request" {
-			t.Fatalf("approval policy = %#v, want on-request", got[codexcli.MetadataKeyApprovalPolicy])
-		}
-		overrides, _ := got[codexcli.MetadataKeyConfigOverrides].([]string)
-		if !strings.Contains(strings.Join(overrides, "\n"), `approvals_reviewer="auto_review"`) {
-			t.Fatalf("config overrides = %#v, want auto reviewer", overrides)
+		// Codex reads only through its shell: no read-only hybrid, shell off.
+		if got[codexcli.MetadataKeyDisableShellTool] != true {
+			t.Fatalf("hybrid Codex must keep its native shell disabled: %#v", got)
 		}
 	})
 }
@@ -1013,8 +1012,8 @@ func TestHybridCodingApproveAllOptions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := metadataFromCallOptions(opts)[cursorcli.MetadataKeyForce]; got != true {
-			t.Fatalf("approve_all Cursor force = %#v, want true", got)
+		if got := metadataFromCallOptions(opts)[cursorcli.MetadataKeyDenyBuiltinTools]; got != true {
+			t.Fatalf("approve_all hybrid Cursor must keep builtins denied, got %#v", got)
 		}
 	})
 

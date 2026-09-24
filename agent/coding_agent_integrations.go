@@ -59,6 +59,18 @@ const (
 	codingAgentApprovalsAll  = "approve_all"
 )
 
+// claudeHybridNativeTools are the Claude Code built-ins enabled in hybrid mode
+// (user decision 2026-09-23: native read tools, todos and subagents; never
+// native writes or shell). Agent subagents inherit this --tools restriction.
+// TaskCreate/Get/Update/List are the current todo tools; TodoWrite is the
+// legacy name, ignored where unknown.
+const claudeHybridNativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,TaskCreate,TaskGet,TaskUpdate,TaskList,TodoWrite"
+
+// nativeCodingToolsEnabled reports hybrid mode: native READ tools, todos and
+// subagents for CLIs with a proven read-only restriction (Claude Code, Muse).
+// Native shell and writes are never enabled in any mode. Codex (no read tool
+// without its shell), Cursor and Pi stay bridge-only until each has its own
+// read-only restriction and live test.
 func (a *Agent) nativeCodingToolsEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(a.codingAgentToolsMode)) {
 	case codingAgentToolsHybrid:
@@ -81,16 +93,21 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// registered bridge tool set (core + withAdditionalBridgeTools) — not a
 	// hardcoded 4-tool literal, which silently rejected any additional tool a
 	// caller had registered.
-	allowedTools := "mcp__api-bridge__*,WebSearch"
+	nativeTools := "WebSearch"
+	if a.nativeCodingToolsEnabled() {
+		nativeTools = claudeHybridNativeTools
+	}
+	allowedTools := "mcp__api-bridge__*," + nativeTools
 	if claudeHTTPHooksEnabled {
-		allowedTools = strings.Join(claudeBridgeAllowedToolIdentifiers(a.additionalBridgeTools, a.admitsBridgeTool), ",") + ",WebSearch"
+		allowedTools = strings.Join(claudeBridgeAllowedToolIdentifiers(a.additionalBridgeTools, a.admitsBridgeTool), ",") + "," + nativeTools
 	}
 	opts = append(opts, llm.WithAllowedTools(allowedTools))
 
 	if a.nativeCodingToolsEnabled() {
-		// "default" re-enables Claude Code's normal filesystem/shell/browser
-		// tools. The MCP bridge remains mounted for product tools.
-		opts = append(opts, llm.WithClaudeCodeTools("default"))
+		// Hybrid: Claude's read-only navigation, skills, todos, subagents and
+		// web tools run natively. Bash and file writes are never enabled; shell
+		// and writes stay on the bridge (grants, sandbox, history).
+		opts = append(opts, llm.WithClaudeCodeTools(claudeHybridNativeTools))
 		if a.approveAllCodingTools() {
 			opts = append(opts, llmproviders.WithDangerouslySkipPermissions())
 		} else {
@@ -102,7 +119,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	}
 
 	if claudeHTTPHooksEnabled {
-		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools, a.admitsBridgeTool)
+		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools, a.admitsBridgeTool, strings.Split(nativeTools, ","))
 		if hookErr != nil {
 			a.logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
 		} else {
@@ -165,17 +182,10 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 }
 
 func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
-	if !a.nativeCodingToolsEnabled() {
-		opts = append(opts, llm.WithCodexDisableShellTool())
-		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
-	} else if a.approveAllCodingTools() {
-		opts = append(opts, llm.WithCodexApprovalPolicy("never"))
-	} else {
-		// Current Codex uses on-request for its guarded approval reviewer. Keep
-		// the standard workspace sandbox; do not use dangerous bypass, which
-		// would remove it. (Codex 0.154 removed the old untrusted spelling.)
-		opts = append(opts, llm.WithCodexApprovalPolicy("on-request"))
-	}
+	// Codex reads files only through its shell, so it has no read-only hybrid:
+	// shell stays disabled in every mode (native writes/shell are never on).
+	opts = append(opts, llm.WithCodexDisableShellTool())
+	opts = append(opts, llm.WithCodexApprovalPolicy("never"))
 	// Shell/exec containment: WithCodexDisableShellTool above turns OFF codex's
 	// built-in shell_tool + the other native code-exec features (unified_exec,
 	// tool_search, browser/computer use, …) via codex's first-class `--disable`
@@ -224,9 +234,6 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	configOverrides := make([]string, 0, 2)
 	if sandboxMode == "workspace-write" && a.codexNetworkAccess {
 		configOverrides = append(configOverrides, "sandbox_workspace_write.network_access=true")
-	}
-	if a.nativeCodingToolsEnabled() && !a.approveAllCodingTools() {
-		configOverrides = append(configOverrides, `approvals_reviewer="auto_review"`)
 	}
 	if len(configOverrides) > 0 {
 		opts = append(opts, llm.WithCodexConfigOverrides(configOverrides))
