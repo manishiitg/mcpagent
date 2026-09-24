@@ -460,7 +460,7 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 	if (!wasActive || refreshRetainedWatcher) && delivery.DeliveryStatus == UserMessageDeliveryStatusSentToCLI && delivery.Transport == llm.CodingAgentTransportTmux {
 		// Claude, Cursor, and Muse can queue follow-ups behind the current reply. Refresh the
 		// watcher so the previous final cannot complete the newly submitted request.
-		s.startRetainedCompletionWatch(lifecycle, input, delivery.Provider, delivery.Transport)
+		s.startRetainedCompletionWatchFor(lifecycle, input, delivery.Provider, delivery.Transport, wasActive)
 	} else if !wasActive {
 		clearStarting()
 	}
@@ -473,7 +473,24 @@ func providerRefreshesRetainedWatcher(provider llm.Provider) bool {
 
 const retainedCompletionPollInterval = 100 * time.Millisecond
 
+// retainedLiveInputFinalGrace is how long a final response must stay final
+// before a watcher refreshed for live input accepts it. Claude writes the
+// running response's end_turn first and only ~100ms later appends the
+// follow-ups it queued meanwhile as user messages; a single read in that gap
+// took the OLD answer as the follow-up's completion, ended the turn, and left
+// the CLI's real work on the follow-up unwatched (RTS 2026-09-24 04:19:45:
+// 4.5 minutes of narration never reached the chat).
+var retainedLiveInputFinalGrace = 1500 * time.Millisecond
+
 func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle, input string, provider llm.Provider, transport llm.CodingAgentTransport) {
+	s.startRetainedCompletionWatchFor(lifecycle, input, provider, transport, false)
+}
+
+// startRetainedCompletionWatchFor starts the retained watcher. liveInput marks
+// a watcher refreshed for a message sent into a running response: its final
+// must survive retainedLiveInputFinalGrace, re-read every poll, so queued
+// follow-ups appended after the old end_turn cancel it.
+func (s *Session) startRetainedCompletionWatchFor(lifecycle *canonicalTurnLifecycle, input string, provider llm.Provider, transport llm.CodingAgentTransport, liveInput bool) {
 	startedAt := time.Now()
 	s.stateMu.Lock()
 	s.retainedStarting = false
@@ -509,6 +526,8 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 		defer ticker.Stop()
 		chunkIndex := 0
 		var lastProgressRead time.Time
+		var finalSeenAt time.Time
+		finalGrace := retainedLiveInputFinalGrace
 		for {
 			select {
 			case <-watchCtx.Done():
@@ -526,7 +545,16 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 				}
 				finalResult := strings.TrimSpace(reader(provider, s.agent.sessionID, startedAt))
 				if finalResult == "" {
+					finalSeenAt = time.Time{}
 					continue
+				}
+				if liveInput {
+					if finalSeenAt.IsZero() {
+						finalSeenAt = time.Now()
+					}
+					if time.Since(finalSeenAt) < finalGrace {
+						continue
+					}
 				}
 				// The final read can see a commit newer than the last progress poll.
 				// Flush it before completion closes this watcher.
