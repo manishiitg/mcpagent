@@ -402,6 +402,12 @@ func WithCursorDenyBuiltinTools(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithCursorDenyBuiltinTools(enabled)
 }
 
+// WithCursorReadOnlyHybridTools keeps Cursor's native read/list/search tools
+// and denies shell, writes, deletes and subagents (hybrid mode).
+func WithCursorReadOnlyHybridTools() llmtypes.CallOption {
+	return llmproviders.WithCursorReadOnlyHybridTools()
+}
+
 // WithCursorSandbox sets Cursor Agent CLI's --sandbox flag ("enabled"/"disabled").
 func WithCursorSandbox(mode string) llmtypes.CallOption {
 	return llmproviders.WithCursorSandbox(mode)

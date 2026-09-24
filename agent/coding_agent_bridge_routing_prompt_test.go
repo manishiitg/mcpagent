@@ -123,7 +123,7 @@ func TestWithBridgeRoutingInstructionsOptionSetsOverride(t *testing.T) {
 }
 
 func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.T) {
-	for _, provider := range []llmproviders.Provider{llmproviders.ProviderClaudeCode, llmproviders.ProviderMuseCLI, llmproviders.ProviderCodexCLI} {
+	for _, provider := range []llmproviders.Provider{llmproviders.ProviderClaudeCode, llmproviders.ProviderMuseCLI, llmproviders.ProviderCodexCLI, llmproviders.ProviderCursorCLI} {
 		hybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid, provider: provider}
 		hybridPrompt := hybrid.codingAgentProviderRoutingPreamble()
 		if !strings.Contains(hybridPrompt, "native read-only tools") || !strings.Contains(hybridPrompt, "Native shell and file writes are disabled") {
@@ -131,9 +131,9 @@ func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.
 		}
 	}
 	// Providers without a read-only hybrid restriction stay bridge-only.
-	cursorHybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid, provider: llmproviders.ProviderCursorCLI}
-	if got := cursorHybrid.codingAgentProviderRoutingPreamble(); !strings.Contains(got, "tools are disabled") {
-		t.Fatalf("cursor hybrid preamble must stay bridge-only: %s", got)
+	piHybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid, provider: llmproviders.ProviderPiCLI}
+	if got := piHybrid.codingAgentProviderRoutingPreamble(); !strings.Contains(got, "tools are disabled") {
+		t.Fatalf("pi hybrid preamble must stay bridge-only: %s", got)
 	}
 
 	mcpOnly := &Agent{codingAgentToolsMode: codingAgentToolsMCPOnly}

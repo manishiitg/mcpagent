@@ -965,9 +965,9 @@ func TestHybridCodingProviderAutoOptions(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := metadataFromCallOptions(opts)
-		// No read-only hybrid for Cursor yet: builtins stay denied.
-		if got[cursorcli.MetadataKeyDenyBuiltinTools] != true {
-			t.Fatalf("hybrid Cursor must keep builtins denied: %#v", got)
+		// Hybrid Cursor: deny hooks stay installed, with native reads allowed.
+		if got[cursorcli.MetadataKeyDenyBuiltinTools] != true || got[cursorcli.MetadataKeyReadOnlyHybridTools] != true {
+			t.Fatalf("hybrid Cursor must use the read-only hybrid deny hooks: %#v", got)
 		}
 	})
 
