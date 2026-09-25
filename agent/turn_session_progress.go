@@ -41,6 +41,16 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 				if text != nil {
 					content = text.Text
 				}
+			case llmtypes.ThinkingContent:
+				// Same event the live stream uses for reasoning (Cursor, Pi),
+				// so the UI folds it as thinking and bots never forward it.
+				if thinking := strings.TrimSpace(text.Thinking); thinking != "" {
+					s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), &events.ConversationThinkingEvent{
+						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+						Thinking:      thinking,
+					})
+				}
+				continue
 			}
 			content = strings.TrimSpace(content)
 			if content == "" {
