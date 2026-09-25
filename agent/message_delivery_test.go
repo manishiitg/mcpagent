@@ -12,6 +12,7 @@ import (
 
 func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
 	agent := &Agent{provider: llm.ProviderOpenAI, modelID: "gpt-5"}
+	agent.setTurnInFlight(true) // the running turn drains the queue at its next boundary
 
 	result, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
 		SessionID: "session-1",
@@ -132,6 +133,7 @@ func TestDeliverUserMessageReportsActualStructuredTransport(t *testing.T) {
 		modelID:              "gpt-5.6-sol",
 		codingAgentTransport: llm.CodingAgentTransportStructured,
 	}
+	agent.setTurnInFlight(true)
 	result, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
 		SessionID: "structured-session",
 		Message:   "continue",
@@ -144,5 +146,24 @@ func TestDeliverUserMessageReportsActualStructuredTransport(t *testing.T) {
 	}
 	if result.DeliveryStatus != UserMessageDeliveryStatusQueuedForInjection {
 		t.Fatalf("status = %q, want queued_for_injection", result.DeliveryStatus)
+	}
+}
+
+// With no turn running nothing drains the steer queue, so a structured or API
+// agent refuses the message and the caller starts a new turn with it, instead
+// of accepting it into a queue no turn will read (RTS 2026-09-25).
+func TestDeliverUserMessageRefusesQueueWhenNoTurnIsRunning(t *testing.T) {
+	for _, agent := range []*Agent{
+		{provider: llm.ProviderOpenAI, modelID: "gpt-5"},
+		{provider: llm.ProviderClaudeCode, modelID: "claude-sonnet-5", codingAgentTransport: llm.CodingAgentTransportStructured},
+	} {
+		_, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{SessionID: "idle", Message: "see the new ticket"})
+		var deliveryErr *CodingAgentDeliveryError
+		if !errors.As(err, &deliveryErr) || deliveryErr.Kind != DeliveryErrorKindNoSession {
+			t.Fatalf("%s: error = %v, want %s", agent.provider, err, DeliveryErrorKindNoSession)
+		}
+		if got := agent.drainSteerMessages(); len(got) != 0 {
+			t.Fatalf("%s: message stranded in the steer queue: %#v", agent.provider, got)
+		}
 	}
 }

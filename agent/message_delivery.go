@@ -209,6 +209,18 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 		return result, nil
 	}
 
+	// The steer queue is drained only inside a running turn. Accepting a
+	// message into it while idle strands it: the caller reports success and no
+	// turn ever reads it (RTS 2026-09-25, a structured agent left behind by a
+	// scheduled turn swallowed the user's next messages). Refuse instead so
+	// the caller starts a new turn with the message.
+	if !a.isTurnInFlight() {
+		return result, &CodingAgentDeliveryError{
+			Kind:     DeliveryErrorKindNoSession,
+			Provider: provider,
+			Reason:   "no turn is running to take the message; start a new turn",
+		}
+	}
 	a.addSteerMessage(message)
 	result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
 	return result, nil

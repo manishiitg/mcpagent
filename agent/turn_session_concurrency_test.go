@@ -17,6 +17,7 @@ func TestSessionSendDoesNotWaitForRunningTurnLock(t *testing.T) {
 	// provider call.
 	session.runMu.Lock()
 	defer session.runMu.Unlock()
+	agent.setTurnInFlight(true) // a running turn is what drains the queued message
 
 	type outcome struct {
 		result DeliveryResult
