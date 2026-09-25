@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/mcpagent/llm"
 )
@@ -69,6 +70,37 @@ func TestDeliverUserMessageQueuesWhenTurnInFlightButNoInteractiveSession(t *test
 	got := agent.drainSteerMessages()
 	if len(got) != 1 || got[0] != "steer while API turn runs" {
 		t.Fatalf("queued messages = %#v", got)
+	}
+}
+
+func TestDeliverUserMessageBreaksStuckQueueToNewTurn(t *testing.T) {
+	// A previous queue that never drained proves its turn is hung or died
+	// without cleanup (pool miss already proved its CLI target is gone).
+	// Parking another message would strand the chat with a silent accept,
+	// so delivery resets the stale flag and reports no-target: the caller
+	// starts a fresh turn instead.
+	agent := &Agent{provider: llm.ProviderMuseCLI, modelID: "muse-spark-1.3-contributor"}
+	agent.setTurnInFlight(true)
+	agent.addSteerMessage("first, never drained")
+	agent.steerMu.Lock()
+	agent.pendingSteerEnqueuedAt[0] = time.Now().Add(-stuckSteerQueueAge - time.Minute)
+	agent.steerMu.Unlock()
+	_, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{
+		SessionID: "muse-stuck-queue",
+		Message:   "second message",
+		Intent:    UserMessageDeliveryIntentLiveInput,
+	})
+	if err == nil {
+		t.Fatal("expected no-target error when the steer queue is proven orphaned")
+	}
+	if !strings.Contains(err.Error(), "interactive session registered") {
+		t.Fatalf("error = %v, want pool-miss error", err)
+	}
+	if agent.isTurnInFlight() {
+		t.Fatal("turn flag still set after stuck-queue break")
+	}
+	if got := agent.drainSteerMessages(); len(got) != 0 {
+		t.Fatalf("queued messages = %#v, want orphaned queue dropped", got)
 	}
 }
 

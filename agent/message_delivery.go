@@ -4,9 +4,20 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/manishiitg/mcpagent/llm"
 )
+
+// stuckSteerQueueAge bounds how long a queued steer message may wait for a
+// drain. Past it, the queue is proven orphaned: no running turn will pick
+// it up (a pooled miss already proved the CLI target is gone, and drains
+// happen inside the turn loop). Delivery then breaks the stuck turn —
+// resetting its flag and reporting no-target so the caller starts a fresh
+// turn — instead of parking another message forever. Five minutes sits
+// beyond the adapter durable-ack budgets while boot races resolve in
+// seconds, so legitimate queueing never trips it.
+const stuckSteerQueueAge = 5 * time.Minute
 
 // CodingAgentDeliveryErrorKind classifies why a DeliverUserMessage call failed.
 // This is distinct from CodingAgentContinuationError, which covers provider-level
@@ -170,7 +181,25 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 				// ever saw. Without a running turn nothing drains the queue,
 				// so idle sessions keep the error and the caller starts a
 				// new turn.
+				if age, orphaned := a.oldestQueuedSteerAge(); orphaned && age >= stuckSteerQueueAge {
+					// The previous queue never drained: its turn is hung or
+					// died without cleanup, and this send's pool miss proves
+					// its CLI target is gone too. Parking another message
+					// would strand the chat with a silent accept, so break
+					// the stuck turn — reset the stale flag, drop the
+					// orphaned queue — and report no-target: the caller
+					// starts a fresh turn that re-resolves the current
+					// provider instead.
+					dropped := a.resetStuckTurnState()
+					if a.logger != nil {
+						a.logger.Warn(fmt.Sprintf("stuck steer queue: session=%s provider=%s orphaned=%s dropped=%d; turn flag reset, caller starts a new turn", req.SessionID, provider, age.Round(time.Second), dropped))
+					}
+					return result, fmt.Errorf("failed to submit live input to %s: %w", provider, err)
+				}
 				a.addSteerMessage(message)
+				if a.logger != nil {
+					a.logger.Warn(fmt.Sprintf("steer message queued for injection: session=%s provider=%s", req.SessionID, provider))
+				}
 				result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
 				return result, nil
 			}

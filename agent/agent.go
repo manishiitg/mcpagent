@@ -970,8 +970,12 @@ type Agent struct {
 
 	// Steer messages: user messages injected mid-execution between tool results and next LLM call.
 	// Written by HTTP handler (AddSteerMessage), read by agent loop (DrainSteerMessages).
-	pendingSteerMessages []string
-	steerMu              sync.Mutex
+	// pendingSteerEnqueuedAt parallels pendingSteerMessages so delivery can
+	// prove a queue is orphaned (oldest entry never drained) and break a
+	// stuck turn instead of parking messages forever.
+	pendingSteerMessages   []string
+	pendingSteerEnqueuedAt []time.Time
+	steerMu                sync.Mutex
 
 	// Tool call log: accumulated tool call entries for prompt logging.
 	// Populated by EmitTypedEvent for tool_call_start/end events (works for ALL providers
@@ -1262,6 +1266,7 @@ func (a *Agent) addSteerMessage(msg string) {
 	a.steerMu.Lock()
 	defer a.steerMu.Unlock()
 	a.pendingSteerMessages = append(a.pendingSteerMessages, msg)
+	a.pendingSteerEnqueuedAt = append(a.pendingSteerEnqueuedAt, time.Now())
 }
 
 // DrainSteerMessages returns and clears all pending steer messages.
@@ -1274,7 +1279,29 @@ func (a *Agent) drainSteerMessages() []string {
 	}
 	msgs := a.pendingSteerMessages
 	a.pendingSteerMessages = nil
+	a.pendingSteerEnqueuedAt = nil
 	return msgs
+}
+
+// oldestQueuedSteerAge reports how long the oldest queued steer message has
+// waited for a drain. False when the queue is empty.
+func (a *Agent) oldestQueuedSteerAge() (time.Duration, bool) {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	if len(a.pendingSteerEnqueuedAt) == 0 {
+		return 0, false
+	}
+	return time.Since(a.pendingSteerEnqueuedAt[0]), true
+}
+
+// resetStuckTurnState clears a turn-in-flight flag that outlived its turn
+// and drops messages queued for a drain that will never come. It returns
+// the dropped count. Call only after proving no turn can drain —
+// resetting a live turn's flag would allow overlapping turns.
+func (a *Agent) resetStuckTurnState() int {
+	dropped := len(a.drainSteerMessages())
+	a.setTurnInFlight(false)
+	return dropped
 }
 
 // GetProvider returns the provider
