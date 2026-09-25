@@ -230,3 +230,40 @@ func TestRetainedProgressIsNotHeldBehindPendingSteer(t *testing.T) {
 		t.Fatal("progress settled the turn")
 	}
 }
+
+// Thinking committed during a follow-up turn is sent as thinking, never as a
+// reply chunk, in both value and pointer form.
+func TestRetainedProgressSendsThinkingAsThinking(t *testing.T) {
+	capture := &retainedProgressCapture{events: make(chan *events.AgentEvent, 20)}
+	s := &Session{agent: &Agent{sessionID: t.Name(), listeners: []AgentEventListener{capture}}, retainedActive: true, retainedSeq: 1}
+	lifecycle := newCanonicalTurnLifecycle("")
+	index := 0
+	s.emitRetainedProgress(lifecycle, 1, llm.ProviderPiCLI, func(llm.Provider, string) []llmtypes.MessageContent {
+		return []llmtypes.MessageContent{{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{
+			llmtypes.ThinkingContent{Thinking: "Identifying session clues."},
+			&llmtypes.ThinkingContent{Thinking: "Checking the report."},
+			llmtypes.TextContent{Text: "Checking the report now."},
+		}}}
+	}, &index)
+	var thinking []string
+	var replies []string
+	for len(thinking)+len(replies) < 3 {
+		select {
+		case e := <-capture.events:
+			switch data := e.Data.(type) {
+			case *events.ConversationThinkingEvent:
+				thinking = append(thinking, data.Thinking)
+			case *events.StreamingChunkEvent:
+				replies = append(replies, data.Content)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("missing events: thinking=%q replies=%q", thinking, replies)
+		}
+	}
+	if len(thinking) != 2 || thinking[0] != "Identifying session clues." || thinking[1] != "Checking the report." {
+		t.Fatalf("thinking = %q", thinking)
+	}
+	if len(replies) != 1 || replies[0] != "Checking the report now." {
+		t.Fatalf("thinking leaked into reply chunks: %q", replies)
+	}
+}

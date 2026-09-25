@@ -42,13 +42,11 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 					content = text.Text
 				}
 			case llmtypes.ThinkingContent:
-				// Same event the live stream uses for reasoning (Cursor, Pi),
-				// so the UI folds it as thinking and bots never forward it.
-				if thinking := strings.TrimSpace(text.Thinking); thinking != "" {
-					s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), &events.ConversationThinkingEvent{
-						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-						Thinking:      thinking,
-					})
+				s.emitRetainedThinking(lifecycle, text.Thinking)
+				continue
+			case *llmtypes.ThinkingContent:
+				if text != nil {
+					s.emitRetainedThinking(lifecycle, text.Thinking)
 				}
 				continue
 			}
@@ -65,4 +63,18 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 			})
 		}
 	}
+}
+
+// emitRetainedThinking sends thinking as the same event the live stream uses
+// for reasoning (Cursor, Pi), so the UI folds it as thinking and bots never
+// forward it as a reply.
+func (s *Session) emitRetainedThinking(lifecycle *canonicalTurnLifecycle, thinking string) {
+	thinking = strings.TrimSpace(thinking)
+	if thinking == "" {
+		return
+	}
+	s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), &events.ConversationThinkingEvent{
+		BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+		Thinking:      thinking,
+	})
 }
