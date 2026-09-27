@@ -98,3 +98,19 @@ func TestMCPRoutingHostResolverReceivesExactProviderName(t *testing.T) {
 		t.Fatalf("rewrote explicit provider as %q", seen)
 	}
 }
+
+// The global clients belong to whichever agent registered last (with its
+// user's credentials); a call for a session with no connection of its own
+// never runs through them (PLAT-362 D3).
+func TestMCPSessionCallNeverUsesAnotherAgentsGlobalClient(t *testing.T) {
+	logger := loggerv2.NewNoop()
+	other := &routingClient{name: "other-users-connection"}
+	codeexec.InitRegistry(map[string]mcpclient.ClientInterface{"d3-notion": other}, nil, nil, logger)
+	h := NewExecutorHandlers("missing-config", logger)
+	if r := callRoutingTool(t, h, "d3-session-without-connections", "d3-notion", "search"); r.Success || other.calls != 0 {
+		t.Fatalf("a session call ran through another agent's global client: %+v calls=%d", r, other.calls)
+	}
+	if r := callRoutingTool(t, h, "", "d3-notion", "search"); !r.Success || other.calls != 1 {
+		t.Fatalf("sessionless calls keep the global client: %+v calls=%d", r, other.calls)
+	}
+}

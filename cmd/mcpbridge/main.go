@@ -316,6 +316,16 @@ func main() {
 
 	apiURL := os.Getenv("MCP_API_URL")
 	apiToken := os.Getenv("MCP_API_TOKEN")
+	// A launcher that must not write the token into a config file others can
+	// read (Cursor's .cursor/mcp.json lives in the agent's working folder)
+	// passes a private file holding it instead.
+	if apiToken == "" {
+		if path := strings.TrimSpace(os.Getenv("MCP_API_TOKEN_FILE")); path != "" {
+			if raw, err := os.ReadFile(filepath.Clean(path)); err == nil { //nolint:gosec // path comes from the launcher's own env, not from a model or user
+				apiToken = strings.TrimSpace(string(raw))
+			}
+		}
+	}
 	toolsJSON := os.Getenv("MCP_TOOLS")
 	virtualScopeID := os.Getenv("MCP_VIRTUAL_SCOPE_ID") // Per-agent scope for virtual tools (prevents parent/child overwrite)
 	sessionID := os.Getenv("MCP_SESSION_ID")
