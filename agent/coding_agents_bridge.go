@@ -262,6 +262,16 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	apiToken := a.apiToken
 	if apiToken == "" {
 		apiToken = os.Getenv("MCP_API_TOKEN")
+		// A consumer that authenticates the shared executor per session hands
+		// the bridge a token for the session it runs as, minted from
+		// a.sessionID at launch so it always matches the MCP_SESSION_ID the
+		// bridge sends. An agent configured with its own executor token keeps
+		// that token.
+		if mint := BridgeTokenForSession; mint != nil && strings.TrimSpace(a.sessionID) != "" {
+			if token := mint(a.sessionID); token != "" {
+				apiToken = token
+			}
+		}
 	}
 	if apiURL == "" {
 		return "", fmt.Errorf("API base URL not configured (set APIBaseURL or MCP_API_URL)")
