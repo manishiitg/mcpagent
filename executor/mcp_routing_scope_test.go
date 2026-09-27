@@ -44,12 +44,14 @@ func TestMCPRoutingNeverFallsBackToAnotherProvidersTool(t *testing.T) {
 	b := &routingClient{name: "provider-b"}
 	codeexec.InitRegistry(map[string]mcpclient.ClientInterface{"routing-a": a, "routing-b": b}, nil, map[string]string{"collision_search": "routing-a"}, logger)
 	h := NewExecutorHandlers("missing-config", logger)
+	// The global clients are never used (PLAT-362 D3), so neither provider's
+	// global client runs, and an unknown provider never reaches another one.
 	result := callRoutingTool(t, h, "", "routing-b", "collision_search")
-	if !result.Success || !strings.Contains(result.Result, "provider-b") || a.calls != 0 || b.calls != 1 {
-		t.Fatalf("wrong provider: %+v a=%d b=%d", result, a.calls, b.calls)
+	if a.calls != 0 || b.calls != 0 {
+		t.Fatalf("a global client ran: %+v a=%d b=%d", result, a.calls, b.calls)
 	}
 	result = callRoutingTool(t, h, "routing-session", "routing-missing", "collision_search")
-	if result.Success || a.calls != 0 || b.calls != 1 {
+	if result.Success || a.calls != 0 || b.calls != 0 {
 		t.Fatalf("unknown provider invoked another client: %+v", result)
 	}
 }
@@ -100,8 +102,7 @@ func TestMCPRoutingHostResolverReceivesExactProviderName(t *testing.T) {
 }
 
 // The global clients belong to whichever agent registered last (with its
-// user's credentials); a call for a session with no connection of its own
-// never runs through them (PLAT-362 D3).
+// user's credentials); no call runs through them (PLAT-362 D3).
 func TestMCPSessionCallNeverUsesAnotherAgentsGlobalClient(t *testing.T) {
 	logger := loggerv2.NewNoop()
 	other := &routingClient{name: "other-users-connection"}
@@ -110,7 +111,9 @@ func TestMCPSessionCallNeverUsesAnotherAgentsGlobalClient(t *testing.T) {
 	if r := callRoutingTool(t, h, "d3-session-without-connections", "d3-notion", "search"); r.Success || other.calls != 0 {
 		t.Fatalf("a session call ran through another agent's global client: %+v calls=%d", r, other.calls)
 	}
-	if r := callRoutingTool(t, h, "", "d3-notion", "search"); !r.Success || other.calls != 1 {
-		t.Fatalf("sessionless calls keep the global client: %+v calls=%d", r, other.calls)
+	// Nor does a call without a session (the MCP tool tester, open to any
+	// signed-in user).
+	if r := callRoutingTool(t, h, "", "d3-notion", "search"); other.calls != 0 {
+		t.Fatalf("a sessionless call ran through another agent's global client: %+v calls=%d", r, other.calls)
 	}
 }

@@ -342,16 +342,11 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 
 	// PRIORITY 2: Try codeexec global registry if no session connection found
 	if client == nil {
-		// An MCP request names its provider explicitly. A global lookup by
-		// tool name could dispatch Notion/search to Jam/search.
-		//
 		// The global clients are whichever agent registered last, with that
-		// agent's user's credentials, so a call for a session never uses them:
-		// it gets its own session's connection (above) or the shared-config
-		// cache below, never another session's connection.
-		if req.SessionID == "" {
-			client = codeexec.MCPClientForServer(req.Server)
-		}
+		// agent's user's credentials, so no call uses them: a session call
+		// gets its own session's connection (above), and any other call the
+		// shared-config cache below, never another user's connection
+		// (AgentWorks PLAT-362 D3).
 
 		// 🔒 SCOPE ENFORCEMENT: If the session registry is active (has MCP clients) but
 		// the requested server is not in scope, deny the request instead of spawning a
