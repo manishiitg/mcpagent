@@ -571,7 +571,14 @@ func CallVirtualToolWithSession(ctx context.Context, sessionID string, toolName 
 		}
 	}
 
-	// Priority 2: Fall back to global virtual tools
+	// A call for a session never falls back to the global virtual tools: they
+	// are closures over whichever agent registered last, so the fallback would
+	// run another session's search_large_output or get_api_spec.
+	if sessionID != "" {
+		return "", fmt.Errorf("virtual tool %s is not registered for session %s", toolName, sessionID)
+	}
+
+	// Priority 2: sessionless calls use the global virtual tools
 	executor, exists := registry.virtualTools[toolName]
 	if !exists {
 		return "", fmt.Errorf("virtual tool %s not found (checked session: %s)", toolName, sessionID)
