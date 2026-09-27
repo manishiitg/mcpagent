@@ -219,6 +219,11 @@ func AwaitMuseInputDurable(ctx context.Context, sessionID, message string, timeo
 	return llmproviders.AwaitMuseInputDurable(ctx, sessionID, message, timeout)
 }
 
+// AwaitAgyInputDurable confirms a live input against AGY's conversation SQLite.
+func AwaitAgyInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
+	return llmproviders.AwaitAgyInputDurable(ctx, sessionID, message, timeout)
+}
+
 // CleanupPiCLIInteractiveSessions closes all tracked Pi CLI interactive
 // sessions.
 func CleanupPiCLIInteractiveSessions(ctx context.Context) error {
