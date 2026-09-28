@@ -591,10 +591,19 @@ func convertConfig(config Config) llmproviders.Config {
 	}
 }
 
+// ConfigHook, when the host sets it (once, at start), adjusts every Config
+// before InitializeLLM uses it, including the agent's own re-initializations
+// (continuation relaunch, model switch). AgentWorks uses it to route models
+// that name no account through its server-account admission.
+var ConfigHook func(Config) Config
+
 // InitializeLLM creates and initializes an LLM based on the provider configuration
 // This function maintains backward compatibility by accepting agent_go Config
 // and converting it to llm-providers Config internally
 func InitializeLLM(config Config) (llmtypes.Model, error) {
+	if ConfigHook != nil {
+		config = ConfigHook(config)
+	}
 	// Convert agent_go Config to llm-providers Config
 	externalConfig := convertConfig(config)
 
