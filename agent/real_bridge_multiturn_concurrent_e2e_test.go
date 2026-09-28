@@ -87,7 +87,7 @@ func closePersistentInteractiveSession(tc multiTurnProviderCase, sessionID strin
 // sidecar booted in an untrusted cwd fails loudly on the trust gate, so
 // every tmux-row builder calls this for agy (peers need no trust).
 func trustAgyWorkdirForTmuxRow(workDir string) (func(), error) {
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
+	if err := os.MkdirAll(workDir, 0o750); err != nil {
 		return nil, err
 	}
 	return agycli.TrustAgyWorkspaceDir(workDir)
