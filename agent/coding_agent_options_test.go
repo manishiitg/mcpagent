@@ -10,11 +10,23 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	claudecode "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
+
+func TestRestoredAgyTransportLaunchEnablesInteractiveLane(t *testing.T) {
+	a := &Agent{provider: llm.ProviderAgyCLI, modelID: "gemini-3.8-flash-high", sessionID: "work:project:test"}
+	if err := a.prepareCodingAgentTransportLaunch(); err != nil {
+		t.Fatal(err)
+	}
+	got := metadataFromCallOptions(a.appendCodingAgentInteractiveOptions(nil))
+	if got[agycli.MetadataKeyInteractiveSessionID] != "work:project:test" || got[agycli.MetadataKeyPersistentInteractive] != "true" {
+		t.Fatalf("restored AGY launch metadata = %#v, want an owned persistent interactive session", got)
+	}
+}
 
 func TestAppendCodingAgentInteractiveOptions(t *testing.T) {
 	tests := []struct {

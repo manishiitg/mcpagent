@@ -1260,6 +1260,9 @@ func (a *Agent) startCodingAgentTransportSession(ctx context.Context) (*llmtypes
 	if a.wantsStructuredTransport() || contract.Transport != llm.CodingAgentTransportTmux {
 		return nil, fmt.Errorf("agent provider %s/%s does not expose a launchable terminal transport (%s)", a.provider, a.modelID, contract.Transport)
 	}
+	if err := a.prepareCodingAgentTransportLaunch(); err != nil {
+		return nil, err
+	}
 	primary := a.getEffectiveLLMConfig().Primary
 	if strings.TrimSpace(primary.Provider) == "" {
 		primary.Provider = string(a.provider)
@@ -1281,6 +1284,17 @@ func (a *Agent) startCodingAgentTransportSession(ctx context.Context) (*llmtypes
 		return &providerHandle, nil
 	}
 	return nil, fmt.Errorf("coding-agent transport session started without provider handle")
+}
+
+func (a *Agent) prepareCodingAgentTransportLaunch() error {
+	if strings.TrimSpace(a.sessionID) == "" {
+		return fmt.Errorf("cannot launch coding-agent transport without an owner session id")
+	}
+	// A restored agent may be prelaunched before ContinueConversation enables
+	// persistent mode. The adapter must take its interactive launch-only path;
+	// otherwise AGY routes the empty warmup to its JSON exec lane as a turn.
+	a.enablePersistentInteractiveForProvider()
+	return nil
 }
 
 func (a *Agent) drainStreamingWithoutEnd(sm *streamingManager) {

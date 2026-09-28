@@ -161,6 +161,9 @@ func claudeBridgeAllowedToolIdentifiers(additional []string, admits func(name, t
 // whenever skills are attached. All other MCP tools are discovered via
 // get_api_spec and called through HTTP API endpoints.
 func (a *Agent) buildBridgeMCPConfig() (string, error) {
+	if protect := ProtectManagedProjectionWrites; protect != nil && strings.TrimSpace(a.sessionID) != "" && strings.TrimSpace(a.codingAgentWorkingDir) != "" {
+		protect(a.sessionID, a.codingAgentWorkingDir)
+	}
 	logger := getLogger(a)
 
 	// 1. Resolve bridge binary path: explicit config, then environment, then PATH.
