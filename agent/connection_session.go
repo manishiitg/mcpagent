@@ -153,15 +153,19 @@ func NewAgentConnectionWithSession(
 			result := &results[idx]
 			result.serverName = srvName
 
-			serverConfig, err := config.GetServer(srvName)
-			if err != nil {
-				logger.Warn(fmt.Sprintf("Server %s not found in config, skipping", srvName),
-					loggerv2.Error(err))
-				result.err = err
-				return
+			serverConfig, extra := runtimeOverrides.ExtraServerConfig(srvName)
+			if !extra {
+				var err error
+				serverConfig, err = config.GetServer(srvName)
+				if err != nil {
+					logger.Warn(fmt.Sprintf("Server %s not found in config, skipping", srvName),
+						loggerv2.Error(err))
+					result.err = err
+					return
+				}
 			}
 			// Apply runtime overrides if provided for this server
-			if runtimeOverrides != nil {
+			if runtimeOverrides != nil && !extra {
 				if override, hasOverride := runtimeOverrideForServer(runtimeOverrides, srvName); hasOverride {
 					serverConfig = serverConfig.ApplyOverride(override)
 					logger.Info("Applied runtime overrides to server config",
@@ -431,6 +435,13 @@ func (a *Agent) resolveOnDemandMCPClient(ctx context.Context, serverName string,
 			}
 			// client nil, err nil — fall through to fresh connection
 		}
+	}
+	// A server outside the catalog connects from its own configuration; it is
+	// never looked up (or created) from the catalog by name.
+	if serverConfig, ok := a.runtimeOverrides.ExtraServerConfig(serverName); ok {
+		registry := mcpclient.GetSessionRegistry()
+		client, _, err := registry.GetOrCreateConnection(ctx, registry.ResolveConnectionSessionID(a.sessionID, serverName), serverName, serverConfig, logger)
+		return client, err
 	}
 	return mcpcache.GetFreshConnection(ctx, serverName, a.configPath, logger)
 }

@@ -123,18 +123,22 @@ func (h *BrokenPipeHandler) recreateViaRegistry(ctx context.Context, serverName 
 		loggerv2.String("server", serverName))
 	registry.CloseSessionServer(connSessionID, serverName)
 
-	// Load server config so we can pass it to GetOrCreateConnection.
-	config, err := mcpclient.LoadMergedConfig(h.agent.configPath, h.logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load MCP config for broken pipe recovery: %w", err)
-	}
-	serverConfig, err := config.GetServer(serverName)
-	if err != nil {
-		return nil, fmt.Errorf("server %s not found in config: %w", serverName, err)
+	// Load server config so we can pass it to GetOrCreateConnection: a server
+	// outside the catalog reconnects from its own configuration.
+	serverConfig, extra := h.agent.runtimeOverrides.ExtraServerConfig(serverName)
+	if !extra {
+		config, err := mcpclient.LoadMergedConfig(h.agent.configPath, h.logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load MCP config for broken pipe recovery: %w", err)
+		}
+		serverConfig, err = config.GetServer(serverName)
+		if err != nil {
+			return nil, fmt.Errorf("server %s not found in config: %w", serverName, err)
+		}
 	}
 
 	// Apply runtime overrides (matching connection_session.go:149-158)
-	if h.agent.runtimeOverrides != nil {
+	if h.agent.runtimeOverrides != nil && !extra {
 		if override, hasOverride := h.agent.runtimeOverrides[serverName]; hasOverride {
 			serverConfig = serverConfig.ApplyOverride(override)
 		}

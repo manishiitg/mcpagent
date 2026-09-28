@@ -115,6 +115,19 @@ type RuntimeConfigOverride struct {
 	// WorkingDir sets the subprocess working directory (stdio only). Used so tools that resolve
 	// relative paths use the desired output directory.
 	WorkingDir string `json:"working_dir,omitempty"`
+	// Server is a complete configuration for a server that is not in the
+	// catalog (a person's own server). When set, it is used as-is instead of
+	// a catalog lookup, and the fields above are ignored.
+	Server *MCPServerConfig `json:"server,omitempty"`
+}
+
+// ExtraServerConfig returns the complete configuration an override carries
+// for a server outside the catalog.
+func (o RuntimeOverrides) ExtraServerConfig(name string) (MCPServerConfig, bool) {
+	if override, ok := o[name]; ok && override.Server != nil {
+		return *override.Server, true
+	}
+	return MCPServerConfig{}, false
 }
 
 // RuntimeOverrides maps server names to their runtime configuration overrides
