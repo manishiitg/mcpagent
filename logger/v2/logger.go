@@ -104,10 +104,8 @@ func New(cfg Config) (Logger, error) {
 		}
 
 		// Use multi-writer to write to both primary output and file
-		if file != nil {
-			writer = io.MultiWriter(writer, logFile)
-		} else {
-			writer = io.MultiWriter(writer, logFile)
+		writer = io.MultiWriter(writer, logFile)
+		if file == nil {
 			file = logFile
 		}
 	}
