@@ -119,6 +119,29 @@ func agyReviewFacts(provider llm.Provider, facts map[string]any) map[string]any 
 	return facts
 }
 
+// AGY's alpha sidecar exposes live terminal frames, but its conversation DB
+// yields assistant content and tool receipts only after each turn. Review its
+// final answer and tool correctness without claiming token-level streaming.
+func realBridgeReviewCriteria(provider llm.Provider) []string {
+	if provider != llm.ProviderAgyCLI {
+		return agentreview.StreamingCriteria
+	}
+	return []string{
+		"no duplicated lines, prompt echo, internal instructions, or terminal escape codes in the answer",
+		"human-readable final answer with coherent formatting and no invented work",
+		"real intended bridge tools completed and their results agree with the answer and on-disk work",
+		"multi-turn context, native resume, session isolation, and failure behavior match the test's claim",
+		"AGY alpha delivers assistant content once at turn completion; do not describe it as token-streamed or claim the post-hoc tool events were live",
+	}
+}
+
+func realBridgeReviewSummary(provider llm.Provider, standard, agyAlpha string) string {
+	if provider == llm.ProviderAgyCLI {
+		return agyAlpha
+	}
+	return standard
+}
+
 // buildRealBridgeAgent stands up an Agent for the given provider, wired to
 // the REAL bridge: its own executor HTTP server, the real mcpbridge, and a
 // registered real execute_shell_command. t-less (usable from concurrency
@@ -379,8 +402,9 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 			t.Logf("[%s] multi-turn OK: reused tmux=%s; turn1(tools=%d content=%d) turn2(tools=%d content=%d elapsed=%s)",
 				tc.name, tmux1, t1tools, t1content, t2tools, t2content, turn2Elapsed.Round(time.Second))
 
-			rec := agentreview.Write(t, "TestRealBridgeStreamingMultiTurn_"+tc.name,
+			rec := agentreview.WriteWithCriteria(t, "TestRealBridgeStreamingMultiTurn_"+tc.name,
 				tc.name+" persistent multi-turn through the REAL bridge: turn 1 reads a build id, turn 2 reuses the session and writes it into report.md",
+				realBridgeReviewCriteria(tc.provider),
 				agyReviewFacts(tc.provider, map[string]any{
 					"provider":              tc.name,
 					"reused_tmux_session":   tmux1 == tmux2,
@@ -506,8 +530,11 @@ func TestRealBridgeStreamingConcurrent(t *testing.T) {
 				t.Logf("[%s] worker %d isolated: own=%s tools=%d", tc.name, i, workers[i].codeWord, r.tools)
 			}
 
-			rec := agentreview.Write(t, "TestRealBridgeStreamingConcurrent_"+tc.name,
-				fmt.Sprintf("%d parallel %s sessions through the REAL bridge, each reading its own build id — stream isolation", n, tc.name),
+			rec := agentreview.WriteWithCriteria(t, "TestRealBridgeStreamingConcurrent_"+tc.name,
+				realBridgeReviewSummary(tc.provider,
+					fmt.Sprintf("%d parallel %s sessions through the REAL bridge, each reading its own build id — stream isolation", n, tc.name),
+					"2 parallel AGY alpha sessions through the real bridge, each reading its own build ID — session isolation with final-only answers"),
+				realBridgeReviewCriteria(tc.provider),
 				agyReviewFacts(tc.provider, map[string]any{
 					"provider":         tc.name,
 					"worker0_answer":   strings.TrimSpace(results[0].answer),

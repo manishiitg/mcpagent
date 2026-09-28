@@ -181,8 +181,11 @@ func TestRealBridgeStreamingToolFailureRecovery(t *testing.T) {
 				assertBridgeOrWebsearchOnly(t, toolNames, collectToolLifecycle(listener.events))
 			}
 
-			rec := agentreview.Write(t, "TestRealBridgeStreamingToolFailureRecovery_"+tc.name,
-				tc.name+" recovers from a MID-STREAM bridge tool failure: first call fails, model retries the same command, stream continues, turn completes with the build id",
+			rec := agentreview.WriteWithCriteria(t, "TestRealBridgeStreamingToolFailureRecovery_"+tc.name,
+				realBridgeReviewSummary(tc.provider,
+					tc.name+" recovers from a MID-STREAM bridge tool failure: first call fails, model retries the same command, stream continues, turn completes with the build id",
+					"AGY alpha recovers from a bridge tool failure: the first call fails, it retries, and the final-only answer contains the build ID"),
+				realBridgeReviewCriteria(tc.provider),
 				agyReviewFacts(tc.provider, map[string]any{
 					"provider":               tc.name,
 					"tool_handler_calls":     nCalls,
@@ -283,8 +286,11 @@ func TestRealBridgeStreamingToolFailureGiveUp(t *testing.T) {
 				assertBridgeOrWebsearchOnly(t, toolNames, collectToolLifecycle(listener.events))
 			}
 
-			rec := agentreview.Write(t, "TestRealBridgeStreamingToolFailureGiveUp_"+tc.name,
-				tc.name+" gives up gracefully on a PERMANENTLY failing bridge tool: bounded retry, stream stays clean, turn ends without fabricating the build id",
+			rec := agentreview.WriteWithCriteria(t, "TestRealBridgeStreamingToolFailureGiveUp_"+tc.name,
+				realBridgeReviewSummary(tc.provider,
+					tc.name+" gives up gracefully on a PERMANENTLY failing bridge tool: bounded retry, stream stays clean, turn ends without fabricating the build id",
+					"AGY alpha gives up on a permanently failing bridge tool: bounded retries and a clean final-only answer without a fabricated build ID"),
+				realBridgeReviewCriteria(tc.provider),
 				agyReviewFacts(tc.provider, map[string]any{
 					"provider":             tc.name,
 					"tool_handler_calls":   nCalls,

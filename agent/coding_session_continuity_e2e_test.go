@@ -100,8 +100,9 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 				t.Fatalf("continuity FAILED across session loss: recall %q does not contain the code word %q (native --resume did not restore conversation memory)", recall, codeWord)
 			}
 
-			rec := agentreview.Write(t, "TestCodingSessionContinuityAfterLoss_"+tc.name,
+			rec := agentreview.WriteWithCriteria(t, "TestCodingSessionContinuityAfterLoss_"+tc.name,
 				tc.name+": ContinueConversation continuity survives live-session loss: a code word stated in turn 1 is recalled in turn 2 after the tmux session is killed, via native --resume off the persisted handle",
+				realBridgeReviewCriteria(tc.provider),
 				agyReviewFacts(tc.provider, map[string]any{
 					"provider":              tc.name,
 					"conversation_id":       convID,
