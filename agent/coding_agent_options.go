@@ -351,11 +351,15 @@ func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) ([]ll
 	}
 
 	// Mount the bridge through the adapter (`agy mcp add` for the turn,
-	// removed after). agy offers no scoped mount and no selective tool
-	// containment: a mounted turn runs with --dangerously-skip-permissions
-	// (natives approved alongside the bridge) and mounted turns serialize
-	// process-wide. See the contract's ToolRestrictionGaps.
+	// removed after). AGY's workspace PreToolUse hook enforces the existing
+	// Native agent tools setting even when print mode skips permissions.
+	// Different mounted tool surfaces serialize process-wide.
 	opts = append(opts, llm.WithAgyMCPConfig(bridgeConfig))
+	toolMode := codingAgentToolsMCPOnly
+	if a.nativeCodingToolsEnabled() {
+		toolMode = codingAgentToolsHybrid
+	}
+	opts = append(opts, llm.WithAgyNativeToolsMode(toolMode))
 	if a.bridgeReadyFile != "" {
 		// Hold a cold session's first prompt until the bridge reports the
 		// tools connected — same cold-turn race as cursor/muse.
@@ -367,7 +371,7 @@ func (a *Agent) appendAgyCLIIntegrationOptions(opts []llmtypes.CallOption) ([]ll
 		}
 	}
 	if a.logger != nil {
-		a.logger.Info("🌉 [AGY_CLI] Configured MCP bridge mount (global add/remove, all-tools approval, serialized turns)")
+		a.logger.Info("🌉 [AGY_CLI] Configured MCP bridge mount and native tool gate (global add/remove, serialized turns)")
 	}
 	// No structured-transport option: the exec lane is agy's default, and the
 	// persistent-interactive option (attached by the shared interactive path,

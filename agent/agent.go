@@ -3219,7 +3219,10 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 // names belong to bridgeRoutingExplicitInstructions, where they are filtered
 // through the same admission predicate used to build the provider manifest.
 func (a *Agent) codingAgentProviderRoutingPreamble() string {
-	hybrid := a.nativeCodingToolsEnabled() && (a.provider == llmproviders.ProviderMuseCLI || a.provider == llmproviders.ProviderClaudeCode || a.provider == llmproviders.ProviderCodexCLI || a.provider == llmproviders.ProviderCursorCLI)
+	hybrid := a.nativeCodingToolsEnabled() && (a.provider == llmproviders.ProviderMuseCLI || a.provider == llmproviders.ProviderClaudeCode || a.provider == llmproviders.ProviderCodexCLI || a.provider == llmproviders.ProviderCursorCLI || a.provider == llmproviders.ProviderAgyCLI)
+	if a.provider == llmproviders.ProviderAgyCLI && hybrid {
+		return "IMPORTANT: Your native file read, file search, web search, and URL read tools are enabled. Native commands, file writes, browser actuation, and subagents are disabled. Use the declared MCP bridge tools for those actions. Call only exact declared bridge tool names."
+	}
 	if a.provider == llmproviders.ProviderMuseCLI && !hybrid {
 		return "IMPORTANT: Use native web_search and the declared MCP bridge tools for work. Native file, shell, memory, scheduling, goal, workflow, and subagent tools are restricted; do not attempt them even if listed. Muse internal session controls may bypass its restriction hook, but they are not a substitute for platform tools. Use platform tools for user questions and task coordination. Call only exact declared bridge tool names."
 	}

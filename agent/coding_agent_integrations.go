@@ -69,11 +69,10 @@ const (
 // legacy name, ignored where unknown.
 const claudeHybridNativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,TaskCreate,TaskGet,TaskUpdate,TaskList,TodoWrite"
 
-// nativeCodingToolsEnabled reports hybrid mode: native READ tools, todos and
-// subagents for CLIs with a proven read-only restriction (Claude Code, Muse).
-// Native writes are never enabled in any mode. Pi stays bridge-only until it
-// has its own read-only restriction and live test. Codex's hybrid is its native shell
-// inside its OS-enforced read-only sandbox.
+// nativeCodingToolsEnabled reports hybrid mode. Each CLI admits its proven
+// native subset: AGY uses a PreToolUse read/search gate; Claude and Muse also
+// support more built-ins. Pi stays bridge-only until it has a restriction and
+// live proof. Codex's native shell runs in its read-only sandbox.
 func (a *Agent) nativeCodingToolsEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(a.codingAgentToolsMode)) {
 	case codingAgentToolsHybrid:

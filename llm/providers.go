@@ -350,6 +350,11 @@ func WithAgyMCPConfig(config string) llmtypes.CallOption {
 	return llmproviders.WithAgyMCPConfig(config)
 }
 
+// WithAgyNativeToolsMode selects AGY's MCP-only or native read/search mode.
+func WithAgyNativeToolsMode(mode string) llmtypes.CallOption {
+	return llmproviders.WithAgyNativeToolsMode(mode)
+}
+
 // WithMuseToolAllowlist installs best-effort restrictions on unlisted native
 // calls reaching PreToolUse. Internal session controls may bypass that hook.
 // Separately mounted MCP tools remain available.

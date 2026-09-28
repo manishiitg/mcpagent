@@ -13,6 +13,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -985,6 +986,24 @@ func TestHybridCodingProviderAutoOptions(t *testing.T) {
 		}
 		if got[codexcli.MetadataKeySandbox] != "read-only" {
 			t.Fatalf("hybrid Codex sandbox = %#v, want read-only (no native writes)", got[codexcli.MetadataKeySandbox])
+		}
+	})
+
+	t.Run("AGY", func(t *testing.T) {
+		for _, mode := range []string{codingAgentToolsMCPOnly, codingAgentToolsHybrid} {
+			agent := bridgeTestAgent()
+			agent.codingAgentToolsMode = mode
+			opts, err := agent.appendAgyCLIIntegrationOptions(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := metadataFromCallOptions(opts)
+			if got[agycli.MetadataKeyNativeToolsMode] != mode {
+				t.Fatalf("AGY mode = %#v, want %q", got[agycli.MetadataKeyNativeToolsMode], mode)
+			}
+			if got[agycli.MetadataKeyMCPConfig] == nil {
+				t.Fatal("AGY lost the MCP bridge while selecting native tool mode")
+			}
 		}
 	})
 }
