@@ -21,6 +21,12 @@ import (
 //	WWW-Authenticate: Bearer resource_metadata="https://server.example.com/.well-known/oauth-protected-resource"
 //	Link: <https://auth.example.com/token>; rel="token_endpoint"
 func DiscoverFromResponse(resp *http.Response) (*OAuthEndpoints, error) {
+	return Discoverer{}.DiscoverFromResponse(resp)
+}
+
+// DiscoverFromResponse follows a 401's WWW-Authenticate to the protected
+// resource and authorization server metadata with d's HTTP client.
+func (d Discoverer) DiscoverFromResponse(resp *http.Response) (*OAuthEndpoints, error) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		return nil, fmt.Errorf("expected 401 response, got %d", resp.StatusCode)
 	}
@@ -45,13 +51,13 @@ func DiscoverFromResponse(resp *http.Response) (*OAuthEndpoints, error) {
 	resourceMetadataURL := extractResourceMetadata(authHeader)
 	if resourceMetadataURL != "" {
 		// Fetch the protected resource metadata
-		resourceMetadata, err := FetchProtectedResourceMetadata(resourceMetadataURL)
+		resourceMetadata, err := d.FetchProtectedResourceMetadata(resourceMetadataURL)
 		if err == nil && len(resourceMetadata.AuthorizationServers) > 0 {
 			// Use the first authorization server
 			authServerURL := resourceMetadata.AuthorizationServers[0]
 
 			// Discover endpoints from the authorization server
-			discoveredEndpoints, _, err := DiscoverFromAuthorizationServer(authServerURL)
+			discoveredEndpoints, _, err := d.DiscoverFromAuthorizationServer(authServerURL)
 			if err == nil && discoveredEndpoints != nil {
 				// Propagate resource and scopes from Protected Resource Metadata
 				discoveredEndpoints.Resource = resourceMetadata.Resource

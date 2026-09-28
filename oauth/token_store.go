@@ -57,6 +57,23 @@ func ReadTokenFile(path string) ([]byte, error) {
 	return data, nil
 }
 
+// WriteTokenFile writes a credential file (a token, a client registration)
+// owner-only, sealing it when a sealer claims the path.
+func WriteTokenFile(path string, data []byte) error {
+	path = ExpandTokenPath(path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if sealer := sealerFor(path); sealer != nil {
+		sealed, err := sealer.Seal(path, data)
+		if err != nil {
+			return err
+		}
+		data = sealed
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
 // TokenStore manages persistent storage of OAuth tokens
 type TokenStore struct {
 	filePath string
