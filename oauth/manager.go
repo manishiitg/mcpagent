@@ -14,6 +14,7 @@ import (
 	"golang.org/x/oauth2"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/netguard"
 )
 
 // Manager orchestrates the OAuth 2.1 authentication flow
@@ -61,6 +62,18 @@ func NewManager(cfg *OAuthConfig, logger loggerv2.Logger) *Manager {
 	}
 }
 
+// requestContext is ctx with the HTTP client every token request must use:
+// the public-only client for a PublicOnly config, else ctx unchanged.
+func (m *Manager) requestContext(ctx context.Context) (context.Context, error) {
+	if !m.config.PublicOnly {
+		return ctx, nil
+	}
+	if err := netguard.CheckURL(m.oauth2Config.Endpoint.TokenURL, false); err != nil {
+		return nil, fmt.Errorf("token endpoint refused: %w", err)
+	}
+	return context.WithValue(ctx, oauth2.HTTPClient, netguard.Client(30*time.Second)), nil
+}
+
 // UpdateEndpoints updates the OAuth endpoints (used after auto-discovery)
 func (m *Manager) UpdateEndpoints(authURL, tokenURL string) {
 	m.config.AuthURL = authURL
@@ -74,6 +87,13 @@ func (m *Manager) GenerateAuthURL() (state string, authURL string, err error) {
 	// Validate configuration
 	if err := m.config.Validate(); err != nil {
 		return "", "", err
+	}
+	// A user-supplied server's authorization URL is opened in the person's
+	// browser: https only, never javascript:, data: or an internal host.
+	if m.config.PublicOnly {
+		if err := netguard.CheckURL(m.oauth2Config.Endpoint.AuthURL, true); err != nil {
+			return "", "", fmt.Errorf("authorization URL refused: %w", err)
+		}
 	}
 
 	// Generate state for CSRF protection
@@ -122,7 +142,11 @@ func (m *Manager) ExchangeCodeForToken(ctx context.Context, code string) (*oauth
 		tokenOptions = append(tokenOptions, oauth2.SetAuthURLParam("resource", m.config.Resource))
 	}
 
-	token, err := m.oauth2Config.Exchange(ctx, code, tokenOptions...)
+	reqCtx, reqErr := m.requestContext(ctx)
+	if reqErr != nil {
+		return nil, reqErr
+	}
+	token, err := m.oauth2Config.Exchange(reqCtx, code, tokenOptions...)
 	if err != nil {
 		m.logger.Error("Token exchange HTTP request failed", err,
 			loggerv2.String("token_url", m.oauth2Config.Endpoint.TokenURL))
@@ -274,7 +298,11 @@ func (m *Manager) StartAuthFlow(ctx context.Context) (*oauth2.Token, error) {
 		tokenOptions = append(tokenOptions, oauth2.SetAuthURLParam("resource", m.config.Resource))
 	}
 
-	token, err := m.oauth2Config.Exchange(ctx, code, tokenOptions...)
+	reqCtx, reqErr := m.requestContext(ctx)
+	if reqErr != nil {
+		return nil, reqErr
+	}
+	token, err := m.oauth2Config.Exchange(reqCtx, code, tokenOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCodeExchange, err)
 	}
@@ -295,7 +323,11 @@ func (m *Manager) StartAuthFlow(ctx context.Context) (*oauth2.Token, error) {
 
 // refreshToken refreshes an expired token using the refresh token
 func (m *Manager) refreshToken(ctx context.Context, token *oauth2.Token) (*oauth2.Token, error) {
-	tokenSource := m.oauth2Config.TokenSource(ctx, token)
+	reqCtx, err := m.requestContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tokenSource := m.oauth2Config.TokenSource(reqCtx, token)
 	newToken, err := tokenSource.Token()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTokenExpired, err)

@@ -3,6 +3,7 @@ package mcpclient
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
@@ -12,9 +13,16 @@ import (
 
 // HTTPManager provides simple HTTP connection management
 type HTTPManager struct {
-	url     string
-	headers map[string]string
-	logger  loggerv2.Logger
+	url        string
+	headers    map[string]string
+	logger     loggerv2.Logger
+	httpClient *http.Client // nil: the transport's default client
+}
+
+// WithHTTPClient sets the HTTP client every request uses.
+func (h *HTTPManager) WithHTTPClient(client *http.Client) *HTTPManager {
+	h.httpClient = client
+	return h
 }
 
 // NewHTTPManager creates a new HTTP manager
@@ -34,6 +42,9 @@ func (h *HTTPManager) CreateClient() (*client.Client, error) {
 	// Add headers if provided
 	if len(h.headers) > 0 {
 		options = append(options, transport.WithHTTPHeaders(h.headers))
+	}
+	if h.httpClient != nil {
+		options = append(options, transport.WithHTTPBasicClient(h.httpClient))
 	}
 
 	// Create StreamableHTTP transport

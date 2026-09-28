@@ -94,6 +94,12 @@ type MCPServerConfig struct {
 	Headers map[string]string `json:"headers,omitempty"`
 	// OAuth configuration
 	OAuth *oauth.OAuthConfig `json:"oauth,omitempty"`
+	// PublicOnly marks a user-supplied server (a personal MCP server). It is
+	// serialized so no copy of the config can drop it: the server must be
+	// remote (http/sse, https URL), and every request -- discovery, the MCP
+	// transport, OAuth -- goes through a public-only client (netguard), so the
+	// server cannot make the platform reach its own network.
+	PublicOnly bool `json:"public_only,omitempty"`
 }
 
 // RuntimeConfigOverride allows runtime modification of MCP server configuration

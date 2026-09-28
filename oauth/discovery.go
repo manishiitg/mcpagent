@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -206,10 +207,59 @@ type ProtectedResourceMetadata struct {
 	ScopesSupported      []string `json:"scopes_supported,omitempty"`
 }
 
+// Discoverer runs OAuth discovery and registration with one HTTP client. The
+// zero value uses http.DefaultClient; a user-supplied server (a personal MCP
+// server) passes a public-only client (netguard) so discovery, metadata and
+// registration can never reach the platform's own network.
+type Discoverer struct {
+	Client *http.Client
+}
+
+// maxDiscoveryBody bounds a metadata or registration response.
+const maxDiscoveryBody = 1 << 20
+
+func (d Discoverer) client() *http.Client {
+	if d.Client != nil {
+		return d.Client
+	}
+	return http.DefaultClient
+}
+
+func (d Discoverer) get(u string) (*http.Response, error) { return d.client().Get(u) }
+
+func (d Discoverer) post(u, contentType string, body io.Reader) (*http.Response, error) {
+	return d.client().Post(u, contentType, body)
+}
+
+// DiscoverFromWellKnown is Discoverer{}.DiscoverFromWellKnown.
+func DiscoverFromWellKnown(serverURL string) (*OAuthEndpoints, error) {
+	return Discoverer{}.DiscoverFromWellKnown(serverURL)
+}
+
+// FetchProtectedResourceMetadata is Discoverer{}.FetchProtectedResourceMetadata.
+func FetchProtectedResourceMetadata(resourceMetadataURL string) (*ProtectedResourceMetadata, error) {
+	return Discoverer{}.FetchProtectedResourceMetadata(resourceMetadataURL)
+}
+
+// DiscoverFromAuthorizationServer is Discoverer{}.DiscoverFromAuthorizationServer.
+func DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *AuthServerMetadata, error) {
+	return Discoverer{}.DiscoverFromAuthorizationServer(authServerURL)
+}
+
+// FetchAuthServerMetadata is Discoverer{}.FetchAuthServerMetadata.
+func FetchAuthServerMetadata(serverURL string) (*AuthServerMetadata, error) {
+	return Discoverer{}.FetchAuthServerMetadata(serverURL)
+}
+
+// RegisterClient is Discoverer{}.RegisterClient.
+func RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrationResponse, error) {
+	return Discoverer{}.RegisterClient(registrationEndpoint, redirectURI)
+}
+
 // DiscoverFromWellKnown attempts to discover OAuth endpoints using RFC 8414
 // (OAuth 2.0 Authorization Server Metadata) from the server's base URL
-func DiscoverFromWellKnown(serverURL string) (*OAuthEndpoints, error) {
-	metadata, err := FetchAuthServerMetadata(serverURL)
+func (d Discoverer) DiscoverFromWellKnown(serverURL string) (*OAuthEndpoints, error) {
+	metadata, err := d.FetchAuthServerMetadata(serverURL)
 	if err != nil {
 		return nil, err
 	}
@@ -223,9 +273,9 @@ func DiscoverFromWellKnown(serverURL string) (*OAuthEndpoints, error) {
 
 // FetchProtectedResourceMetadata fetches the OAuth 2.0 Protected Resource Metadata (RFC 9728)
 // from the given resource_metadata URL
-func FetchProtectedResourceMetadata(resourceMetadataURL string) (*ProtectedResourceMetadata, error) {
+func (d Discoverer) FetchProtectedResourceMetadata(resourceMetadataURL string) (*ProtectedResourceMetadata, error) {
 	//nolint:gosec // G107: Discovery URLs are dynamic by design
-	resp, err := http.Get(resourceMetadataURL)
+	resp, err := d.get(resourceMetadataURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch protected resource metadata: %w", err)
 	}
@@ -236,7 +286,7 @@ func FetchProtectedResourceMetadata(resourceMetadataURL string) (*ProtectedResou
 	}
 
 	var metadata ProtectedResourceMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiscoveryBody)).Decode(&metadata); err != nil {
 		return nil, fmt.Errorf("failed to parse protected resource metadata: %w", err)
 	}
 
@@ -249,7 +299,7 @@ func FetchProtectedResourceMetadata(resourceMetadataURL string) (*ProtectedResou
 
 // DiscoverFromAuthorizationServer discovers OAuth endpoints from an authorization server URL
 // by trying both path-specific and root-level well-known endpoints
-func DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *AuthServerMetadata, error) {
+func (d Discoverer) DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *AuthServerMetadata, error) {
 	// Parse the auth server URL
 	parsedURL, err := url.Parse(authServerURL)
 	if err != nil {
@@ -261,7 +311,7 @@ func DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *Au
 	// Try path-specific well-known first (e.g., https://auth.example.com/.well-known/oauth-authorization-server/twitter)
 	if parsedURL.Path != "" && parsedURL.Path != "/" {
 		pathSpecificURL := baseURL + "/.well-known/oauth-authorization-server" + parsedURL.Path
-		metadata, err := fetchAuthServerMetadataFromURL(pathSpecificURL)
+		metadata, err := d.fetchAuthServerMetadataFromURL(pathSpecificURL)
 		if err == nil {
 			return &OAuthEndpoints{
 				Issuer:               metadata.Issuer,
@@ -274,7 +324,7 @@ func DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *Au
 
 	// Try root well-known
 	rootURL := baseURL + "/.well-known/oauth-authorization-server"
-	metadata, err := fetchAuthServerMetadataFromURL(rootURL)
+	metadata, err := d.fetchAuthServerMetadataFromURL(rootURL)
 	if err == nil {
 		return &OAuthEndpoints{
 			Issuer:               metadata.Issuer,
@@ -286,7 +336,7 @@ func DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *Au
 
 	// Try OpenID Connect Discovery fallback
 	oidcURL := baseURL + "/.well-known/openid-configuration"
-	metadata, err = fetchAuthServerMetadataFromURL(oidcURL)
+	metadata, err = d.fetchAuthServerMetadataFromURL(oidcURL)
 	if err == nil {
 		return &OAuthEndpoints{
 			Issuer:               metadata.Issuer,
@@ -306,9 +356,9 @@ func DiscoverFromAuthorizationServer(authServerURL string) (*OAuthEndpoints, *Au
 }
 
 // fetchAuthServerMetadataFromURL fetches auth server metadata from a specific URL
-func fetchAuthServerMetadataFromURL(wellKnownURL string) (*AuthServerMetadata, error) {
+func (d Discoverer) fetchAuthServerMetadataFromURL(wellKnownURL string) (*AuthServerMetadata, error) {
 	//nolint:gosec // G107: Discovery URLs are dynamic by design
-	resp, err := http.Get(wellKnownURL)
+	resp, err := d.get(wellKnownURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch well-known metadata: %w", err)
 	}
@@ -319,7 +369,7 @@ func fetchAuthServerMetadataFromURL(wellKnownURL string) (*AuthServerMetadata, e
 	}
 
 	var metadata AuthServerMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiscoveryBody)).Decode(&metadata); err != nil {
 		return nil, fmt.Errorf("failed to parse metadata: %w", err)
 	}
 
@@ -331,7 +381,7 @@ func fetchAuthServerMetadataFromURL(wellKnownURL string) (*AuthServerMetadata, e
 }
 
 // FetchAuthServerMetadata fetches the OAuth 2.0 Authorization Server Metadata
-func FetchAuthServerMetadata(serverURL string) (*AuthServerMetadata, error) {
+func (d Discoverer) FetchAuthServerMetadata(serverURL string) (*AuthServerMetadata, error) {
 	// Parse the server URL to get the base
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {
@@ -344,7 +394,7 @@ func FetchAuthServerMetadata(serverURL string) (*AuthServerMetadata, error) {
 
 	// Try to fetch the metadata
 	//nolint:gosec // G107: Discovery URLs are dynamic by design
-	resp, err := http.Get(wellKnownURL)
+	resp, err := d.get(wellKnownURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch well-known metadata: %w", err)
 	}
@@ -357,7 +407,7 @@ func FetchAuthServerMetadata(serverURL string) (*AuthServerMetadata, error) {
 	// Parse the JSON response
 	var metadata AuthServerMetadata
 
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiscoveryBody)).Decode(&metadata); err != nil {
 		return nil, fmt.Errorf("failed to parse metadata: %w", err)
 	}
 
@@ -392,7 +442,7 @@ type ClientRegistrationResponse struct {
 }
 
 // RegisterClient performs Dynamic Client Registration (RFC 7591) to obtain a client_id
-func RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrationResponse, error) {
+func (d Discoverer) RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrationResponse, error) {
 	// Prepare registration request
 	regRequest := ClientRegistrationRequest{
 		RedirectURIs:            []string{redirectURI},
@@ -411,7 +461,7 @@ func RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrati
 
 	// Send POST request to registration endpoint
 	//nolint:gosec // G107: Discovery URLs are dynamic by design
-	resp, err := http.Post(registrationEndpoint, "application/json", bytes.NewBuffer(requestBody))
+	resp, err := d.post(registrationEndpoint, "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to send registration request: %w", err)
 	}
@@ -423,7 +473,7 @@ func RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrati
 
 	// Parse response
 	var regResponse ClientRegistrationResponse
-	if err := json.NewDecoder(resp.Body).Decode(&regResponse); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiscoveryBody)).Decode(&regResponse); err != nil {
 		return nil, fmt.Errorf("failed to parse registration response: %w", err)
 	}
 

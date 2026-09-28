@@ -14,6 +14,7 @@ import (
 	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/netguard"
 	"github.com/manishiitg/mcpagent/oauth"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -77,6 +78,10 @@ func NewWithRetryConfig(config MCPServerConfig, retryConfig RetryConfig, logger 
 
 // Connect establishes a connection to the MCP server with retry logic
 func (c *Client) Connect(ctx context.Context) error {
+	// A refused public-only server is refused once, never retried.
+	if err := c.checkPublicOnly(); err != nil {
+		return err
+	}
 	maxRetries := 3
 	baseDelay := time.Second
 
@@ -168,6 +173,19 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
 
+	// A user-supplied server is remote-only with a public https URL, and
+	// every request goes through the public-only client.
+	var guarded *http.Client
+	if c.config.PublicOnly {
+		if err := c.checkPublicOnly(); err != nil {
+			return err
+		}
+		guarded = netguard.Client(0)
+		if c.config.OAuth != nil {
+			c.config.OAuth.PublicOnly = true
+		}
+	}
+
 	// Handle OAuth authentication if configured
 	if c.config.OAuth != nil {
 		if err := c.setupOAuthAuth(ctx); err != nil {
@@ -184,6 +202,9 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	case ProtocolSSE:
 		// Use SSE transport
 		sseManager := NewSSEManager(c.config.URL, c.config.Headers, c.logger)
+		if guarded != nil {
+			sseManager.WithHTTPClient(guarded)
+		}
 		mcpClient, err = sseManager.Connect(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to create SSE MCP client: %w", err)
@@ -192,6 +213,9 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	case ProtocolHTTP:
 		// Use HTTP transport
 		httpManager := NewHTTPManager(c.config.URL, c.config.Headers, c.logger)
+		if guarded != nil {
+			httpManager.WithHTTPClient(guarded)
+		}
 		mcpClient, err = httpManager.Connect(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to create HTTP MCP client: %w", err)
@@ -826,6 +850,30 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 	return results
 }
 
+// checkPublicOnly refuses a public-only server that is not remote with a
+// public https URL; nil for every other server.
+func (c *Client) checkPublicOnly() error {
+	if !c.config.PublicOnly {
+		return nil
+	}
+	if p := c.config.GetProtocol(); p != ProtocolHTTP && p != ProtocolSSE {
+		return fmt.Errorf("public-only MCP server must be remote (http or sse), not %s", p)
+	}
+	if err := netguard.CheckURL(c.config.URL, true); err != nil {
+		return fmt.Errorf("MCP server URL refused: %w", err)
+	}
+	return nil
+}
+
+// discoveryClient is the client for OAuth discovery requests to the server:
+// public-only for a user-supplied server.
+func (c *Client) discoveryClient() *http.Client {
+	if c.config.PublicOnly {
+		return netguard.Client(30 * time.Second)
+	}
+	return http.DefaultClient
+}
+
 // setupOAuthAuth handles OAuth authentication for the client
 func (c *Client) setupOAuthAuth(ctx context.Context) error {
 	// Initialize OAuth manager if not already done
@@ -863,7 +911,7 @@ func (c *Client) setupOAuthAuth(ctx context.Context) error {
 // discoverOAuthEndpoints auto-discovers OAuth endpoints from 401 response
 func (c *Client) discoverOAuthEndpoints(ctx context.Context) error {
 	// Make a test request to trigger 401 response
-	resp, err := http.Get(c.config.URL)
+	resp, err := c.discoveryClient().Get(c.config.URL)
 	if err != nil {
 		return fmt.Errorf("failed to reach server for discovery: %w", err)
 	}
@@ -892,7 +940,7 @@ func (c *Client) discoverOAuthEndpoints(ctx context.Context) error {
 // This is the public wrapper for external use (e.g., UI)
 func (c *Client) DiscoverOAuthEndpoints(ctx context.Context) (*oauth.OAuthEndpoints, error) {
 	// Make a test request to trigger 401 response
-	resp, err := http.Get(c.config.URL)
+	resp, err := c.discoveryClient().Get(c.config.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reach server for discovery: %w", err)
 	}

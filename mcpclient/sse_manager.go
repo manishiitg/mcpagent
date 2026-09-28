@@ -3,6 +3,7 @@ package mcpclient
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
@@ -12,9 +13,16 @@ import (
 
 // SSEManager provides simple SSE connection management
 type SSEManager struct {
-	url     string
-	headers map[string]string
-	logger  loggerv2.Logger
+	url        string
+	headers    map[string]string
+	logger     loggerv2.Logger
+	httpClient *http.Client // nil: the transport's default client
+}
+
+// WithHTTPClient sets the HTTP client every request uses.
+func (s *SSEManager) WithHTTPClient(client *http.Client) *SSEManager {
+	s.httpClient = client
+	return s
 }
 
 // NewSSEManager creates a new SSE manager
@@ -34,6 +42,9 @@ func (s *SSEManager) CreateClient() (*client.Client, error) {
 	// Add headers if provided
 	if len(s.headers) > 0 {
 		options = append(options, transport.WithHeaders(s.headers))
+	}
+	if s.httpClient != nil {
+		options = append(options, transport.WithHTTPClient(s.httpClient))
 	}
 
 	// Add custom logger for better debugging

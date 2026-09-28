@@ -12,6 +12,51 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// TokenSealer encrypts token files at rest. A host registers one with
+// SetTokenSealer; it applies only to the paths it claims (Handles), so every
+// other token file keeps its plaintext format.
+type TokenSealer interface {
+	Handles(path string) bool
+	Seal(path string, plaintext []byte) ([]byte, error)
+	Open(path string, sealed []byte) ([]byte, error)
+}
+
+var (
+	tokenSealerMu sync.RWMutex
+	tokenSealer   TokenSealer
+)
+
+// SetTokenSealer installs the process-wide token sealer (nil removes it).
+func SetTokenSealer(sealer TokenSealer) {
+	tokenSealerMu.Lock()
+	defer tokenSealerMu.Unlock()
+	tokenSealer = sealer
+}
+
+func sealerFor(path string) TokenSealer {
+	tokenSealerMu.RLock()
+	defer tokenSealerMu.RUnlock()
+	if tokenSealer != nil && tokenSealer.Handles(path) {
+		return tokenSealer
+	}
+	return nil
+}
+
+// ReadTokenFile reads a token file, opening it when a sealer claims the path.
+// Callers outside this package that inspect a token file use this, never
+// os.ReadFile, so a sealed file is never parsed as JSON.
+func ReadTokenFile(path string) ([]byte, error) {
+	path = ExpandTokenPath(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: token paths come from server configuration
+	if err != nil {
+		return nil, err
+	}
+	if sealer := sealerFor(path); sealer != nil {
+		return sealer.Open(path, data)
+	}
+	return data, nil
+}
+
 // TokenStore manages persistent storage of OAuth tokens
 type TokenStore struct {
 	filePath string
@@ -44,6 +89,12 @@ func (ts *TokenStore) Save(token *oauth2.Token) error {
 		return fmt.Errorf("failed to marshal token: %w", err)
 	}
 
+	if sealer := sealerFor(ts.filePath); sealer != nil {
+		if data, err = sealer.Seal(ts.filePath, data); err != nil {
+			return fmt.Errorf("failed to seal token: %w", err)
+		}
+	}
+
 	// Write with secure permissions (owner read/write only)
 	//nolint:gosec // G306: We intentionally set 0600 permissions for security
 	if err := os.WriteFile(ts.filePath, data, 0600); err != nil {
@@ -63,8 +114,8 @@ func (ts *TokenStore) Load() (*oauth2.Token, error) {
 		return nil, ErrTokenFileNotFound
 	}
 
-	// Read file
-	data, err := os.ReadFile(ts.filePath)
+	// Read file (opened when a sealer claims the path)
+	data, err := ReadTokenFile(ts.filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read token file: %w", err)
 	}

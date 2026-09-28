@@ -24,6 +24,11 @@ type OAuthConfig struct {
 	// Security & Storage
 	UsePKCE   bool   `json:"use_pkce,omitempty"`   // Default: true (recommended)
 	TokenFile string `json:"token_file,omitempty"` // Path to cache tokens
+
+	// PublicOnly marks a user-supplied server (a personal MCP server): every
+	// OAuth request (token exchange, refresh) goes through a public-only HTTP
+	// client (netguard), and the authorization URL must be https.
+	PublicOnly bool `json:"public_only,omitempty"`
 }
 
 // SetDefaults sets default values for optional fields
