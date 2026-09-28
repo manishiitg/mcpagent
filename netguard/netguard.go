@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -90,6 +91,36 @@ func CheckURL(raw string, requireHTTPS bool) error {
 	return nil
 }
 
+// Option adjusts a client or transport. The zero configuration is the
+// strict one: public addresses only, same-origin redirects, no body cap.
+type Option func(*options)
+
+type options struct {
+	allowPrivate     bool
+	maxResponseBytes int64
+	noRedirects      bool
+}
+
+// AllowPrivate permits private and loopback destinations (a local
+// development setup). Proxies stay disabled and URL schemes are still checked.
+func AllowPrivate() Option { return func(o *options) { o.allowPrivate = true } }
+
+// MaxResponseBytes fails a response body read past n bytes.
+func MaxResponseBytes(n int64) Option { return func(o *options) { o.maxResponseBytes = n } }
+
+// NoRedirects refuses every redirect, not only cross-origin ones.
+func NoRedirects() Option { return func(o *options) { o.noRedirects = true } }
+
+func collect(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	return o
+}
+
 // control refuses any socket to a non-public address. It runs for every
 // dial attempt with the resolved address, after DNS.
 func control(_, address string, _ syscall.RawConn) error {
@@ -104,10 +135,14 @@ func control(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// Transport is an http.Transport that dials public addresses only and never
-// uses a proxy.
-func Transport() *http.Transport {
+// Transport is an http.Transport that dials public addresses only (unless
+// AllowPrivate) and never uses a proxy.
+func Transport(opts ...Option) *http.Transport {
+	o := collect(opts)
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second, Control: control}
+	if o.allowPrivate {
+		dialer.Control = nil
+	}
 	return &http.Transport{
 		Proxy:                 nil,
 		DialContext:           dialer.DialContext,
@@ -122,11 +157,19 @@ func Transport() *http.Transport {
 
 // Client returns a public-only client. timeout 0 means no overall timeout
 // (streaming transports hold responses open).
-func Client(timeout time.Duration) *http.Client {
+func Client(timeout time.Duration, opts ...Option) *http.Client {
+	o := collect(opts)
+	var transport http.RoundTripper = Transport(opts...)
+	if o.maxResponseBytes > 0 {
+		transport = limitedTransport{next: transport, limit: o.maxResponseBytes}
+	}
 	return &http.Client{
-		Transport: Transport(),
+		Transport: transport,
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if o.noRedirects {
+				return fmt.Errorf("%w: redirects are not followed (%s)", ErrBlocked, req.URL.Host)
+			}
 			if len(via) >= 5 {
 				return fmt.Errorf("%w: too many redirects", ErrBlocked)
 			}
@@ -134,10 +177,54 @@ func Client(timeout time.Duration) *http.Client {
 			if req.URL.Scheme != first.Scheme || !strings.EqualFold(req.URL.Host, first.Host) {
 				return fmt.Errorf("%w: redirect to another origin (%s)", ErrBlocked, req.URL.Host)
 			}
+			if o.allowPrivate {
+				return nil
+			}
 			return CheckURL(req.URL.String(), false)
 		},
 	}
 }
+
+// ErrResponseTooLarge is returned when a body passes MaxResponseBytes.
+var ErrResponseTooLarge = errors.New("response body exceeds the size limit")
+
+type limitedTransport struct {
+	next  http.RoundTripper
+	limit int64
+}
+
+func (t limitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(req)
+	if err != nil || resp.Body == nil {
+		return resp, err
+	}
+	resp.Body = &limitedBody{body: resp.Body, remaining: t.limit}
+	return resp, nil
+}
+
+type limitedBody struct {
+	body      io.ReadCloser
+	remaining int64
+}
+
+func (b *limitedBody) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		// One byte past the limit decides between EOF and too large.
+		var probe [1]byte
+		if n, _ := b.body.Read(probe[:]); n > 0 {
+			return 0, ErrResponseTooLarge
+		}
+		return 0, io.EOF
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.body.Read(p)
+	b.remaining -= int64(n)
+	return n, err
+}
+
+func (b *limitedBody) Close() error { return b.body.Close() }
 
 // Context attaches a public-only client for libraries (golang.org/x/oauth2)
 // that take their HTTP client from the context.

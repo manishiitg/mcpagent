@@ -2,6 +2,7 @@ package netguard
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -69,5 +70,53 @@ func TestRedirectsStayOnTheOrigin(t *testing.T) {
 		if err := check(to(target), []*http.Request{{URL: from}}); !errors.Is(err, ErrBlocked) {
 			t.Errorf("redirect to %s allowed", target)
 		}
+	}
+}
+
+func TestOptions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "/big", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte(strings.Repeat("x", 100)))
+	}))
+	defer server.Close()
+
+	if _, err := Client(0).Get(server.URL); !errors.Is(err, ErrBlocked) {
+		t.Fatalf("default client reached loopback: %v", err)
+	}
+	resp, err := Client(0, AllowPrivate()).Get(server.URL + "/big")
+	if err != nil {
+		t.Fatalf("AllowPrivate: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	resp, err = Client(0, AllowPrivate(), MaxResponseBytes(10)).Get(server.URL + "/big")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !errors.Is(readErr, ErrResponseTooLarge) {
+		t.Fatalf("body cap not enforced: %v", readErr)
+	}
+	resp, err = Client(0, AllowPrivate(), MaxResponseBytes(100)).Get(server.URL + "/big")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil || len(body) != 100 {
+		t.Fatalf("exact-size body refused: %d %v", len(body), readErr)
+	}
+
+	if _, err := Client(0, AllowPrivate(), NoRedirects()).Get(server.URL + "/redirect"); !errors.Is(err, ErrBlocked) {
+		t.Fatalf("NoRedirects followed a redirect: %v", err)
+	}
+	if resp, err := Client(0, AllowPrivate()).Get(server.URL + "/redirect"); err != nil {
+		t.Fatalf("same-origin redirect refused: %v", err)
+	} else {
+		_ = resp.Body.Close()
 	}
 }

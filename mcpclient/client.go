@@ -418,13 +418,7 @@ func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 	c.logger.Debug("About to make the actual ListTools call")
 
 	c.logger.Debug("Making ListTools call without an added timeout")
-	result, err := c.mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
-
-	if err != nil {
-		c.logger.Debug("ListTools call returned with error", loggerv2.Error(err))
-	} else {
-		c.logger.Debug("ListTools call returned successfully")
-	}
+	tools, err := listAllTools(ctx, c.mcpClient.ListTools)
 
 	listDuration := time.Since(listStartTime)
 	c.logger.Debug("ListTools call completed",
@@ -435,8 +429,34 @@ func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 		return nil, fmt.Errorf("failed to list tools: %w", err)
 	}
 
-	c.logger.Debug("Successfully listed tools", loggerv2.Int("tool_count", len(result.Tools)))
-	return result.Tools, nil
+	c.logger.Debug("Successfully listed tools", loggerv2.Int("tool_count", len(tools)))
+	return tools, nil
+}
+
+// maxToolListPages bounds tools/list pagination, so a server that keeps
+// returning a cursor cannot hold discovery forever.
+const maxToolListPages = 50
+
+// listAllTools follows tools/list pagination (nextCursor) until the server
+// stops returning a cursor, up to maxToolListPages. A server that paginates
+// would otherwise show only its first page of tools.
+func listAllTools(ctx context.Context, list func(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error)) ([]mcp.Tool, error) {
+	var tools []mcp.Tool
+	var cursor mcp.Cursor
+	for page := 0; page < maxToolListPages; page++ {
+		request := mcp.ListToolsRequest{}
+		request.Params.Cursor = cursor
+		result, err := list(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, result.Tools...)
+		if result.NextCursor == "" || result.NextCursor == cursor {
+			return tools, nil
+		}
+		cursor = result.NextCursor
+	}
+	return tools, fmt.Errorf("tools/list returned more than %d pages", maxToolListPages)
 }
 
 // CallTool invokes a tool with the given arguments. If the transport died
