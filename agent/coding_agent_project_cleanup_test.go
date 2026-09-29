@@ -7,6 +7,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/projectfile"
 )
 
 // TestCleanupProjectedArtifactsOnClose is the deterministic (no live CLI) proof
@@ -29,6 +30,9 @@ func TestCleanupProjectedArtifactsOnClose(t *testing.T) {
 		t.Helper()
 		dir := filepath.Join(workdir, subdir, name)
 		writeFile(t, filepath.Join(dir, "SKILL.md"), "# "+name+"\ncontent\n")
+		if name == "managed-skill" {
+			writeFile(t, filepath.Join(dir, projectfile.SkillMarkerFile), "x")
+		}
 		return dir
 	}
 
@@ -38,10 +42,10 @@ func TestCleanupProjectedArtifactsOnClose(t *testing.T) {
 		promptFile   string // "" => provider keeps prompt in an adapter-wiped dir; no managed prompt to assert
 		promptBody   string // managed body (with marker) written when promptFile != ""
 	}{
-		{llm.ProviderClaudeCode, ".claude/skills", "CLAUDE.md", "<!-- mlp-session-instructions -->\nyou are managed\n"},
-		{llm.ProviderCodexCLI, ".agents/skills", "AGENTS.md", "<!-- mlp-session-instructions -->\nyou are managed\n"},
+		{llm.ProviderClaudeCode, ".claude/skills", "CLAUDE.md", "<!-- BEGIN agentworks-session-instructions created=true -->\nyou are managed\n<!-- END agentworks-session-instructions -->\n"},
+		{llm.ProviderCodexCLI, ".agents/skills", "AGENTS.md", "<!-- BEGIN agentworks-session-instructions created=true -->\nyou are managed\n<!-- END agentworks-session-instructions -->\n"},
 		{llm.ProviderCursorCLI, ".cursor/skills", "", ""},
-		{llm.ProviderPiCLI, ".pi/skills", ".pi/APPEND_SYSTEM.md", "# MCP Agent System Instructions\n\nyou are managed\n"},
+		{llm.ProviderPiCLI, ".pi/skills", ".pi/APPEND_SYSTEM.md", "<!-- BEGIN agentworks-session-instructions created=true -->\nyou are managed\n<!-- END agentworks-session-instructions -->\n"},
 	}
 
 	for _, tc := range cases {
@@ -99,6 +103,9 @@ func TestCleanupProjectedArtifactsPreservesUnmarkedPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, projectfile.SkillMarkerFile), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

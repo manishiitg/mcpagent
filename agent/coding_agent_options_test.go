@@ -15,6 +15,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/projectfile"
 )
 
 func TestRestoredAgyTransportLaunchEnablesInteractiveLane(t *testing.T) {
@@ -227,6 +228,8 @@ func TestAppendCodingAgentWorkingDirOptionRemovesInactiveProviderDirsInWorkflow(
 	}
 }
 
+// Only what a session projected is removed from an inactive provider's folder;
+// the project's own files (a Cursor mcp.json with the user's servers) stay.
 func TestCleanupInactiveCodingAgentArtifactsRemovesInactiveCursorDir(t *testing.T) {
 	workDir := t.TempDir()
 	cursorDir := filepath.Join(workDir, ".cursor")
@@ -244,11 +247,17 @@ func TestCleanupInactiveCodingAgentArtifactsRemovesInactiveCursorDir(t *testing.
 	if err := os.WriteFile(filepath.Join(cursorDir, "skills", "system-tools", "SKILL.md"), []byte("generated"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(cursorDir, "skills", "system-tools", projectfile.SkillMarkerFile), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	cleanupInactiveCodingAgentProjectArtifacts(workDir, llm.ProviderClaudeCode)
 
-	if _, err := os.Stat(cursorDir); !os.IsNotExist(err) {
-		t.Fatalf("inactive cursor dir should be removed, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(cursorDir, "skills", "system-tools")); !os.IsNotExist(err) {
+		t.Fatalf("a projected skill should be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(userMCP); err != nil {
+		t.Fatalf("the project's own .cursor/mcp.json must survive: %v", err)
 	}
 }
 

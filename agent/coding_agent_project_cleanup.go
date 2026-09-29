@@ -7,6 +7,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/projectfile"
 )
 
 // projectedSkillLocation describes where a provider projects attached skills and
@@ -58,17 +59,20 @@ func cleanupProjectedArtifactsOnClose(workingDir string, provider llm.Provider, 
 			if s == nil || strings.TrimSpace(s.Name) == "" {
 				continue
 			}
-			removeManagedDir(filepath.Join(base, s.Name))
+			// Only a folder this session wrote (it holds the marker).
+			skill := filepath.Join(base, s.Name)
+			if _, err := os.Stat(filepath.Join(skill, projectfile.SkillMarkerFile)); err == nil {
+				_ = os.RemoveAll(skill)
+			}
 		}
 		pruneDirs = append(pruneDirs, base, filepath.Dir(base)) // e.g. .claude/skills, then .claude
 	}
 	if loc.promptFile != "" && loc.promptMarker != "" {
 		promptPath := filepath.Join(workingDir, loc.promptFile)
-		// #nosec G304 - path is built from the configured coding-agent working directory.
-		body, readErr := os.ReadFile(promptPath)
-		if readErr == nil && strings.Contains(string(body), loc.promptMarker) {
-			_ = os.Remove(promptPath)
-		}
+		// The adapter already released this session's block; this strips a
+		// leftover one and does nothing while another session still holds it.
+		projectfile.StripStale(promptPath)
+		removeManagedInstructionFile(promptPath)
 		if dir := filepath.Dir(promptPath); dir != workingDir {
 			pruneDirs = append(pruneDirs, dir) // e.g. .pi (only if now empty)
 		}
@@ -83,36 +87,48 @@ func cleanupInactiveCodingAgentProjectArtifacts(workingDir string, activeProvide
 	}
 	active := string(activeProvider)
 
-	if active != string(llm.ProviderClaudeCode) {
-		removeManagedInstructionFile(filepath.Join(workingDir, "CLAUDE.md"))
-		removeManagedDir(filepath.Join(workingDir, ".claude"))
+	// Instruction files carry our marked block only while a session holds
+	// them; a block left behind by a crash is stripped, the project's own
+	// text never is. A file from the old format (whole file ours) is removed.
+	for _, file := range []string{"CLAUDE.md", "AGENTS.md", filepath.Join(".pi", "APPEND_SYSTEM.md")} {
+		path := filepath.Join(workingDir, file)
+		projectfile.StripStale(path)
+		removeManagedInstructionFile(path)
 	}
-	// AGENTS.md is shared by codex and muse: spare it when either is active.
+	removeManagedFile(filepath.Join(workingDir, ".cursor", "rules", "mlp-system.mdc"))
+
+	// Skills a session projected carry an ownership marker; remove only those
+	// (never a project's own skills, settings, commands or rules).
+	skillDirs := map[llm.Provider]string{
+		llm.ProviderClaudeCode: filepath.Join(".claude", "skills"),
+		llm.ProviderCursorCLI:  filepath.Join(".cursor", "skills"),
+		llm.ProviderPiCLI:      filepath.Join(".pi", "skills"),
+	}
+	for provider, dir := range skillDirs {
+		if provider != activeProvider {
+			removeManagedSkills(filepath.Join(workingDir, dir))
+		}
+	}
+	// .agents/skills is shared by codex and muse: spare it when either is active.
 	if active != string(llm.ProviderCodexCLI) && active != string(llm.ProviderMuseCLI) {
-		removeManagedInstructionFile(filepath.Join(workingDir, "AGENTS.md"))
+		removeManagedSkills(filepath.Join(workingDir, ".agents", "skills"))
 	}
-	if active != string(llm.ProviderCodexCLI) {
-		removeManagedDir(filepath.Join(workingDir, ".codex"))
-	}
-	removeManagedInstructionFile(filepath.Join(workingDir, "GEMINI.md"))
-	removeManagedDir(filepath.Join(workingDir, ".gemini"))
-	removeManagedDir(filepath.Join(workingDir, ".gemini-main"))
+
+	// Generated configuration is recognised by its content, never by folder.
 	if active != string(llm.ProviderCursorCLI) {
-		removeManagedDir(filepath.Join(workingDir, ".cursor"))
+		for _, file := range []string{"cli.json", "hooks.json", "mcp.json"} {
+			removeManagedFileIfGenerated(filepath.Join(workingDir, ".cursor", file))
+		}
+		removeManagedFile(filepath.Join(workingDir, ".cursor", "hooks", "mlp-deny-builtin.sh"))
 	}
 	if active != string(llm.ProviderPiCLI) {
-		removeManagedDir(filepath.Join(workingDir, ".pi"))
+		removeManagedFileIfGenerated(filepath.Join(workingDir, ".pi", "mcp.json"))
 	}
-	// .agents/skills is shared by codex and muse: spare the tree when either
-	// is active (per-skill dirs are still removed by
-	// cleanupProjectedArtifactsOnClose for the active provider's own skills).
-	if active != string(llm.ProviderCodexCLI) && active != string(llm.ProviderMuseCLI) {
-		removeManagedDir(filepath.Join(workingDir, ".agents"))
+	if active != string(llm.ProviderCodexCLI) {
+		removeManagedFileIfGenerated(filepath.Join(workingDir, ".codex", "config.toml"))
 	}
-	// Antigravity CLI (Agy) is no longer a supported provider, so its
-	// artifacts under .agents/ (which Codex CLI also uses, for
-	// .agents/skills/ — the cross-provider skills convention) are always
-	// stale and safe to remove unconditionally.
+	// Antigravity CLI (Agy) is no longer a supported provider; its generated
+	// files under .agents/ are stale and recognised by content or fixed name.
 	removeManagedFile(filepath.Join(workingDir, ".agents", "rules", "mlp-system.md"))
 	removeManagedFileIfGenerated(filepath.Join(workingDir, ".agents", "mcp_config.json"))
 	removeManagedFileIfGenerated(filepath.Join(workingDir, ".agents", "hooks.json"))
@@ -122,7 +138,34 @@ func cleanupInactiveCodingAgentProjectArtifacts(workingDir string, activeProvide
 		filepath.Join(workingDir, ".agents", "rules"),
 		filepath.Join(workingDir, ".agents", "skills"),
 		filepath.Join(workingDir, ".agents"),
+		filepath.Join(workingDir, ".claude", "skills"),
+		filepath.Join(workingDir, ".claude"),
+		filepath.Join(workingDir, ".cursor", "rules"),
+		filepath.Join(workingDir, ".cursor", "hooks"),
+		filepath.Join(workingDir, ".cursor", "skills"),
+		filepath.Join(workingDir, ".cursor"),
+		filepath.Join(workingDir, ".pi", "skills"),
+		filepath.Join(workingDir, ".pi"),
+		filepath.Join(workingDir, ".codex"),
 	)
+}
+
+// removeManagedSkills removes the skill folders under dir that a session
+// projected (they hold the ownership marker), and nothing else.
+func removeManagedSkills(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skill := filepath.Join(dir, entry.Name())
+		if _, err := os.Stat(filepath.Join(skill, projectfile.SkillMarkerFile)); err == nil {
+			_ = os.RemoveAll(skill)
+		}
+	}
 }
 
 func removeManagedInstructionFile(path string) {
@@ -131,7 +174,8 @@ func removeManagedInstructionFile(path string) {
 	if err != nil {
 		return
 	}
-	if strings.Contains(string(body), "mlp-session-instructions") {
+	// Old format: the whole file was ours and ended with this sentinel.
+	if strings.Contains(string(body), "<!-- mlp-session-instructions -->") && !strings.Contains(string(body), "BEGIN agentworks-session-instructions") {
 		_ = os.Remove(path)
 	}
 }
@@ -154,10 +198,6 @@ func removeManagedFileIfGenerated(path string) {
 
 func removeManagedFile(path string) {
 	_ = os.Remove(path)
-}
-
-func removeManagedDir(path string) {
-	_ = os.RemoveAll(path)
 }
 
 func pruneEmptyDirs(paths ...string) {
