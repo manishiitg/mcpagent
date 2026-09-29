@@ -21,6 +21,11 @@ type OAuthConfig struct {
 	// RFC 8707 Resource Indicator
 	Resource string `json:"resource,omitempty"` // Resource URI for token audience restriction
 
+	// ExtraAuthParams are added to the authorization URL. Google, for one,
+	// issues a refresh token only with access_type=offline (and prompt=consent
+	// on a repeat sign-in); without them its logins expire after an hour.
+	ExtraAuthParams map[string]string `json:"extra_auth_params,omitempty"`
+
 	// Security & Storage
 	UsePKCE   bool   `json:"use_pkce,omitempty"`   // Default: true (recommended)
 	TokenFile string `json:"token_file,omitempty"` // Path to cache tokens

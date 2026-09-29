@@ -113,6 +113,7 @@ func (m *Manager) GenerateAuthURL() (state string, authURL string, err error) {
 	if m.config.Resource != "" {
 		authOptions = append(authOptions, oauth2.SetAuthURLParam("resource", m.config.Resource))
 	}
+	authOptions = append(authOptions, m.extraAuthOptions()...)
 
 	// Build authorization URL
 	authURL = m.oauth2Config.AuthCodeURL(m.state, authOptions...)
@@ -242,6 +243,7 @@ func (m *Manager) StartAuthFlow(ctx context.Context) (*oauth2.Token, error) {
 	if m.config.Resource != "" {
 		authOptions = append(authOptions, oauth2.SetAuthURLParam("resource", m.config.Resource))
 	}
+	authOptions = append(authOptions, m.extraAuthOptions()...)
 
 	// Extract port from redirect URL, default to 3333 if not specified
 	port := 3333
@@ -410,4 +412,18 @@ func openBrowser(url string) error {
 	}
 
 	return cmd.Start()
+}
+
+// extraAuthOptions carries OAuthConfig.ExtraAuthParams into the authorization
+// URL, never overriding a parameter the flow itself sets.
+func (m *Manager) extraAuthOptions() []oauth2.AuthCodeOption {
+	var out []oauth2.AuthCodeOption
+	for key, value := range m.config.ExtraAuthParams {
+		switch key {
+		case "state", "code_challenge", "code_challenge_method", "redirect_uri", "client_id", "response_type", "scope", "resource":
+			continue
+		}
+		out = append(out, oauth2.SetAuthURLParam(key, value))
+	}
+	return out
 }
