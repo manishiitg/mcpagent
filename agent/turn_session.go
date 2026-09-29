@@ -142,11 +142,15 @@ func (a *Agent) Start(context.Context) (*Session, error) {
 		retainedFinalResponse: retainedturn.FinalResponse,
 	}
 	registerTurnSession(a.sessionID, session)
+	// Question cards exist only where a person answers them (the builder
+	// chat); everywhere else Muse auto-answers and no card is shown.
+	if a.provider == llm.ProviderMuseCLI && a.museWaitsForUserChoice() {
+		session.startMuseQuestionWatcher()
+	}
 	// A restored Muse session may have task rows committed while this server
 	// was down. Re-scan its native journal on attach; stable native event IDs
 	// let the durable event store discard rows already published before restart.
 	if a.provider == llm.ProviderMuseCLI {
-		session.startMuseQuestionWatcher()
 		if handle := a.currentAgentSessionHandle(); handle != nil {
 			session.startMuseBackgroundWatcher(handle.Provider.NativeSessionID, 0)
 		}
