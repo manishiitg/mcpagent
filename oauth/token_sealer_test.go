@@ -58,13 +58,13 @@ func TestExtraAuthParamsReachTheAuthorizationURL(t *testing.T) {
 	cfg := &OAuthConfig{ClientID: "c", AuthURL: "https://accounts.example.com/auth"}
 	cfg.TokenURL = "https://accounts.example.com/token"
 	cfg.RedirectURL = "https://app.example.com/cb"
-	cfg.ExtraAuthParams = map[string]string{"access_type": "offline", "prompt": "consent", "state": "evil"}
+	cfg.ExtraAuthParams = map[string]string{"access_type": "offline", "prompt": "consent", "state": "evil", "Redirect_URI": "https://evil.example.com"}
 	m := NewManager(cfg, nil)
 	state, authURL, err := m.GenerateAuthURL()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(authURL, "access_type=offline") || !strings.Contains(authURL, "prompt=consent") || strings.Contains(authURL, "state=evil") || !strings.Contains(authURL, "state="+state) {
+	if !strings.Contains(authURL, "access_type=offline") || !strings.Contains(authURL, "prompt=consent") || strings.Contains(authURL, "state=evil") || strings.Contains(authURL, "evil.example.com") || !strings.Contains(authURL, "state="+state) {
 		t.Fatalf("auth URL = %s", authURL)
 	}
 }

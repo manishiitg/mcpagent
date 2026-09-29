@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -419,8 +420,9 @@ func openBrowser(url string) error {
 func (m *Manager) extraAuthOptions() []oauth2.AuthCodeOption {
 	var out []oauth2.AuthCodeOption
 	for key, value := range m.config.ExtraAuthParams {
-		switch key {
-		case "state", "code_challenge", "code_challenge_method", "redirect_uri", "client_id", "response_type", "scope", "resource":
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "state", "code_challenge", "code_challenge_method", "code_verifier", "redirect_uri", "client_id",
+			"response_type", "response_mode", "scope", "resource", "request", "request_uri", "nonce":
 			continue
 		}
 		out = append(out, oauth2.SetAuthURLParam(key, value))
