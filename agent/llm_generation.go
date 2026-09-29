@@ -79,14 +79,12 @@ func writeClaudeHTTPRoutingHook(additional []string, admits func(name, toolType 
 	hookPath := filepath.Join(hooksDir, "enforce-http-tool-routing-"+hex.EncodeToString(hookHash[:8])+".py")
 	hookScript := `#!/usr/bin/env python3
 import json
-from pathlib import Path
 import sys
 
 ALLOWED = set(json.loads('` + string(allowedJSON) + `'))
 
 raw = sys.stdin.read()
 payload = {}
-log_path = Path("` + filepath.Join(os.TempDir(), "claude-code-hooks", "pretool.log") + `")
 
 try:
     payload = json.loads(raw) if raw else {}
@@ -94,12 +92,6 @@ except Exception:
     payload = {}
 
 tool_name = payload.get("tool_name", "")
-
-with log_path.open("a", encoding="utf-8") as fh:
-    fh.write(json.dumps({
-        "tool_name": tool_name,
-        "tool_input": payload.get("tool_input"),
-    }, ensure_ascii=True, sort_keys=True) + "\n")
 
 if tool_name in ALLOWED:
     raise SystemExit(0)
