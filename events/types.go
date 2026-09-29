@@ -43,6 +43,7 @@ const (
 	LiveInputConfirmed EventType = "live_input_confirmed"
 	// Muse task lifecycle continues after its foreground run completes.
 	CodingAgentBackgroundTask EventType = "coding_agent_background_task"
+	CodingAgentQuestion       EventType = "coding_agent_question"
 
 	// Streaming events
 	StreamingStart      EventType = "streaming_start"

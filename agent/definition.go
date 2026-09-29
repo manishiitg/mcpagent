@@ -104,7 +104,13 @@ type CodingRuntimeConfig struct {
 	PersistentPi         bool
 	PersistentMuse       bool
 	PersistentAgy        bool
-	CursorBridgeTools    bool
+	// UserAnswersNativeQuestions says a person is attending this chat and can
+	// answer the coding CLI's native multiple-choice questions (PLAT-354). It
+	// is deliberately separate from the Persistent* flags: a scheduler also
+	// keeps the native session alive, but nobody is there to answer, so a
+	// question must still be auto-answered instead of waiting forever.
+	UserAnswersNativeQuestions bool
+	CursorBridgeTools          bool
 	// AgentToolsMode selects whether coding-provider native tools are available:
 	// mcp_only (default) or hybrid.
 	AgentToolsMode string
@@ -332,6 +338,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if coding.PersistentAgy {
 		options = append(options, withAgyPersistentInteractiveSession(true))
+	}
+	if coding.UserAnswersNativeQuestions {
+		options = append(options, withUserAnswersNativeQuestions(true))
 	}
 	if coding.CursorBridgeTools {
 		options = append(options, withCursorBridgeToolsMode(true))
