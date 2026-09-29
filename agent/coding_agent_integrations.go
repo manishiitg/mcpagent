@@ -58,6 +58,10 @@ var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentInteg
 const (
 	codingAgentToolsMCPOnly  = "mcp_only"
 	codingAgentToolsHybrid   = "hybrid"
+	// codingAgentToolsFull is hybrid plus the CLI's own shell and file edits
+	// (PLAT-364 Full CLI). It takes effect only when the CLI is confined by
+	// the Landlock launcher; otherwise it runs exactly as hybrid.
+	codingAgentToolsFull = "full"
 	codingAgentApprovalsAuto = "provider_auto"
 	codingAgentApprovalsAll  = "approve_all"
 )
@@ -69,13 +73,32 @@ const (
 // legacy name, ignored where unknown.
 const claudeHybridNativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,TaskCreate,TaskGet,TaskUpdate,TaskList,TodoWrite"
 
+// claudeFullCLINativeTools adds Claude's own shell and file edits to hybrid.
+const claudeFullCLINativeTools = claudeHybridNativeTools + ",Bash,Write,Edit,MultiEdit,NotebookEdit"
+
+// fullCLIEnabled reports Full CLI: the mode asks for it AND the CLI starts
+// under the Landlock launcher, which confines those native writes and
+// commands to the chat's folder. Unconfined, Full CLI never applies.
+func (a *Agent) fullCLIEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFull) &&
+		a.cliSecurityPolicy.LandlockEnforced()
+}
+
+// claudeNativeTools is the --tools list for this agent's mode.
+func (a *Agent) claudeNativeTools() string {
+	if a.fullCLIEnabled() {
+		return claudeFullCLINativeTools
+	}
+	return claudeHybridNativeTools
+}
+
 // nativeCodingToolsEnabled reports hybrid mode. Each CLI admits its proven
 // native subset: AGY uses a PreToolUse read/search gate; Claude and Muse also
 // support more built-ins. Pi stays bridge-only until it has a restriction and
 // live proof. Codex's native shell runs in its read-only sandbox.
 func (a *Agent) nativeCodingToolsEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(a.codingAgentToolsMode)) {
-	case codingAgentToolsHybrid:
+	case codingAgentToolsHybrid, codingAgentToolsFull:
 		return true
 	default:
 		return false
@@ -97,7 +120,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// caller had registered.
 	nativeTools := "WebSearch"
 	if a.nativeCodingToolsEnabled() {
-		nativeTools = claudeHybridNativeTools
+		nativeTools = a.claudeNativeTools()
 	}
 	allowedTools := "mcp__api-bridge__*," + nativeTools
 	if claudeHTTPHooksEnabled {
@@ -109,8 +132,11 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		// Hybrid: Claude's read-only navigation, skills, todos, subagents and
 		// web tools run natively. Bash and file writes are never enabled; shell
 		// and writes stay on the bridge (grants, sandbox, history).
-		opts = append(opts, llm.WithClaudeCodeTools(claudeHybridNativeTools))
-		if a.approveAllCodingTools() {
+		opts = append(opts, llm.WithClaudeCodeTools(a.claudeNativeTools()))
+		// Full CLI: the Landlock lock is the boundary, so Claude must not stop
+		// the turn to ask about a command or a read (live on RTS 2026-09-29, a
+		// Bash read outside the folder stalled the turn on a prompt).
+		if a.approveAllCodingTools() || a.fullCLIEnabled() {
 			opts = append(opts, llmproviders.WithDangerouslySkipPermissions())
 		} else {
 			opts = append(opts, llm.WithClaudeCodePermissionMode("auto"))
