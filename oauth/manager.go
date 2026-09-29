@@ -43,10 +43,19 @@ func NewManager(cfg *OAuthConfig, logger loggerv2.Logger) *Manager {
 	// Create token store
 	tokenStore := NewTokenStore(cfg.TokenFile)
 
+	clientSecret := cfg.ClientSecret
+	if clientSecret == "" && cfg.ClientSecretFile != "" {
+		secret, err := ReadClientSecretFile(cfg.ClientSecretFile)
+		if err != nil {
+			logger.Warn(fmt.Sprintf("OAuth client secret unavailable (%v); continuing without it", err))
+		}
+		clientSecret = secret
+	}
+
 	// Create oauth2 config (may be incomplete if using auto-discovery)
 	oauth2Cfg := &oauth2.Config{
 		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
+		ClientSecret: clientSecret,
 		RedirectURL:  cfg.RedirectURL,
 		Scopes:       cfg.Scopes,
 		Endpoint: oauth2.Endpoint{

@@ -8,6 +8,10 @@ type OAuthConfig struct {
 	// OAuth endpoints (required if not using auto-discovery)
 	ClientID     string `json:"client_id,omitempty"`
 	ClientSecret string `json:"client_secret,omitempty"` // Optional for public clients (PKCE)
+	// ClientSecretFile keeps the secret out of the config: a credential file
+	// ({"client_secret": ...}, sealed when a token sealer claims the path)
+	// read when ClientSecret is empty. The config then holds only a reference.
+	ClientSecretFile string `json:"client_secret_file,omitempty"`
 	AuthURL      string `json:"auth_url,omitempty"`
 	TokenURL     string `json:"token_url,omitempty"`
 	// RegistrationEndpoint enables Dynamic Client Registration (RFC 7591) for

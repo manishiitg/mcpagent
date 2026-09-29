@@ -216,3 +216,19 @@ func ExpandTokenPath(filePath string) string {
 	}
 	return filePath
 }
+
+// ReadClientSecretFile returns the client_secret held in a credential file
+// (OAuthConfig.ClientSecretFile), unsealing it when a sealer claims the path.
+func ReadClientSecretFile(path string) (string, error) {
+	data, err := ReadTokenFile(path)
+	if err != nil {
+		return "", err
+	}
+	var record struct {
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		return "", fmt.Errorf("unreadable client credential file")
+	}
+	return record.ClientSecret, nil
+}

@@ -68,3 +68,22 @@ func TestExtraAuthParamsReachTheAuthorizationURL(t *testing.T) {
 		t.Fatalf("auth URL = %s", authURL)
 	}
 }
+
+// A config holding only a reference to a credential file gets its client
+// secret from that file, sealed or not.
+func TestClientSecretFileIsReadWhenTheConfigHoldsNoSecret(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.client.json")
+	if err := WriteTokenFile(path, []byte(`{"client_id":"cid","client_secret":"from-file"}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &OAuthConfig{ClientID: "cid", AuthURL: "https://a.example.com/auth"}
+	cfg.TokenURL = "https://a.example.com/token"
+	cfg.ClientSecretFile = path
+	if got := NewManager(cfg, nil).oauth2Config.ClientSecret; got != "from-file" {
+		t.Fatalf("client secret = %q", got)
+	}
+	cfg.ClientSecret = "inline"
+	if got := NewManager(cfg, nil).oauth2Config.ClientSecret; got != "inline" {
+		t.Fatalf("inline secret should win, got %q", got)
+	}
+}
