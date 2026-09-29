@@ -21,6 +21,12 @@ type canonicalTurnLifecycle struct {
 
 	mu       sync.Mutex
 	terminal bool
+	// liveInputFollowup marks a Session.Run turn that received live input
+	// through a tmux CLI while it ran. That input may be answered only after
+	// this turn's completion, by a follow-up watch the Session starts when Run
+	// returns. The completion carries the marker so hosts keep the input's
+	// turn open instead of settling it on this (older) response.
+	liveInputFollowup bool
 }
 
 func newTurnID() string {
@@ -80,7 +86,31 @@ func (l *canonicalTurnLifecycle) prepareEvent(eventData events.EventData) bool {
 	}
 	completion.Metadata["turn_id"] = l.id
 	completion.Metadata["canonical_turn_completion"] = true
+	if l.liveInputFollowup {
+		completion.Metadata[LiveInputFollowupMetadataKey] = true
+	}
 	return true
+}
+
+// LiveInputFollowupMetadataKey is set on a turn's canonical completion when
+// live input was sent to its CLI while it ran. The Session answers that input
+// with a separate follow-up completion (source "mcpagent_session"); hosts must
+// not treat this completion as the answer to that input.
+const LiveInputFollowupMetadataKey = "live_input_followup"
+
+// AnsweredByPreviousResponseMetadataKey is set on a follow-up completion whose
+// live input the previous turn's own response already answered (the input
+// steered that turn). It carries no final text so hosts never add a second
+// copy of the previous answer; it only closes the input's turn.
+const AnsweredByPreviousResponseMetadataKey = "answered_by_previous_response"
+
+func (l *canonicalTurnLifecycle) markLiveInputFollowup() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.liveInputFollowup = true
+	l.mu.Unlock()
 }
 
 func (l *canonicalTurnLifecycle) isTerminal() bool {

@@ -115,6 +115,13 @@ type Session struct {
 	watchCancel            context.CancelFunc
 	museBackgroundWatching bool
 
+	// runLiveInputs tracks tmux live input sent while a Session.Run is active.
+	// A CLI may queue that input and answer it only after the running response
+	// completes, when Run has already returned and nothing reads the CLI. Run
+	// hands the tracked inputs to a follow-up retained watch on exit, so the
+	// reply still reaches the host as a canonical completion.
+	runLiveInputs *runLiveInputState
+
 	// Tests replace this on an individual Session. Production always reads the
 	// provider adapter's authoritative retained transcript/sidecar.
 	retainedFinalResponse    func(llm.Provider, string, time.Time) string
@@ -228,6 +235,7 @@ func (s *Session) Run(ctx context.Context, turn Turn) (result Result, err error)
 	ctx = withCanonicalTurnLifecycle(ctx, lifecycle)
 	s.stateMu.Lock()
 	s.activeTurn = lifecycle
+	s.runLiveInputs = &runLiveInputState{lifecycle: lifecycle}
 	s.stateMu.Unlock()
 	var museBackgroundSessionID string
 	var museBackgroundBaseline int64
@@ -253,7 +261,17 @@ func (s *Session) Run(ctx context.Context, turn Turn) (result Result, err error)
 		if s.activeTurn == lifecycle {
 			s.activeTurn = nil
 		}
+		var followup *retainedWatch
+		if liveInputs := s.runLiveInputs; liveInputs != nil && liveInputs.lifecycle == lifecycle {
+			s.runLiveInputs = nil
+			liveInputs.ended = true
+			liveInputs.runText = result.Text
+			followup = s.takeRunLiveInputFollowupLocked(liveInputs)
+		}
 		s.stateMu.Unlock()
+		if followup != nil {
+			s.runRetainedCompletionWatch(*followup)
+		}
 		if museBackgroundSessionID != "" {
 			s.startMuseBackgroundWatcher(museBackgroundSessionID, museBackgroundBaseline)
 		}
@@ -420,7 +438,18 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		lifecycle = newCanonicalTurnLifecycle("")
 		s.activeTurn = lifecycle
 	}
+	// Live input into a running Session.Run through a tmux CLI. Mark the Run's
+	// lifecycle before delivery: the CLI can accept the text just as the
+	// running response completes, and the completion must already say that a
+	// follow-up owns this input (hosts then keep the input's turn open).
+	var runInputs *runLiveInputState
+	if runWasActive && s.runLiveInputs != nil && s.agent.liveInputUsesTmux() {
+		runInputs = s.runLiveInputs
+		runInputs.inflight++
+		runInputs.lifecycle.markLiveInputFollowup()
+	}
 	s.stateMu.Unlock()
+	sentAt := time.Now()
 	if lifecycle != nil {
 		ctx = withCanonicalTurnLifecycle(ctx, lifecycle)
 	}
@@ -451,6 +480,22 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		Status:    delivery.DeliveryStatus,
 		Provider:  delivery.Provider,
 		Transport: delivery.Transport,
+	}
+	if runInputs != nil {
+		sent := err == nil && delivery.DeliveryStatus == UserMessageDeliveryStatusSentToCLI && delivery.Transport == llm.CodingAgentTransportTmux
+		s.stateMu.Lock()
+		runInputs.inflight--
+		if sent {
+			runInputs.record(input, sentAt, delivery.Provider, delivery.Transport)
+		}
+		// The Run may have returned while this delivery was in flight (the
+		// muse durable ack can land after the completion). Then this Send owns
+		// the hand-off the Run's exit could not make.
+		followup := s.takeRunLiveInputFollowupLocked(runInputs)
+		s.stateMu.Unlock()
+		if followup != nil {
+			s.runRetainedCompletionWatch(*followup)
+		}
 	}
 	if err != nil {
 		clearStarting()
@@ -498,13 +543,47 @@ func (s *Session) startRetainedCompletionWatchFor(lifecycle *canonicalTurnLifecy
 		s.stateMu.Unlock()
 		return
 	}
+	watch := s.beginRetainedWatchLocked(lifecycle)
+	s.stateMu.Unlock()
+	watch.input, watch.provider, watch.transport = input, provider, transport
+	watch.liveInput, watch.startedAt = liveInput, startedAt
+	s.runRetainedCompletionWatch(watch)
+}
+
+// retainedWatch is one retained completion watcher's configuration.
+type retainedWatch struct {
+	lifecycle *canonicalTurnLifecycle
+	seq       uint64
+	input     string
+	provider  llm.Provider
+	transport llm.CodingAgentTransport
+	liveInput bool
+	// startedAt bounds the provider transcript read: only a response after
+	// this instant can complete the watch.
+	startedAt time.Time
+	// previousResponse is set for a follow-up of live input sent into a
+	// Session.Run. A final equal to (contained in) that Run's own response
+	// means the input steered the Run and was already answered.
+	previousResponse string
+	followup         bool
+}
+
+// beginRetainedWatchLocked makes a new retained watcher current. Callers hold
+// stateMu and have checked s.closed.
+func (s *Session) beginRetainedWatchLocked(lifecycle *canonicalTurnLifecycle) retainedWatch {
 	s.retainedActive = true
 	if lifecycle == nil {
 		lifecycle = newCanonicalTurnLifecycle("")
 	}
 	s.activeTurn = lifecycle
 	s.retainedSeq++
-	seq := s.retainedSeq
+	return retainedWatch{lifecycle: lifecycle, seq: s.retainedSeq}
+}
+
+func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
+	lifecycle, seq, input, provider, transport := watch.lifecycle, watch.seq, watch.input, watch.provider, watch.transport
+	liveInput, startedAt := watch.liveInput, watch.startedAt
+	s.stateMu.Lock()
 	watchCtx := s.watchCtx
 	reader := s.retainedFinalResponse
 	progressReader := s.retainedProgressMessages
@@ -528,6 +607,17 @@ func (s *Session) startRetainedCompletionWatchFor(lifecycle *canonicalTurnLifecy
 		var lastProgressRead time.Time
 		var finalSeenAt time.Time
 		finalGrace := retainedLiveInputFinalGrace
+		if watch.followup {
+			// Everything the CLI wrote before the Run returned was streamed by
+			// that Run. Advance the progress cursor past it so the follow-up
+			// streams only the CLI's reply to the live input.
+			s.stateMu.Lock()
+			if !s.closed && s.retainedActive && s.retainedSeq == seq {
+				_ = progressReader(provider, s.agent.sessionID)
+			}
+			s.stateMu.Unlock()
+			lastProgressRead = time.Now()
+		}
 		for {
 			select {
 			case <-watchCtx.Done():
@@ -556,6 +646,10 @@ func (s *Session) startRetainedCompletionWatchFor(lifecycle *canonicalTurnLifecy
 						continue
 					}
 				}
+				if watch.followup && responseAlreadyContains(watch.previousResponse, finalResult) {
+					s.completeRetainedTurnAnsweredByPrevious(lifecycle, seq, input, provider, transport, startedAt)
+					return
+				}
 				// The final read can see a commit newer than the last progress poll.
 				// Flush it before completion closes this watcher.
 				s.emitRetainedProgress(lifecycle, seq, provider, progressReader, &chunkIndex)
@@ -564,6 +658,84 @@ func (s *Session) startRetainedCompletionWatchFor(lifecycle *canonicalTurnLifecy
 			}
 		}
 	}()
+}
+
+// runLiveInputState is the live input a tmux CLI accepted during one
+// Session.Run. Guarded by Session.stateMu.
+type runLiveInputState struct {
+	lifecycle *canonicalTurnLifecycle
+	inflight  int
+	inputs    []string
+	firstSent time.Time
+	provider  llm.Provider
+	transport llm.CodingAgentTransport
+	ended     bool
+	runText   string
+	handedOff bool
+}
+
+func (r *runLiveInputState) record(input string, sentAt time.Time, provider llm.Provider, transport llm.CodingAgentTransport) {
+	r.inputs = append(r.inputs, input)
+	if r.firstSent.IsZero() || sentAt.Before(r.firstSent) {
+		r.firstSent = sentAt
+	}
+	r.provider, r.transport = provider, transport
+}
+
+// takeRunLiveInputFollowupLocked hands the live input a finished Run received
+// to exactly one follow-up watch: once the Run has returned and no delivery
+// into it is still in flight. Both Run's exit and a late Send call it; the
+// handedOff flag makes the second caller a no-op. The input is never sent
+// again -- the watch only reads the CLI's transcript for its reply.
+func (s *Session) takeRunLiveInputFollowupLocked(r *runLiveInputState) *retainedWatch {
+	if r == nil || r.handedOff || !r.ended || r.inflight > 0 || len(r.inputs) == 0 || s.closed {
+		return nil
+	}
+	r.handedOff = true
+	if s.retainedActive || s.runActive {
+		// A newer turn (a Run, or a retained watch started by a later Send)
+		// already owns the CLI's next output; it reads the queued reply.
+		return nil
+	}
+	watch := s.beginRetainedWatchLocked(newCanonicalTurnLifecycle(""))
+	watch.input = strings.Join(r.inputs, "\n\n")
+	watch.provider, watch.transport = r.provider, r.transport
+	watch.liveInput = true
+	watch.startedAt = r.firstSent
+	watch.previousResponse = r.runText
+	watch.followup = true
+	return &watch
+}
+
+// responseAlreadyContains reports whether final is the previous response (or
+// part of it), compared on whitespace-normalized text.
+func responseAlreadyContains(previous, final string) bool {
+	previous, final = strings.Join(strings.Fields(previous), " "), strings.Join(strings.Fields(final), " ")
+	return previous != "" && final != "" && strings.Contains(previous, final)
+}
+
+// completeRetainedTurnAnsweredByPrevious closes a follow-up whose live input
+// the Run's own response already answered. The completion has no final text,
+// so no host renders or persists the previous answer a second time.
+func (s *Session) completeRetainedTurnAnsweredByPrevious(lifecycle *canonicalTurnLifecycle, seq uint64, input string, provider llm.Provider, transport llm.CodingAgentTransport, startedAt time.Time) {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	s.stateMu.Lock()
+	if s.closed || !s.retainedActive || s.retainedSeq != seq {
+		s.stateMu.Unlock()
+		return
+	}
+	s.retainedActive = false
+	if s.activeTurn == lifecycle {
+		s.activeTurn = nil
+	}
+	s.stateMu.Unlock()
+	completion := events.NewUnifiedCompletionEvent("coding_agent", "retained", input, "", "completed", time.Since(startedAt), 1)
+	completion.Metadata["source"] = "mcpagent_session"
+	completion.Metadata["provider"] = string(provider)
+	completion.Metadata["transport"] = string(transport)
+	completion.Metadata[AnsweredByPreviousResponseMetadataKey] = true
+	s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), completion)
 }
 
 func (s *Session) completeRetainedTurn(lifecycle *canonicalTurnLifecycle, seq uint64, input, finalResult string, provider llm.Provider, transport llm.CodingAgentTransport, startedAt time.Time) {

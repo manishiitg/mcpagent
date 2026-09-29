@@ -225,3 +225,13 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 	result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
 	return result, nil
 }
+
+// liveInputUsesTmux reports whether live input is typed into a tmux CLI pane
+// (as opposed to the structured transport's steer queue).
+func (a *Agent) liveInputUsesTmux() bool {
+	if a == nil {
+		return false
+	}
+	contract, isCodingAgent := llm.GetCodingAgentProviderContract(a.getProvider(), a.modelID)
+	return isCodingAgent && contract.SupportsLiveInput && !a.usesStructuredTransport()
+}
