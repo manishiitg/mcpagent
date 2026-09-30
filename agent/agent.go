@@ -3229,6 +3229,13 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 // names belong to bridgeRoutingExplicitInstructions, where they are filtered
 // through the same admission predicate used to build the provider manifest.
 func (a *Agent) codingAgentProviderRoutingPreamble() string {
+	if a.provider == llmproviders.ProviderAgyCLI && a.fullCLIEnabled() {
+		boundary := "Native tools and their child processes are confined to the granted folders."
+		if a.agyNativeToolsMode() == codingAgentToolsFullUnconfined {
+			boundary = "This session explicitly runs unconfined with the host user's permissions."
+		}
+		return "IMPORTANT: AGY Full CLI is enabled. Use your native tools directly, including file reads, search, edits, shell commands and subagents. Wait for delegated work that your answer depends on before giving the final answer. " + boundary + " The declared MCP bridge tools remain available for platform actions and integrations. Call only exact declared bridge tool names."
+	}
 	hybrid := a.nativeCodingToolsEnabled() && (a.provider == llmproviders.ProviderMuseCLI || a.provider == llmproviders.ProviderClaudeCode || a.provider == llmproviders.ProviderCodexCLI || a.provider == llmproviders.ProviderCursorCLI || a.provider == llmproviders.ProviderAgyCLI)
 	if a.provider == llmproviders.ProviderAgyCLI && hybrid {
 		return "IMPORTANT: Your native file read, file search, web search, and URL read tools are enabled. Native commands, file writes, browser actuation, and subagents are disabled. Use the declared MCP bridge tools for those actions. Call only exact declared bridge tool names."

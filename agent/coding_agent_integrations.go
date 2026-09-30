@@ -56,8 +56,8 @@ var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentInteg
 }
 
 const (
-	codingAgentToolsMCPOnly  = "mcp_only"
-	codingAgentToolsHybrid   = "hybrid"
+	codingAgentToolsMCPOnly = "mcp_only"
+	codingAgentToolsHybrid  = "hybrid"
 	// codingAgentToolsFull is hybrid plus the CLI's own shell and file edits
 	// (PLAT-364 Full CLI). It takes effect only when the CLI is confined by
 	// the Landlock launcher; otherwise it runs exactly as hybrid.
@@ -66,8 +66,8 @@ const (
 	// single-user machine (the server only asks for it there): the CLI runs with the
 	// person's own rights, so nothing but its working directory limits it.
 	codingAgentToolsFullUnconfined = "full_unconfined"
-	codingAgentApprovalsAuto = "provider_auto"
-	codingAgentApprovalsAll  = "approve_all"
+	codingAgentApprovalsAuto       = "provider_auto"
+	codingAgentApprovalsAll        = "approve_all"
 )
 
 // claudeHybridNativeTools are the Claude Code built-ins enabled in hybrid mode
@@ -103,6 +103,19 @@ func (a *Agent) claudeNativeTools() string {
 		return claudeFullCLINativeTools
 	}
 	return claudeHybridNativeTools
+}
+
+func (a *Agent) agyNativeToolsMode() string {
+	if a.fullCLIEnabled() {
+		if strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFullUnconfined) {
+			return codingAgentToolsFullUnconfined
+		}
+		return codingAgentToolsFull
+	}
+	if a.nativeCodingToolsEnabled() {
+		return codingAgentToolsHybrid
+	}
+	return codingAgentToolsMCPOnly
 }
 
 // nativeCodingToolsEnabled reports hybrid mode. Each CLI admits its proven
