@@ -11,14 +11,12 @@ import (
 // workspacePath: the actual workspace path to substitute in examples.
 // If workspacePath is empty (chat mode), workspace-related instructions are excluded.
 func GetCodeExecutionInstructions(workspacePath string) string {
-	return `**CODE EXECUTION MODE — Access MCP Tools via HTTP API:**
+	return `## Code execution: calling tools over HTTP
 
 {{TOOL_STRUCTURE}}
 
 **Filesystem Access:**
-- Do NOT use provider-native or built-in filesystem/shell tools (for example: Bash, Read, Write, read_file, write_file, list_directory, grep_search, glob, read_many_files, replace, run_shell_command)
-- For filesystem access, use only the tools declared in this session
-- In code execution mode, prefer execute_shell_command for file reads/writes/commands, and use other declared workspace tools only when they are explicitly available
+- Use the tools this session declares. Provider-native file and shell tools are usable only when this session says native tools are enabled; otherwise run commands and file changes through execute_shell_command.
 
 **Workflow:**
 1. See available servers and tools in the JSON block above. Call get_api_spec(tool_name="...") to get the full API spec for any tool. Use server_name only to disambiguate a real MCP-server collision
@@ -44,19 +42,11 @@ curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/{tool_na
 # Response envelope: {"success": true|false, "result": ..., "error": "..."}
 ` + "```" + `
 
-When an argument contains quotes, newlines, SQL, JSON paths, or other shell
-punctuation, **do not inline it inside a single-quoted JSON literal**. Shell
-single quotes do not nest: a command such as ` + "`" + `payload='{"sql":"SELECT
-json_extract(data, '$.field')"}'` + "`" + ` silently removes the quotes around
-` + "`" + `$.field` + "`" + ` before the request reaches the tool. Keep the value in its own
-shell variable and let ` + "`" + `jq` + "`" + ` encode the JSON instead:
+For an argument with quotes, newlines, SQL or JSON paths, **do not inline it inside a single-quoted JSON literal** (shell single quotes do not nest); build it with jq:
 ` + "```" + `bash
-sql="SELECT json_extract(data, '$.field') FROM events"
-payload="$(jq -cn --arg sql "$sql" '{sql:$sql}')"
+sql="SELECT json_extract(data, '$.field') FROM events"; payload="$(jq -cn --arg sql "$sql" '{sql:$sql}')"
 curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/query_workflow_db"
 ` + "```" + `
-Use the same ` + "`" + `jq -n --arg` + "`" + ` pattern for any custom or MCP tool argument
-whose contents are not a fixed simple literal.
 
 **Calling a real MCP-server tool:**
 Only keys listed under ` + "`" + `mcp_servers` + "`" + ` are valid server path segments. Their tools are reachable at ` + "`" + `$MCP_MCP/{server}/{tool}` + "`" + `.
