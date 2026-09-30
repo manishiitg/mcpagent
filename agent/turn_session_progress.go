@@ -14,8 +14,9 @@ import (
 // committed narration through the same transcript events used by normal turns.
 // The final-response reader remains the only authority for completion.
 type retainedNativeTool struct {
-	name      string
-	startedAt time.Time
+	name        string
+	startedAt   time.Time
+	bridgeOwned bool
 }
 
 func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq uint64, provider llm.Provider, reader func(llm.Provider, string) []llmtypes.MessageContent, chunkIndex *int, toolMaps ...map[string]retainedNativeTool) {
@@ -46,7 +47,11 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 			switch text := part.(type) {
 			case llmtypes.ToolCall:
 				if text.FunctionCall != nil {
-					tools[text.ID] = retainedNativeTool{name: text.FunctionCall.Name, startedAt: time.Now()}
+					bridgeOwned := s.retainedBridgeOwnsTool(text.FunctionCall.Name)
+					tools[text.ID] = retainedNativeTool{name: text.FunctionCall.Name, startedAt: time.Now(), bridgeOwned: bridgeOwned}
+					if bridgeOwned {
+						continue
+					}
 					event := events.NewToolCallStartEvent(0, text.FunctionCall.Name, events.ToolParams{Arguments: text.FunctionCall.Arguments}, "native", text.ID)
 					event.ToolCallID = text.ID
 					s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), event)
@@ -61,6 +66,10 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 				if name == "" {
 					continue
 				} // A result without its invocation cannot be paired.
+				if tool.bridgeOwned || s.retainedBridgeOwnsTool(name) {
+					delete(tools, text.ToolCallID)
+					continue
+				}
 				var duration time.Duration
 				if known {
 					duration = time.Since(tool.startedAt)
@@ -104,6 +113,19 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 			})
 		}
 	}
+}
+
+// During a retained turn the observed bridge executor owns direct tools'
+// arguments, result and duration. Their transcript echo must not emit a second
+// receipt. Native CLI tools and unobserved MCP tools still need transcript events.
+func (s *Session) retainedBridgeOwnsTool(name string) bool {
+	if !s.agent.directToolExecutionEvents {
+		return false
+	}
+	name = strings.TrimPrefix(name, "mcp__api-bridge__")
+	name = strings.TrimPrefix(name, "mcp__api_bridge__")
+	_, direct := s.agent.lookupDirectTool(name)
+	return direct
 }
 
 // emitRetainedThinking sends thinking as the same event the live stream uses

@@ -78,6 +78,64 @@ func TestRetainedNativeToolsPairAcrossPolls(t *testing.T) {
 	}
 }
 
+func TestRetainedProgressKeepsOnlyObservedBridgeReceipt(t *testing.T) {
+	for _, observed := range []bool{true, false} {
+		name := "transcript-only"
+		if observed {
+			name = "observed-bridge"
+		}
+		t.Run(name, func(t *testing.T) {
+			capture := &retainedProgressCapture{events: make(chan *events.AgentEvent, 10)}
+			agent := &Agent{
+				sessionID: t.Name(), listeners: []AgentEventListener{capture},
+				directToolExecutionEvents: observed,
+				toolRegistry:              directToolRegistry(directToolFixture("execute_shell_command", "workspace")),
+			}
+			s := &Session{agent: agent, retainedActive: true, retainedSeq: 1}
+			lifecycle := newCanonicalTurnLifecycle("")
+			if observed {
+				executor := agent.observedDirectToolExecutor("execute_shell_command", func(context.Context, map[string]interface{}) (string, error) {
+					return "real stdout", nil
+				})
+				if _, err := executor(withCanonicalTurnLifecycle(t.Context(), lifecycle), map[string]interface{}{"command": "printf test"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			index := 0
+			tools := map[string]retainedNativeTool{}
+			// The transcript echoes a bridge call after it executed. A native
+			// built-in tool must still produce its own pair in the next poll.
+			for _, message := range []llmtypes.MessageContent{
+				{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.ToolCall{ID: "bridge", FunctionCall: &llmtypes.FunctionCall{Name: "mcp__api_bridge__execute_shell_command", Arguments: `{}`}}}},
+				{Role: llmtypes.ChatMessageTypeTool, Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: "bridge", Content: "real stdout"}}},
+				{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.ToolCall{ID: "native", FunctionCall: &llmtypes.FunctionCall{Name: "Bash", Arguments: `{}`}}}},
+				{Role: llmtypes.ChatMessageTypeTool, Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: "native", Content: "native stdout"}}},
+			} {
+				s.emitRetainedProgress(lifecycle, 1, llm.ProviderCodexCLI, func(llm.Provider, string) []llmtypes.MessageContent { return []llmtypes.MessageContent{message} }, &index, tools)
+			}
+			if got := len(capture.events); got != 4 {
+				t.Fatalf("events = %d, want one bridge pair plus one native pair", got)
+			}
+			start := (<-capture.events).Data.(*events.ToolCallStartEvent)
+			end := (<-capture.events).Data.(*events.ToolCallEndEvent)
+			if start.ToolCallID != end.ToolCallID || end.Result != "real stdout" {
+				t.Fatalf("bridge receipt = %+v %+v", start, end)
+			}
+			if observed && start.ServerName != "direct_execution" {
+				t.Fatalf("expected authoritative bridge receipt, got %+v", start)
+			}
+			nativeStart := (<-capture.events).Data.(*events.ToolCallStartEvent)
+			nativeEnd := (<-capture.events).Data.(*events.ToolCallEndEvent)
+			if nativeStart.ToolName != "Bash" || nativeEnd.ToolCallID != "native" || nativeEnd.Result != "native stdout" {
+				t.Fatalf("native receipt lost: %+v %+v", nativeStart, nativeEnd)
+			}
+			if len(tools) != 0 {
+				t.Fatalf("completed tool calls retained: %+v", tools)
+			}
+		})
+	}
+}
+
 func TestNativeInterruptClosesOnlyItsRetainedWatch(t *testing.T) {
 	s, capture, cancel := newFollowupTestSession(t, func() string { return "" })
 	defer cancel()
