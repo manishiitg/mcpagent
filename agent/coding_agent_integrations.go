@@ -31,6 +31,9 @@ func applyCodingAgentIntegrationOptions(a *Agent, opts []llmtypes.CallOption, mo
 		}
 		return opts, nil
 	}
+	if err := a.prepareIsolatedOutputLink(); err != nil {
+		return opts, err
+	}
 	return appender(a, opts, model)
 }
 

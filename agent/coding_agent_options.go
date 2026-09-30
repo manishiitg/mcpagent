@@ -87,10 +87,8 @@ func codingAgentInteractiveEnabledForProvider(provider llm.Provider, modelID, se
 
 func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
 	workingDir := strings.TrimSpace(a.codingAgentWorkingDir)
-	// IsolatedSessionWorkspace overrides the caller-supplied workingDir
-	// with a fresh per-Agent tmp dir. The dir is created lazily on
-	// first call and rm -rf'd by Agent.Close. Workflow steps opt into
-	// this; chat code paths don't.
+	// All turns of an isolated session use the same private cwd. Linked-output
+	// setup is validated at construction and again before provider integration.
 	if a.isolatedSessionWorkspace {
 		if tmpDir := a.ensureIsolatedWorkspaceDir(); tmpDir != "" {
 			workingDir = tmpDir

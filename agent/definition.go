@@ -158,8 +158,11 @@ type MCPRuntimeConfig struct {
 type WorkspaceRuntimeConfig struct {
 	CodingAgentWorkingDir string
 	IsolatedSession       bool
-	ReadPaths             []string
-	WritePaths            []string
+	// OutputDir is an application-admitted, existing artifact directory. With
+	// IsolatedSession, it is linked as output/ without copying its contents.
+	OutputDir  string
+	ReadPaths  []string
+	WritePaths []string
 }
 
 type ObservabilityRuntimeConfig struct {
@@ -194,6 +197,9 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 		return nil, err
 	}
 
+	if strings.TrimSpace(runtime.Workspace.OutputDir) != "" {
+		definition.Instructions += isolatedOutputInstructions
+	}
 	options := runtimeAgentOptions(runtime)
 	options = append(options, withSystemPrompt(definition.Instructions))
 	if len(definition.Tools.MCP) > 0 {
@@ -211,6 +217,9 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 	fail := func(cause error) (*Agent, error) {
 		_ = agent.Close()
 		return nil, cause
+	}
+	if err := agent.prepareIsolatedOutputLink(); err != nil {
+		return fail(err)
 	}
 	if runtime.ResumeHandle != nil && !runtime.ResumeHandle.Empty() {
 		// A rejected handle leaves the agent without native state; the
@@ -393,6 +402,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	workspace := runtime.Workspace
 	if workspace.CodingAgentWorkingDir != "" {
 		options = append(options, withCodingAgentWorkingDir(workspace.CodingAgentWorkingDir))
+	}
+	if workspace.OutputDir != "" {
+		options = append(options, withCodingAgentOutputDir(workspace.OutputDir))
 	}
 	if workspace.IsolatedSession {
 		options = append(options, withIsolatedSessionWorkspace(true))

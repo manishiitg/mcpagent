@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
@@ -23,6 +24,15 @@ func (a *Agent) appendCLISecurityPolicyOption(opts []llmtypes.CallOption, provid
 		return opts
 	}
 	policy := a.cliSecurityPolicy.Clone()
+	// Linked-output steps carry a policy narrowed by the application to their
+	// own guard. Keep the private home in this session's runtime too, rather
+	// than reusing the parent chat's home and native history.
+	if a.codingAgentOutputDir != "" && a.isolatedWorkspacePath != "" {
+		policy.WorkspaceWritePaths = append(policy.WorkspaceWritePaths, a.isolatedWorkspacePath)
+		if policy.PrivateHome != "" {
+			policy.PrivateHome = filepath.Join(a.isolatedWorkspacePath, ".sandbox-cache", "cli-home", string(provider))
+		}
+	}
 	// Provider identity comes from the trusted provider selected by AgentWorks,
 	// never from a model-authored policy value.
 	policy.Provider = strings.ToLower(strings.TrimSpace(string(provider)))

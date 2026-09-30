@@ -142,32 +142,11 @@ func withCodingAgentWorkingDir(dir string) agentOption {
 	}
 }
 
-// withIsolatedSessionWorkspace asks the coding-CLI session to run in a
-// fresh per-call os.MkdirTemp directory instead of CodingAgentWorkingDir.
-// When enabled, the agent:
-//
-//   - Creates a new tmp dir before launching the CLI session
-//   - Overrides the CLI's cwd / --dir option to that tmp path
-//   - rm -rf's the tmp dir after the session completes
-//
-// The MCP bridge config (which already carries the actual workflow dir
-// paths in its env / args) is unchanged — the bridge subprocess runs
-// outside the CLI's sandbox so it can still touch the user's workflow
-// dir for file ops the model invokes via bridge tools.
-//
-// Intended for WORKFLOW STEPS where:
-//   - Resume is never needed (each step is a fresh conversation)
-//   - Concurrent steps must not collide on the same workspace files
-//   - The user's actual workflow dir must be protected from accidental
-//     model writes via the CLI's built-in editing tools
-//
-// Chat code paths (multi-agent + builder) should NOT set this — they
-// need the agent to operate directly on the user's chosen workspace
-// dir for the "agent edits my files" UX and need resume-tied-to-dir
-// for session continuity.
-//
-// See docs/WORKFLOW_STEP_ISOLATION.md in multi-llm-provider-go for the
-// design rationale and per-CLI sandbox interaction details.
+// withIsolatedSessionWorkspace keeps CLI projections in a private directory
+// keyed by session ID. It survives between turns for native resume and is
+// reclaimed by CloseSession. Without an ID, Agent.Close removes a random dir.
+// An explicitly admitted OutputDir can be linked into it; bridge paths and
+// native tool modes remain independent of this placement.
 func withIsolatedSessionWorkspace(enabled bool) agentOption {
 	return func(a *Agent) {
 		a.isolatedSessionWorkspace = enabled
@@ -828,6 +807,7 @@ type Agent struct {
 	// ever created. Unexported because the lifecycle is managed
 	// internally; callers control the feature via
 	// withIsolatedSessionWorkspace.
+	codingAgentOutputDir  string // Trusted artifact target of the private runtime output/ link
 	isolatedWorkspacePath string
 	isolatedWorkspaceOnce sync.Once
 
@@ -3124,7 +3104,7 @@ func (a *Agent) Close() error {
 		if a.logger != nil {
 			a.logger.Info("IsolatedSessionWorkspace: removed tmp dir " + a.isolatedWorkspacePath)
 		}
-	} else if wd := strings.TrimSpace(a.codingAgentWorkingDir); wd != "" && llm.IsCodingAgentProvider(a.provider, a.modelID) && !a.codingAgentPersistentInteractiveEnabled(a.provider) {
+	} else if wd := strings.TrimSpace(a.codingAgentWorkingDir); !a.isolatedSessionWorkspace && wd != "" && llm.IsCodingAgentProvider(a.provider, a.modelID) && !a.codingAgentPersistentInteractiveEnabled(a.provider) {
 		// Real (non-isolated) workdir: the whole-tree rm -rf above never runs, so
 		// skills + the managed system prompt this session projected would otherwise
 		// linger in the operator's repo after a one-shot session. Persistent
