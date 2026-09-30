@@ -669,7 +669,7 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 	}
 	if progressReader == nil {
 		progressReader = func(provider llm.Provider, ownerSessionID string) []llmtypes.MessageContent {
-			return llmproviders.ReadCodingAgentRetainedTurnProgressMessages(provider, ownerSessionID, startedAt)
+			return llmproviders.ReadCodingAgentRetainedTurnStructuredProgressMessages(provider, ownerSessionID, startedAt)
 		}
 	}
 
@@ -677,6 +677,7 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 		ticker := time.NewTicker(retainedCompletionPollInterval)
 		defer ticker.Stop()
 		chunkIndex := 0
+		tools := map[string]retainedNativeTool{}
 		var lastProgressRead time.Time
 		var finalSeenAt time.Time
 		finalGrace := retainedLiveInputFinalGrace
@@ -703,7 +704,7 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 					return
 				}
 				if time.Since(lastProgressRead) >= 400*time.Millisecond {
-					s.emitRetainedProgress(lifecycle, seq, provider, progressReader, &chunkIndex)
+					s.emitRetainedProgress(lifecycle, seq, provider, progressReader, &chunkIndex, tools)
 					lastProgressRead = time.Now()
 				}
 				finalResult := strings.TrimSpace(reader(provider, s.agent.sessionID, startedAt))
@@ -725,7 +726,7 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 				}
 				// The final read can see a commit newer than the last progress poll.
 				// Flush it before completion closes this watcher.
-				s.emitRetainedProgress(lifecycle, seq, provider, progressReader, &chunkIndex)
+				s.emitRetainedProgress(lifecycle, seq, provider, progressReader, &chunkIndex, tools)
 				s.completeRetainedTurn(lifecycle, seq, input, finalResult, provider, transport, startedAt)
 				return
 			}

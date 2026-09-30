@@ -13,7 +13,16 @@ import (
 // Retained sends bypass GenerateContent and its stream channel. Publish their
 // committed narration through the same transcript events used by normal turns.
 // The final-response reader remains the only authority for completion.
-func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq uint64, provider llm.Provider, reader func(llm.Provider, string) []llmtypes.MessageContent, chunkIndex *int) {
+type retainedNativeTool struct {
+	name      string
+	startedAt time.Time
+}
+
+func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq uint64, provider llm.Provider, reader func(llm.Provider, string) []llmtypes.MessageContent, chunkIndex *int, toolMaps ...map[string]retainedNativeTool) {
+	tools := map[string]retainedNativeTool{}
+	if len(toolMaps) > 0 {
+		tools = toolMaps[0]
+	}
 	// Check and read under stateMu, never sendMu. Send holds sendMu while a
 	// busy CLI has not yet taken a steered message (Claude queues it until the
 	// running tool returns), so waiting on it held narration written before a
@@ -29,12 +38,44 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 	}
 	s.stateMu.Unlock()
 	for _, message := range messages {
-		if message.Role != llmtypes.ChatMessageTypeAI {
+		if message.Role != llmtypes.ChatMessageTypeAI && message.Role != llmtypes.ChatMessageTypeTool {
 			continue
 		}
 		for _, part := range message.Parts {
 			var content string
 			switch text := part.(type) {
+			case llmtypes.ToolCall:
+				if text.FunctionCall != nil {
+					tools[text.ID] = retainedNativeTool{name: text.FunctionCall.Name, startedAt: time.Now()}
+					event := events.NewToolCallStartEvent(0, text.FunctionCall.Name, events.ToolParams{Arguments: text.FunctionCall.Arguments}, "native", text.ID)
+					event.ToolCallID = text.ID
+					s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), event)
+				}
+				continue
+			case llmtypes.ToolCallResponse:
+				tool, known := tools[text.ToolCallID]
+				name := text.Name
+				if name == "" {
+					name = tool.name
+				}
+				if name == "" {
+					continue
+				} // A result without its invocation cannot be paired.
+				var duration time.Duration
+				if known {
+					duration = time.Since(tool.startedAt)
+					delete(tools, text.ToolCallID)
+				}
+				if text.IsError {
+					event := events.NewToolCallErrorEvent(0, name, text.Content, "native", duration)
+					event.ToolCallID = text.ToolCallID
+					s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), event)
+					continue
+				}
+				event := events.NewToolCallEndEvent(0, name, text.Content, "native", duration, text.ToolCallID)
+				event.ToolCallID = text.ToolCallID
+				s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), event)
+				continue
 			case llmtypes.TextContent:
 				content = text.Text
 			case *llmtypes.TextContent:
