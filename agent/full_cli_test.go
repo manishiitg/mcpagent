@@ -28,3 +28,19 @@ func TestFullCLIRequiresLandlock(t *testing.T) {
 		t.Fatal("hybrid must not grant Full CLI")
 	}
 }
+
+// full_unconfined is Full CLI without the lock, asked for only by the server on a person's own
+// single-user machine: Claude gets its own shell and file edits, and nothing else changes.
+func TestFullCLIUnconfinedNeedsNoLock(t *testing.T) {
+	a := &Agent{codingAgentToolsMode: codingAgentToolsFullUnconfined}
+	if !a.fullCLIEnabled() || !strings.Contains(a.claudeNativeTools(), "Bash") || !strings.Contains(a.claudeNativeTools(), "Write") {
+		t.Fatalf("unconfined Full CLI: enabled=%v tools=%s", a.fullCLIEnabled(), a.claudeNativeTools())
+	}
+	if !a.nativeCodingToolsEnabled() {
+		t.Fatal("full_unconfined must keep hybrid's native tools")
+	}
+	a.codingAgentToolsMode = codingAgentToolsFull
+	if a.fullCLIEnabled() {
+		t.Fatal("plain full must still need the lock")
+	}
+}

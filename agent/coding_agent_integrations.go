@@ -62,6 +62,10 @@ const (
 	// (PLAT-364 Full CLI). It takes effect only when the CLI is confined by
 	// the Landlock launcher; otherwise it runs exactly as hybrid.
 	codingAgentToolsFull = "full"
+	// codingAgentToolsFullUnconfined is Full CLI without the lock, for a person's own
+	// single-user machine (the server only asks for it there): the CLI runs with the
+	// person's own rights, so nothing but its working directory limits it.
+	codingAgentToolsFullUnconfined = "full_unconfined"
 	codingAgentApprovalsAuto = "provider_auto"
 	codingAgentApprovalsAll  = "approve_all"
 )
@@ -80,8 +84,11 @@ const claudeFullCLINativeTools = claudeHybridNativeTools + ",Bash,Write,Edit,Mul
 // under the Landlock launcher, which confines those native writes and
 // commands to the chat's folder. Unconfined, Full CLI never applies.
 func (a *Agent) fullCLIEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFull) &&
-		a.cliSecurityPolicy.LandlockEnforced()
+	mode := strings.TrimSpace(a.codingAgentToolsMode)
+	if strings.EqualFold(mode, codingAgentToolsFullUnconfined) {
+		return true
+	}
+	return strings.EqualFold(mode, codingAgentToolsFull) && a.cliSecurityPolicy.LandlockEnforced()
 }
 
 // claudeNativeTools is the --tools list for this agent's mode.
@@ -98,7 +105,7 @@ func (a *Agent) claudeNativeTools() string {
 // live proof. Codex's native shell runs in its read-only sandbox.
 func (a *Agent) nativeCodingToolsEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(a.codingAgentToolsMode)) {
-	case codingAgentToolsHybrid, codingAgentToolsFull:
+	case codingAgentToolsHybrid, codingAgentToolsFull, codingAgentToolsFullUnconfined:
 		return true
 	default:
 		return false
