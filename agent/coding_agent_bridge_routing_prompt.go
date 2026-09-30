@@ -42,10 +42,10 @@ func bridgeRoutingExplicitInstructions(admits func(name string) bool, additional
 
 	var bullets []string
 	if shell {
-		bullets = append(bullets, "  • api-bridge.execute_shell_command / api_bridge_execute_shell_command(command, timeout?) — shell (cat, ls, jq, python3, curl, any *nix command). USE INSTEAD OF: built-in Shell / Bash / run_command / view_file.\n")
+		bullets = append(bullets, "  • api-bridge.execute_shell_command / mcp__api-bridge__execute_shell_command / api_bridge_execute_shell_command(command, timeout?) — shell (cat, ls, jq, python3, curl, any *nix command). USE INSTEAD OF: built-in Shell / Bash / run_command / view_file.\n")
 	}
 	if diffPatch {
-		bullets = append(bullets, "  • api-bridge.diff_patch_workspace_file / api_bridge_diff_patch_workspace_file(filepath, diff) — apply a unified diff to a workspace file. USE INSTEAD OF: built-in Edit / Write / write_to_file / replace_file_content / multi_replace_file_content.\n")
+		bullets = append(bullets, "  • api-bridge.diff_patch_workspace_file / mcp__api-bridge__diff_patch_workspace_file / api_bridge_diff_patch_workspace_file(filepath, diff) — apply a unified diff to a workspace file. USE INSTEAD OF: built-in Edit / Write / write_to_file / replace_file_content / multi_replace_file_content.\n")
 	}
 	if directReadImage {
 		bullets = append(bullets, "  • api-bridge.read_image / api_bridge_read_image / mcp__api-bridge__read_image(filepath, query, provider?, model_id?) — inspect an image through the platform's workspace-aware image-analysis tool. This is a direct bridge tool; use it instead of opening the image with native file or shell tools.\n")
@@ -53,12 +53,12 @@ func bridgeRoutingExplicitInstructions(admits func(name string) bool, additional
 	// get_api_spec is virtual and always survives the profile filter, but the
 	// "then call it via execute_shell_command + curl" follow-through does not.
 	if shell {
-		bullets = append(bullets, "  • api-bridge.get_api_spec / api_bridge_get_api_spec(tool_name, server_name?) — fetch the OpenAPI spec by tool name. Omit server_name normally; use it only to disambiguate a real MCP-server collision. Then call the tool via execute_shell_command + curl / python3.\n")
+		bullets = append(bullets, "  • api-bridge.get_api_spec / mcp__api-bridge__get_api_spec / api_bridge_get_api_spec(tool_name, server_name?) — fetch the OpenAPI spec by tool name. Omit server_name normally; use it only to disambiguate a real MCP-server collision. Then call the tool via execute_shell_command + curl / python3.\n")
 		bullets = append(bullets, "  • Custom tools (get_human_input_request, create_human_input_request, notify_user, and everything else not explicitly declared as a direct api-bridge tool above) are called ONLY through execute_shell_command + curl using $MCP_CUSTOM and $MCP_AUTH — never as a direct tool call by their bare name. For LLM/provider configuration, use $MCP_CUSTOM/list_published_llms, $MCP_CUSTOM/list_provider_models, $MCP_CUSTOM/test_llm, $MCP_CUSTOM/save_published_llm, and $MCP_CUSTOM/set_provider_auth. Do not read or edit config/ files for LLM/provider configuration.\n")
 		bullets = append(bullets, "  • Compact HTTP form (use this instead of verbose curl): curl --fail-with-body -sS --json '<payload>' -H \"$MCP_AUTH\" \"$MCP_CUSTOM/<tool>\" (or $MCP_MCP/<server>/<tool>). MCP_AUTH is already the complete `Authorization: Bearer ...` header; never prepend another header or Bearer prefix. --json already selects POST and Content-Type, so do not add -X POST, a Content-Type header, or --data. Do not pipe through jq unless you explicitly preserve curl's nonzero status.\n")
 		bullets = append(bullets, "  • BLOCKING HUMAN FEEDBACK: When human_feedback is available only through the custom HTTP route, call $MCP_CUSTOM/human_feedback with curl in the FOREGROUND and wait for that same curl call to return the user's answer. Never use nohup, append &, launch it through run_in_background, write its result to a temporary file, poll for completion, or ask the user to send another message after responding. Do not set execute_shell_command's timeout shorter than human_feedback.timeout_seconds; omitting the shell timeout is safe. The open curl request is the wait mechanism, and its returned body resumes your turn automatically. Cursor CLI abandons silent MCP calls at about 60 seconds, so when running in Cursor set human_feedback.timeout_seconds to at most 45 seconds; if it expires, explain that clearly and retry only if the input is still required.\n")
 	} else {
-		bullets = append(bullets, "  • api-bridge.get_api_spec / api_bridge_get_api_spec(tool_name, server_name?) — fetch the OpenAPI spec by tool name. Omit server_name normally; use it only to disambiguate a real MCP-server collision.\n")
+		bullets = append(bullets, "  • api-bridge.get_api_spec / mcp__api-bridge__get_api_spec / api_bridge_get_api_spec(tool_name, server_name?) — fetch the OpenAPI spec by tool name. Omit server_name normally; use it only to disambiguate a real MCP-server collision.\n")
 	}
 
 	// With nothing routable left, the whole block would be an instruction to

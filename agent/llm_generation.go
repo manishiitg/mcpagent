@@ -1037,9 +1037,9 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 			opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
 		}
 		if bridgeOnly {
-			a.logger.Info("🌉 [PI_CLI] Configured MCP bridge through .pi/mcp.json with built-in tools disabled")
+			a.logger.Info("🌉 [PI_CLI] Configured native MCP bridge through private session mcp.json with built-in tools disabled")
 		} else {
-			a.logger.Info("🌉 [PI_CLI] Configured MCP bridge through .pi/mcp.json with native built-in tools enabled (hybrid)")
+			a.logger.Info("🌉 [PI_CLI] Configured native MCP bridge through private session mcp.json with native built-in tools enabled (hybrid)")
 		}
 	} else {
 		return nil, fmt.Errorf("Pi CLI requires the MCP bridge: %w", bridgeErr)
@@ -1047,7 +1047,7 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 	if a.piSessionID != "" {
 		opts = append(opts, llm.WithPiResumeSessionID(a.piSessionID))
 	}
-	a.logger.Info("⏱️ [PI_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
+	a.logger.Info("⏱️ [PI_CLI] Native MCP request timeouts complement request cancellation and the mcpbridge HTTP backstop")
 	a.logger.Info("🌉 Using Pi CLI in tmux marker mode with MCP bridge and live input support")
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithPiStructuredTransport(true))
