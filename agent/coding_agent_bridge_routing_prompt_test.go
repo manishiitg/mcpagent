@@ -23,7 +23,7 @@ func TestAppendBridgeRoutingInstructionsDefaultUnchanged(t *testing.T) {
 		`curl --fail-with-body -sS --json '<payload>' -H "$MCP_AUTH" "$MCP_CUSTOM/<tool>"`,
 		"MCP_AUTH is already the complete `Authorization: Bearer ...` header",
 		"--json already selects POST and Content-Type",
-		"Do not pipe through jq unless you explicitly preserve curl's nonzero status",
+		"Keep curl unpiped to preserve its nonzero HTTP-failure status",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected compact MCP bridge rule %q in system prompt, got: %s", want, got)
@@ -37,10 +37,9 @@ func TestAppendBridgeRoutingInstructionsNamesDirectPlatformReadImage(t *testing.
 
 	got := a.instructions()
 	for _, want := range []string{
-		"api-bridge.read_image",
-		"mcp__api-bridge__read_image",
-		"platform's workspace-aware image-analysis tool",
-		"not explicitly declared as a direct api-bridge tool above",
+		"read_image",
+		"platform image analysis",
+		"Only declared runtime tools are direct calls",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("direct read_image routing prompt missing %q: %s", want, got)
@@ -59,8 +58,8 @@ func TestAppendBridgeRoutingInstructionsNoLongerTeachesMcpWrapperSyntax(t *testi
 		t.Fatalf("expected no mcp() wrapper syntax taught in system prompt (native MCP has no proxy), got: %s", got)
 	}
 	for _, want := range []string{
-		"Custom tools (get_human_input_request, create_human_input_request, notify_user, and everything else not explicitly declared as a direct api-bridge tool above) are called ONLY through execute_shell_command + curl",
-		"never as a direct tool call by their bare name",
+		"Call HTTP tools through execute_shell_command",
+		"never a direct tool call by their bare name",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected custom-tools-via-curl-only guardrail %q in system prompt, got: %s", want, got)
@@ -132,6 +131,7 @@ func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.
 
 func TestCodingAgentProviderRoutingPromptDoesNotNameExcludedBridgeTools(t *testing.T) {
 	a := &Agent{
+		provider:             llmproviders.ProviderClaudeCode,
 		codingAgentToolsMode: codingAgentToolsHybrid,
 		bridgeToolAdmit: func(name string) bool {
 			return name != "execute_shell_command" && name != "diff_patch_workspace_file"

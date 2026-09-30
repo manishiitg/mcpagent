@@ -709,6 +709,19 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 		loggerv2.Int("total_sessions", len(globalRegistry.sessionCustomTools)))
 }
 
+// IsSessionToolAllowed lets metadata discovery enforce the same current policy
+// as HTTP execution. HTTP requests do not carry the in-process turn context.
+func IsSessionToolAllowed(sessionID, toolName string) bool {
+	registry := GetRegistry()
+	if registry == nil || sessionID == "" {
+		return true
+	}
+	registry.allowListMu.RLock()
+	defer registry.allowListMu.RUnlock()
+	allowed, restricted := registry.sessionToolAllowLists[sessionID]
+	return !restricted || allowed[toolName]
+}
+
 // SetSessionToolAllowList sets the tool allow list for a session in the code execution registry.
 // When set, CallCustomToolWithSession will reject tools not in the list.
 // Pass nil to clear the restriction (all tools allowed).

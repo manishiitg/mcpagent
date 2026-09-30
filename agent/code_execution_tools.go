@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/manishiitg/mcpagent/agent/codeexec"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -20,9 +21,8 @@ import (
 // handleGetAPISpec handles the get_api_spec virtual tool.
 // Returns the full OpenAPI spec for the requested tool(s) on a server.
 // tool_name is required — accepts a single string or an array of strings.
-// The system prompt already lists all servers and tool names, so no "list only" mode is needed.
+// Use search_tools for authorized discovery; this tool loads exact schemas.
 func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{}) (string, error) {
-	_ = ctx
 	// Optional: an omitted server_name means "resolve by tool name", which is the
 	// contract everywhere else. It remains accepted as compatibility input, but
 	// routing and authorization never depend on an agent-supplied category/server.
@@ -76,7 +76,7 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	mcpToolsByServer := make(map[string][]llmtypes.Tool)
 	var unknown, notAllowed []string
 	for _, name := range sortedNames {
-		if !a.isToolAllowedForContext(ctx, name) {
+		if !a.isToolAllowedForContext(ctx, name) || !codeexec.IsSessionToolAllowed(a.sessionID, name) {
 			notAllowed = append(notAllowed, name)
 			continue
 		}
@@ -228,7 +228,8 @@ func (a *Agent) registeredToolNamesForContext(ctx context.Context, registry *can
 	tools := registry.snapshot() // already sorted by name
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
-		if a.isToolAllowedForContext(ctx, tool.Name) {
+		if a.isToolAllowedForContext(ctx, tool.Name) && codeexec.IsSessionToolAllowed(a.sessionID, tool.Name) &&
+			(tool.Kind != toolImplementationMCP || a.serverIsAvailable(tool.Source)) {
 			names = append(names, tool.Name)
 		}
 	}

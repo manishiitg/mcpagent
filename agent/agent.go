@@ -1009,6 +1009,7 @@ type Agent struct {
 	// use the default for whichever provider this agent runs; a pointer to
 	// "" suppresses the block entirely for this agent.
 	bridgeRoutingInstructionsOverride *string
+	bridgeRoutingPreamble             *string
 
 	// conversationSink, when set via withConversationSink, receives one
 	// convrecord.TurnRecord per completed LLM call. nil (the default) means
@@ -1121,6 +1122,7 @@ type Agent struct {
 	// MCP server tools are accessed via HTTP API (documented in OpenAPI specs from get_api_spec)
 	// When disabled (default): All MCP tools are added directly as LLM tools
 	useCodeExecutionMode bool
+	toolDiscovery        bool
 
 	// Cache configuration
 	// When enabled: Skips cache lookup and always performs fresh connections
@@ -1818,7 +1820,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		for _, tool := range virtualTools {
 			if tool.Function != nil {
 				toolName := tool.Function.Name
-				if toolName == "get_api_spec" {
+				if toolName == "get_api_spec" || toolName == "search_tools" {
 					filteredVirtualTools = append(filteredVirtualTools, tool)
 				}
 			}
@@ -1832,7 +1834,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		for _, tool := range virtualTools {
 			if tool.Function != nil {
 				toolName := tool.Function.Name
-				if toolName != "get_api_spec" {
+				if toolName != "get_api_spec" && toolName != "search_tools" {
 					filteredVirtualTools = append(filteredVirtualTools, tool)
 				}
 			}
@@ -2047,6 +2049,10 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			ag.enableStreaming = true
 			logger.Debug("🔧 [PI_CLI] Auto-enabled streaming (required for terminal observability)")
 		}
+	}
+
+	if ag.provider == llmproviders.ProviderAgyCLI {
+		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 	}
 
 	// Agent initialization complete
@@ -3195,13 +3201,8 @@ func (a *Agent) setInstructions(systemPrompt string) {
 // provider-specific preamble AND the shared bridgeRoutingExplicitInstructions
 // text with the caller's own).
 func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
-	if a.bridgeRoutingInstructionsOverride != nil {
-		if *a.bridgeRoutingInstructionsOverride != "" {
-			a.appendInstructions(*a.bridgeRoutingInstructionsOverride)
-		}
-		return
-	}
-	a.appendInstructions(defaultPreamble, bridgeRoutingExplicitInstructions(a.admitsCoreBridgeTool, a.additionalBridgeTools...))
+	// Render at the outbound boundary, after turn policy and late tool registration.
+	a.bridgeRoutingPreamble = &defaultPreamble
 }
 
 // codingAgentProviderRoutingPreamble describes the tool mode that is actually
@@ -3224,7 +3225,7 @@ func (a *Agent) codingAgentProviderRoutingPreamble() string {
 		return "IMPORTANT: Use native web_search and the declared MCP bridge tools for work. Native file, shell, memory, scheduling, goal, workflow, and subagent tools are restricted; do not attempt them even if listed. Muse internal session controls may bypass its restriction hook, but they are not a substitute for platform tools. Use platform tools for user questions and task coordination. Call only exact declared bridge tool names."
 	}
 	if hybrid {
-		return "IMPORTANT: Your native read-only tools (read files, search, list/glob), skills, todo list, subagents and web search are enabled; use them directly. Native shell and file writes are disabled: run commands and create or change files only through the declared bridge tools (execute_shell_command, write/edit tools). Call only exact declared bridge tool names; never invent alternate prefixes or namespaces. If an action fails, choose another genuinely available route or explain the specific blocker."
+		return "IMPORTANT: Your native read-only tools (read files, search, list/glob), skills, todo list, subagents and web search are enabled; use them directly. Native shell and file writes are disabled: run commands and create or change files only through the declared bridge tools (commands and file mutations). Call only exact declared bridge tool names; never invent alternate prefixes or namespaces. If an action fails, choose another genuinely available route or explain the specific blocker."
 	}
 	return "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Use only bridge tools explicitly declared in this session, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
 }

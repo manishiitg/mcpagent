@@ -70,7 +70,7 @@ func TestRoutingPromptNarrowsToDiscoveryWhenPolicyRejectsEverything(t *testing.T
 func TestRoutingSurfacesAreUnchangedWithoutAPolicy(t *testing.T) {
 	none := &Agent{}
 	prompt := bridgeRoutingExplicitInstructions(none.admitsCoreBridgeTool)
-	for _, want := range []string{"execute_shell_command", "diff_patch_workspace_file", "get_api_spec", "human_feedback"} {
+	for _, want := range []string{"execute_shell_command", "diff_patch_workspace_file", "get_api_spec", "search_tools"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("unpoliced prompt is missing %q:\n%s", want, prompt)
 		}

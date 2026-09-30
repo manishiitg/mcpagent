@@ -399,6 +399,9 @@ func attachedSkillFileNames(skill *llmtypes.Skill) []string {
 }
 
 func (a *Agent) isIntrinsicIdentityTool(name string) bool {
+	if a != nil && a.useCodeExecutionMode && (name == "search_tools" || name == "get_api_spec") {
+		return true
+	}
 	return a != nil && name == readSkillToolName && (len(a.attachedSkills) > 0 || a.installedSkillResolver != nil)
 }
 

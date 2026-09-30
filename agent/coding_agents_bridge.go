@@ -82,6 +82,7 @@ var bridgeTools = []struct {
 	{"diff_patch_workspace_file", "custom"},
 	{"agent_browser", "custom"},
 	{"get_api_spec", "virtual"},
+	{"search_tools", "virtual"},
 }
 
 // claudeBridgeAllowedToolIdentifiers returns the full "mcp__api-bridge__<name>"

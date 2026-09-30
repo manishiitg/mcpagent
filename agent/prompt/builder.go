@@ -8,53 +8,10 @@ import (
 )
 
 // GetCodeExecutionInstructions returns the code execution mode instructions section.
-// workspacePath: the actual workspace path to substitute in examples.
-// If workspacePath is empty (chat mode), workspace-related instructions are excluded.
+// workspacePath is retained for compatibility. Product environment and file rules
+// belong to caller instructions; current routing is composed by the Agent.
 func GetCodeExecutionInstructions(workspacePath string) string {
-	return `## Code execution: calling tools over HTTP
-
-{{TOOL_STRUCTURE}}
-
-**Filesystem Access:**
-- Use the tools this session declares. Provider-native file and shell tools are usable only when this session says native tools are enabled; otherwise run commands and file changes through execute_shell_command.
-
-**Workflow:**
-1. See available servers and tools in the JSON block above. Call get_api_spec(tool_name="...") to get the full API spec for any tool. Use server_name only to disambiguate a real MCP-server collision
-2. Use execute_shell_command to write and run code
-3. MCP_API_URL, MCP_API_TOKEN, MCP_AUTH, MCP_MCP, MCP_CUSTOM, and MCP_VIRTUAL env vars are pre-set — use them as-is
-
-**Environment — what's pre-set for you:**
-- ` + "`" + `$MCP_MCP` + "`" + `, ` + "`" + `$MCP_CUSTOM` + "`" + `, ` + "`" + `$MCP_VIRTUAL` + "`" + ` — short endpoint bases for MCP, custom, and virtual tools.
-- ` + "`" + `$MCP_AUTH` + "`" + ` — Authorization header value (` + "`" + `Authorization: Bearer ...` + "`" + `). Use with ` + "`" + `-H "$MCP_AUTH"` + "`" + `.
-- ` + "`" + `$MCP_API_URL` + "`" + ` + ` + "`" + `$MCP_API_TOKEN` + "`" + ` — full bridge endpoint + token fallback if you need custom HTTP code.
-- ` + "`" + `$STEP_OUTPUT_DIR` + "`" + ` — write all primary outputs here. The folder exists; do not mkdir.
-- ` + "`" + `$STEP_EXECUTION_DIR` + "`" + ` — parent of STEP_OUTPUT_DIR. Use only when reaching a sibling step's folder and sys.argv wasn't used.
-- ` + "`" + `$VAR_<NAME>` + "`" + ` — workflow config values (e.g. ` + "`" + `$VAR_PAN` + "`" + `, ` + "`" + `$VAR_SHEET_URL` + "`" + `). Reference always; never hardcode the value.
-- ` + "`" + `$SECRET_<NAME>` + "`" + ` — credentials (e.g. ` + "`" + `$SECRET_API_KEY` + "`" + `). Never echo to stdout, never write to files.
-- ` + "`" + `$VAR_GROUP_NAME` + "`" + ` — current group (may be empty string when no group is active). The only var where an empty/absent value is acceptable.
-- Accessing missing vars must fail loudly. In bash use ` + "`" + `"${VAR_PAN:?missing}"` + "`" + ` or ` + "`" + `set -u` + "`" + `; in python use ` + "`" + `os.environ['VAR_PAN']` + "`" + ` (not ` + "`" + `.get()` + "`" + ` with a default).
-
-**Calling a custom tool (workflow, database, human-input, and other app tools):**
-Custom tools are reachable at ` + "`" + `$MCP_CUSTOM/{tool}` + "`" + `. The labels under ` + "`" + `custom_tools.groups` + "`" + ` are display-only groups, never MCP server names and never URL path segments.
-` + "```" + `bash
-payload='{"arg1":"value1"}'
-curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/{tool_name}"
-# Response envelope: {"success": true|false, "result": ..., "error": "..."}
-` + "```" + `
-
-For an argument with quotes, newlines, SQL or JSON paths, **do not inline it inside a single-quoted JSON literal** (shell single quotes do not nest); build it with jq:
-` + "```" + `bash
-sql="SELECT json_extract(data, '$.field') FROM events"; payload="$(jq -cn --arg sql "$sql" '{sql:$sql}')"
-curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/query_workflow_db"
-` + "```" + `
-
-**Calling a real MCP-server tool:**
-Only keys listed under ` + "`" + `mcp_servers` + "`" + ` are valid server path segments. Their tools are reachable at ` + "`" + `$MCP_MCP/{server}/{tool}` + "`" + `.
-` + "```" + `bash
-curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_MCP/{server_name}/{tool_name}"
-` + "```" + `
-` + "`$MCP_AUTH`" + ` is already the complete ` + "`Authorization: Bearer ...`" + ` header. Never prepend another header or Bearer prefix. ` + "`--json`" + ` already selects POST and Content-Type, so do not add ` + "`-X POST`" + `, another Content-Type header, or ` + "`--data`" + `. Keep the call unpiped so curl's nonzero HTTP-failure status reaches ` + "`execute_shell_command`" + `.
-If you need retries, backoff, or structured logging, write a small helper in the language of your choice. For reusable helpers saved to main.py, see the main.py authoring rules below (when in learn-code mode).`
+	return "## Code execution\n\n{{TOOL_STRUCTURE}}\n\nUse this session's declared tools and runtime routing instructions. Discover exact tool contracts before invoking HTTP tools."
 }
 
 // BuildAvailableToolsSection renders the one replaceable, agent-facing tool
@@ -67,7 +24,7 @@ func BuildAvailableToolsSection(toolStructureJSON string) string {
 		inventory = "The following custom tools and real MCP servers are accessible via HTTP API.\n" +
 			"Call get_api_spec(tool_name=\"...\") to get the full API spec for specific tools.\n\n" +
 			"```json\n" + toolStructureJSON + "\n```\n\n" +
-			"Keys under custom_tools.groups are display-only labels and use $MCP_CUSTOM/{tool}; they are not MCP servers. Only keys under mcp_servers use $MCP_MCP/{server}/{tool}. System tools (execute_shell_command, agent_browser) are called directly — see your provider's tool list for exact names.\n"
+			"Group keys are display labels. Use the runtime routing instructions and get_api_spec for call contracts.\n"
 	}
 
 	return "<available_tools>\n" +
@@ -80,7 +37,6 @@ func BuildAvailableToolsSection(toolStructureJSON string) string {
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 // toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
 func BuildSystemPromptWithoutTools(mode interface{}, useCodeExecutionMode bool, toolStructureJSON string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
-	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode)
 
 	// Get current date and time
 	now := time.Now()
@@ -166,24 +122,10 @@ Use 'search_large_output' with operation='read', operation='search', or operatio
 	// Replace all placeholders
 	prompt = strings.ReplaceAll(prompt, CorePrinciplesPlaceholder, corePrinciplesSection)
 	prompt = strings.ReplaceAll(prompt, ToolUsagePlaceholder, toolUsageSection)
-	prompt = strings.ReplaceAll(prompt, VirtualToolsSectionPlaceholder, virtualToolsSection)
+	prompt = strings.ReplaceAll(prompt, VirtualToolsSectionPlaceholder, "")
 	prompt = strings.ReplaceAll(prompt, LargeOutputHandlingPlaceholder, largeOutputHandlingSection)
 	prompt = strings.ReplaceAll(prompt, CurrentDatePlaceholder, currentDate)
 	prompt = strings.ReplaceAll(prompt, CurrentTimePlaceholder, currentTime)
 
 	return prompt
-}
-
-// buildVirtualToolsSection builds the virtual tools section
-func buildVirtualToolsSection(useCodeExecutionMode bool) string {
-	if useCodeExecutionMode {
-		return `AVAILABLE FUNCTIONS:
-
-- **get_api_spec** - Get the full OpenAPI spec for specific tool(s).
-  Usage: get_api_spec(tool_name="<tool>")
-  Multiple tools: get_api_spec(tool_name=["<tool1>", "<tool2>"])
-  Optional disambiguation for a real MCP-server collision: server_name="<server>"`
-	}
-
-	return ""
 }

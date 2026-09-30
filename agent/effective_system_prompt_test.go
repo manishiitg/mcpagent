@@ -66,7 +66,7 @@ func TestEffectiveSystemPromptIsBalancedAndIdempotent(t *testing.T) {
 	if strings.Contains(first, prompt.ToolStructurePlaceholder) {
 		t.Fatalf("tool placeholder leaked into the effective prompt")
 	}
-	if !strings.HasPrefix(first, "before\n") || !strings.HasSuffix(first, "\nafter") {
+	if !strings.HasPrefix(first, "before\n") || !strings.Contains(first, "\nafter") {
 		t.Fatalf("placeholder position was not preserved:\n%s", first)
 	}
 }

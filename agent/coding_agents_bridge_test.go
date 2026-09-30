@@ -76,32 +76,16 @@ func bridgeTestAgent() *Agent {
 	return &Agent{logger: loggerv2.NewDefault()}
 }
 
-func TestBridgeRoutingExplicitInstructionsIncludesCustomLLMTools(t *testing.T) {
-	prompt := bridgeRoutingExplicitInstructions(nil)
-	for _, want := range []string{
-		"Omit server_name normally",
-		"$MCP_CUSTOM/list_published_llms",
-		"$MCP_CUSTOM/list_provider_models",
-		"$MCP_CUSTOM/save_published_llm",
-		"Do not read or edit config/ files for LLM/provider configuration",
-		"$MCP_CUSTOM/human_feedback",
-		"curl in the FOREGROUND",
-		"Never use nohup",
-		"poll for completion",
-		"returned body resumes your turn automatically",
-		"at most 45 seconds",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("bridge routing prompt missing %q:\n%s", want, prompt)
+func TestBridgeRoutingOwnsMechanicsNotProductProcedures(t *testing.T) {
+	routing := bridgeRoutingExplicitInstructions(nil)
+	for _, want := range []string{"search_tools", "get_api_spec", "$MCP_CUSTOM/<tool>", "$MCP_MCP/<server>/<tool>", "Custom groups are labels", "JSON encoder", "success/error"} {
+		if !strings.Contains(routing, want) {
+			t.Fatalf("runtime contract missing %q: %s", want, routing)
 		}
 	}
-	for _, unwanted := range []string{
-		"api_bridge_call_sub_agent",
-		"api_bridge_get_route_description",
-		"custom categories",
-	} {
-		if strings.Contains(prompt, unwanted) {
-			t.Fatalf("bridge routing prompt should not advertise sub-agent tools as native bridge tools: found %q\n%s", unwanted, prompt)
+	for _, forbidden := range []string{"human_feedback", "list_published_llms", "save_published_llm", "Cursor CLI", "api_bridge_call_sub_agent"} {
+		if strings.Contains(routing, forbidden) {
+			t.Fatalf("product/provider procedure leaked into shared runtime contract: %s", forbidden)
 		}
 	}
 }
@@ -1190,6 +1174,7 @@ func TestBridgeToolsList(t *testing.T) {
 		"diff_patch_workspace_file": "custom",
 		"agent_browser":             "custom",
 		"get_api_spec":              "virtual",
+		"search_tools":              "virtual",
 	}
 
 	if len(bridgeTools) != len(expected) {

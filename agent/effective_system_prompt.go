@@ -55,11 +55,11 @@ func (a *Agent) outgoingSystemPrompt() string {
 
 func (a *Agent) outgoingSystemPromptForContext(ctx context.Context) string {
 	systemPrompt := a.effectiveSystemPromptForContext(ctx)
-	// Coding CLIs receive the same attached skills through their native on-disk
+	// Most coding CLIs receive attached skills through their native on-disk
 	// skill projection. Repeating the catalog inside AGENTS.md/CLAUDE.md makes
 	// the CLI discover every skill twice. API models have no native projection,
-	// so they still need the prompt listing.
-	if !llm.IsCodingAgentProvider(a.provider, a.modelID) {
+	// so they still need the prompt listing. Agy currently also needs this fallback.
+	if !llm.IsCodingAgentProvider(a.provider, a.modelID) || a.provider == llm.ProviderAgyCLI {
 		if listing := renderSkillListing(a.attachedSkills); listing != "" {
 			if systemPrompt != "" {
 				return systemPrompt + "\n\n" + listing
@@ -74,8 +74,34 @@ func (a *Agent) outgoingSystemPromptForContext(ctx context.Context) string {
 // reads, and prompt-event/log rendering. This keeps what operators inspect
 // identical to what the model receives.
 func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base string) string {
+	// A single runtime section is composed from current permissions. Caller
+	// instructions and arbitrary AddInstructions supplements remain untouched.
+	if a.bridgeRoutingPreamble != nil || a.useCodeExecutionMode {
+		base = removeTaggedSections(base, "<runtime_tools>", "</runtime_tools>")
+		routing := ""
+		if a.bridgeRoutingInstructionsOverride != nil {
+			routing = *a.bridgeRoutingInstructionsOverride
+		} else {
+			if a.bridgeRoutingPreamble != nil {
+				if llm.IsCodingAgentProvider(a.provider, a.modelID) {
+					routing = a.codingAgentProviderRoutingPreamble()
+				} else {
+					routing = *a.bridgeRoutingPreamble
+				}
+			}
+			admits := func(name string) bool { return a.admitsCoreBridgeTool(name) && a.isToolAllowedForContext(ctx, name) }
+			routing = strings.TrimSpace(routing + "\n" + bridgeRoutingExplicitInstructions(admits, a.additionalBridgeTools...))
+		}
+		if routing != "" {
+			base = strings.TrimSpace(base + "\n\n<runtime_tools>\n" + routing + "\n</runtime_tools>")
+		}
+	}
 	if !a.useCodeExecutionMode {
 		return strings.ReplaceAll(base, prompt.ToolStructurePlaceholder, "")
+	}
+
+	if a.toolDiscovery {
+		return replaceEffectiveToolsSection(base, "<available_tools>\nThe HTTP catalog is loaded on demand. Follow the live discovery and routing contract in the runtime routing section; never guess tool names.\n</available_tools>")
 	}
 
 	toolStructure, err := a.buildToolIndexForContext(ctx)

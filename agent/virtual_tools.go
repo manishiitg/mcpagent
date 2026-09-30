@@ -32,7 +32,7 @@ func (a *Agent) createVirtualTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_api_spec",
-			Description: "Get the OpenAPI specification for specific tool(s). Pass the tool names you want to call — that is the address. The system prompt lists every available tool name.",
+			Description: "Get the OpenAPI specification for specific tool(s). Pass the tool names you want to call — that is the address. Find exact names with search_tools or the session tool inventory.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -56,7 +56,7 @@ func (a *Agent) createVirtualTools() []llmtypes.Tool {
 			}),
 		},
 	}
-	virtualTools = append(virtualTools, getAPISpecTool)
+	virtualTools = append(virtualTools, getAPISpecTool, searchToolsDefinition())
 
 	return virtualTools
 }
@@ -64,6 +64,8 @@ func (a *Agent) createVirtualTools() []llmtypes.Tool {
 // HandleVirtualTool handles virtual tool execution
 func (a *Agent) handleVirtualTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	switch toolName {
+	case "search_tools":
+		return a.handleSearchTools(ctx, args)
 	case "get_api_spec":
 		return a.handleGetAPISpec(ctx, args)
 	default:
