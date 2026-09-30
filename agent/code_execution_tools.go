@@ -525,7 +525,7 @@ func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
 		}
 	}
 
-	jsonData, err := json.MarshalIndent(index, "", "  ")
+	jsonData, err := json.Marshal(index)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal tool index: %w", err)
 	}
