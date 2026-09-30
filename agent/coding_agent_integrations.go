@@ -91,6 +91,12 @@ func (a *Agent) fullCLIEnabled() bool {
 	return strings.EqualFold(mode, codingAgentToolsFull) && a.cliSecurityPolicy.LandlockEnforced()
 }
 
+// codexFullUnconfined reports unconfined Full CLI for Codex: hybrid's shell and subagents, with
+// Codex's own workspace-write sandbox instead of read-only.
+func (a *Agent) codexFullUnconfined() bool {
+	return strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFullUnconfined)
+}
+
 // claudeNativeTools is the --tools list for this agent's mode.
 func (a *Agent) claudeNativeTools() string {
 	if a.fullCLIEnabled() {
@@ -265,6 +271,11 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	// apply_patch), so Codex always runs in its read-only sandbox. Writes go
 	// through the bridge, whose execute_shell_command runs outside it.
 	sandboxMode := "read-only"
+	// Full CLI without the lock (a person's own machine): Codex may write inside its working
+	// directory. Confined Full (Landlock) does not change Codex yet.
+	if a.codexFullUnconfined() {
+		sandboxMode = "workspace-write"
+	}
 	opts = append(opts, llm.WithCodexSandbox(sandboxMode))
 	configOverrides := make([]string, 0, 2)
 	if sandboxMode == "workspace-write" && a.codexNetworkAccess {

@@ -44,3 +44,16 @@ func TestFullCLIUnconfinedNeedsNoLock(t *testing.T) {
 		t.Fatal("plain full must still need the lock")
 	}
 }
+
+// Codex under unconfined Full CLI gets its own workspace-write sandbox; every other mode keeps
+// the read-only one.
+func TestCodexFullUnconfinedOnlyForFullUnconfined(t *testing.T) {
+	for mode, want := range map[string]bool{
+		codingAgentToolsMCPOnly: false, codingAgentToolsHybrid: false,
+		codingAgentToolsFull: false, codingAgentToolsFullUnconfined: true,
+	} {
+		if got := (&Agent{codingAgentToolsMode: mode}).codexFullUnconfined(); got != want {
+			t.Fatalf("%s: got %v want %v", mode, got, want)
+		}
+	}
+}
