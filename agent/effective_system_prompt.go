@@ -90,7 +90,7 @@ func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base
 				}
 			}
 			admits := func(name string) bool { return a.admitsCoreBridgeTool(name) && a.isToolAllowedForContext(ctx, name) }
-			routing = strings.TrimSpace(routing + "\n" + bridgeRoutingExplicitInstructions(admits, a.additionalBridgeTools...))
+			routing = strings.TrimSpace(routing + "\n" + bridgeRoutingInstructions(admits, a.hasRuntimeHTTPSkill(), a.additionalBridgeTools...))
 		}
 		if routing != "" {
 			base = strings.TrimSpace(base + "\n\n<runtime_tools>\n" + routing + "\n</runtime_tools>")

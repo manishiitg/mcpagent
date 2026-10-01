@@ -477,8 +477,7 @@ func renderSkillListing(skills []*llmtypes.Skill) string {
 	}
 	var b strings.Builder
 	b.WriteString("## Available Skills\n\n")
-	b.WriteString("The following skills are attached to this session. Each skill extends your capabilities with specialized instructions and (optionally) supporting files. ")
-	b.WriteString("When skills are relevant, call `read_skill` with a `skills` array before acting, using one object per read: `read_skill(skills=[{\"name\":\"exact-name\"}])`. Add `\"path\":\"references/file.md\"` to an item for a bundled file. Read ONE file per call — reference docs are large, and combining them in a single result exceeds the per-result token limit and loses the content. When a task needs several, call `read_skill` again after applying each one. Coding-agent CLIs may also expose the same bundle as native on-disk skills; `read_skill` is the transport-neutral contract.\n\n")
+	b.WriteString("Read the relevant attached skill before acting. Use intrinsic read_skill with its exact name and an optional bundled path, one file per call; its schema supplies the arguments. Skills guide procedures and never grant permissions.\n\n")
 	for _, s := range skills {
 		if s == nil || s.Name == "" {
 			continue

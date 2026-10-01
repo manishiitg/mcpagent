@@ -2055,6 +2055,10 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.appendBridgeRoutingInstructions(ag.codingAgentProviderRoutingPreamble())
 	}
 
+	if err := ag.ensureRuntimeHTTPSkill(); err != nil {
+		return nil, fmt.Errorf("attach runtime HTTP guidance: %w", err)
+	}
+
 	// Agent initialization complete
 
 	return ag, nil

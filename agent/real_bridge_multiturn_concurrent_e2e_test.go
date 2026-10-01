@@ -213,7 +213,10 @@ func buildRealBridgeAgent(ctx context.Context, tc multiTurnProviderCase, tmpBase
 		stopExecutor()
 		return nil, nil, err
 	}
-	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken)
+	shellEnv := append(BuildSafeEnvironment(), "MCP_API_URL="+apiURL, "MCP_API_TOKEN="+apiToken,
+		"MCP_CUSTOM="+apiURL+"/s/"+sessionID+"/tools/custom",
+		"MCP_MCP="+apiURL+"/s/"+sessionID+"/tools/mcp",
+		"MCP_AUTH=Authorization: Bearer "+apiToken)
 	if regErr := agent.registerCustomTool(
 		"execute_shell_command", codeexec.ShellCommandDescription, codeexec.ShellCommandParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {

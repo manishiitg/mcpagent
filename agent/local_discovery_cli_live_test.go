@@ -36,11 +36,23 @@ func TestLocalCLIDiscoverySkillsAndResume(t *testing.T) {
 			var calls atomic.Int32
 			configure := func(a *Agent) string {
 				a.toolDiscovery = true
+				if err := a.ensureRuntimeHTTPSkill(); err != nil {
+					t.Fatal(err)
+				}
 				name := "fixture_" + realBridgeRandHex(5)
 				input := "INPUT_" + realBridgeRandHex(5)
 				receipt := "RECEIPT_" + realBridgeRandHex(5)
-				params := map[string]interface{}{"type": "object", "properties": map[string]interface{}{"validation_input": map[string]interface{}{"type": "string"}}, "required": []string{"validation_input"}}
+				transportMarker := "TRANSPORT_" + realBridgeRandHex(5)
+				for _, skill := range a.attachedSkills {
+					if skill.Name == runtimeHTTPSkillName {
+						skill.Content += "\nFor this qualification tool only, set transport_marker to " + transportMarker + "."
+					}
+				}
+				params := map[string]interface{}{"type": "object", "properties": map[string]interface{}{"validation_input": map[string]interface{}{"type": "string"}, "transport_marker": map[string]interface{}{"type": "string", "description": "Read the current runtime-http-tools skill for the transport marker."}}, "required": []string{"validation_input", "transport_marker"}}
 				if err := a.registerCustomTool(name, "Fetch the qualification validation receipt for the current fixture.", params, func(_ context.Context, args map[string]interface{}) (string, error) {
+					if args["transport_marker"] != transportMarker {
+						return "", fmt.Errorf("read the current runtime-http-tools skill for transport_marker")
+					}
 					if args["validation_input"] != input {
 						return "", fmt.Errorf("read the current qualification skill for validation_input")
 					}
@@ -50,7 +62,7 @@ func TestLocalCLIDiscoverySkillsAndResume(t *testing.T) {
 					t.Fatal(err)
 				}
 				mustAttachSkill(t, a, &llmtypes.Skill{Name: "qualification", Description: "Read before fetching a qualification validation receipt.", Content: "Search for the qualification validation receipt tool. Get its current schema and execute it with validation_input set to " + input + ". Return the tool's actual receipt."})
-				if strings.Contains(a.outgoingSystemPrompt(), name) || strings.Contains(a.outgoingSystemPrompt(), input) || strings.Contains(a.outgoingSystemPrompt(), receipt) {
+				if strings.Contains(a.outgoingSystemPrompt(), name) || strings.Contains(a.outgoingSystemPrompt(), input) || strings.Contains(a.outgoingSystemPrompt(), receipt) || strings.Contains(a.outgoingSystemPrompt(), transportMarker) {
 					t.Fatal("fixture leaked into initial prompt")
 				}
 				return receipt
@@ -81,7 +93,7 @@ func TestLocalCLIDiscoverySkillsAndResume(t *testing.T) {
 			if err != nil || !strings.Contains(answer, want) || calls.Load() != 2 {
 				t.Fatalf("dynamic discovery after native resume failed: %v; answer=%q calls=%d", err, answer, calls.Load())
 			}
-			t.Logf("LOCAL_DISCOVERY_PASS provider=%s first-use=skill+search+schema+HTTP native-resume=updated-tool+skill", tc.name)
+			t.Logf("LOCAL_DISCOVERY_PASS provider=%s first-use=feature-skill+transport-skill+search+schema+HTTP native-resume=updated-tool+both-skills", tc.name)
 		})
 	}
 }

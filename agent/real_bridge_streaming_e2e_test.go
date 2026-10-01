@@ -244,6 +244,22 @@ func bootRealExecutor(configPath string) (string, string, func(), error) {
 		handlers.HandlePerToolVirtualRequest(w, r, tool)
 	})
 
+	// Production bridge metadata returns session-prefixed routes. Keep the
+	// test executor reachable through those same routes, not just unscoped URLs.
+	mux.HandleFunc("/s/", func(w http.ResponseWriter, r *http.Request) {
+		remainder := strings.TrimPrefix(r.URL.Path, "/s/")
+		_, toolPath, ok := strings.Cut(remainder, "/")
+		if !ok || !strings.HasPrefix(toolPath, "tools/") {
+			http.NotFound(w, r)
+			return
+		}
+		scoped := r.Clone(r.Context())
+		scopedURL := *r.URL
+		scopedURL.Path = "/" + toolPath
+		scoped.URL = &scopedURL
+		mux.ServeHTTP(w, scoped)
+	})
+
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", "", nil, err
