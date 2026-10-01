@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -118,5 +119,28 @@ func TestMCPAgentExtensionsNeverReplaceProductBasePrompt(t *testing.T) {
 	}
 	if strings.Index(got, "PRODUCT BASE") > strings.Index(got, "MCP EXTENSION") {
 		t.Fatal("an mcpagent extension appeared before the product base prompt")
+	}
+}
+
+func TestReadAgentSystemPromptUsesOutboundComposition(t *testing.T) {
+	a := codeExecutionPromptAgent()
+	a.toolDiscovery = true
+	a.setInstructions("PRODUCT POLICY\n" + prompt.ToolStructurePlaceholder + "\n<available_tools>stale catalog</available_tools>")
+	mustAttachSkill(t, a, &llmtypes.Skill{Name: "test-skill", Description: "Fresh discovery", Content: "ON DEMAND BODY"})
+	ctx := context.Background()
+	got := ReadAgentSystemPrompt(ctx, a)
+	if got != a.outgoingSystemPromptForContext(ctx) {
+		t.Fatal("inspection differs from send composer")
+	}
+	for _, absent := range []string{"<available_tools>", "stale catalog", prompt.ToolStructurePlaceholder, "ON DEMAND BODY"} {
+		if strings.Contains(got, absent) {
+			t.Fatalf("inspection leaked %q", absent)
+		}
+	}
+	if !strings.Contains(got, "PRODUCT POLICY") || !strings.Contains(got, "Fresh discovery") {
+		t.Fatal("inspection lost identity or attached skill discovery")
+	}
+	if ReadAgentSystemPrompt(nil, a) != got || ReadAgentSystemPrompt(ctx, nil) != "" {
+		t.Fatal("nil input handling")
 	}
 }

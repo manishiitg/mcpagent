@@ -129,7 +129,7 @@ func TestDynamicRuntimePreservesCallerInstructionsAndSkills(t *testing.T) {
 		}
 	}
 	a.setInstructions(got)
-	if current := a.outgoingSystemPromptForContext(ctx); strings.Count(current, "<runtime_tools>") != 1 || strings.Count(current, "<available_tools>") != 1 {
+	if current := a.outgoingSystemPromptForContext(ctx); strings.Count(current, "<runtime_tools>") != 1 || strings.Count(current, "<available_tools>") != 0 {
 		t.Fatal("recomposition duplicated runtime/discovery sections")
 	}
 	// Replacing an attached skill updates its discovery description and body.

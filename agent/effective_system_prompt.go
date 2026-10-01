@@ -101,7 +101,8 @@ func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base
 	}
 
 	if a.toolDiscovery {
-		return replaceEffectiveToolsSection(base, "<available_tools>\nThe HTTP catalog is loaded on demand. Follow the live discovery and routing contract in the runtime routing section; never guess tool names.\n</available_tools>")
+		// Discovery is already specified by runtime_tools; remove stale catalogs.
+		return replaceEffectiveToolsSection(base, "")
 	}
 
 	toolStructure, err := a.buildToolIndexForContext(ctx)

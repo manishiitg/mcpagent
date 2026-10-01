@@ -151,3 +151,16 @@ func ApplyAgentResumeHandle(agent *Agent, handle *AgentSessionHandle) bool {
 	}
 	return agent.applyAgentSessionHandle(handle)
 }
+
+// ReadAgentSystemPrompt renders the exact outbound system text for the current
+// context and grants without starting a turn or invoking the model. Attached
+// native CLI skill indexes and provider-owned instructions remain separate.
+func ReadAgentSystemPrompt(ctx context.Context, agent *Agent) string {
+	if agent == nil {
+		return ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return agent.outgoingSystemPromptForContext(ctx)
+}
