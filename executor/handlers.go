@@ -16,6 +16,7 @@ import (
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/toolcalllog"
 	"github.com/manishiitg/mcpagent/toolerr"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func resolveCustomToolTimeout(tool string) time.Duration {
@@ -64,9 +65,10 @@ type MCPExecuteRequest struct {
 
 // MCPExecuteResponse represents the response from an MCP tool execution
 type MCPExecuteResponse struct {
-	Success bool   `json:"success"`
-	Result  string `json:"result,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Success bool               `json:"success"`
+	Result  string             `json:"result,omitempty"`
+	Error   string             `json:"error,omitempty"`
+	Images  []mcp.ImageContent `json:"images,omitempty"`
 }
 
 // CustomExecuteRequest represents a request to execute a custom tool
@@ -545,6 +547,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 					loggerv2.String("tool", req.Tool))
 				retryResult, retryErr := freshClient.CallTool(ctx, req.Tool, req.Args)
 				if retryErr == nil {
+					result = retryResult
 					resultStr = ConvertMCPResultToString(retryResult)
 					h.logger.Info("🔧 [BROKEN PIPE IN CONTENT] Retry successful",
 						loggerv2.String("tool", req.Tool))
@@ -586,6 +589,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(MCPExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
 		Success: true,
 		Result:  resultStr,
+		Images:  mcpResultImages(result),
 	})
 }
 

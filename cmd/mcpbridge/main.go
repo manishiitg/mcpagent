@@ -438,9 +438,10 @@ func main() {
 			}
 
 			var result struct {
-				Success bool   `json:"success"`
-				Result  string `json:"result"`
-				Error   string `json:"error"`
+				Success bool               `json:"success"`
+				Result  string             `json:"result"`
+				Error   string             `json:"error"`
+				Images  []mcp.ImageContent `json:"images"`
 			}
 			if err := json.Unmarshal(body, &result); err != nil {
 				// If response isn't our expected format, return raw body
@@ -481,7 +482,7 @@ func main() {
 			if truncated {
 				log.Printf("mcpbridge: truncated tool result type=%s tool=%s original_bytes=%d returned_bytes=%d saved_path=%q save_error=%v", def.Type, def.Name, len(result.Result), len(bounded), savedPath, saveErr)
 			}
-			return mcp.NewToolResultText(bounded), nil
+			return bridgeResultWithImages(bounded, result.Images, toolOutputDir), nil
 		})
 	}
 

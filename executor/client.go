@@ -24,7 +24,7 @@ func GetOrCreateMCPClient(ctx context.Context, serverName, configPath string, lo
 		nil, // No LLM needed for tool execution
 		serverName,
 		configPath,
-		nil,   // No tracers needed
+		nil, // No tracers needed
 		logger,
 		false, // disableCache - use cache by default for executor
 		nil,   // No runtime overrides needed for executor
@@ -74,9 +74,32 @@ func ConvertMCPResultToString(result *mcp.CallToolResult) string {
 		return fmt.Sprintf("Error: %s", joined)
 	}
 
+	if joined == "" && len(mcpResultImages(result)) > 0 {
+		return "MCP tool returned image content."
+	}
 	if joined == "" {
 		return "Tool execution completed (no output returned)"
 	}
 
 	return joined
+}
+
+// Preserve images alongside the legacy text result. HTTP bridge callers need
+// the original MIME type and base64 bytes to return native MCP image blocks.
+func mcpResultImages(result *mcp.CallToolResult) []mcp.ImageContent {
+	if result == nil {
+		return nil
+	}
+	var images []mcp.ImageContent
+	for _, content := range result.Content {
+		switch image := content.(type) {
+		case mcp.ImageContent:
+			images = append(images, image)
+		case *mcp.ImageContent:
+			if image != nil {
+				images = append(images, *image)
+			}
+		}
+	}
+	return images
 }
