@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -291,13 +292,22 @@ func prepareBridgeToolResult(toolName, value, outputDir string) (bounded, savedP
 	return bounded, savedPath, truncated, saveErr
 }
 
+// bridgeMaxCall parses MCP_BRIDGE_MAX_CALL_SECONDS: a positive whole number of seconds, else 0 (no cap).
+func bridgeMaxCall(raw string) time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func bridgeRequestError(toolType, toolName, sessionID string, timeout time.Duration, err error) string {
 	layer := "mcpbridge_http"
 	switch {
 	case errors.Is(err, context.Canceled):
 		return fmt.Sprintf("CANCELED: layer=%s type=%s tool=%s session=%s: %v", layer, toolType, toolName, sessionID, err)
 	case errors.Is(err, context.DeadlineExceeded):
-		return fmt.Sprintf("TIMEOUT: layer=%s type=%s tool=%s session=%s timeout=%s: %v", layer, toolType, toolName, sessionID, timeout, err)
+		return fmt.Sprintf("TIMEOUT: layer=%s type=%s tool=%s session=%s timeout=%s: %v. The call was stopped; run anything this slow in the background (nohup ... &) and poll its output instead of waiting on it.", layer, toolType, toolName, sessionID, timeout, err)
 	default:
 		return fmt.Sprintf("ERROR: layer=%s type=%s tool=%s session=%s: HTTP request failed: %v", layer, toolType, toolName, sessionID, err)
 	}
@@ -355,8 +365,20 @@ func main() {
 		server.WithHooks(hooks),
 	)
 
-	defaultHTTPClient := &http.Client{Timeout: codingtimeout.DefaultBridgeHTTPTimeout}
+	defaultTimeout := codingtimeout.DefaultBridgeHTTPTimeout
 	longRunningTimeout := codingtimeout.LongRunningMCPToolTimeout()
+	// A CLI with its own tool-call limit (Muse: 300 s) must get an answer from the bridge first. When its limit
+	// fires the CLI drops the whole MCP connection for good and every later call fails with "MCP stdio connection
+	// is closed", so this cap makes a slow call end as an ordinary tool error instead.
+	if limit := bridgeMaxCall(os.Getenv("MCP_BRIDGE_MAX_CALL_SECONDS")); limit > 0 {
+		if limit < defaultTimeout {
+			defaultTimeout = limit
+		}
+		if limit < longRunningTimeout {
+			longRunningTimeout = limit
+		}
+	}
+	defaultHTTPClient := &http.Client{Timeout: defaultTimeout}
 	longRunningHTTPClient := &http.Client{Timeout: longRunningTimeout}
 
 	for _, td := range toolDefs {

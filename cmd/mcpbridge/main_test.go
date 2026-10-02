@@ -143,3 +143,11 @@ func TestTruncateBridgeTextBytesPreservesUTF8(t *testing.T) {
 		t.Fatalf("result is %d bytes, limit is 257", len(got))
 	}
 }
+
+func TestBridgeMaxCallParsesOnlyPositiveSeconds(t *testing.T) {
+	for raw, want := range map[string]time.Duration{"270": 270 * time.Second, " 30 ": 30 * time.Second, "": 0, "0": 0, "-5": 0, "abc": 0} {
+		if got := bridgeMaxCall(raw); got != want {
+			t.Fatalf("bridgeMaxCall(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
