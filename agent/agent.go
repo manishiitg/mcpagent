@@ -3243,7 +3243,7 @@ func (a *Agent) fullCLIToolsSentence() string {
 	case llmproviders.ProviderCodexCLI:
 		return "Your own shell (in Codex's workspace-write sandbox) and subagents are enabled. Use the shell directly to read, search, create and change files in your working folder and to run commands."
 	case llmproviders.ProviderCursorCLI:
-		return "Your own Shell, Read, List, Glob, Grep, Search, Edit, Write and Delete tools are enabled; use them directly. Cursor subagents, background and cloud agents, computer use and image tools are denied."
+		return "Your own Shell, Read, List, Glob, Grep, Search, Edit and Write tools are enabled; use them directly, and delete files with the shell (rm). Cursor's Delete tool, subagents, background and cloud agents, computer use and image tools are denied."
 	case llmproviders.ProviderMuseCLI:
 		return "Your native file, shell, search and subagent tools are enabled; use them directly to read, create and change files and to run commands."
 	case llmproviders.ProviderAgyCLI:
