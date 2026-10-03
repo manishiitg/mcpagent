@@ -87,14 +87,14 @@ const claudeHybridNativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,T
 const claudeFullCLINativeTools = claudeHybridNativeTools + ",Bash,Write,Edit,MultiEdit,NotebookEdit"
 
 // fullCLIEnabled reports Full CLI: the mode asks for it AND the CLI starts
-// under the Landlock launcher, which confines those native writes and
-// commands to the chat's folder. Unconfined, Full CLI never applies.
+// confined (the Landlock launcher on Linux, Seatbelt on a Mac), which limits
+// those native writes and commands to the chat's folders. Unconfined, Full CLI never applies.
 func (a *Agent) fullCLIEnabled() bool {
 	mode := strings.TrimSpace(a.codingAgentToolsMode)
 	if strings.EqualFold(mode, codingAgentToolsFullUnconfined) {
 		return true
 	}
-	return strings.EqualFold(mode, codingAgentToolsFull) && a.cliSecurityPolicy.LandlockEnforced()
+	return strings.EqualFold(mode, codingAgentToolsFull) && a.cliSecurityPolicy.Confined()
 }
 
 // codexFullUnconfined reports unconfined Full CLI for Codex: hybrid's shell and subagents, with
