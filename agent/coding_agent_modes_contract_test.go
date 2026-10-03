@@ -128,3 +128,31 @@ func TestCodingAgentModesContract(t *testing.T) {
 		}
 	}
 }
+
+// Full mode edits natively; the bridge edit tool is offered only when native
+// tools are off (and to Pi, which never has them).
+func TestBridgeEditToolOnlyWithoutNativeTools(t *testing.T) {
+	for _, tc := range []struct {
+		provider llm.Provider
+		mode     string
+		want     bool
+	}{
+		{llm.ProviderClaudeCode, codingAgentToolsFull, false},
+		{llm.ProviderCodexCLI, codingAgentToolsFull, false},
+		{llm.ProviderCursorCLI, codingAgentToolsFull, false},
+		{llm.ProviderMuseCLI, codingAgentToolsFull, false},
+		{llm.ProviderClaudeCode, codingAgentToolsMCPOnly, true},
+		{llm.ProviderPiCLI, codingAgentToolsFull, true},
+	} {
+		a := &Agent{provider: tc.provider, codingAgentToolsMode: tc.mode, cliSecurityPolicy: confinedTestPolicy()}
+		if got := a.admitsCoreBridgeTool("diff_patch_workspace_file"); got != tc.want {
+			t.Errorf("%s/%s: diff_patch admitted=%v, want %v", tc.provider, tc.mode, got, tc.want)
+		}
+		if !a.admitsCoreBridgeTool("execute_shell_command") {
+			t.Errorf("%s/%s: the bridge shell must stay (HTTP tool routes run through it)", tc.provider, tc.mode)
+		}
+		if prompt := bridgeRoutingInstructions(a.admitsCoreBridgeTool, false); strings.Contains(prompt, "diff_patch_workspace_file") != tc.want {
+			t.Errorf("%s/%s: routing prompt disagrees with the bridge: %s", tc.provider, tc.mode, prompt)
+		}
+	}
+}

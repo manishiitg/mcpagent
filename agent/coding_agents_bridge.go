@@ -105,7 +105,16 @@ var bridgeTools = []struct {
 // from the catalog while the prompt still told the model to call it and the
 // allowlist still permitted it.
 func (a *Agent) admitsBridgeTool(name, toolType string) bool {
-	if toolType != "custom" || a == nil || a.bridgeToolAdmit == nil {
+	if toolType != "custom" || a == nil {
+		return true
+	}
+	// With its own tools on, the CLI edits files natively inside the sandbox,
+	// which refuses protected files; a second, bridge edit tool only splits the
+	// model's choice. mcp_only chats, Pi and workflow step agents keep it.
+	if name == "diff_patch_workspace_file" && a.nativeCodingToolsEnabled() {
+		return false
+	}
+	if a.bridgeToolAdmit == nil {
 		return true
 	}
 	return a.bridgeToolAdmit(name)
