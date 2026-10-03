@@ -13,7 +13,6 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -199,26 +198,15 @@ func TestMuseIntegrationConfiguresBestEffortNativePolicy(t *testing.T) {
 	if !slices.Equal(got, []string{"web_search"}) {
 		t.Fatalf("mcp_only Muse allowlist = %v, want only web_search", got)
 	}
-	agent.codingAgentToolsMode = codingAgentToolsHybrid
-	hybridOpts, err := agent.appendMuseCLIIntegrationOptions(nil)
+	// Full CLI: no allowlist at all, so Muse keeps its native toolset and the
+	// provider adds no --disable-shell/--disable-write.
+	agent.codingAgentToolsMode = codingAgentToolsFullUnconfined
+	fullOpts, err := agent.appendMuseCLIIntegrationOptions(nil)
 	if err != nil {
-		t.Fatalf("append hybrid Muse options: %v", err)
+		t.Fatalf("append full Muse options: %v", err)
 	}
-	hybrid, _ := metadataFromCallOptions(hybridOpts)[musecli.MetadataKeyMuseToolAllowlist].([]string)
-	for _, want := range []string{"web_search", "read_skill", "read_file", "search", "subagent_spawn"} {
-		if !slices.Contains(hybrid, want) {
-			t.Fatalf("hybrid Muse allowlist missing %q: %v", want, hybrid)
-		}
-	}
-	for _, forbidden := range []string{"bash", "write_file"} {
-		if slices.Contains(hybrid, forbidden) {
-			t.Fatalf("hybrid Muse allowlist must not include %q: %v", forbidden, hybrid)
-		}
-	}
-	for _, forbidden := range []string{"bash", "write_file", "read_image", "request_user_input", "cron_create", "mcp__api_bridge__execute_shell_command"} {
-		if slices.Contains(got, forbidden) {
-			t.Fatalf("Muse native tool %q must not be allowed: %v", forbidden, got)
-		}
+	if _, set := metadataFromCallOptions(fullOpts)[musecli.MetadataKeyMuseToolAllowlist]; set {
+		t.Fatal("full Muse must not get a tool allowlist")
 	}
 	mcpConfig, ok := metadataFromCallOptions(opts)[musecli.MetadataKeyMuseMCPConfig].(string)
 	if !ok {
@@ -911,140 +899,6 @@ func TestAppendCodexCLIIntegrationOptionsSandboxDefault(t *testing.T) {
 	}
 }
 
-func TestHybridCodingProviderAutoOptions(t *testing.T) {
-	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
-	t.Setenv("MCP_API_URL", "http://localhost:8080")
-	t.Setenv("MCP_API_TOKEN", "test-token")
-
-	t.Run("Claude Code", func(t *testing.T) {
-		agent := bridgeTestAgent()
-		agent.codingAgentToolsMode = codingAgentToolsHybrid
-		opts, err := agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := metadataFromCallOptions(opts)
-		if got[claudecode.MetadataKeyTools] != claudeHybridNativeTools {
-			t.Fatalf("tools = %#v, want the read/todo/subagent set %q", got[claudecode.MetadataKeyTools], claudeHybridNativeTools)
-		}
-		for _, forbidden := range []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "default"} {
-			for _, tool := range strings.Split(claudeHybridNativeTools, ",") {
-				if tool == forbidden {
-					t.Fatalf("hybrid must never enable native %s", forbidden)
-				}
-			}
-		}
-		if got["claude_code_permission_mode"] != "auto" {
-			t.Fatalf("permission mode = %#v, want auto", got["claude_code_permission_mode"])
-		}
-		if _, dangerous := got[claudecode.MetadataKeyDangerouslySkipPermissions]; dangerous {
-			t.Fatalf("provider_auto must not skip Claude permissions: %#v", got)
-		}
-	})
-
-	t.Run("Cursor", func(t *testing.T) {
-		agent := bridgeTestAgent()
-		agent.codingAgentToolsMode = codingAgentToolsHybrid
-		opts, err := agent.appendCursorCLIIntegrationOptions(nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := metadataFromCallOptions(opts)
-		// Hybrid Cursor: deny hooks stay installed, with native reads allowed.
-		if got[cursorcli.MetadataKeyDenyBuiltinTools] != true || got[cursorcli.MetadataKeyReadOnlyHybridTools] != true {
-			t.Fatalf("hybrid Cursor must use the read-only hybrid deny hooks: %#v", got)
-		}
-	})
-
-	t.Run("Codex", func(t *testing.T) {
-		agent := bridgeTestAgent()
-		agent.codingAgentToolsMode = codingAgentToolsHybrid
-		opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := metadataFromCallOptions(opts)
-		// Codex hybrid: native shell on, inside the read-only sandbox.
-		if _, disabled := got[codexcli.MetadataKeyDisableShellTool]; disabled {
-			t.Fatalf("hybrid Codex must keep its native shell for reads: %#v", got)
-		}
-		if got[codexcli.MetadataKeySandbox] != "read-only" {
-			t.Fatalf("hybrid Codex sandbox = %#v, want read-only (no native writes)", got[codexcli.MetadataKeySandbox])
-		}
-	})
-
-	t.Run("AGY", func(t *testing.T) {
-		for _, mode := range []string{codingAgentToolsMCPOnly, codingAgentToolsHybrid} {
-			agent := bridgeTestAgent()
-			agent.codingAgentToolsMode = mode
-			opts, err := agent.appendAgyCLIIntegrationOptions(nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := metadataFromCallOptions(opts)
-			if got[agycli.MetadataKeyNativeToolsMode] != mode {
-				t.Fatalf("AGY mode = %#v, want %q", got[agycli.MetadataKeyNativeToolsMode], mode)
-			}
-			if got[agycli.MetadataKeyMCPConfig] == nil {
-				t.Fatal("AGY lost the MCP bridge while selecting native tool mode")
-			}
-		}
-	})
-}
-
-func TestHybridCodingApproveAllOptions(t *testing.T) {
-	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
-	t.Setenv("MCP_API_URL", "http://localhost:8080")
-	t.Setenv("MCP_API_TOKEN", "test-token")
-
-	t.Run("Claude Code", func(t *testing.T) {
-		agent := bridgeTestAgent()
-		agent.codingAgentToolsMode = codingAgentToolsHybrid
-		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
-		opts, err := agent.appendClaudeCodeIntegrationOptions(nil, LLMModel{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := metadataFromCallOptions(opts)
-		if got[claudecode.MetadataKeyDangerouslySkipPermissions] != true {
-			t.Fatalf("approve_all must bypass Claude approvals: %#v", got)
-		}
-	})
-
-	t.Run("Cursor", func(t *testing.T) {
-		agent := bridgeTestAgent()
-		agent.codingAgentToolsMode = codingAgentToolsHybrid
-		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
-		opts, err := agent.appendCursorCLIIntegrationOptions(nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := metadataFromCallOptions(opts)[cursorcli.MetadataKeyDenyBuiltinTools]; got != true {
-			t.Fatalf("approve_all hybrid Cursor must keep builtins denied, got %#v", got)
-		}
-	})
-
-	t.Run("Codex", func(t *testing.T) {
-		agent := bridgeTestAgent()
-		agent.codingAgentToolsMode = codingAgentToolsHybrid
-		agent.codingAgentApprovalsMode = codingAgentApprovalsAll
-		opts, err := agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := metadataFromCallOptions(opts)
-		if got[codexcli.MetadataKeyApprovalPolicy] != "never" {
-			t.Fatalf("approve_all Codex policy = %#v, want never", got)
-		}
-		if _, reviewer := got[codexcli.MetadataKeyConfigOverrides]; reviewer {
-			t.Fatalf("approve_all must not configure Codex auto-review: %#v", got)
-		}
-	})
-}
-
-// TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess proves neither a
-// network request nor a workspace-write sandbox request can widen Codex's
-// read-only sandbox: native writes are never allowed (2026-09-24).
 func TestAppendCodexCLIIntegrationOptionsSandboxNetworkAccess(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")

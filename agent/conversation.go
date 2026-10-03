@@ -624,9 +624,9 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		if !llm.IsO3O4Model(a.modelID) {
 			opts = append(opts, llmtypes.WithTemperature(a.temperature))
 		}
-		// The bridge-only shell disable belongs to mcp_only. In Native agent tools the Codex
-		// integration options keep the shell on in a read-only sandbox; disabling it here as
-		// well made the adapter union both lists, so hybrid never got its shell or subagents.
+		// The bridge-only shell disable belongs to mcp_only. In Full CLI the Codex
+		// integration options keep the shell on; disabling it here as well made the
+		// adapter union both lists, so native mode never got its shell or subagents.
 		if a.provider == "codex-cli" && !a.nativeCodingToolsEnabled() {
 			opts = append(opts, codexcli.WithDisableShellTool())
 		}

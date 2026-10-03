@@ -421,10 +421,11 @@ func WithCursorDenyBuiltinTools(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithCursorDenyBuiltinTools(enabled)
 }
 
-// WithCursorReadOnlyHybridTools keeps Cursor's native read/list/search tools
-// and denies shell, writes, deletes and subagents (hybrid mode).
-func WithCursorReadOnlyHybridTools() llmtypes.CallOption {
-	return llmproviders.WithCursorReadOnlyHybridTools()
+// WithCursorFullNativeTools lets Cursor's own shell, reads, edits and deletes
+// run (Full CLI) and keeps subagents, cloud/background agents and computer use
+// denied.
+func WithCursorFullNativeTools() llmtypes.CallOption {
+	return llmproviders.WithCursorFullNativeTools()
 }
 
 // WithCursorSandbox sets Cursor Agent CLI's --sandbox flag ("enabled"/"disabled").
@@ -862,10 +863,10 @@ func WithCodexReasoningEffort(effort string) CallOption {
 	return llmproviders.WithCodexReasoningEffort(effort)
 }
 
-// WithCodexReadOnlyHybridTools keeps Codex's shell and subagents and disables
-// its other native features (hybrid mode, with the read-only sandbox).
-func WithCodexReadOnlyHybridTools() CallOption {
-	return llmproviders.WithCodexReadOnlyHybridTools()
+// WithCodexNativeTools keeps Codex's shell and subagents and disables its
+// other native features (Full CLI).
+func WithCodexNativeTools() CallOption {
+	return llmproviders.WithCodexNativeTools()
 }
 
 // WithCodexDisableShellTool disables the built-in shell tool in Codex CLI.

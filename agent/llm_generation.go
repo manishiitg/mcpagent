@@ -1022,10 +1022,9 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 	if bridgeConfig, bridgeErr := a.buildBridgeMCPConfig(); bridgeErr == nil {
 		// Honor the same tools-mode contract Claude/Codex/Cursor consult.
 		// Hardcoding bridge-only here made AgentToolsMode provider-dependent:
-		// a caller selecting hybrid got native tools everywhere except Pi,
+		// a caller selecting native tools got them everywhere except Pi,
 		// silently, with no error to explain the difference.
-		// Pi stays bridge-only in every mode: native writes/shell are never
-		// enabled and Pi has no read-only hybrid restriction yet.
+		// Pi stays bridge-only in every mode until it has a confined full mode.
 		bridgeOnly := true
 		opts = append(opts,
 			llm.WithPiMCPConfig(bridgeConfig),
@@ -1039,7 +1038,7 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 		if bridgeOnly {
 			a.logger.Info("🌉 [PI_CLI] Configured native MCP bridge through private session mcp.json with built-in tools disabled")
 		} else {
-			a.logger.Info("🌉 [PI_CLI] Configured native MCP bridge through private session mcp.json with native built-in tools enabled (hybrid)")
+			a.logger.Info("🌉 [PI_CLI] Configured native MCP bridge through private session mcp.json with native built-in tools enabled")
 		}
 	} else {
 		return nil, fmt.Errorf("Pi CLI requires the MCP bridge: %w", bridgeErr)

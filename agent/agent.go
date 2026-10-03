@@ -261,10 +261,20 @@ func withCursorBridgeToolsMode(enabled bool) agentOption {
 
 // withCodingAgentToolsMode chooses the relationship between a coding CLI's
 // native tools and the MCP bridge. Empty preserves the safe mcp_only default.
+// The retired "hybrid" (native reads only) is read as "full": there are only
+// two modes, mcp_only and full (owner decision 2026-10-03).
 func withCodingAgentToolsMode(mode string) agentOption {
 	return func(a *Agent) {
-		a.codingAgentToolsMode = strings.ToLower(strings.TrimSpace(mode))
+		a.codingAgentToolsMode = normalizeCodingAgentToolsMode(mode)
 	}
+}
+
+func normalizeCodingAgentToolsMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "hybrid" {
+		return codingAgentToolsFull
+	}
+	return mode
 }
 
 // withBridgeToolAdmit restricts which CORE bridge tools this agent advertises.
@@ -3214,24 +3224,41 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 // names belong to bridgeRoutingExplicitInstructions, where they are filtered
 // through the same admission predicate used to build the provider manifest.
 func (a *Agent) codingAgentProviderRoutingPreamble() string {
-	if a.provider == llmproviders.ProviderAgyCLI && a.fullCLIEnabled() {
-		boundary := "Native tools and their child processes are confined to the granted folders."
-		if a.agyNativeToolsMode() == codingAgentToolsFullUnconfined {
-			boundary = "This session explicitly runs unconfined with the host user's permissions."
-		}
-		return "IMPORTANT: AGY Full CLI is enabled. Use your native tools directly, including file reads, search, edits, shell commands and subagents. Wait for delegated work that your answer depends on before giving the final answer. " + boundary + " The declared MCP bridge tools remain available for platform actions and integrations. Call only exact declared bridge tool names."
+	if a.nativeCodingToolsEnabled() {
+		return "IMPORTANT: " + a.fullCLIToolsSentence() + " " + a.fullCLIBoundarySentence() +
+			" Protected files (a workflow's planning/, its raw database, instruction files) are refused even inside granted folders: change plans and the workflow database only through their bridge tools." +
+			" Use the declared MCP bridge tools for platform actions, integrations, the workflow database, notifications and anything outside your folders. Call only exact declared bridge tool names; never invent alternate prefixes or namespaces."
 	}
-	hybrid := a.nativeCodingToolsEnabled() && (a.provider == llmproviders.ProviderMuseCLI || a.provider == llmproviders.ProviderClaudeCode || a.provider == llmproviders.ProviderCodexCLI || a.provider == llmproviders.ProviderCursorCLI || a.provider == llmproviders.ProviderAgyCLI)
-	if a.provider == llmproviders.ProviderAgyCLI && hybrid {
-		return "IMPORTANT: Your native file read, file search, web search, and URL read tools are enabled. Native commands, file writes, browser actuation, and subagents are disabled. Use the declared MCP bridge tools for those actions. Call only exact declared bridge tool names."
-	}
-	if a.provider == llmproviders.ProviderMuseCLI && !hybrid {
+	if a.provider == llmproviders.ProviderMuseCLI {
 		return "IMPORTANT: Use native web_search and the declared MCP bridge tools for work. Native file, shell, memory, scheduling, goal, workflow, and subagent tools are restricted; do not attempt them even if listed. Muse internal session controls may bypass its restriction hook, but they are not a substitute for platform tools. Use platform tools for user questions and task coordination. Call only exact declared bridge tool names."
 	}
-	if hybrid {
-		return "IMPORTANT: Your native read-only tools (read files, search, list/glob), skills, todo list, subagents and web search are enabled; use them directly. Native shell and file writes are disabled: run commands and create or change files only through the declared bridge tools (commands and file mutations). Call only exact declared bridge tool names; never invent alternate prefixes or namespaces. If an action fails, choose another genuinely available route or explain the specific blocker."
+	return "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Run commands and read, create or change files only through the declared bridge tools, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
+}
+
+// fullCLIToolsSentence names the native tools this CLI really has in Full CLI.
+func (a *Agent) fullCLIToolsSentence() string {
+	switch a.provider {
+	case llmproviders.ProviderClaudeCode:
+		return "Your own tools are enabled: Bash, Read, Write, Edit, Grep, Glob, skills, todos, subagents and web search. Use them directly to read, search, create and change files and to run commands."
+	case llmproviders.ProviderCodexCLI:
+		return "Your own shell (in Codex's workspace-write sandbox) and subagents are enabled. Use the shell directly to read, search, create and change files in your working folder and to run commands."
+	case llmproviders.ProviderCursorCLI:
+		return "Your own Shell, Read, List, Glob, Grep, Search, Edit, Write and Delete tools are enabled; use them directly. Cursor subagents, background and cloud agents, computer use and image tools are denied."
+	case llmproviders.ProviderMuseCLI:
+		return "Your native file, shell, search and subagent tools are enabled; use them directly to read, create and change files and to run commands."
+	case llmproviders.ProviderAgyCLI:
+		return "AGY Full CLI is enabled. Use your native tools directly, including file reads, search, edits, shell commands and subagents. Wait for delegated work that your answer depends on before giving the final answer."
+	default:
+		return "Your native tools are enabled; use them directly for files and commands."
 	}
-	return "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Use only bridge tools explicitly declared in this session, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
+}
+
+// fullCLIBoundarySentence states where native tools reach in this session.
+func (a *Agent) fullCLIBoundarySentence() string {
+	if a.fullUnconfined() {
+		return "This session runs with the host user's own permissions (a person's own machine)."
+	}
+	return "Your native tools and every process they start are confined to the folders granted to this chat."
 }
 
 // AddInstructions records supplementary instructions. They are composed with

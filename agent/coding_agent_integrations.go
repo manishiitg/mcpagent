@@ -63,10 +63,10 @@ var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentInteg
 
 const (
 	codingAgentToolsMCPOnly = "mcp_only"
-	codingAgentToolsHybrid  = "hybrid"
-	// codingAgentToolsFull is hybrid plus the CLI's own shell and file edits
-	// (PLAT-364 Full CLI). It takes effect only when the CLI is confined by
-	// the Landlock launcher; otherwise it runs exactly as hybrid.
+	// codingAgentToolsFull is the CLI's own toolset (reads, shell, edits,
+	// subagents) alongside the bridge (PLAT-364 Full CLI). It takes effect only
+	// when the CLI is confined (Landlock on Linux, Seatbelt on a Mac); an
+	// unconfined "full" runs as mcp_only, never with native tools.
 	codingAgentToolsFull = "full"
 	// codingAgentToolsFullUnconfined is Full CLI without the lock, for a person's own
 	// single-user machine (the server only asks for it there): the CLI runs with the
@@ -76,15 +76,12 @@ const (
 	codingAgentApprovalsAll        = "approve_all"
 )
 
-// claudeHybridNativeTools are the Claude Code built-ins enabled in hybrid mode
-// (user decision 2026-09-23: native read tools, todos and subagents; never
-// native writes or shell). Agent subagents inherit this --tools restriction.
-// TaskCreate/Get/Update/List are the current todo tools; TodoWrite is the
-// legacy name, ignored where unknown.
-const claudeHybridNativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,TaskCreate,TaskGet,TaskUpdate,TaskList,TodoWrite"
-
-// claudeFullCLINativeTools adds Claude's own shell and file edits to hybrid.
-const claudeFullCLINativeTools = claudeHybridNativeTools + ",Bash,Write,Edit,MultiEdit,NotebookEdit"
+// claudeFullCLINativeTools are the Claude Code built-ins in Full CLI mode:
+// reads, search, skills, subagents, todos, web, and its own shell and file
+// edits. Agent subagents inherit this --tools list. TaskCreate/Get/Update/List
+// are the current todo tools; TodoWrite is the legacy name, ignored where
+// unknown.
+const claudeFullCLINativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,TaskCreate,TaskGet,TaskUpdate,TaskList,TodoWrite,Bash,Write,Edit,MultiEdit,NotebookEdit"
 
 // fullCLIEnabled reports Full CLI: the mode asks for it AND the CLI starts
 // confined (the Landlock launcher on Linux, Seatbelt on a Mac), which limits
@@ -97,48 +94,28 @@ func (a *Agent) fullCLIEnabled() bool {
 	return strings.EqualFold(mode, codingAgentToolsFull) && a.cliSecurityPolicy.Confined()
 }
 
-// codexFullUnconfined reports unconfined Full CLI for Codex: hybrid's shell and subagents, with
-// Codex's own workspace-write sandbox instead of read-only.
-func (a *Agent) codexFullUnconfined() bool {
+// fullUnconfined reports Full CLI with the host user's own rights (a person's
+// own machine, until every CLI runs under Seatbelt there).
+func (a *Agent) fullUnconfined() bool {
 	return strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFullUnconfined)
-}
-
-// claudeNativeTools is the --tools list for this agent's mode.
-func (a *Agent) claudeNativeTools() string {
-	if a.fullCLIEnabled() {
-		return claudeFullCLINativeTools
-	}
-	return claudeHybridNativeTools
 }
 
 func (a *Agent) agyNativeToolsMode() string {
 	if a.fullCLIEnabled() {
-		if strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFullUnconfined) {
+		if a.fullUnconfined() {
 			return codingAgentToolsFullUnconfined
 		}
 		return codingAgentToolsFull
 	}
-	if a.nativeCodingToolsEnabled() {
-		return codingAgentToolsHybrid
-	}
 	return codingAgentToolsMCPOnly
 }
 
-// nativeCodingToolsEnabled reports hybrid mode. Each CLI admits its proven
-// native subset: AGY uses a PreToolUse read/search gate; Claude and Muse also
-// support more built-ins. Pi stays bridge-only until it has a restriction and
-// live proof. Codex's native shell runs in its read-only sandbox.
+// nativeCodingToolsEnabled reports whether this CLI runs with its own tools:
+// only in Full CLI that actually applies (confined, or explicitly
+// unconfined). There is no reads-only middle state: anything else is
+// mcp_only. Pi stays bridge-only until it has a confined full mode.
 func (a *Agent) nativeCodingToolsEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(a.codingAgentToolsMode)) {
-	case codingAgentToolsHybrid, codingAgentToolsFull, codingAgentToolsFullUnconfined:
-		return true
-	default:
-		return false
-	}
-}
-
-func (a *Agent) approveAllCodingTools() bool {
-	return strings.EqualFold(strings.TrimSpace(a.codingAgentApprovalsMode), codingAgentApprovalsAll)
+	return a.provider != llmproviders.ProviderPiCLI && a.fullCLIEnabled()
 }
 
 func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
@@ -152,7 +129,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// caller had registered.
 	nativeTools := "WebSearch"
 	if a.nativeCodingToolsEnabled() {
-		nativeTools = a.claudeNativeTools()
+		nativeTools = claudeFullCLINativeTools
 	}
 	allowedTools := "mcp__api-bridge__*," + nativeTools
 	if claudeHTTPHooksEnabled {
@@ -161,18 +138,13 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	opts = append(opts, llm.WithAllowedTools(allowedTools))
 
 	if a.nativeCodingToolsEnabled() {
-		// Hybrid: Claude's read-only navigation, skills, todos, subagents and
-		// web tools run natively. Bash and file writes are never enabled; shell
-		// and writes stay on the bridge (grants, sandbox, history).
-		opts = append(opts, llm.WithClaudeCodeTools(a.claudeNativeTools()))
-		// Full CLI: the Landlock lock is the boundary, so Claude must not stop
-		// the turn to ask about a command or a read (live on RTS 2026-09-29, a
-		// Bash read outside the folder stalled the turn on a prompt).
-		if a.approveAllCodingTools() || a.fullCLIEnabled() {
-			opts = append(opts, llmproviders.WithDangerouslySkipPermissions())
-		} else {
-			opts = append(opts, llm.WithClaudeCodePermissionMode("auto"))
-		}
+		// Full CLI: Claude's own reads, shell, edits, skills, todos, subagents
+		// and web tools run natively. The sandbox is the boundary, so Claude
+		// must not stop the turn to ask about a command or a read (live on RTS
+		// 2026-09-29, a Bash read outside the folder stalled the turn on a
+		// prompt).
+		opts = append(opts, llm.WithClaudeCodeTools(claudeFullCLINativeTools))
+		opts = append(opts, llmproviders.WithDangerouslySkipPermissions())
 	} else {
 		// Force Claude to use our custom tools by disabling its own internal ones.
 		opts = append(opts, llm.WithClaudeCodeTools("WebSearch"))
@@ -242,17 +214,15 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 }
 
 func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
-	// Codex reads files only through its shell. Hybrid ("Native agent tools")
-	// therefore keeps the shell ON but forces Codex's OS-enforced read-only
-	// sandbox (below): native reads/search work, every native write is refused
-	// by the sandbox, and shell writes/product APIs go through the bridge's
-	// execute_shell_command, which runs outside Codex's sandbox
-	// (TestCodexCLIRealReadOnlyHybridP0). mcp_only keeps the shell disabled.
-	hybrid := a.nativeCodingToolsEnabled()
-	if hybrid {
-		// Shell (reads) and subagents only; browser/computer use, apps,
-		// plugins, hooks, image generation etc. stay disabled.
-		opts = append(opts, llm.WithCodexReadOnlyHybridTools())
+	// Full CLI ("Native agent tools"): Codex's shell and subagents run in its
+	// workspace-write sandbox, inside AgentWorks' own confinement
+	// (TestCodexCLIRealNativeToolsP0). mcp_only keeps the shell disabled and
+	// the sandbox read-only.
+	native := a.nativeCodingToolsEnabled()
+	if native {
+		// Shell and subagents only; browser/computer use, apps, plugins,
+		// hooks, image generation etc. stay disabled.
+		opts = append(opts, llm.WithCodexNativeTools())
 	} else {
 		opts = append(opts, llm.WithCodexDisableShellTool())
 	}
@@ -290,9 +260,9 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	// apply_patch), so Codex always runs in its read-only sandbox. Writes go
 	// through the bridge, whose execute_shell_command runs outside it.
 	sandboxMode := "read-only"
-	// Full CLI without the lock (a person's own machine): Codex may write inside its working
-	// directory. Confined Full (Landlock) does not change Codex yet.
-	if a.codexFullUnconfined() {
+	// Full CLI: Codex may write inside its working directory; AgentWorks'
+	// confinement (Landlock, Seatbelt) bounds everything else.
+	if native {
 		sandboxMode = "workspace-write"
 	}
 	opts = append(opts, llm.WithCodexSandbox(sandboxMode))

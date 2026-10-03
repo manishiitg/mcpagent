@@ -108,31 +108,34 @@ func TestWithBridgeRoutingInstructionsOptionSetsOverride(t *testing.T) {
 	}
 }
 
+// The routing preamble describes the mode the chat actually got. A "full"
+// request that is not confined is mcp_only (never native tools), and Pi stays
+// bridge-only in every mode.
 func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.T) {
-	for _, provider := range []llmproviders.Provider{llmproviders.ProviderClaudeCode, llmproviders.ProviderMuseCLI, llmproviders.ProviderCodexCLI, llmproviders.ProviderCursorCLI} {
-		hybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid, provider: provider}
-		hybridPrompt := hybrid.codingAgentProviderRoutingPreamble()
-		if !strings.Contains(hybridPrompt, "native read-only tools") || !strings.Contains(hybridPrompt, "Native shell and file writes are disabled") {
-			t.Fatalf("%s hybrid routing preamble must describe read-only native tools with shell/writes on the bridge: %s", provider, hybridPrompt)
+	for _, provider := range []llmproviders.Provider{llmproviders.ProviderClaudeCode, llmproviders.ProviderMuseCLI, llmproviders.ProviderCodexCLI, llmproviders.ProviderCursorCLI, llmproviders.ProviderAgyCLI} {
+		full := &Agent{codingAgentToolsMode: codingAgentToolsFullUnconfined, provider: provider}
+		if prompt := full.codingAgentProviderRoutingPreamble(); strings.Contains(prompt, "disabled for this session") || !strings.Contains(prompt, "Protected files") {
+			t.Fatalf("%s full preamble must describe enabled native tools and protected files: %s", provider, prompt)
+		}
+		unconfined := &Agent{codingAgentToolsMode: codingAgentToolsFull, provider: provider}
+		if prompt := unconfined.codingAgentProviderRoutingPreamble(); strings.Contains(prompt, "Protected files") {
+			t.Fatalf("%s: an unconfined full request must read as mcp_only: %s", provider, prompt)
 		}
 	}
-	// Providers without a read-only hybrid restriction stay bridge-only.
-	piHybrid := &Agent{codingAgentToolsMode: codingAgentToolsHybrid, provider: llmproviders.ProviderPiCLI}
-	if got := piHybrid.codingAgentProviderRoutingPreamble(); !strings.Contains(got, "tools are disabled") {
-		t.Fatalf("pi hybrid preamble must stay bridge-only: %s", got)
+	piFull := &Agent{codingAgentToolsMode: codingAgentToolsFullUnconfined, provider: llmproviders.ProviderPiCLI}
+	if got := piFull.codingAgentProviderRoutingPreamble(); !strings.Contains(got, "tools are disabled") {
+		t.Fatalf("pi preamble must stay bridge-only: %s", got)
 	}
-
 	mcpOnly := &Agent{codingAgentToolsMode: codingAgentToolsMCPOnly}
-	mcpOnlyPrompt := mcpOnly.codingAgentProviderRoutingPreamble()
-	if !strings.Contains(mcpOnlyPrompt, "Provider-native filesystem, shell, edit, and browser tools are disabled") {
-		t.Fatalf("mcp-only routing preamble does not describe disabled native tools: %s", mcpOnlyPrompt)
+	if got := mcpOnly.codingAgentProviderRoutingPreamble(); !strings.Contains(got, "Provider-native filesystem, shell, edit, and browser tools are disabled") {
+		t.Fatalf("mcp-only routing preamble does not describe disabled native tools: %s", got)
 	}
 }
 
 func TestCodingAgentProviderRoutingPromptDoesNotNameExcludedBridgeTools(t *testing.T) {
 	a := &Agent{
 		provider:             llmproviders.ProviderClaudeCode,
-		codingAgentToolsMode: codingAgentToolsHybrid,
+		codingAgentToolsMode: codingAgentToolsFullUnconfined,
 		bridgeToolAdmit: func(name string) bool {
 			return name != "execute_shell_command" && name != "diff_patch_workspace_file"
 		},

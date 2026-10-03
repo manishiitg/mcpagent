@@ -25,15 +25,14 @@ func piBridgeOnlyFromOptions(t *testing.T, opts []llmtypes.CallOption) bool {
 	return value
 }
 
-// Pi stays bridge-only in every mode: hybrid never enables native writes or
-// shell, and Pi has no read-only hybrid restriction yet (2026-09-24).
+// Pi stays bridge-only in every mode until it has a confined full mode.
 func TestPiBridgeOnlyToolsFollowsAgentToolsMode(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		toolsMode      string
 		wantBridgeOnly bool
 	}{
-		{"hybrid stays bridge-only", codingAgentToolsHybrid, true},
+		{"full stays bridge-only", codingAgentToolsFullUnconfined, true},
 		{"default is bridge-only", "", true},
 		{"explicit mcp_only is bridge-only", "mcp_only", true},
 	} {

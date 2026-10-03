@@ -254,11 +254,12 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	// WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json
 	// that denies Cursor's built-in Shell/Read/Edit/Write/Delete/etc. tools at
 	// the hook layer, forcing the agent to route tool calls through the bridge.
-	// Hybrid ("Native agent tools") uses the same hooks but lets the native
-	// read/list/search tools run; shell, writes, deletes and subagents stay
-	// denied in every mode (TestCursorCLIRealReadOnlyHybridP0).
+	// Full CLI ("Native agent tools") uses the same hooks but lets Cursor's own
+	// shell, reads, edits and deletes run (shell approved by the hook, never
+	// --force); subagents, cloud/background agents and computer use stay
+	// denied (TestCursorCLIRealFullNativeP0).
 	if a.nativeCodingToolsEnabled() {
-		opts = append(opts, llm.WithCursorReadOnlyHybridTools())
+		opts = append(opts, llm.WithCursorFullNativeTools())
 	} else {
 		opts = append(opts, llm.WithCursorDenyBuiltinTools(true))
 	}
@@ -283,11 +284,6 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	return opts, nil
 }
 
-// museHybridNativeTools are the Muse built-ins added in hybrid coding-tools
-// mode on top of web_search.
-var museHybridNativeTools = []string{"read_skill", "read_file", "search",
-	"subagent_spawn", "subagent_wait", "subagent_send_message", "subagent_read_result", "subagent_input", "subagent_cancel"}
-
 // museWaitsForUserChoice reports whether a Muse native question should wait
 // for the user's answer instead of being auto-answered. That needs both a
 // retained pane to answer in and a person attending the chat. Persistence alone
@@ -306,22 +302,14 @@ func (a *Agent) appendMuseCLIIntegrationOptions(opts []llmtypes.CallOption) ([]l
 	// Mount the bridge in a private config root; concurrent sessions must not
 	// overwrite one another's settings or retain a stale bridge endpoint.
 	opts = append(opts, llm.WithMuseMCPConfig(bridgeConfig))
-	// Muse's PreToolUse policy denies unlisted tools that reach the hook.
-	// mcp_only (default) is pure bridge: native web search only. hybrid adds
-	// the native tools models reached for most (2026-09-23 log audit:
-	// read_file 28, read_skill 16, search 12 denials) plus subagents, which Muse
-	// uses well on long tasks; allowlisting subagent_spawn turns delegation on
-	// and children inherit the hook and --disable-shell/--disable-write
-	// (TestMuseCLIRealSubagentContainment). Native reads are not limited to the
-	// step's granted folders. Shell and writes stay bridge-only in both modes.
-	// MCP discovery and concrete MCP server tools mount separately; concrete
-	// MCP identifiers must not be added here. Internal controls such as
-	// write_todos bypass the hook in both modes.
-	toolAllowlist := []string{"web_search"}
-	if a.nativeCodingToolsEnabled() {
-		toolAllowlist = append(toolAllowlist, museHybridNativeTools...)
+	// mcp_only: Muse's PreToolUse policy allows native web search only, and
+	// the provider adds --disable-shell/--disable-write. Full CLI ("Native
+	// agent tools"): no allowlist at all, so Muse keeps its whole native
+	// toolset (files, shell, subagents) inside AgentWorks' confinement. MCP
+	// discovery and concrete MCP server tools mount separately in both modes.
+	if !a.nativeCodingToolsEnabled() {
+		opts = append(opts, llm.WithMuseToolAllowlist([]string{"web_search"}))
 	}
-	opts = append(opts, llm.WithMuseToolAllowlist(toolAllowlist))
 	if a.museWaitsForUserChoice() {
 		opts = append(opts, musecli.WithUserChoice(true))
 	}
