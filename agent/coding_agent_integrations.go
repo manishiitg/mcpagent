@@ -45,6 +45,9 @@ var codingAgentIntegrationAppenders = map[llmproviders.Provider]codingAgentInteg
 		return a.appendCodexCLIIntegrationOptions(opts, model)
 	},
 	llmproviders.ProviderCursorCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
+		if effort, ok := model.Options["reasoning_effort"].(string); ok && strings.TrimSpace(effort) != "" {
+			opts = append(opts, llmtypes.WithReasoningEffort(effort))
+		}
 		return a.appendCursorCLIIntegrationOptions(opts)
 	},
 	llmproviders.ProviderMuseCLI: func(a *Agent, opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {

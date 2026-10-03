@@ -1272,3 +1272,26 @@ func TestBuildBridgeMCPConfigPrefersExplicitOverEnvironment(t *testing.T) {
 		t.Fatalf("environment fallback broken: %v", fb)
 	}
 }
+
+func TestCursorIntegrationForwardsSavedModelReasoning(t *testing.T) {
+	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+	a := bridgeTestAgent()
+	opts, err := codingAgentIntegrationAppenders[llm.ProviderCursorCLI](a, nil, LLMModel{
+		Provider: "cursor-cli", ModelID: "grok-4.6", Options: map[string]interface{}{"reasoning_effort": "xhigh"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := &llmtypes.CallOptions{}
+	for _, opt := range opts {
+		opt(call)
+	}
+	if call.ReasoningEffort != "xhigh" {
+		t.Fatalf("reasoning effort = %q, want xhigh", call.ReasoningEffort)
+	}
+	if call.Metadata == nil || call.Metadata.Custom[cursorcli.MetadataKeyMCPConfig] == nil {
+		t.Fatal("reasoning selection lost the MCP bridge")
+	}
+}
