@@ -32,7 +32,7 @@ func TestPiBridgeOnlyToolsFollowsAgentToolsMode(t *testing.T) {
 		toolsMode      string
 		wantBridgeOnly bool
 	}{
-		{"full stays bridge-only", codingAgentToolsFullUnconfined, true},
+		{"full stays bridge-only", codingAgentToolsFull, true},
 		{"default is bridge-only", "", true},
 		{"explicit mcp_only is bridge-only", "mcp_only", true},
 	} {
@@ -54,5 +54,5 @@ func newPiToolsModeTestAgent(t *testing.T, toolsMode string) *Agent {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token-123")
-	return &Agent{logger: loggerv2.NewDefault(), codingAgentToolsMode: toolsMode}
+	return &Agent{logger: loggerv2.NewDefault(), codingAgentToolsMode: toolsMode, cliSecurityPolicy: confinedTestPolicy()}
 }

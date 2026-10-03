@@ -67,13 +67,9 @@ const (
 	// subagents) alongside the bridge (PLAT-364 Full CLI). It takes effect only
 	// when the CLI is confined (Landlock on Linux, Seatbelt on a Mac); an
 	// unconfined "full" runs as mcp_only, never with native tools.
-	codingAgentToolsFull = "full"
-	// codingAgentToolsFullUnconfined is Full CLI without the lock, for a person's own
-	// single-user machine (the server only asks for it there): the CLI runs with the
-	// person's own rights, so nothing but its working directory limits it.
-	codingAgentToolsFullUnconfined = "full_unconfined"
-	codingAgentApprovalsAuto       = "provider_auto"
-	codingAgentApprovalsAll        = "approve_all"
+	codingAgentToolsFull     = "full"
+	codingAgentApprovalsAuto = "provider_auto"
+	codingAgentApprovalsAll  = "approve_all"
 )
 
 // claudeFullCLINativeTools are the Claude Code built-ins in Full CLI mode:
@@ -87,32 +83,19 @@ const claudeFullCLINativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,
 // confined (the Landlock launcher on Linux, Seatbelt on a Mac), which limits
 // those native writes and commands to the chat's folders. Unconfined, Full CLI never applies.
 func (a *Agent) fullCLIEnabled() bool {
-	mode := strings.TrimSpace(a.codingAgentToolsMode)
-	if strings.EqualFold(mode, codingAgentToolsFullUnconfined) {
-		return true
-	}
-	return strings.EqualFold(mode, codingAgentToolsFull) && a.cliSecurityPolicy.Confined()
-}
-
-// fullUnconfined reports Full CLI with the host user's own rights (a person's
-// own machine, until every CLI runs under Seatbelt there).
-func (a *Agent) fullUnconfined() bool {
-	return strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFullUnconfined)
+	return strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFull) && a.cliSecurityPolicy.Confined()
 }
 
 func (a *Agent) agyNativeToolsMode() string {
 	if a.fullCLIEnabled() {
-		if a.fullUnconfined() {
-			return codingAgentToolsFullUnconfined
-		}
 		return codingAgentToolsFull
 	}
 	return codingAgentToolsMCPOnly
 }
 
 // nativeCodingToolsEnabled reports whether this CLI runs with its own tools:
-// only in Full CLI that actually applies (confined, or explicitly
-// unconfined). There is no reads-only middle state: anything else is
+// only in Full CLI that actually applies (the CLI is confined). There is no
+// reads-only middle state: anything else is
 // mcp_only. Pi stays bridge-only until it has a confined full mode.
 func (a *Agent) nativeCodingToolsEnabled() bool {
 	return a.provider != llmproviders.ProviderPiCLI && a.fullCLIEnabled()

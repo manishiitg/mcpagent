@@ -200,7 +200,8 @@ func TestMuseIntegrationConfiguresBestEffortNativePolicy(t *testing.T) {
 	}
 	// Full CLI: no allowlist at all, so Muse keeps its native toolset and the
 	// provider adds no --disable-shell/--disable-write.
-	agent.codingAgentToolsMode = codingAgentToolsFullUnconfined
+	agent.codingAgentToolsMode = codingAgentToolsFull
+	agent.cliSecurityPolicy = confinedTestPolicy()
 	fullOpts, err := agent.appendMuseCLIIntegrationOptions(nil)
 	if err != nil {
 		t.Fatalf("append full Muse options: %v", err)

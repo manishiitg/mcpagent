@@ -59,7 +59,8 @@ func TestLocalLinkedCLIArtifactsAndResume(t *testing.T) {
 			a.addEventListener(listener)
 			a.isolatedSessionWorkspace = true
 			a.codingAgentOutputDir = output
-			a.codingAgentToolsMode = codingAgentToolsFullUnconfined
+			a.codingAgentToolsMode = codingAgentToolsFull
+			a.cliSecurityPolicy = confinedTestPolicy()
 			if err := a.prepareIsolatedOutputLink(); err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +113,8 @@ func TestLocalLinkedCLIArtifactsAndResume(t *testing.T) {
 			defer cleanup2()
 			b.isolatedSessionWorkspace = true
 			b.codingAgentOutputDir = output
-			b.codingAgentToolsMode = codingAgentToolsFullUnconfined
+			b.codingAgentToolsMode = codingAgentToolsFull
+			b.cliSecurityPolicy = confinedTestPolicy()
 			b.addInstructions(isolatedOutputInstructions + "\nFor native search/glob, always supply project or output as the search path. Do not search the runtime root. Use only these fixture directories.")
 			if err := b.prepareIsolatedOutputLink(); err != nil {
 				t.Fatal(err)

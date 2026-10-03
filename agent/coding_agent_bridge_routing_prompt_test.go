@@ -113,7 +113,7 @@ func TestWithBridgeRoutingInstructionsOptionSetsOverride(t *testing.T) {
 // bridge-only in every mode.
 func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.T) {
 	for _, provider := range []llmproviders.Provider{llmproviders.ProviderClaudeCode, llmproviders.ProviderMuseCLI, llmproviders.ProviderCodexCLI, llmproviders.ProviderCursorCLI, llmproviders.ProviderAgyCLI} {
-		full := &Agent{codingAgentToolsMode: codingAgentToolsFullUnconfined, provider: provider}
+		full := &Agent{codingAgentToolsMode: codingAgentToolsFull, provider: provider, cliSecurityPolicy: confinedTestPolicy()}
 		if prompt := full.codingAgentProviderRoutingPreamble(); strings.Contains(prompt, "disabled for this session") || !strings.Contains(prompt, "Protected files") {
 			t.Fatalf("%s full preamble must describe enabled native tools and protected files: %s", provider, prompt)
 		}
@@ -122,7 +122,7 @@ func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.
 			t.Fatalf("%s: an unconfined full request must read as mcp_only: %s", provider, prompt)
 		}
 	}
-	piFull := &Agent{codingAgentToolsMode: codingAgentToolsFullUnconfined, provider: llmproviders.ProviderPiCLI}
+	piFull := &Agent{codingAgentToolsMode: codingAgentToolsFull, provider: llmproviders.ProviderPiCLI, cliSecurityPolicy: confinedTestPolicy()}
 	if got := piFull.codingAgentProviderRoutingPreamble(); !strings.Contains(got, "tools are disabled") {
 		t.Fatalf("pi preamble must stay bridge-only: %s", got)
 	}
@@ -135,7 +135,8 @@ func TestCodingAgentProviderRoutingPreambleMatchesConfiguredToolMode(t *testing.
 func TestCodingAgentProviderRoutingPromptDoesNotNameExcludedBridgeTools(t *testing.T) {
 	a := &Agent{
 		provider:             llmproviders.ProviderClaudeCode,
-		codingAgentToolsMode: codingAgentToolsFullUnconfined,
+		codingAgentToolsMode: codingAgentToolsFull,
+		cliSecurityPolicy:    confinedTestPolicy(),
 		bridgeToolAdmit: func(name string) bool {
 			return name != "execute_shell_command" && name != "diff_patch_workspace_file"
 		},

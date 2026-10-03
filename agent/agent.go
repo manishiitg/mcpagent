@@ -271,7 +271,9 @@ func withCodingAgentToolsMode(mode string) agentOption {
 
 func normalizeCodingAgentToolsMode(mode string) string {
 	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "hybrid" {
+	// hybrid and full_unconfined are retired: both read as full, which only
+	// applies when the CLI is confined (Landlock on Linux, Seatbelt on a Mac).
+	if mode == "hybrid" || mode == "full_unconfined" {
 		return codingAgentToolsFull
 	}
 	return mode
@@ -3255,8 +3257,8 @@ func (a *Agent) fullCLIToolsSentence() string {
 
 // fullCLIBoundarySentence states where native tools reach in this session.
 func (a *Agent) fullCLIBoundarySentence() string {
-	if a.fullUnconfined() {
-		return "This session runs with the host user's own permissions (a person's own machine)."
+	if a.cliSecurityPolicy.SeatbeltEnforced() {
+		return "Your native tools and every process they start run in a macOS sandbox: the user's own home folder stays open, but AgentWorks data outside the folders granted to this chat, protected workflow files, and opening or scripting other apps (open, osascript) are refused."
 	}
 	return "Your native tools and every process they start are confined to the folders granted to this chat."
 }

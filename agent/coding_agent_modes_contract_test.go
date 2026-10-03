@@ -90,7 +90,7 @@ func TestCodingAgentModesContract(t *testing.T) {
 			}},
 		{llm.ProviderAgyCLI, func(a *Agent) ([]llmtypes.CallOption, error) { return a.appendAgyCLIIntegrationOptions(nil) },
 			func(t *testing.T, got map[string]interface{}) {
-				if got[agycli.MetadataKeyNativeToolsMode] != codingAgentToolsFullUnconfined {
+				if got[agycli.MetadataKeyNativeToolsMode] != codingAgentToolsFull {
 					t.Errorf("full Agy mode = %v", got[agycli.MetadataKeyNativeToolsMode])
 				}
 			},
@@ -101,11 +101,12 @@ func TestCodingAgentModesContract(t *testing.T) {
 			}},
 	}
 	for _, tc := range cases {
-		for _, mode := range []string{codingAgentToolsFullUnconfined, codingAgentToolsMCPOnly} {
+		for _, mode := range []string{codingAgentToolsFull, codingAgentToolsMCPOnly} {
 			t.Run(string(tc.provider)+"/"+mode, func(t *testing.T) {
 				a := bridgeTestAgent()
 				a.provider = tc.provider
 				a.codingAgentToolsMode = mode
+				a.cliSecurityPolicy = confinedTestPolicy()
 				opts, err := tc.launch(a)
 				if err != nil {
 					t.Fatal(err)

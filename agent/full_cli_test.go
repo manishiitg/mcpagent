@@ -20,33 +20,43 @@ func TestFullCLIRequiresConfinement(t *testing.T) {
 	if a.fullCLIEnabled() != want || a.nativeCodingToolsEnabled() != want {
 		t.Fatalf("confined Full CLI on %s: enabled=%v native=%v", runtime.GOOS, a.fullCLIEnabled(), a.nativeCodingToolsEnabled())
 	}
-	if !(&Agent{codingAgentToolsMode: codingAgentToolsFullUnconfined, provider: "claude-code"}).nativeCodingToolsEnabled() {
-		t.Fatal("full_unconfined must run with native tools")
+	if !(&Agent{codingAgentToolsMode: codingAgentToolsFull, provider: "claude-code", cliSecurityPolicy: confinedTestPolicy()}).nativeCodingToolsEnabled() {
+		t.Fatal("confined full must run with native tools")
 	}
+}
+
+// confinedTestPolicy confines a CLI on the test's host: Seatbelt on a Mac,
+// the Landlock launcher on Linux.
+func confinedTestPolicy() *llmtypes.CLISecurityPolicy {
+	return &llmtypes.CLISecurityPolicy{Mode: llmtypes.CLISecurityModeIsolated, Seatbelt: true, LandlockRunner: "/bin/true", PrivateHome: "/tmp/agentworks-test-cli-home"}
 }
 
 func TestRetiredHybridModeReadsAsFull(t *testing.T) {
 	a := &Agent{}
-	withCodingAgentToolsMode(" Hybrid ")(a)
-	if a.codingAgentToolsMode != codingAgentToolsFull {
-		t.Fatalf("hybrid = %q, want full", a.codingAgentToolsMode)
+	for _, retired := range []string{" Hybrid ", "full_unconfined"} {
+		withCodingAgentToolsMode(retired)(a)
+		if a.codingAgentToolsMode != codingAgentToolsFull {
+			t.Fatalf("%q = %q, want full", retired, a.codingAgentToolsMode)
+		}
 	}
 }
 
 func TestAgyFullCLIMode(t *testing.T) {
 	for mode, want := range map[string]string{
-		codingAgentToolsMCPOnly:        codingAgentToolsMCPOnly,
-		codingAgentToolsFull:           codingAgentToolsMCPOnly, // not confined
-		codingAgentToolsFullUnconfined: codingAgentToolsFullUnconfined,
+		codingAgentToolsMCPOnly: codingAgentToolsMCPOnly,
+		codingAgentToolsFull:    codingAgentToolsMCPOnly, // not confined
 	} {
 		if got := (&Agent{provider: "agy-cli", codingAgentToolsMode: mode}).agyNativeToolsMode(); got != want {
 			t.Fatalf("mode %s = %s, want %s", mode, got, want)
 		}
 	}
+	if got := (&Agent{provider: "agy-cli", codingAgentToolsMode: codingAgentToolsFull, cliSecurityPolicy: confinedTestPolicy()}).agyNativeToolsMode(); got != codingAgentToolsFull {
+		t.Fatalf("confined full = %s", got)
+	}
 }
 
 func TestAgyFullCLIEmittedOptions(t *testing.T) {
-	for _, mode := range []string{codingAgentToolsMCPOnly, codingAgentToolsFullUnconfined} {
+	for _, mode := range []string{codingAgentToolsMCPOnly, codingAgentToolsFull} {
 		t.Run(mode, func(t *testing.T) {
 			a := newPiToolsModeTestAgent(t, mode)
 			opts, err := a.appendAgyCLIIntegrationOptions(nil)
