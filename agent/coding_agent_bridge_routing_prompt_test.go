@@ -152,3 +152,15 @@ func TestCodingAgentProviderRoutingPromptDoesNotNameExcludedBridgeTools(t *testi
 		t.Fatalf("routing prompt lost the always-available discovery tool: %s", got)
 	}
 }
+
+// Codex answered "the UI control tools aren't available" after searching its own tool list (ALL_TOOLS): the runtime block, the single owner of tool discovery, must say that a tool
+// missing from the CLI's own list or its own tool search is not missing (Excellence, 2026-10-04). Every coding CLI gets this block.
+func TestBridgeRoutingBlockSaysAMissingDirectToolIsNotMissing(t *testing.T) {
+	a := &Agent{}
+	a.appendBridgeRoutingInstructions(testDefaultPreamble)
+	got := a.instructions()
+	want := "A tool missing from your own tool list or your runtime's own tool search is not missing: use search_tools."
+	if !strings.Contains(got, want) {
+		t.Fatalf("the bridge routing block does not say %q:\n%s", want, got)
+	}
+}

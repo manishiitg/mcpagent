@@ -30,7 +30,7 @@ func bridgeRoutingInstructions(admits func(name string) bool, skillFirst bool, a
 			text += "Use read_image for platform image analysis.\n"
 		}
 	}
-	text += "Find other tools with search_tools; get_api_spec(tool_name=...) returns their schema and route. If no match, broaden the query or enumerate a group/server. Only declared runtime tools are direct calls; other tools use the returned HTTP route, never a direct tool call by their bare name. Discovery is live and does not grant permission.\n"
+	text += "Find other tools with search_tools; get_api_spec(tool_name=...) returns their schema and route. A tool missing from your own tool list or your runtime's own tool search is not missing: use search_tools. If no match, broaden the query or enumerate a group/server. Only declared runtime tools are direct calls; other tools use the returned HTTP route, never a direct tool call by their bare name. Discovery is live and does not grant permission.\n"
 	if allow("execute_shell_command") {
 		if skillFirst {
 			text += "Before HTTP execution, read the attached runtime-http-tools skill. Use the authorized shell route and current schema; never print credentials or ignore a failed response.\n"
