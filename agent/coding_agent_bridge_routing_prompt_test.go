@@ -164,3 +164,18 @@ func TestBridgeRoutingBlockSaysAMissingDirectToolIsNotMissing(t *testing.T) {
 		t.Fatalf("the bridge routing block does not say %q:\n%s", want, got)
 	}
 }
+
+// A coding CLI's own shell has no platform credentials; only the bridge shell does. Agents that reach
+// for bash first (Muse in Full CLI mode) must be told, in the inline instructions and in the skill.
+func TestRuntimeHTTPInstructionsSayNativeShellHasNoCredentials(t *testing.T) {
+	for name, text := range map[string]string{
+		"inline routing":     bridgeRoutingExplicitInstructions(nil),
+		"runtime-http skill": runtimeHTTPInstructions,
+	} {
+		for _, want := range []string{"bridge shell", "no MCP_AUTH or MCP_CUSTOM", "missing or invalid Authorization header"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not contain %q", name, want)
+			}
+		}
+	}
+}
