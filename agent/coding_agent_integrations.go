@@ -114,7 +114,23 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	if a.nativeCodingToolsEnabled() {
 		nativeTools = claudeFullCLINativeTools
 	}
+	bridgeConfig, err := a.buildBridgeMCPConfig()
+	if err != nil {
+		return nil, fmt.Errorf("Claude Code requires the MCP bridge: %w", err)
+	}
+	// Native questions need the answer hook (python3, a session-scoped bridge). When it cannot be
+	// prepared the turn runs without AskUserQuestion; failing the turn would be worse for the person
+	// than the agent asking in plain text.
 	nativeQuestions := a.claudeNativeQuestionsEnabled()
+	var questionHook claudeNativeQuestionHookFile
+	if nativeQuestions {
+		var hookErr error
+		questionHook, hookErr = prepareClaudeNativeQuestionHook(bridgeConfig)
+		if hookErr != nil {
+			a.logger.Warn("Claude native questions unavailable for this turn", loggerv2.Error(hookErr))
+			nativeQuestions = false
+		}
+	}
 	if nativeQuestions {
 		nativeTools += ",AskUserQuestion"
 	}
@@ -155,12 +171,8 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		}
 	}
 
-	bridgeConfig, err := a.buildBridgeMCPConfig()
-	if err != nil {
-		return nil, fmt.Errorf("Claude Code requires the MCP bridge: %w", err)
-	}
 	if nativeQuestions {
-		settingsJSON, err = BuildClaudeNativeQuestionSettings(bridgeConfig, settingsJSON)
+		settingsJSON, err = addClaudeNativeQuestionHook(settingsJSON, questionHook)
 		if err != nil {
 			return nil, fmt.Errorf("connect Claude native questions: %w", err)
 		}

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -198,5 +199,72 @@ func TestClaudeNativeQuestionHookPrivateAndSessionScoped(t *testing.T) {
 	}
 	if _, err := BuildClaudeNativeQuestionSettings(`{"mcpServers":{}}`, ""); err == nil {
 		t.Fatal("sessionless question hook accepted")
+	}
+}
+
+// Claude may send an option label with surrounding spaces; the clarification server trims labels, so the
+// hook must trim them the same way or a valid answer would be denied.
+func TestClaudeNativeQuestionHookAcceptsLabelsWithSurroundingSpaces(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var args struct {
+			Questions []struct {
+				Options []struct{ Label string } `json:"options"`
+			}
+		}
+		if err := json.NewDecoder(r.Body).Decode(&args); err != nil || len(args.Questions) != 1 || args.Questions[0].Options[0].Label != "Alpha" {
+			t.Errorf("labels were not trimmed before they reached the server: %+v", args)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": `{"status":"answered","answers":[{"id":"question-1","selected_labels":["Alpha"]}]}`})
+	}))
+	defer server.Close()
+	input := `{"tool_name":"AskUserQuestion","tool_input":{"questions":[{"header":"H","question":"Pick one?","options":[{"label":" Alpha ","description":"a"},{"label":"Beta ","description":"b"}]}]}}`
+	output := runNativeQuestionHook(t, nativeQuestionTestConfig(server.URL, "owner"), input)
+	if output["permissionDecision"] != "allow" {
+		t.Fatalf("an answer for a label with surrounding spaces was denied: %v", output)
+	}
+	if answers := output["updatedInput"].(map[string]interface{})["answers"].(map[string]interface{}); answers["Pick one?"] != "Alpha" {
+		t.Fatalf("answer = %v", answers)
+	}
+}
+
+// Without python3 the hook cannot run; preparing it must fail cleanly so the caller can turn native questions
+// off for the turn, rather than failing the whole turn.
+func TestPrepareClaudeNativeQuestionHookFailsCleanlyWithoutPython(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, err := prepareClaudeNativeQuestionHook(nativeQuestionTestConfig("http://127.0.0.1:1", "owner")); err == nil || !strings.Contains(err.Error(), "python3") {
+		t.Fatalf("err = %v, want a python3 error", err)
+	}
+	if _, err := BuildClaudeNativeQuestionSettings(nativeQuestionTestConfig("http://127.0.0.1:1", "owner"), ""); err == nil {
+		t.Fatal("BuildClaudeNativeQuestionSettings succeeded without python3")
+	}
+}
+
+// Hook scripts hold a session token. Scripts of chats that are long gone are removed; recent ones and
+// files of other kinds are left alone.
+func TestSweepClaudeNativeQuestionHooksRemovesOnlyOldScripts(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, age time.Duration) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-age)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	oldScript := write("ask-user-question-aaaa.py", 48*time.Hour)
+	freshScript := write("ask-user-question-bbbb.py", time.Hour)
+	otherOld := write("routing-hook-cccc.py", 48*time.Hour)
+	sweepClaudeNativeQuestionHooks(dir, time.Now().Add(-claudeNativeQuestionHookMaxAge))
+	if _, err := os.Stat(oldScript); !os.IsNotExist(err) {
+		t.Error("an old question hook script was kept")
+	}
+	if _, err := os.Stat(freshScript); err != nil {
+		t.Error("a recent question hook script was removed")
+	}
+	if _, err := os.Stat(otherOld); err != nil {
+		t.Error("a file that is not a question hook script was removed")
 	}
 }

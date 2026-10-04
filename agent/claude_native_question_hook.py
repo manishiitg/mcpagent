@@ -32,7 +32,7 @@ def answer_question(payload):
             "id": "question-" + str(index + 1),
             "header": question.get("header", ""),
             "question": text,
-            "options": [{"label": option["label"], "description": option.get("description", "")}
+            "options": [{"label": option["label"].strip(), "description": option.get("description", "")}
                         for option in question["options"]],
             "multi_select": question.get("multiSelect") is True,
             "allow_other": True,
