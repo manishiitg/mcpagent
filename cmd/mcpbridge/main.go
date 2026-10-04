@@ -74,7 +74,7 @@ func isLongRunningDelegationTool(toolType, toolName string) bool {
 		return false
 	}
 	switch toolName {
-	case "call_sub_agent", "call_generic_agent", "execute_shell_command":
+	case "call_sub_agent", "call_generic_agent", "execute_shell_command", "request_clarification":
 		return true
 	default:
 		return false

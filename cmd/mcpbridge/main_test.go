@@ -151,3 +151,12 @@ func TestBridgeMaxCallParsesOnlyPositiveSeconds(t *testing.T) {
 		}
 	}
 }
+
+func TestClarificationUsesLongRunningBridgeTimeout(t *testing.T) {
+	if !isLongRunningDelegationTool("custom", "request_clarification") {
+		t.Fatal("human clarification must not expire at the ordinary tool timeout")
+	}
+	if isLongRunningDelegationTool("mcp", "request_clarification") {
+		t.Fatal("an external MCP tool must not inherit the platform clarification timeout")
+	}
+}

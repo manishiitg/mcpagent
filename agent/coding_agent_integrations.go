@@ -114,6 +114,10 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	if a.nativeCodingToolsEnabled() {
 		nativeTools = claudeFullCLINativeTools
 	}
+	nativeQuestions := a.claudeNativeQuestionsEnabled()
+	if nativeQuestions {
+		nativeTools += ",AskUserQuestion"
+	}
 	allowedTools := "mcp__api-bridge__*," + nativeTools
 	if claudeHTTPHooksEnabled {
 		allowedTools = strings.Join(claudeBridgeAllowedToolIdentifiers(a.additionalBridgeTools, a.admitsBridgeTool), ",") + "," + nativeTools
@@ -126,23 +130,24 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		// must not stop the turn to ask about a command or a read (live on RTS
 		// 2026-09-29, a Bash read outside the folder stalled the turn on a
 		// prompt).
-		opts = append(opts, llm.WithClaudeCodeTools(claudeFullCLINativeTools))
+		opts = append(opts, llm.WithClaudeCodeTools(nativeTools))
 		opts = append(opts, llmproviders.WithDangerouslySkipPermissions())
 	} else {
 		// Force Claude to use our custom tools by disabling its own internal ones.
-		opts = append(opts, llm.WithClaudeCodeTools("WebSearch"))
+		opts = append(opts, llm.WithClaudeCodeTools(nativeTools))
 	}
 
+	settingsJSON := ""
 	if claudeHTTPHooksEnabled {
 		hookPath, hookErr := writeClaudeHTTPRoutingHook(a.additionalBridgeTools, a.admitsBridgeTool, strings.Split(nativeTools, ","))
 		if hookErr != nil {
 			a.logger.Warn("Failed to write Claude Code HTTP routing hook", loggerv2.Error(hookErr))
 		} else {
-			settingsJSON, settingsErr := buildClaudeHTTPRoutingSettings(hookPath)
+			var settingsErr error
+			settingsJSON, settingsErr = buildClaudeHTTPRoutingSettings(hookPath)
 			if settingsErr != nil {
 				a.logger.Warn("Failed to build Claude Code hook settings", loggerv2.Error(settingsErr))
 			} else {
-				opts = append(opts, llm.WithClaudeCodeSettings(settingsJSON))
 				a.logger.Info("🪝 Claude Code HTTP tool routing enforcement enabled",
 					loggerv2.String("env", "MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING"),
 					loggerv2.String("hook_path", hookPath))
@@ -153,6 +158,15 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	bridgeConfig, err := a.buildBridgeMCPConfig()
 	if err != nil {
 		return nil, fmt.Errorf("Claude Code requires the MCP bridge: %w", err)
+	}
+	if nativeQuestions {
+		settingsJSON, err = BuildClaudeNativeQuestionSettings(bridgeConfig, settingsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("connect Claude native questions: %w", err)
+		}
+	}
+	if settingsJSON != "" {
+		opts = append(opts, llm.WithClaudeCodeSettings(settingsJSON))
 	}
 	opts = append(opts, llm.WithMCPConfig(bridgeConfig))
 	if a.bridgeReadyFile != "" {

@@ -45,6 +45,22 @@ The routing preamble names each CLI's real tools, the sandbox boundary, and
 the protected files. The contract test fails if prompts and launch options
 disagree for any CLI in either mode.
 
+## Attended clarification questions
+
+Claude Code's `AskUserQuestion` is enabled in either mode when the host enables
+user answers for a retained interactive session, advertises
+`request_clarification`, and registers that tool's answer handler. Its
+`PreToolUse` hook sends the questions to the host's selectable chat card and
+returns only the user's submitted answers. It supports grouped questions,
+multi-select, custom text, and subsequent prompts. A cancellation or transport
+failure denies the native call rather than choosing an answer.
+
+This question tool does not grant filesystem or shell access. Unattended,
+unregistered, nonpersistent, and structured transports keep it disabled. Other
+coding CLIs can use the same host-registered `request_clarification` bridge
+tool. Hosts must expose the bridge's session-scoped HTTP API and have `python3`
+available for the native Claude hook. Existing routing hooks are preserved.
+
 ## Mac (Seatbelt) notes
 
 Every coding CLI runs under Seatbelt on a Mac with home open. Practical

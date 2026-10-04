@@ -15,6 +15,7 @@ type CodingAgentQuestionPrompt struct {
 	Header      string `json:"header,omitempty"`
 	Question    string `json:"question"`
 	MultiSelect bool   `json:"multi_select,omitempty"`
+	AllowOther  bool   `json:"allow_other,omitempty"`
 	// MinSelections/MaxSelections bound a multi-select answer; zero means
 	// at least one and up to every option.
 	MinSelections int                         `json:"min_selections,omitempty"`
@@ -25,6 +26,7 @@ type CodingAgentQuestionPrompt struct {
 type CodingAgentQuestionAnswer struct {
 	ID             string   `json:"id"`
 	SelectedLabels []string `json:"selected_labels,omitempty"`
+	OtherText      string   `json:"other_text,omitempty"`
 }
 
 // CodingAgentQuestionEvent is a provider-neutral requested/settled lifecycle.
