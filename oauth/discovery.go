@@ -447,6 +447,13 @@ type ClientRegistrationResponse struct {
 	ResponseTypes           []string `json:"response_types,omitempty"`
 }
 
+// What a remote server's consent screen shows for the app that asks for access. A registration is
+// cached per server, so a change reaches only servers authorized after it.
+const (
+	ClientDisplayName = "AgentWorks"
+	ClientHomepage    = "https://agentworkshq.com"
+)
+
 // RegisterClient performs Dynamic Client Registration (RFC 7591) to obtain a client_id
 func (d Discoverer) RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrationResponse, error) {
 	// Prepare registration request
@@ -455,8 +462,8 @@ func (d Discoverer) RegisterClient(registrationEndpoint, redirectURI string) (*C
 		TokenEndpointAuthMethod: "none", // Public client (PKCE)
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
-		ClientName:              "Multi Agent Builder",
-		ClientURI:               "https://github.com/your-org/mcp-agent-builder-go",
+		ClientName:              ClientDisplayName,
+		ClientURI:               ClientHomepage,
 	}
 
 	// Encode request as JSON
