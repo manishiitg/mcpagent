@@ -872,7 +872,12 @@ func (r *ToolRegistry) registryScopeForSession(sessionID, toolName string) strin
 	_, virtual := r.sessionVirtualTools[parent][toolName]
 	r.mu.RUnlock()
 	if !custom && !virtual {
-		return sessionID
+		// The run's own tools are registered by one of its other live sessions (its workflow session), not by the HTTP
+		// run id itself. A step's bridge session has no registry, so without this it fell to the global table, where
+		// the last registration wins: a Crew chat running at the same moment could hand it ITS executor, and the
+		// ownership check then rejected the step (PLAT-514). Use the run's sibling session only when exactly one
+		// registered the tool; none or several keeps the legacy lookup.
+		return r.siblingScopeForTool(parent, sessionID, toolName)
 	}
 	if r.logger != nil {
 		r.logger.Debug("Resolved child session to its parent run's tool registry",
@@ -881,6 +886,34 @@ func (r *ToolRegistry) registryScopeForSession(sessionID, toolName string) strin
 			loggerv2.String("tool", toolName))
 	}
 	return parent
+}
+
+// siblingScopeForTool returns the one live session under httpSessionID, other than self, whose registry holds toolName
+// (custom or virtual); self when there is not exactly one.
+func (r *ToolRegistry) siblingScopeForTool(httpSessionID, self, toolName string) string {
+	var found []string
+	r.mu.RLock()
+	for _, candidate := range mcpclient.GetSessionRegistry().MCPSessionsForHTTPSession(httpSessionID) {
+		if candidate == self {
+			continue
+		}
+		_, custom := r.sessionCustomTools[candidate][toolName]
+		_, virtual := r.sessionVirtualTools[candidate][toolName]
+		if custom || virtual {
+			found = append(found, candidate)
+		}
+	}
+	r.mu.RUnlock()
+	if len(found) != 1 {
+		return self
+	}
+	if r.logger != nil {
+		r.logger.Debug("Resolved child session to its sibling session's tool registry",
+			loggerv2.String("session_id", self),
+			loggerv2.String("sibling_session_id", found[0]),
+			loggerv2.String("tool", toolName))
+	}
+	return found[0]
 }
 
 // CallCustomToolWithSession calls a custom tool with session scoping.

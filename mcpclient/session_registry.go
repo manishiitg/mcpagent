@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -463,6 +464,19 @@ func (r *SessionConnectionRegistry) GetSessionStats(sessionID string) *SessionSt
 // CloseHTTPSession can close all of them when the workflow stops.
 func (r *SessionConnectionRegistry) RegisterHTTPSession(httpSessionID, mcpSessionID string) {
 	globalHTTPSessionTracker.register(httpSessionID, mcpSessionID)
+}
+
+// MCPSessionsForHTTPSession lists the live (not stopped) MCP sessions registered under an HTTP run, in no particular
+// order. A run's scripted-step bridge sessions use it to find the sibling session that registered the run's tools.
+func (r *SessionConnectionRegistry) MCPSessionsForHTTPSession(httpSessionID string) []string {
+	live := []string{}
+	for _, id := range globalHTTPSessionTracker.getMCPSessions(httpSessionID) {
+		if !globalHTTPSessionTracker.isStopped(id) {
+			live = append(live, id)
+		}
+	}
+	sort.Strings(live)
+	return live
 }
 
 // HTTPSessionForMCPSession resolves a live MCP child to its registered HTTP run.

@@ -534,3 +534,40 @@ func TestRegisteredToolStillReadsAsADenial(t *testing.T) {
 		t.Errorf("withheld tool wrongly reported as missing: %s", msg)
 	}
 }
+
+// PLAT-514: a webhook run's tools are registered by its workflow session, a sibling of the scripted step's bridge
+// session, not by the HTTP run id. The step must reach that sibling, never the global executor another session (a Crew
+// chat running at the same moment) registered last.
+func TestCallCustomToolWithSessionReachesTheRunsSiblingNotTheGlobalExecutor(t *testing.T) {
+	resetRegistryForTest(t)
+
+	parent := "http-run-" + t.Name()
+	step := "session-group-default-" + t.Name()
+	workflow := "workflow-session-" + t.Name()
+	sessions := mcpclient.GetSessionRegistry()
+	sessions.RegisterHTTPSession(parent, step)
+	sessions.RegisterHTTPSession(parent, workflow)
+	t.Cleanup(func() { sessions.CloseHTTPSession(parent) })
+
+	InitRegistry(nil, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"mutate_workflow_db": func(context.Context, map[string]interface{}) (string, error) { return "crew-chat", nil },
+	}, nil, nil)
+	InitRegistryForSession(workflow, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"mutate_workflow_db": func(context.Context, map[string]interface{}) (string, error) { return "this-run", nil },
+	}, nil)
+
+	got, err := CallCustomToolWithSession(context.Background(), step, "mutate_workflow_db", nil)
+	if err != nil || got != "this-run" {
+		t.Fatalf("step call = %q, %v; want this-run (the run's own session, not the global executor)", got, err)
+	}
+
+	// Two siblings with the tool is ambiguous: keep the legacy lookup instead of guessing.
+	other := "workflow-session-b-" + t.Name()
+	sessions.RegisterHTTPSession(parent, other)
+	InitRegistryForSession(other, map[string]func(context.Context, map[string]interface{}) (string, error){
+		"mutate_workflow_db": func(context.Context, map[string]interface{}) (string, error) { return "other", nil },
+	}, nil)
+	if got, _ := CallCustomToolWithSession(context.Background(), step, "mutate_workflow_db", nil); got != "crew-chat" {
+		t.Fatalf("ambiguous siblings call = %q, want the legacy global lookup", got)
+	}
+}
