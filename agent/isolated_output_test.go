@@ -211,13 +211,23 @@ func TestNewAgentLinkedOutputInstructionsAndFailures(t *testing.T) {
 	output := t.TempDir()
 	session := t.Name() + t.TempDir()
 	t.Cleanup(func() { CloseSession(session) })
-	a, err := NewAgentFromDefinition(context.Background(), AgentDefinition{Instructions: "execute step"}, RuntimeConfig{Model: linkedOutputFakeModel{}, MCPConfigPath: config, MCP: MCPRuntimeConfig{SessionID: session}, Workspace: WorkspaceRuntimeConfig{IsolatedSession: true, OutputDir: output}})
+	a, err := NewAgentFromDefinition(context.Background(), AgentDefinition{Instructions: "execute step"}, RuntimeConfig{Model: linkedOutputFakeModel{}, MCPConfigPath: config, MCP: MCPRuntimeConfig{SessionID: session}, Workspace: WorkspaceRuntimeConfig{IsolatedSession: true, OutputDir: output}, Coding: CodingRuntimeConfig{AgentToolsMode: "full"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
 	if !strings.Contains(a.systemPrompt, "output/") || !strings.Contains(a.systemPrompt, "bridge paths") {
 		t.Fatal("missing output path contract")
+	}
+	// mcp_only: native file tools and shell are disabled, so a paragraph about "native file tools" would
+	// contradict the tool list and push models to report a false read-only failure (PLAT-496).
+	bridgeOnly, err := NewAgentFromDefinition(context.Background(), AgentDefinition{Instructions: "execute step"}, RuntimeConfig{Model: linkedOutputFakeModel{}, MCPConfigPath: config, MCP: MCPRuntimeConfig{SessionID: session + "-bridge"}, Workspace: WorkspaceRuntimeConfig{IsolatedSession: true, OutputDir: output}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridgeOnly.Close()
+	if strings.Contains(bridgeOnly.systemPrompt, "native file") || strings.Contains(bridgeOnly.systemPrompt, "Step output directory") {
+		t.Fatal("bridge-only step agent was told to use native file tools")
 	}
 	_, err = NewAgentFromDefinition(context.Background(), AgentDefinition{Instructions: "execute step"}, RuntimeConfig{Model: linkedOutputFakeModel{}, MCPConfigPath: config, Workspace: WorkspaceRuntimeConfig{OutputDir: output}})
 	if err == nil {

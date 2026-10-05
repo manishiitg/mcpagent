@@ -200,7 +200,12 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 		return nil, err
 	}
 
-	if strings.TrimSpace(runtime.Workspace.OutputDir) != "" {
+	// The output/ link instructions talk about native file tools and native shell commands. In
+	// mcp_only mode those tools are disabled and the same prompt says so, so the paragraph contradicts
+	// the tool list and models read it as "writing is not allowed" (false "read-only filesystem"
+	// failures, PLAT-496). Add it only when native tools are on.
+	if strings.TrimSpace(runtime.Workspace.OutputDir) != "" &&
+		normalizeCodingAgentToolsMode(runtime.Coding.AgentToolsMode) == codingAgentToolsFull {
 		definition.Instructions += isolatedOutputInstructions
 	}
 	options := runtimeAgentOptions(runtime)
