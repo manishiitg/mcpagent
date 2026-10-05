@@ -784,6 +784,13 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				sm.callback(chunk)
 			}
 
+		case llmtypes.StreamChunkTypeContextCompaction:
+			// Like status lines and terminal frames, compaction is not
+			// generation streaming: emit it even when suppressEvents is set.
+			if c := chunk.ContextCompaction; c != nil {
+				a.emitTypedEvent(ctx, contextCompactionEvent(c, string(a.provider)))
+			}
+
 		case llmtypes.StreamChunkTypeStatusLine:
 			if chunk.StatusLine != nil {
 				// Carry the owning tmux session (when the provider supplies it) so
@@ -1558,4 +1565,31 @@ func (a *Agent) handleContextCancellation(ctx context.Context, turn int, startTi
 	}
 	a.emitTypedEvent(ctx, events.NewContextCancelledEvent(turn, err.Error(), time.Since(startTime)))
 	return err
+}
+
+// contextCompactionEvent converts the provider chunk into the agent event.
+func contextCompactionEvent(c *llmtypes.ContextCompaction, fallbackProvider string) *events.ContextCompactionEvent {
+	formatTime := func(t time.Time) string {
+		if t.IsZero() {
+			return ""
+		}
+		return t.UTC().Format(time.RFC3339Nano)
+	}
+	provider := c.Provider
+	if provider == "" {
+		provider = fallbackProvider
+	}
+	return &events.ContextCompactionEvent{
+		BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+		Provider:      provider,
+		Phase:         string(c.Phase),
+		CompactionID:  c.ID,
+		Trigger:       c.Trigger,
+		Outcome:       c.Outcome,
+		TokensBefore:  c.TokensBefore,
+		TokensAfter:   c.TokensAfter,
+		StartedAt:     formatTime(c.StartedAt),
+		EndedAt:       formatTime(c.EndedAt),
+		DurationMs:    c.DurationMs,
+	}
 }
