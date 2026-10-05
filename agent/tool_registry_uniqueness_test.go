@@ -8,23 +8,35 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-func TestRegisterCustomToolRejectsMCPNameCollision(t *testing.T) {
+// PLAT-518: an MCP server that exposes a tool named like a platform tool must not stop the agent from being built.
+// The platform tool is used and the MCP tool of that name is hidden (stopgap).
+func TestRegisterCustomToolShadowsAnMCPToolOfTheSameName(t *testing.T) {
 	agent := &Agent{
-		toolToServer: map[string]string{"query_records": "database"},
+		toolToServer: map[string]string{"delete_function": "neon"},
 		toolRegistry: directToolRegistry(),
+		tools:        []llmtypes.Tool{{Type: "function", Function: &llmtypes.FunctionDefinition{Name: "delete_function"}}},
 	}
 
-	err := agent.registerCustomTool("query_records", "direct", objectSchema(), noopTool, "workflow")
-	if err == nil || !strings.Contains(err.Error(), `already registered by MCP server "database"`) {
-		t.Fatalf("RegisterCustomTool() error = %v, want MCP collision", err)
+	if err := agent.registerCustomTool("delete_function", "direct", objectSchema(), noopTool, "workflow"); err != nil {
+		t.Fatalf("RegisterCustomTool() error = %v, want the platform tool to be used without failing", err)
 	}
-	if got := len(agent.directToolSnapshot()); got != 0 {
-		t.Fatalf("collision mutated canonical registry: %d direct tools", got)
+	if got := agent.toolToServer["delete_function"]; got != "custom" {
+		t.Fatalf("tool owner = %q, want the platform tool (custom)", got)
 	}
-	if got := agent.toolToServer["query_records"]; got != "database" {
-		t.Fatalf("collision replaced MCP owner with %q", got)
+	if registered, ok := agent.lookupDirectTool("delete_function"); !ok || registered.Kind != toolImplementationDirect {
+		t.Fatal("the platform tool is not registered")
+	}
+	names := 0
+	for _, tool := range agent.tools {
+		if tool.Function != nil && tool.Function.Name == "delete_function" {
+			names++
+		}
+	}
+	if names != 1 {
+		t.Fatalf("the model sees %d tools named delete_function, want exactly 1", names)
 	}
 }
 

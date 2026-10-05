@@ -77,6 +77,18 @@ func (r *canonicalToolRegistry) register(tool registeredTool) error {
 	return nil
 }
 
+// removeMCP drops an MCP tool's record (never a direct tool's), so a direct tool of the same name can take its place.
+func (r *canonicalToolRegistry) removeMCP(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	existing, exists := r.byName[name]
+	if !exists || existing.Kind != toolImplementationMCP {
+		return false
+	}
+	delete(r.byName, name)
+	return true
+}
+
 func (r *canonicalToolRegistry) lookup(name string) (registeredTool, bool) {
 	if r == nil {
 		return registeredTool{}, false
