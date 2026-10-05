@@ -11,7 +11,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// PLAT-518: an MCP server that exposes a tool named like a platform tool must not stop the agent from being built.
+// PLAT-519: an MCP server that exposes a tool named like a platform tool must not stop the agent from being built.
 // The platform tool is used and the MCP tool of that name is hidden (stopgap).
 func TestRegisterCustomToolShadowsAnMCPToolOfTheSameName(t *testing.T) {
 	agent := &Agent{

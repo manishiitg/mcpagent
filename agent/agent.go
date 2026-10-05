@@ -3411,7 +3411,7 @@ func (a *Agent) registerDirectTool(name string, description string, parameters m
 	// Tool names are the model-facing address, so one name can serve only one tool. When a connected MCP server
 	// exposes a tool with a platform tool's name, the platform tool is used and the MCP tool of that name is hidden,
 	// with a warning. Failing here made the whole agent definition fail, so one connected server whose tool happened
-	// to share a name (a Neon server's "delete_function") stopped the chat from starting (PLAT-518; stopgap until a
+	// to share a name (a Neon server's "delete_function") stopped the chat from starting (PLAT-519; stopgap until a
 	// clashing MCP tool gets a server prefix). A tool still cannot silently move between legacy configuration
 	// categories. Re-registering the same direct tool in the same category remains supported during migration;
 	// several builder paths use that to refresh a session-aware executor.
