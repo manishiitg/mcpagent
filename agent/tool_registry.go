@@ -32,6 +32,18 @@ type registeredTool struct {
 	DisplayGroup string
 	Executor     ToolExecutor
 	Timeout      time.Duration
+	// MCPToolName is the name the MCP server registered (Kind mcp only). Name
+	// is the model-facing <alias>__<tool> (PLAT-519); bridge routes and
+	// generated specs use Source + MCPToolName.
+	MCPToolName string
+}
+
+// realName is the name the tool's implementation knows it by.
+func (t registeredTool) realName() string {
+	if t.Kind == toolImplementationMCP && t.MCPToolName != "" {
+		return t.MCPToolName
+	}
+	return t.Name
 }
 
 type canonicalToolRegistry struct {
@@ -78,6 +90,7 @@ func (r *canonicalToolRegistry) register(tool registeredTool) error {
 }
 
 // removeMCP drops an MCP tool's record (never a direct tool's), so a direct tool of the same name can take its place.
+// With every MCP tool prefixed (PLAT-519) this only fires for a platform tool named like a prefixed MCP tool.
 func (r *canonicalToolRegistry) removeMCP(name string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -97,6 +110,31 @@ func (r *canonicalToolRegistry) lookup(name string) (registeredTool, bool) {
 	defer r.mu.RUnlock()
 	tool, ok := r.byName[name]
 	return tool, ok
+}
+
+// lookupMCPByRealName finds an MCP tool by the name its server registered,
+// optionally narrowed to one server (hyphens and underscores alike). It
+// reports false when no tool or more than one matches.
+func (r *canonicalToolRegistry) lookupMCPByRealName(realName, server string) (registeredTool, bool) {
+	if r == nil || realName == "" {
+		return registeredTool{}, false
+	}
+	server = normalizeServerKey(server)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var found registeredTool
+	matches := 0
+	for _, tool := range r.byName {
+		if tool.Kind != toolImplementationMCP || tool.realName() != realName {
+			continue
+		}
+		if server != "" && normalizeServerKey(tool.Source) != server {
+			continue
+		}
+		found = tool
+		matches++
+	}
+	return found, matches == 1
 }
 
 func (r *canonicalToolRegistry) snapshot() []registeredTool {
@@ -136,10 +174,11 @@ func (a *Agent) initializeCanonicalToolRegistry(mcpTools []llmtypes.Tool, toolTo
 			return fmt.Errorf("MCP tool %q has no owning server", name)
 		}
 		if err := registry.register(registeredTool{
-			Name:       name,
-			Definition: definition,
-			Kind:       toolImplementationMCP,
-			Source:     server,
+			Name:        name,
+			Definition:  definition,
+			Kind:        toolImplementationMCP,
+			Source:      server,
+			MCPToolName: a.realMCPToolName(name, server),
 		}); err != nil {
 			return err
 		}
@@ -174,7 +213,7 @@ func (a *Agent) canonicalRegistry() (*canonicalToolRegistry, error) {
 		if server == "" || server == "custom" {
 			continue
 		}
-		if err := registry.register(registeredTool{Name: name, Definition: definition, Kind: toolImplementationMCP, Source: server}); err != nil {
+		if err := registry.register(registeredTool{Name: name, Definition: definition, Kind: toolImplementationMCP, Source: server, MCPToolName: a.realMCPToolName(name, server)}); err != nil {
 			return nil, err
 		}
 	}

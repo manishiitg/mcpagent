@@ -12,7 +12,7 @@ import (
 )
 
 // PLAT-519: an MCP server that exposes a tool named like a platform tool must not stop the agent from being built.
-// The platform tool is used and the MCP tool of that name is hidden (stopgap).
+// With every MCP tool prefixed this only guards a platform tool named like a prefixed MCP tool (safety net).
 func TestRegisterCustomToolShadowsAnMCPToolOfTheSameName(t *testing.T) {
 	agent := &Agent{
 		toolToServer: map[string]string{"delete_function": "neon"},

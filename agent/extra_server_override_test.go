@@ -21,7 +21,7 @@ func TestExtraServerOverrideIsUsedInsteadOfTheCatalog(t *testing.T) {
 	overrides := mcpclient.RuntimeOverrides{"u1a2b3c4d__svc": {Server: &mcpclient.MCPServerConfig{
 		URL: "https://127.0.0.1/mcp", Protocol: mcpclient.ProtocolHTTP, PublicOnly: true,
 	}}}
-	_, _, tools, _, _, err := NewAgentConnectionWithSession(context.Background(), nil, "u1a2b3c4d__svc", configPath,
+	_, _, _, tools, _, _, err := NewAgentConnectionWithSession(context.Background(), nil, "u1a2b3c4d__svc", configPath,
 		"", "", nil, loggerv2.NewNoop(), true, overrides, "")
 	if len(tools) != 0 {
 		t.Fatalf("connected to a blocked address: %d tools", len(tools))

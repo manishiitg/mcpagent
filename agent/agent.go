@@ -752,6 +752,9 @@ type Agent struct {
 
 	// Map tool name → server name (quick dispatch)
 	toolToServer map[string]string
+	// mcpToolRealNames maps each MCP tool's model-facing name (<alias>__<tool>,
+	// PLAT-519) to the name its server registered; see tool_name.go.
+	mcpToolRealNames map[string]string
 
 	llmModel llmtypes.Model
 	tracers  []observability.Tracer // Support multiple tracers
@@ -1581,6 +1584,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Check if session-scoped connection management is enabled
 	var clients map[string]mcpclient.ClientInterface
 	var toolToServer map[string]string
+	var realToolNames map[string]string
 	var allLLMTools []llmtypes.Tool
 	var servers []string
 	var systemPrompt string
@@ -1594,7 +1598,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.sessionID))
-	clients, toolToServer, allLLMTools, servers, systemPrompt, err =
+	clients, toolToServer, realToolNames, allLLMTools, servers, systemPrompt, err =
 		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.sessionID, string(ag.traceID), ag.tracers, logger, ag.disableCache, ag.runtimeOverrides, ag.userID)
 
 	connectionDuration := time.Since(connectionStartTime)
@@ -1626,6 +1630,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Update the existing agent with connection data
 	ag.clients = clients
 	ag.toolToServer = toolToServer
+	ag.mcpToolRealNames = realToolNames
 	if err := ag.initializeCanonicalToolRegistry(allLLMTools, toolToServer); err != nil {
 		return nil, fmt.Errorf("initialize canonical tool registry: %w", err)
 	}
@@ -1789,7 +1794,8 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 			// Use unified filter to check if tool should be included
 			// Virtual tools are handled above, so isVirtualTool=false here
-			if ag.toolFilter.ShouldIncludeTool(packageName, toolName, isCustomTool, false) {
+			// Saved selections name the real server:tool, not the prefixed name.
+			if ag.toolFilter.ShouldIncludeTool(packageName, ag.realMCPToolName(toolName, ""), isCustomTool, false) {
 				filteredTools = append(filteredTools, tool)
 			}
 		}
@@ -1877,7 +1883,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	// Initialize registry with virtual tools
-	codeexec.InitRegistryWithVirtualTools(ag.clients, customToolExecutors, virtualToolExecutors, ag.toolToServer, logger)
+	codeexec.InitRegistryWithVirtualTools(ag.clients, customToolExecutors, virtualToolExecutors, ag.realToolToServer(), logger)
 
 	// Also register session-scoped tools to prevent cross-workflow contamination
 	if ag.sessionID != "" {
@@ -3408,17 +3414,18 @@ func (a *Agent) registerDirectTool(name string, description string, parameters m
 	}
 	toolCategory := category
 
-	// Tool names are the model-facing address, so one name can serve only one tool. When a connected MCP server
-	// exposes a tool with a platform tool's name, the platform tool is used and the MCP tool of that name is hidden,
-	// with a warning. Failing here made the whole agent definition fail, so one connected server whose tool happened
-	// to share a name (a Neon server's "delete_function") stopped the chat from starting (PLAT-519; stopgap until a
-	// clashing MCP tool gets a server prefix). A tool still cannot silently move between legacy configuration
-	// categories. Re-registering the same direct tool in the same category remains supported during migration;
-	// several builder paths use that to refresh a session-aware executor.
+	// Tool names are the model-facing address, so one name can serve only one tool. Every MCP tool is offered as
+	// <alias>__<tool> (PLAT-519), so an MCP tool no longer takes a platform tool's name; failing here made the whole
+	// agent definition fail (a Neon server's "delete_function" stopped a chat from starting). The safety net stays for
+	// a platform tool named exactly like a prefixed MCP tool: the platform tool is used and that MCP tool is hidden,
+	// with a warning. A tool still cannot silently move between legacy configuration categories. Re-registering the
+	// same direct tool in the same category remains supported during migration; several builder paths use that to
+	// refresh a session-aware executor.
 	if server, exists := a.toolToServer[name]; exists && server != "custom" {
 		if registry, regErr := a.canonicalRegistry(); regErr == nil {
 			registry.removeMCP(name)
 		}
+		delete(a.mcpToolRealNames, name)
 		if a.logger != nil {
 			a.logger.Warn(fmt.Sprintf("[TOOL_SHADOW] MCP server %q exposes a tool named %q, which is also a platform tool; the platform tool is used and the MCP tool of that name is hidden", server, name))
 		}
@@ -3561,7 +3568,7 @@ func (a *Agent) registerDirectTool(name string, description string, parameters m
 			}
 			a.logger.Debug("🔧 [CODE_EXECUTION] Custom tools in registry", loggerv2.Any("tools", toolNames))
 		}
-		codeexec.InitRegistry(a.clients, customToolExecutors, a.toolToServer, a.logger)
+		codeexec.InitRegistry(a.clients, customToolExecutors, a.realToolToServer(), a.logger)
 		// Also register session-scoped tools
 		if a.sessionID != "" {
 			codeexec.InitRegistryForSession(a.sessionID, customToolExecutors, a.logger)

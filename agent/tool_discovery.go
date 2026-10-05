@@ -102,7 +102,7 @@ func (a *Agent) handleSearchTools(ctx context.Context, args map[string]interface
 		if len(terms) > 0 && score == 0 {
 			continue
 		}
-		if name == strings.ToLower(values["query"]) {
+		if query := strings.ToLower(values["query"]); name == query || strings.ToLower(tool.realName()) == query {
 			score += 100
 		}
 		runes := []rune(strings.Join(strings.Fields(description), " "))

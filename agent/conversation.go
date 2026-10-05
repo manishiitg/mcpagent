@@ -1176,7 +1176,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				var toolErr error
 
 				// Resolve the LLM-facing disambiguated name to the name registered by MCP.
-				actualToolName := actualMCPToolName(tc.FunctionCall.Name, serverName)
+				actualToolName := a.realMCPToolName(tc.FunctionCall.Name, serverName)
 				if actualToolName != tc.FunctionCall.Name {
 					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Resolved disambiguated tool '%s' -> '%s' (server: %s)", tc.FunctionCall.Name, actualToolName, serverName))
 				}

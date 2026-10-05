@@ -493,7 +493,7 @@ func executeToolCall(
 
 	var mcpResult *mcp.CallToolResult
 	var toolErr error
-	actualToolName := actualMCPToolName(tc.FunctionCall.Name, plan.serverName)
+	actualToolName := a.realMCPToolName(tc.FunctionCall.Name, plan.serverName)
 
 	if isVirtualTool(tc.FunctionCall.Name) {
 		v2Logger.Debug("🔧 [TOOL_CALL] Executing virtual tool (parallel)",

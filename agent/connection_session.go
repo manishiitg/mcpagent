@@ -64,7 +64,8 @@ type serverConnectionResult struct {
 //
 // Returns:
 //   - clients: Map of server name to client interface
-//   - toolToServer: Map of tool name to server name
+//   - toolToServer: Map of model-facing tool name (<alias>__<tool>) to server name
+//   - realToolNames: Map of model-facing tool name to the name the server registered
 //   - tools: List of LLM tools
 //   - servers: List of server names
 //   - systemPrompt: Combined system prompt from servers
@@ -80,7 +81,7 @@ func NewAgentConnectionWithSession(
 	disableCache bool,
 	runtimeOverrides mcpclient.RuntimeOverrides,
 	userID string,
-) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, string, error) {
+) (map[string]mcpclient.ClientInterface, map[string]string, map[string]string, []llmtypes.Tool, []string, string, error) {
 
 	connectionStartTime := time.Now()
 
@@ -112,7 +113,7 @@ func NewAgentConnectionWithSession(
 	// Load merged MCP configuration
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
-		return nil, nil, nil, nil, "", fmt.Errorf("failed to load merged MCP config: %w", err)
+		return nil, nil, nil, nil, nil, "", fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
 
 	// Determine which servers to connect to
@@ -137,7 +138,7 @@ func NewAgentConnectionWithSession(
 	// Handle special case: no servers requested
 	if len(servers) == 0 {
 		logger.Info("No servers requested, returning empty result")
-		return make(map[string]mcpclient.ClientInterface), make(map[string]string), nil, servers, "", nil
+		return make(map[string]mcpclient.ClientInterface), make(map[string]string), make(map[string]string), nil, servers, "", nil
 	}
 
 	registry := mcpclient.GetSessionRegistry()
@@ -299,12 +300,22 @@ func NewAgentConnectionWithSession(
 
 	wg.Wait()
 
-	// Merge results from all goroutines (serial — preserves server order, deduplicates tools)
+	// Merge results from all goroutines (serial — preserves server order).
+	// Every MCP tool is offered as <alias>__<tool> (PLAT-519), so tools of
+	// different servers never collide, even two connections of one server.
 	clients := make(map[string]mcpclient.ClientInterface)
 	toolToServer := make(map[string]string)
+	realToolNames := make(map[string]string)
 	var allTools []llmtypes.Tool
 	var connectedServers []string
 	seenTools := make(map[string]bool)
+	aliasServers := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.err == nil && (result.client != nil || result.isLazy) {
+			aliasServers = append(aliasServers, result.serverName)
+		}
+	}
+	aliases := mcpToolAliases(aliasServers)
 
 	for _, result := range results {
 		if result.err != nil {
@@ -323,14 +334,20 @@ func NewAgentConnectionWithSession(
 
 		// Merge tools with deduplication
 		for i, llmTool := range result.tools {
-			toolName := result.toolNames[i]
+			realName := result.toolNames[i]
+			toolName := mcpVisibleToolName(aliases[result.serverName], result.serverName, realName)
 			if seenTools[toolName] {
-				logger.Warn(fmt.Sprintf("Duplicate tool %s from server %s, skipping", toolName, result.serverName))
+				logger.Warn(fmt.Sprintf("Duplicate tool %s from server %s, skipping", realName, result.serverName))
 				continue
 			}
 			seenTools[toolName] = true
+			// Copy the definition: cached tool lists are shared between agents.
+			function := *llmTool.Function
+			function.Name = toolName
+			llmTool.Function = &function
 			allTools = append(allTools, llmTool)
 			toolToServer[toolName] = result.serverName
+			realToolNames[toolName] = realName
 		}
 
 		if result.isLazy {
@@ -381,7 +398,7 @@ func NewAgentConnectionWithSession(
 		loggerv2.Int("tools_count", len(allTools)),
 		loggerv2.String("duration", connectionDuration.String()))
 
-	return clients, toolToServer, allTools, connectedServers, systemPrompt, nil
+	return clients, toolToServer, realToolNames, allTools, connectedServers, systemPrompt, nil
 }
 
 // canonicalizeRequestedServers resolves sanitized aliases to their configured

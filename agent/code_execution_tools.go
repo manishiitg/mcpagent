@@ -24,8 +24,8 @@ import (
 // Use search_tools for authorized discovery; this tool loads exact schemas.
 func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Optional: an omitted server_name means "resolve by tool name", which is the
-	// contract everywhere else. It remains accepted as compatibility input, but
-	// routing and authorization never depend on an agent-supplied category/server.
+	// contract everywhere else. It only narrows a real MCP tool name (as listed
+	// in the tool index) to one server; authorization never depends on it.
 	serverName, _ := args["server_name"].(string)
 
 	// Parse tool_name: accepts string or []string (JSON array)
@@ -60,6 +60,10 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	copy(sortedNames, toolNames)
 	sort.Strings(sortedNames)
 	cacheKey := "tools:" + strings.Join(sortedNames, ",")
+	if serverName != "" {
+		// server_name can pick an MCP tool by its real name over a platform tool of that name.
+		cacheKey += "@" + normalizeServerKey(serverName)
+	}
 	if serverName != "" && a.logger != nil {
 		a.logger.Debug("get_api_spec: server_name is compatibility-only; resolving by tool name",
 			loggerv2.String("server_name", serverName),
@@ -81,6 +85,15 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 			continue
 		}
 		registered, ok := registry.lookup(name)
+		// MCP tools are named <alias>__<tool> (PLAT-519), but the tool index
+		// lists each server's real tool names under its $MCP_MCP/<server>
+		// route, so a real name resolves too: alone when only one server has
+		// it and no platform tool takes it, or with server_name.
+		if !ok || (registered.Kind == toolImplementationDirect && serverName != "") {
+			if mcpTool, found := registry.lookupMCPByRealName(name, serverName); found {
+				registered, ok = mcpTool, true
+			}
+		}
 		if !ok || registered.Kind == toolImplementationVirtual {
 			unknown = append(unknown, name)
 			continue
@@ -99,8 +112,15 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 			continue
 		}
 
+		// The spec documents the bridge route, which carries the real tool name.
+		definition := registered.Definition
+		if definition.Function != nil && registered.realName() != definition.Function.Name {
+			function := *definition.Function
+			function.Name = registered.realName()
+			definition.Function = &function
+		}
 		normalizedServer := strings.ReplaceAll(srvName, "-", "_")
-		mcpToolsByServer[normalizedServer] = append(mcpToolsByServer[normalizedServer], registered.Definition)
+		mcpToolsByServer[normalizedServer] = append(mcpToolsByServer[normalizedServer], definition)
 	}
 
 	if len(unknown) > 0 || len(notAllowed) > 0 {
@@ -491,7 +511,8 @@ func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
 		if serverToolsMap[normalized] == nil {
 			serverToolsMap[normalized] = make(map[string]bool)
 		}
-		serverToolsMap[normalized][toolName] = true
+		// Listed under its server's route, so by the name the route takes.
+		serverToolsMap[normalized][registered.realName()] = true
 	}
 
 	for serverName, toolsSet := range serverToolsMap {

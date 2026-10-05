@@ -193,7 +193,7 @@ func (h *BrokenPipeHandler) retryToolCall(
 
 	// Execute the retry with the server's registered name, not the qualified
 	// LLM-facing name used to disambiguate duplicate tools.
-	actualToolName := actualMCPToolName(toolCall.FunctionCall.Name, serverName)
+	actualToolName := h.agent.realMCPToolName(toolCall.FunctionCall.Name, serverName)
 	retryResult, retryErr := client.CallTool(retryCtx, actualToolName, retryArgs)
 	retryDuration := time.Since(startTime)
 
