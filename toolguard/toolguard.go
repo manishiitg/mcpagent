@@ -6,7 +6,7 @@
 //
 // A Guard can let a call run or answer it with a stub result instead. It is
 // how an application runs a step in a test mode in which calls with external
-// effects are recorded instead of performed (AgentWorks PLAT-560).
+// effects are recorded instead of performed (AgentWorks PLAT-562).
 package toolguard
 
 import (

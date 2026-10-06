@@ -1183,7 +1183,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 
 				// The application's tool guard sees every call before it runs and
-				// may answer it with a stub instead (test mode, PLAT-560).
+				// may answer it with a stub instead (test mode, PLAT-562).
 				if guarded := toolguard.Check(toolCtx, a.guardCall(tc.FunctionCall.Name, actualToolName, serverName, isCustomTool, client, args)); guarded.Stub {
 					result = guarded.AsResult()
 				} else if isVirtualTool(tc.FunctionCall.Name) {

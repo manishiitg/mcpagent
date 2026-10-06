@@ -397,7 +397,7 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	}
 
 	// The application's tool guard sees the call before it runs and may answer
-	// it with a stub instead (test mode, PLAT-560).
+	// it with a stub instead (test mode, PLAT-562).
 	if guarded := toolguard.Check(ctx, toolguard.Call{
 		SessionID:   req.SessionID,
 		Kind:        toolguard.KindMCP,

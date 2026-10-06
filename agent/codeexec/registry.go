@@ -1197,7 +1197,7 @@ func isActualGoBuildError(errorMsg, fullContent string) bool {
 	return false
 }
 
-// guardedResult turns a tool guard's stub into the bridge result (PLAT-560).
+// guardedResult turns a tool guard's stub into the bridge result (PLAT-562).
 func guardedResult(d toolguard.Decision) (string, error) {
 	if d.IsError {
 		return "", errors.New(d.Result)
