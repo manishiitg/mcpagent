@@ -16,6 +16,7 @@ import (
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/toolcalllog"
 	"github.com/manishiitg/mcpagent/toolerr"
+	"github.com/manishiitg/mcpagent/toolguard"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -393,6 +394,24 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 				loggerv2.String("server", req.Server),
 				loggerv2.String("session_id", connSessionID))
 		}
+	}
+
+	// The application's tool guard sees the call before it runs and may answer
+	// it with a stub instead (test mode, PLAT-560).
+	if guarded := toolguard.Check(ctx, toolguard.Call{
+		SessionID:   req.SessionID,
+		Kind:        toolguard.KindMCP,
+		Server:      req.Server,
+		Tool:        req.Tool,
+		Args:        req.Args,
+		Annotations: toolguard.AnnotationsFrom(client, req.Tool),
+	}); guarded.Stub {
+		resp := MCPExecuteResponse{Success: !guarded.IsError, Result: guarded.Result}
+		if guarded.IsError {
+			resp.Error = guarded.Result
+		}
+		_ = json.NewEncoder(w).Encode(resp) //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers
+		return
 	}
 
 	// Execute tool

@@ -14,6 +14,7 @@ import (
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/toolguard"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -521,6 +522,9 @@ func InitRegistryVirtualToolsForSession(sessionID string, virtualTools map[strin
 // CallVirtualToolWithSession calls a virtual tool with session scoping
 // It first checks session-scoped tools, then falls back to global tools
 func CallVirtualToolWithSession(ctx context.Context, sessionID string, toolName string, args map[string]interface{}) (string, error) {
+	if guarded := toolguard.Check(ctx, toolguard.Call{SessionID: sessionID, Kind: toolguard.KindVirtual, Tool: toolName, Args: args}); guarded.Stub {
+		return guardedResult(guarded)
+	}
 	registry := GetRegistry()
 	if registry == nil {
 		return "", fmt.Errorf("tool registry not initialized")
@@ -929,6 +933,9 @@ func (r *ToolRegistry) siblingScopeForTool(httpSessionID, self, toolName string)
 // against the calling session before that resolution: the parent chat's
 // per-turn ToolPolicy governs the parent's agent, not a step script.
 func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName string, args map[string]interface{}) (string, error) {
+	if guarded := toolguard.Check(ctx, toolguard.Call{SessionID: sessionID, Kind: toolguard.KindCustom, Tool: toolName, Args: args}); guarded.Stub {
+		return guardedResult(guarded)
+	}
 	registry := GetRegistry()
 	if registry == nil {
 		return "", fmt.Errorf("tool registry not initialized")
@@ -1188,4 +1195,12 @@ func isActualGoBuildError(errorMsg, fullContent string) bool {
 
 	// If none of the heuristics match, it's not a Go build error
 	return false
+}
+
+// guardedResult turns a tool guard's stub into the bridge result (PLAT-560).
+func guardedResult(d toolguard.Decision) (string, error) {
+	if d.IsError {
+		return "", errors.New(d.Result)
+	}
+	return d.Result, nil
 }

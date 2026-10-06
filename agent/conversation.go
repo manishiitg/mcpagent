@@ -30,6 +30,7 @@ import (
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
 	"github.com/manishiitg/mcpagent/toolerr"
+	"github.com/manishiitg/mcpagent/toolguard"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -1181,8 +1182,11 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Resolved disambiguated tool '%s' -> '%s' (server: %s)", tc.FunctionCall.Name, actualToolName, serverName))
 				}
 
-				// Check if this is a virtual tool
-				if isVirtualTool(tc.FunctionCall.Name) {
+				// The application's tool guard sees every call before it runs and
+				// may answer it with a stub instead (test mode, PLAT-560).
+				if guarded := toolguard.Check(toolCtx, a.guardCall(tc.FunctionCall.Name, actualToolName, serverName, isCustomTool, client, args)); guarded.Stub {
+					result = guarded.AsResult()
+				} else if isVirtualTool(tc.FunctionCall.Name) {
 					// Handle virtual tool execution
 					v2Logger.Debug("🔧 [TOOL_CALL] Executing virtual tool",
 						loggerv2.String("tool_name", tc.FunctionCall.Name))

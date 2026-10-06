@@ -23,6 +23,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/toolerr"
+	"github.com/manishiitg/mcpagent/toolguard"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -495,7 +496,9 @@ func executeToolCall(
 	var toolErr error
 	actualToolName := a.realMCPToolName(tc.FunctionCall.Name, plan.serverName)
 
-	if isVirtualTool(tc.FunctionCall.Name) {
+	if guarded := toolguard.Check(toolCtx, a.guardCall(tc.FunctionCall.Name, actualToolName, plan.serverName, plan.isCustomTool, plan.client, plan.args)); guarded.Stub {
+		mcpResult = guarded.AsResult()
+	} else if isVirtualTool(tc.FunctionCall.Name) {
 		v2Logger.Debug("🔧 [TOOL_CALL] Executing virtual tool (parallel)",
 			loggerv2.String("tool_name", tc.FunctionCall.Name))
 		resultText, vtErr := a.handleVirtualTool(toolCtx, tc.FunctionCall.Name, plan.args)
