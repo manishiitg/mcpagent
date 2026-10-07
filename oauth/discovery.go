@@ -454,6 +454,59 @@ const (
 	ClientHomepage    = "https://agentworkshq.com"
 )
 
+// RegistrationError is a rejected Dynamic Client Registration. It carries the
+// provider's RFC 7591 error (for example invalid_redirect_uri) and a bounded
+// copy of the body, so the failure can be logged and shown. A rejection body
+// never holds a client secret; only a successful registration issues one.
+type RegistrationError struct {
+	StatusCode  int
+	Code        string // RFC 7591 "error"
+	Description string // RFC 7591 "error_description"
+	Body        string // the response body, truncated to one line
+}
+
+// maxRegistrationErrorBody bounds the body kept on a RegistrationError.
+const maxRegistrationErrorBody = 300
+
+func newRegistrationError(resp *http.Response) *RegistrationError {
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	e := &RegistrationError{StatusCode: resp.StatusCode}
+	var body struct {
+		Error       string `json:"error"`
+		Description string `json:"error_description"`
+	}
+	if json.Unmarshal(raw, &body) == nil {
+		e.Code, e.Description = body.Error, body.Description
+	}
+	text := strings.Join(strings.Fields(string(raw)), " ")
+	if len(text) > maxRegistrationErrorBody {
+		text = text[:maxRegistrationErrorBody] + "..."
+	}
+	e.Body = text
+	return e
+}
+
+func (e *RegistrationError) Error() string {
+	msg := fmt.Sprintf("registration failed with status %d", e.StatusCode)
+	if e.Body != "" {
+		msg += ": " + e.Body
+	}
+	return msg
+}
+
+// Reason is the provider's own account of the rejection, for a person to read.
+func (e *RegistrationError) Reason() string {
+	switch {
+	case e.Description != "" && e.Code != "":
+		return fmt.Sprintf("%s (%s)", strings.TrimRight(e.Description, "."), e.Code)
+	case e.Description != "":
+		return strings.TrimRight(e.Description, ".")
+	case e.Code != "":
+		return e.Code
+	}
+	return fmt.Sprintf("the provider answered HTTP %d", e.StatusCode)
+}
+
 // RegisterClient performs Dynamic Client Registration (RFC 7591) to obtain a client_id
 func (d Discoverer) RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrationResponse, error) {
 	// Prepare registration request
@@ -481,7 +534,7 @@ func (d Discoverer) RegisterClient(registrationEndpoint, redirectURI string) (*C
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registration failed with status %d", resp.StatusCode)
+		return nil, newRegistrationError(resp)
 	}
 
 	// Parse response
