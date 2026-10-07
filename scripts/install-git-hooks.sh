@@ -1,11 +1,10 @@
 #!/bin/bash
 
-# Install Git Hooks for Gitleaks Secret Scanning and Golangci-lint
-# This script sets up pre-commit hooks to automatically scan for secrets and run linting
+# Install Git Hooks for Gitleaks Secret Scanning
+# This script sets up pre-commit hooks to scan staged files for secrets (lint runs on GitHub)
 
 set -e
 
-echo "🔒 Setting up pre-commit hooks (Gitleaks + Golangci-lint)..."
 
 # Colors for output
 RED='\033[0;31m'
@@ -60,89 +59,30 @@ echo -e "${GREEN}✅ Gitleaks installed successfully${NC}"
 mkdir -p scripts
 
 # Create the pre-commit hook script
-cat > .git/hooks/pre-commit << 'EOF'
+HOOK_DIR="$(git rev-parse --path-format=absolute --git-path hooks)"
+mkdir -p "$HOOK_DIR"
+cat > "$HOOK_DIR/pre-commit" << 'EOF'
 #!/bin/bash
-
-# Pre-commit Hook
-# Scans staged files for secrets and runs golangci-lint
-
+# Secrets scan only. Lint and tests run on GitHub (ci.yml) on every push;
+# running golangci-lint here slowed the owner's laptop on every commit.
 set -e
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-echo -e "${BLUE}🔒 Scanning for secrets with gitleaks...${NC}"
-
-# Check if gitleaks is available
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 if ! command -v gitleaks &> /dev/null; then
-    echo -e "${YELLOW}⚠️  Gitleaks not found. Skipping secret scan.${NC}"
-    echo "Run './scripts/install-git-hooks.sh' to install gitleaks."
+    echo "⚠️  gitleaks not installed; secret scan skipped (brew install gitleaks)."
     exit 0
 fi
-
-# Run gitleaks on staged files
-if gitleaks protect --staged --config .gitleaks.toml --verbose; then
-    echo -e "${GREEN}✅ No secrets detected.${NC}"
+CONFIG=()
+[ -f "$REPO_ROOT/.gitleaks.toml" ] && CONFIG=(--config "$REPO_ROOT/.gitleaks.toml")
+if gitleaks protect --staged "${CONFIG[@]}" --redact; then
+    echo "✅ No secrets detected."
 else
-    echo -e "${RED}❌ Secrets detected! Commit blocked.${NC}"
-    echo ""
-    echo "Please remove or replace the detected secrets before committing."
-    echo "Common solutions:"
-    echo "  • Use environment variables instead of hardcoded secrets"
-    echo "  • Move secrets to .env files (not tracked by git)"
-    echo "  • Use placeholder values in example files"
-    echo ""
-    echo "For more information, see README.md"
+    echo "❌ Secrets detected! Commit blocked. Remove them and commit again."
     exit 1
 fi
-
-# Run golangci-lint on Go files
-echo -e "${BLUE}🔍 Running golangci-lint...${NC}"
-
-# Only lint when staged changes could affect Go analysis.
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
-if ! echo "$STAGED_FILES" | grep -Eq '(^|/)(.*\.go|go\.mod|go\.sum|\.golangci\.yml)$'; then
-    echo -e "${GREEN}✅ No staged Go changes. Skipping golangci-lint.${NC}"
-    exit 0
-fi
-
-# Add GOPATH/bin to PATH early so golangci-lint can be found
-if [ -d "$(go env GOPATH)/bin" ]; then
-    export PATH="$PATH:$(go env GOPATH)/bin"
-fi
-
-# Check if golangci-lint is available
-GOLANGCI_LINT_CMD=""
-if command -v golangci-lint &> /dev/null; then
-    GOLANGCI_LINT_CMD="golangci-lint"
-elif [ -f "$(go env GOPATH)/bin/golangci-lint" ]; then
-    GOLANGCI_LINT_CMD="$(go env GOPATH)/bin/golangci-lint"
-else
-    echo -e "${RED}❌ golangci-lint not found. Commit blocked.${NC}"
-    echo "Run 'make install-linter' to install golangci-lint."
-    exit 1
-fi
-
-# Run the same lint command GitHub Actions uses and block on any failure.
-echo ""
-if $GOLANGCI_LINT_CMD run --timeout=5m; then
-    echo ""
-    echo -e "${GREEN}✅ Linting passed. Proceeding with commit.${NC}"
-    exit 0
-fi
-
-echo ""
-echo -e "${RED}❌ golangci-lint found issues. Commit blocked.${NC}"
-echo "Fix the reported issues or run 'make lint' for the same check used in CI."
-exit 1
 EOF
 
 # Make the pre-commit hook executable
-chmod +x .git/hooks/pre-commit
+chmod +x "$HOOK_DIR/pre-commit"
 
 # Create a manual scan script
 cat > scripts/scan-secrets.sh << 'EOF'
@@ -211,18 +151,15 @@ echo -e "${GREEN}🎉 Pre-commit hooks installed successfully!${NC}"
 echo ""
 echo -e "${BLUE}What happens now:${NC}"
 echo "  • Every commit will be automatically scanned for secrets (gitleaks)"
-echo "  • Every commit will run golangci-lint on Go code"
 echo "  • Errors from tool_output_folder, cache, bin, and generated are automatically filtered"
-echo "  • Commits with secrets or critical linting issues will be blocked"
+echo "  • Commits with secrets will be blocked"
 echo "  • You'll get clear error messages if issues are detected"
 echo ""
 echo -e "${BLUE}Manual scanning:${NC}"
 echo "  • Run './scripts/scan-secrets.sh' to scan the entire repository"
 echo "  • Run './scripts/scan-secrets.sh path/to/file' to scan specific files"
-echo "  • Run 'make lint' to run golangci-lint manually"
 echo ""
 echo -e "${BLUE}Configuration:${NC}"
 echo "  • Edit '.gitleaks.toml' to customize secret detection rules"
-echo "  • Edit '.golangci.yml' to customize linting rules"
 echo ""
 echo -e "${GREEN}Your repository is now protected against accidental secret commits and linting issues! 🔒${NC}"
