@@ -38,7 +38,7 @@
     "function-calling"
   ],
   "author": "MCPAgent Team",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mcpagent/mcpagent.git",

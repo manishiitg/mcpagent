@@ -1,7 +1,7 @@
 # MCPAgent - Go Agent Runtime
 
 [![Go Version](https://img.shields.io/badge/Go-1.24.4-blue.svg)](https://golang.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
 
 A production-ready Go library for building tool-using, code-executing agents across frontier, open, and CLI-native model providers. MCP support is built in, but it is only one part of the runtime.
 
@@ -837,7 +837,7 @@ Contributions are welcome! Please see the [Documentation Writing Guide](docs/doc
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+mcpagent is source-available under the [Business Source License 1.1](LICENSE), from 2026-10-09. You may read, modify and run it for personal projects, development, testing, evaluation, education and research. Using it in the operation of a business, or offering it to others, needs a commercial license: contact us through [agentworkshq.com/about](https://agentworkshq.com/about/). Each version converts to the Apache License 2.0 on the Change Date in the license. Versions published before 2026-10-09 remain available under the MIT License.
 
 ## 🙏 Acknowledgments
 
