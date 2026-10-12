@@ -90,7 +90,15 @@ func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base
 				}
 			}
 			admits := func(name string) bool { return a.admitsCoreBridgeTool(name) && a.isToolAllowedForContext(ctx, name) }
-			routing = strings.TrimSpace(routing + "\n" + bridgeRoutingInstructions(admits, a.hasRuntimeHTTPSkill(), a.additionalBridgeTools...))
+			exposed := make([]string, 0, len(a.additionalBridgeTools))
+			for _, name := range a.additionalBridgeTools {
+				if name == "read_image" || name == "read_skill" {
+					exposed = append(exposed, name)
+				} else if _, ok := a.lookupDirectTool(name); ok {
+					exposed = append(exposed, name)
+				}
+			}
+			routing = strings.TrimSpace(routing + "\n" + bridgeRoutingInstructions(admits, a.hasRuntimeHTTPSkill(), exposed...))
 		}
 		if routing != "" {
 			base = strings.TrimSpace(base + "\n\n<runtime_tools>\n" + routing + "\n</runtime_tools>")

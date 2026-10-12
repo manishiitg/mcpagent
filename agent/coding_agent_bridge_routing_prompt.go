@@ -16,8 +16,17 @@ func bridgeRoutingInstructions(admits func(name string) bool, skillFirst bool, a
 			names = append(names, name)
 		}
 	}
+	// Every native bridge tool is a direct tool. The caller passes only names that
+	// are really exposed (registered and allowed), so a tool the model has natively
+	// is never described as something to find through search_tools and HTTP: a
+	// session with no shell would otherwise hit a dead end.
+	listed := map[string]bool{}
+	for _, name := range names {
+		listed[name] = true
+	}
 	for _, name := range additionalBridgeTools {
-		if (name == "read_image" || name == "read_skill") && allow(name) {
+		if name != "" && !listed[name] && allow(name) {
+			listed[name] = true
 			names = append(names, name)
 		}
 	}

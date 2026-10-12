@@ -1,6 +1,7 @@
 package mcpagent
 
 import (
+	"context"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"strings"
 	"testing"
@@ -177,5 +178,23 @@ func TestRuntimeHTTPInstructionsSayNativeShellHasNoCredentials(t *testing.T) {
 				t.Errorf("%s does not contain %q", name, want)
 			}
 		}
+	}
+}
+
+// A native bridge tool the agent really exposes (a guest's send_message) is named a
+// direct tool; a name that is not registered is not claimed. Without this a session
+// with no shell was told to find send_message through search_tools and HTTP.
+func TestRoutingPromptNamesEveryExposedNativeBridgeTool(t *testing.T) {
+	a := &Agent{additionalBridgeTools: []string{"send_message", "not_registered_anywhere"}}
+	if err := a.registerCustomTool("send_message", "Send a message", map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}, func(ctx context.Context, args map[string]interface{}) (string, error) { return "", nil }, "agent_messaging"); err != nil {
+		t.Fatal(err)
+	}
+	a.appendBridgeRoutingInstructions(testDefaultPreamble)
+	got := a.instructions()
+	if !strings.Contains(got, "agent_browser, send_message. Use the exact identifiers") {
+		t.Fatalf("an exposed native bridge tool must be listed as a direct tool: %s", got)
+	}
+	if strings.Contains(got, "not_registered_anywhere") {
+		t.Fatalf("a tool the agent does not have must not be claimed: %s", got)
 	}
 }
