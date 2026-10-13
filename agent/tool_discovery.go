@@ -23,7 +23,7 @@ func searchToolsDefinition() llmtypes.Tool {
 				"group":       map[string]interface{}{"type": "string", "description": "Optional exact custom-tool display group from a previous result."},
 				"server_name": map[string]interface{}{"type": "string", "description": "Optional exact connected MCP server from a previous result."},
 				"offset":      map[string]interface{}{"type": "integer", "minimum": 0},
-				"limit":       map[string]interface{}{"type": "integer", "minimum": 10, "maximum": 20, "default": 10},
+				"limit":       map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 20, "default": 10, "description": "Page size; a page is at least 10 tools."},
 			},
 		}),
 	}}
