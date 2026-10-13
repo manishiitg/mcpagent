@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/nativeshell"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
 	"github.com/manishiitg/mcpagent/agent/convrecord"
@@ -3227,24 +3228,52 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 	a.bridgeRoutingPreamble = &defaultPreamble
 }
 
-// codingAgentProviderRoutingPreamble describes the tool mode that is actually
-// configured for this agent without naming individual bridge tools. Exact tool
-// names belong to bridgeRoutingExplicitInstructions, where they are filtered
-// through the same admission predicate used to build the provider manifest.
+// codingAgentProviderRoutingPreamble describes the tool mode configured for this
+// agent. The outbound variant also checks the turn's permissions before adding
+// Muse's shell clarification, so it cannot advertise an excluded bridge shell.
 func (a *Agent) codingAgentProviderRoutingPreamble() string {
+	return a.codingAgentProviderRoutingPreambleForContext(context.Background())
+}
+
+func (a *Agent) codingAgentProviderRoutingPreambleForContext(ctx context.Context) string {
+	var preamble string
 	if a.nativeCodingToolsEnabled() {
-		return "IMPORTANT: " + a.fullCLIToolsSentence() + " " + a.fullCLIBoundarySentence() +
+		preamble = "IMPORTANT: " + a.fullCLIToolsSentence() + " " + a.fullCLIBoundarySentence() +
 			" Protected files (a workflow's planning/, its raw database, instruction files) are refused even inside granted folders: change plans and the workflow database only through their bridge tools." +
 			" Use the declared MCP bridge tools for platform actions, integrations, the workflow database, notifications and anything outside your folders. Call only exact declared bridge tool names; never invent alternate prefixes or namespaces."
+	} else if a.provider == llmproviders.ProviderMuseCLI {
+		preamble = "IMPORTANT: Use native web_search and the declared MCP bridge tools for work. Native file, shell, memory, scheduling, goal, workflow, and subagent tools are restricted; do not attempt them even if listed. Muse internal session controls may bypass its restriction hook, but they are not a substitute for platform tools. Use platform tools for user questions and task coordination. Call only exact declared bridge tool names."
+	} else {
+		preamble = "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Run commands and read, create or change files only through the declared bridge tools, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
 	}
-	if a.provider == llmproviders.ProviderMuseCLI {
-		return "IMPORTANT: Use native web_search and the declared MCP bridge tools for work. Native file, shell, memory, scheduling, goal, workflow, and subagent tools are restricted; do not attempt them even if listed. Muse internal session controls may bypass its restriction hook, but they are not a substitute for platform tools. Use platform tools for user questions and task coordination. Call only exact declared bridge tool names."
+	if a.provider == llmproviders.ProviderMuseCLI && (!a.nativeCodingToolsEnabled() || !nativeshell.Enabled()) &&
+		a.admitsCoreBridgeTool("execute_shell_command") && a.isToolAllowedForContext(ctx, "execute_shell_command") {
+		preamble += " Native shell and write restrictions apply to Muse's built-in tools; the permitted AgentWorks MCP shell remains available for commands and authorized file writes. Run terminal commands through the declared MCP execute_shell_command tool, using its exact provider tool identifier. Use search_tools and get_api_spec for platform tool discovery. Report shell access unavailable only if the MCP shell itself returns an availability or permission error."
 	}
-	return "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Run commands and read, create or change files only through the declared bridge tools, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
+	return preamble
 }
 
 // fullCLIToolsSentence names the native tools this CLI really has in Full CLI.
 func (a *Agent) fullCLIToolsSentence() string {
+	// Use the adapter's switch rather than treating Full mode as shell access.
+	if !nativeshell.Enabled() {
+		var tools string
+		switch a.provider {
+		case llmproviders.ProviderClaudeCode:
+			tools = "Your own Read, Write, Edit, Grep, Glob, skills, todos, subagents and web search are enabled. Use them directly for files and coordination."
+		case llmproviders.ProviderCodexCLI:
+			tools = "Your native subagents are enabled."
+		case llmproviders.ProviderCursorCLI:
+			tools = "Your own Read, List, Glob, Grep, Search, Edit and Write tools are enabled; use them directly for files. Cursor's Delete tool, subagents, background and cloud agents, computer use and image tools are denied. Use a permitted bridge shell for file deletion."
+		case llmproviders.ProviderMuseCLI:
+			tools = "Your native file, search and subagent tools are enabled; use them directly to read, create and change files."
+		case llmproviders.ProviderAgyCLI:
+			tools = "AGY Full CLI is enabled. Use your native non-shell tools directly, including file reads, search, edits and subagents. Wait for delegated work that your answer depends on before giving the final answer."
+		default:
+			tools = "Your native non-shell tools are enabled."
+		}
+		return tools + " Your native shell is disabled; use a permitted MCP bridge shell for commands."
+	}
 	switch a.provider {
 	case llmproviders.ProviderClaudeCode:
 		return "Your own tools are enabled: Bash, Read, Write, Edit, Grep, Glob, skills, todos, subagents and web search. Use them directly to read, search, create and change files and to run commands."

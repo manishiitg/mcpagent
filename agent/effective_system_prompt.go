@@ -84,7 +84,7 @@ func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base
 		} else {
 			if a.bridgeRoutingPreamble != nil {
 				if llm.IsCodingAgentProvider(a.provider, a.modelID) {
-					routing = a.codingAgentProviderRoutingPreamble()
+					routing = a.codingAgentProviderRoutingPreambleForContext(ctx)
 				} else {
 					routing = *a.bridgeRoutingPreamble
 				}

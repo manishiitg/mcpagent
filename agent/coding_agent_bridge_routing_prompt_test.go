@@ -2,9 +2,11 @@ package mcpagent
 
 import (
 	"context"
-	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"strings"
 	"testing"
+
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/nativeshell"
 )
 
 const testDefaultPreamble = "DEFAULT PREAMBLE FOR TEST"
@@ -196,5 +198,87 @@ func TestRoutingPromptNamesEveryExposedNativeBridgeTool(t *testing.T) {
 	}
 	if strings.Contains(got, "not_registered_anywhere") {
 		t.Fatalf("a tool the agent does not have must not be claimed: %s", got)
+	}
+}
+
+// The adapters keep non-shell native tools in Full mode but remove command
+// execution by default (PLAT-491). The outbound prompt must describe that same
+// switch, including every spelling accepted by the adapter's shared helper.
+func TestFullCLIRoutingPromptFollowsNativeShellSetting(t *testing.T) {
+	for _, provider := range []llmproviders.Provider{
+		llmproviders.ProviderClaudeCode, llmproviders.ProviderCodexCLI,
+		llmproviders.ProviderCursorCLI, llmproviders.ProviderMuseCLI, llmproviders.ProviderAgyCLI,
+	} {
+		t.Run(string(provider), func(t *testing.T) {
+			a := &Agent{provider: provider, codingAgentToolsMode: codingAgentToolsFull, cliSecurityPolicy: confinedTestPolicy()}
+			a.appendBridgeRoutingInstructions(a.codingAgentProviderRoutingPreamble())
+			for _, setting := range []string{"", "off", "on", "1", "true", "yes"} {
+				t.Run("shell="+setting, func(t *testing.T) {
+					t.Setenv(nativeshell.EnvVar, setting)
+					got := a.outgoingSystemPrompt()
+					if strings.Contains(got, "Your native shell is disabled") == nativeshell.Enabled() {
+						t.Fatalf("shell=%q disagrees with outbound prompt: %s", setting, got)
+					}
+					if !strings.Contains(got, "Protected files") || !strings.Contains(got, "execute_shell_command") {
+						t.Fatalf("Full CLI lost its boundary or bridge shell: %s", got)
+					}
+					if !nativeshell.Enabled() {
+						for _, stale := range []string{"Bash, Read", "own shell (in Codex", "own Shell, Read", "native file, shell", "including file reads, search, edits, shell"} {
+							if strings.Contains(got, stale) {
+								t.Fatalf("disabled native shell advertised by %s: %s", stale, got)
+							}
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestMuseRoutingClarificationRespectsCurrentShellPermission(t *testing.T) {
+	t.Setenv(nativeshell.EnvVar, "")
+	for _, mode := range []string{codingAgentToolsMCPOnly, codingAgentToolsFull} {
+		t.Run(mode, func(t *testing.T) {
+			a := &Agent{provider: llmproviders.ProviderMuseCLI, codingAgentToolsMode: mode, cliSecurityPolicy: confinedTestPolicy()}
+			a.appendBridgeRoutingInstructions(a.codingAgentProviderRoutingPreamble())
+			for _, want := range []string{
+				"Native shell and write restrictions apply to Muse's built-in tools",
+				"AgentWorks MCP shell remains available",
+				"authorized file writes",
+				"Report shell access unavailable only if the MCP shell itself returns",
+			} {
+				if got := a.outgoingSystemPrompt(); !strings.Contains(got, want) {
+					t.Fatalf("Muse routing missing %q: %s", want, got)
+				}
+			}
+
+			// A per-turn restriction must replace the previous turn's guidance,
+			// without claiming a shell that the bridge manifest will exclude.
+			ctx := context.WithValue(context.Background(), turnPolicyContextKey{}, normalizedToolPolicy{allowed: map[string]bool{"search_tools": true, "get_api_spec": true}})
+			if got := a.outgoingSystemPromptForContext(ctx); strings.Contains(got, "execute_shell_command") || strings.Contains(got, "MCP shell remains available") {
+				t.Fatalf("turn policy excludes the shell but prompt advertises it: %s", got)
+			}
+			if got := a.outgoingSystemPrompt(); !strings.Contains(got, "MCP shell remains available") {
+				t.Fatalf("a restricted turn removed the next turn's shell guidance: %s", got)
+			}
+			a.bridgeToolAdmit = func(name string) bool { return name != "execute_shell_command" }
+			if got := a.outgoingSystemPrompt(); strings.Contains(got, "execute_shell_command") || strings.Contains(got, "MCP shell remains available") {
+				t.Fatalf("profile excludes the shell but prompt advertises it: %s", got)
+			}
+		})
+	}
+}
+
+func TestMuseRoutingClarificationDoesNotLeakToOtherCLIsOrEnabledNativeShell(t *testing.T) {
+	t.Setenv(nativeshell.EnvVar, "on")
+	a := &Agent{provider: llmproviders.ProviderMuseCLI, codingAgentToolsMode: codingAgentToolsFull, cliSecurityPolicy: confinedTestPolicy()}
+	a.appendBridgeRoutingInstructions(a.codingAgentProviderRoutingPreamble())
+	if got := a.outgoingSystemPrompt(); strings.Contains(got, "Muse's built-in tools") {
+		t.Fatalf("enabled Full CLI shell described as restricted: %s", got)
+	}
+	t.Setenv(nativeshell.EnvVar, "")
+	a.provider = llmproviders.ProviderClaudeCode
+	if got := a.outgoingSystemPrompt(); strings.Contains(got, "Muse") || strings.Contains(got, "MCP shell remains available") {
+		t.Fatalf("Muse-specific workaround reached another CLI: %s", got)
 	}
 }
