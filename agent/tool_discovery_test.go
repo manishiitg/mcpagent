@@ -89,18 +89,18 @@ func TestDiscoveryFiltersMCPServersAndPaginates(t *testing.T) {
 	a := codeExecutionPromptAgent()
 	a.toolFilter = NewToolFilter(nil, []string{"selected-server"}, nil, nil, nil)
 	for _, server := range []string{"selected-server", "hidden-server"} {
-		for i := 0; i < 3; i++ {
+		for i := 0; i < 12; i++ {
 			tool := directToolFixture(fmt.Sprintf("%s_%d", server, i), "")
 			tool.Kind, tool.Source = toolImplementationMCP, server
 			addDirectToolFixture(t, a, tool)
 		}
 	}
 	first := discoveryResult(t, a, context.Background(), map[string]interface{}{"server_name": "selected_server", "limit": float64(2)})
-	if strings.Contains(first, "hidden") || !strings.Contains(first, `"next_offset":2`) {
+	if strings.Contains(first, "hidden") || !strings.Contains(first, `"next_offset":10`) {
 		t.Fatalf("server filtering/page failed: %s", first)
 	}
-	last := discoveryResult(t, a, context.Background(), map[string]interface{}{"offset": 2, "limit": 2})
-	if strings.Contains(last, "next_offset") || !strings.Contains(last, "selected-server_2") {
+	last := discoveryResult(t, a, context.Background(), map[string]interface{}{"offset": 10, "limit": 2})
+	if strings.Contains(last, "next_offset") || !strings.Contains(last, "selected-server_9") {
 		t.Fatalf("last page failed: %s", last)
 	}
 	for _, args := range []map[string]interface{}{{"offset": -1}, {"limit": 21}, {"limit": 1.5}, {"query": 1}, {"group": strings.Repeat("x", 513)}} {

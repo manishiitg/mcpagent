@@ -23,7 +23,7 @@ func searchToolsDefinition() llmtypes.Tool {
 				"group":       map[string]interface{}{"type": "string", "description": "Optional exact custom-tool display group from a previous result."},
 				"server_name": map[string]interface{}{"type": "string", "description": "Optional exact connected MCP server from a previous result."},
 				"offset":      map[string]interface{}{"type": "integer", "minimum": 0},
-				"limit":       map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+				"limit":       map[string]interface{}{"type": "integer", "minimum": 10, "maximum": 20, "default": 10},
 			},
 		}),
 	}}
@@ -58,6 +58,9 @@ func (a *Agent) handleSearchTools(ctx context.Context, args map[string]interface
 	if err != nil {
 		return "", err
 	}
+	// A page of one or two tools made weaker models page through a group call by call (28 calls in one turn), so a
+	// smaller request is raised to the default page rather than refused.
+	limit = max(limit, discoveryMinPageSize)
 	registry, err := a.canonicalRegistry()
 	if err != nil {
 		return "", err
@@ -147,6 +150,9 @@ func discoveryKeys(values map[string]bool) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// discoveryMinPageSize is the smallest page search_tools returns.
+const discoveryMinPageSize = 10
 
 func discoveryInteger(args map[string]interface{}, name string, fallback, low, high int) (int, error) {
 	raw, exists := args[name]
