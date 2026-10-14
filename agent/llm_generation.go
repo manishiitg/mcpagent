@@ -612,6 +612,14 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 
 	for chunk := range sm.streamChan {
 		switch chunk.Type {
+		case llmtypes.StreamChunkTypeNativeSubagentTranscript:
+			raw, err := json.Marshal(chunk.Metadata["native_subagents"])
+			if err == nil {
+				var transcripts []llmtypes.NativeSubagentTranscript
+				if json.Unmarshal(raw, &transcripts) == nil && len(transcripts) > 0 {
+					a.emitTypedEvent(ctx, &events.NativeSubagentTranscriptEvent{BaseEventData: events.BaseEventData{Timestamp: time.Now()}, Transcripts: transcripts})
+				}
+			}
 		case llmtypes.StreamChunkTypeReasoning:
 			thinkingActive, _ := chunk.Metadata["thinking_active"].(bool)
 			if chunk.Content != "" || thinkingActive {

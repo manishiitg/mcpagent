@@ -3248,7 +3248,11 @@ func (a *Agent) codingAgentProviderRoutingPreambleForContext(ctx context.Context
 	}
 	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file"} {
 		if a.admitsCoreBridgeTool(name) && a.isToolAllowedForContext(ctx, name) {
-			preamble += " Provider-native sandbox restrictions, including sandbox_mode: read-only, apply to native tools. AgentWorks bridge tools enforce their own grants. Use permitted bridge tools for authorized writes; do not infer a bridge write denial from the native sandbox, and report actual permission or availability errors."
+			if a.nativeCodingToolsEnabled() {
+				preamble += " Native writes follow the granted folders and protected-file restrictions above. AgentWorks bridge tools independently enforce their own grants; report actual permission or availability errors."
+			} else {
+				preamble += " Provider-native sandbox restrictions, including sandbox_mode: read-only, apply to native tools. AgentWorks bridge tools enforce their own grants. Use permitted bridge tools for authorized writes; do not infer a bridge write denial from the native sandbox, and report actual permission or availability errors."
+			}
 			break
 		}
 	}

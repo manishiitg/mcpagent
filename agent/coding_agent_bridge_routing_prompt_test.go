@@ -251,8 +251,16 @@ func TestCLIRoutingDistinguishesNativeSandboxFromGrantedBridgeWrites(t *testing.
 							t.Setenv(nativeshell.EnvVar, setting)
 							a := &Agent{provider: provider, codingAgentToolsMode: mode, cliSecurityPolicy: confinedTestPolicy()}
 							a.appendBridgeRoutingInstructions(a.codingAgentProviderRoutingPreamble())
-							const clarification = "do not infer a bridge write denial from the native sandbox"
-							for _, want := range []string{"sandbox_mode: read-only, apply to native tools", "bridge tools enforce their own grants", clarification} {
+							clarification := "do not infer a bridge write denial from the native sandbox"
+							wants := []string{"sandbox_mode: read-only, apply to native tools", "bridge tools enforce their own grants", clarification}
+							if mode == codingAgentToolsFull && provider != llmproviders.ProviderPiCLI {
+								clarification = "Native writes follow the granted folders"
+								wants = []string{clarification, "bridge tools independently enforce their own grants"}
+								if got := a.outgoingSystemPrompt(); strings.Contains(got, "sandbox_mode: read-only") {
+									t.Fatalf("Full CLI described as native read-only: %s", got)
+								}
+							}
+							for _, want := range wants {
 								if got := a.outgoingSystemPrompt(); !strings.Contains(got, want) {
 									t.Fatalf("routing missing %q: %s", want, got)
 								}

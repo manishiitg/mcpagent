@@ -44,6 +44,7 @@ const (
 	// Muse task lifecycle continues after its foreground run completes.
 	CodingAgentBackgroundTask EventType = "coding_agent_background_task"
 	CodingAgentQuestion       EventType = "coding_agent_question"
+	NativeSubagentTranscript  EventType = "native_subagent_transcript"
 
 	// Streaming events
 	StreamingStart      EventType = "streaming_start"
