@@ -267,10 +267,12 @@ func TestCLIRoutingDistinguishesNativeSandboxFromGrantedBridgeWrites(t *testing.
 								t.Fatalf("restricted turn removed subsequent guidance: %s", got)
 							}
 
-							// Patch access still qualifies when shell access is absent.
+							// MCP-only profiles retain the patch route without a shell;
+							// Full CLI uses native file tools and omits the bridge patch.
 							a.bridgeToolAdmit = func(name string) bool { return name != "execute_shell_command" }
-							if got := a.outgoingSystemPrompt(); !strings.Contains(got, clarification) || strings.Contains(got, "execute_shell_command") {
-								t.Fatalf("patch-only profile has incorrect write guidance: %s", got)
+							wantPatch := mode == codingAgentToolsMCPOnly || provider == llmproviders.ProviderPiCLI
+							if got := a.outgoingSystemPrompt(); strings.Contains(got, clarification) != wantPatch || strings.Contains(got, "diff_patch_workspace_file") != wantPatch || strings.Contains(got, "execute_shell_command") {
+								t.Fatalf("shell-excluded profile has incorrect write guidance (patch=%t): %s", wantPatch, got)
 							}
 							a.bridgeToolAdmit = func(name string) bool { return name != "execute_shell_command" && name != "diff_patch_workspace_file" }
 							if got := a.outgoingSystemPrompt(); strings.Contains(got, clarification) {
