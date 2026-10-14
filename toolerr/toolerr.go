@@ -381,7 +381,7 @@ const (
 // Non-object or malformed input falls back to plain truncation, so this is
 // never worse than what it replaces.
 func TruncateArgsForLog(argsJSON string) string {
-	trimmed := strings.TrimSpace(argsJSON)
+	trimmed := strings.TrimSpace(redactSecretValuesForLog(argsJSON))
 	if trimmed == "" {
 		return ""
 	}
@@ -424,4 +424,48 @@ func renderArgValue(raw json.RawMessage) string {
 		return strings.TrimSpace(asString)
 	}
 	return strings.TrimSpace(string(raw))
+}
+
+// redactSecretValuesForLog replaces the values of the argument fields that carry a secret a person gave an agent to
+// store (`value`, `values`, and `secrets.set` of a settings call) with a marker, at any depth, so a failed secret call
+// never writes the secret into the log. Names and every other field are kept. Input that is not JSON is returned as is.
+func redactSecretValuesForLog(argsJSON string) string {
+	var parsed any
+	if err := json.Unmarshal([]byte(argsJSON), &parsed); err != nil {
+		return argsJSON
+	}
+	changed := false
+	var walk func(node any, parent string) any
+	walk = func(node any, parent string) any {
+		switch typed := node.(type) {
+		case map[string]any:
+			for key, value := range typed {
+				lower := strings.ToLower(key)
+				if lower == "value" || lower == "values" || (lower == "set" && strings.ToLower(parent) == "secrets") {
+					if value != nil {
+						typed[key] = "[redacted]"
+						changed = true
+						continue
+					}
+				}
+				typed[key] = walk(value, key)
+			}
+			return typed
+		case []any:
+			for i := range typed {
+				typed[i] = walk(typed[i], parent)
+			}
+			return typed
+		}
+		return node
+	}
+	walk(parsed, "")
+	if !changed {
+		return argsJSON
+	}
+	redacted, err := json.Marshal(parsed)
+	if err != nil {
+		return "[arguments omitted]"
+	}
+	return string(redacted)
 }

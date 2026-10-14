@@ -428,3 +428,20 @@ func TestCanonicalFailureRecognisesErrorEnvelopeMessageKeys(t *testing.T) {
 		t.Fatal("empty errorMessage must not classify as a failure")
 	}
 }
+
+// A failed secret call must not write the secret into the log.
+func TestTruncateArgsForLogRedactsSecretValues(t *testing.T) {
+	for _, in := range []string{
+		`{"operation":"set_value","values":{"API_KEY":"s3cr3t-value"}}`,
+		`{"operation":"set_secret","name":"API_KEY","value":"s3cr3t-value"}`,
+		`{"workflow_id":"w","secrets":{"set":{"API_KEY":"s3cr3t-value"}}}`,
+	} {
+		out := TruncateArgsForLog(in)
+		if strings.Contains(out, "s3cr3t-value") || !strings.Contains(out, "[redacted]") {
+			t.Errorf("secret value reached the log line or the marker is missing: %s", out)
+		}
+	}
+	if out := TruncateArgsForLog(`{"command":"ls","name":"API_KEY"}`); !strings.Contains(out, "API_KEY") || strings.Contains(out, "redacted") {
+		t.Errorf("unrelated arguments were changed: %s", out)
+	}
+}
