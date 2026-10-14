@@ -71,4 +71,7 @@ func TestRetainedTurnReportsTheUsageTheCLIRecordedBeforeItCompletes(t *testing.T
 	if len(capture.ends) != 2 || capture.ends[0].UsageMetrics.PromptTokens != 200 || capture.ends[1].UsageMetrics.CompletionTokens != 30 {
 		t.Fatalf("expected the two reported runs as generation-end events, got %+v", capture.ends)
 	}
+	if capture.ends[0].Metadata["usage_source"] != "retained" || capture.ends[0].Metadata["usage_source_id"] != "run-1" || capture.ends[1].Metadata["usage_source_id"] != "run-2" {
+		t.Fatalf("each event must name the CLI run it came from, got %v / %v", capture.ends[0].Metadata, capture.ends[1].Metadata)
+	}
 }

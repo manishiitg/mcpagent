@@ -32,6 +32,14 @@ func (s *Session) emitRetainedTurnUsage(lifecycle *canonicalTurnLifecycle, provi
 	for _, item := range items {
 		info := item.Info
 		usage := item.Usage
+		// Name where this row came from, so a ledger row traces to the CLI's own run/message id (and a later backfill
+		// can skip what is already recorded). GenerationInfo.Additional is copied onto the event metadata.
+		additional := make(map[string]interface{}, len(info.Additional)+2)
+		for k, v := range info.Additional {
+			additional[k] = v
+		}
+		additional["usage_source"], additional["usage_source_id"] = "retained", item.ID
+		info.Additional = additional
 		resp := &llmtypes.ContentResponse{
 			Choices: []*llmtypes.ContentChoice{{GenerationInfo: &info}},
 			Usage:   &usage,
