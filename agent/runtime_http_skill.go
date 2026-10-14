@@ -10,13 +10,17 @@ const runtimeHTTPInstructions = "Call HTTP tools through execute_shell_command: 
 // Runtime transport instructions are mcpagent-owned. This skill teaches HTTP
 // mechanics without listing tools or granting authority; current schemas win.
 func (a *Agent) ensureRuntimeHTTPSkill() error {
-	if !a.useCodeExecutionMode || !a.toolDiscovery {
+	if !a.useCodeExecutionMode {
 		return nil
+	}
+	names := "Choose admitted names from the current tool list."
+	if a.toolDiscovery {
+		names = "Discover exact admitted names through search_tools; broaden or enumerate a returned group/server when a query misses."
 	}
 	return a.attachSkill(&llmtypes.Skill{
 		Name:        runtimeHTTPSkillName,
-		Description: "Read before executing platform or connected-app tools over HTTP: discovery, exact schemas/routes, auth headers, JSON quoting and response/error handling. Grants no tool or filesystem permission.",
-		Content:     "# HTTP tool execution\n\nDiscover exact admitted names through search_tools; broaden or enumerate a returned group/server when a query misses. Load get_api_spec for the selected names and use its current schema and route. Never guess a name or treat a prior discovery result as authority. Native declared tools use their provider's exact identifiers; read_skill is intrinsic, never HTTP.\n\n" + runtimeHTTPInstructions,
+		Description: "Read before executing platform or connected-app tools over HTTP: current names, exact schemas/routes, auth headers, JSON quoting and response/error handling. Grants no tool or filesystem permission.",
+		Content:     "# HTTP tool execution\n\n" + names + " Load get_api_spec for the selected names and use its current schema and route. Never guess a name or treat a prior catalog or discovery result as authority. Native declared tools use their provider's exact identifiers; read_skill is intrinsic, never HTTP.\n\n" + runtimeHTTPInstructions,
 		Source:      llmtypes.SkillSource{Origin: "builtin"},
 	})
 }
