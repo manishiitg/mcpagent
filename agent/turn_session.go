@@ -127,6 +127,8 @@ type Session struct {
 	// provider adapter's authoritative retained transcript/sidecar.
 	retainedFinalResponse    func(llm.Provider, string, time.Time) string
 	retainedProgressMessages func(llm.Provider, string) []llmtypes.MessageContent
+	// retainedUsage reads the usage the CLI recorded for a retained turn; nil reads the provider adapter's transcript.
+	retainedUsage func(llm.Provider, string, string, time.Time) []llmtypes.RetainedTurnUsage
 }
 
 // Start opens a stateful session over this immutable agent definition.
@@ -804,6 +806,7 @@ func (s *Session) completeRetainedTurnAnsweredByPrevious(lifecycle *canonicalTur
 		s.activeTurn = nil
 	}
 	s.stateMu.Unlock()
+	s.emitRetainedTurnUsage(lifecycle, provider, startedAt) // the input was answered by the Run's response, but its runs spent tokens
 	completion := events.NewUnifiedCompletionEvent("coding_agent", "retained", input, "", "completed", time.Since(startedAt), 1)
 	completion.Metadata["source"] = "mcpagent_session"
 	completion.Metadata["provider"] = string(provider)
@@ -832,6 +835,7 @@ func (s *Session) completeRetainedTurn(lifecycle *canonicalTurnLifecycle, seq ui
 	)
 	s.stateMu.Unlock()
 
+	s.emitRetainedTurnUsage(lifecycle, provider, startedAt)
 	completion := events.NewUnifiedCompletionEvent("coding_agent", "retained", input, finalResult, "completed", time.Since(startedAt), 1)
 	completion.Metadata["source"] = "mcpagent_session"
 	completion.Metadata["provider"] = string(provider)
