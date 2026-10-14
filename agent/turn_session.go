@@ -812,7 +812,9 @@ func (s *Session) completeRetainedTurnAnsweredByPrevious(lifecycle *canonicalTur
 	completion.Metadata["provider"] = string(provider)
 	completion.Metadata["transport"] = string(transport)
 	completion.Metadata[AnsweredByPreviousResponseMetadataKey] = true
+	endedAt := time.Now()
 	s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), completion)
+	s.emitRetainedStreamEnd(lifecycle, provider, startedAt, endedAt)
 }
 
 func (s *Session) completeRetainedTurn(lifecycle *canonicalTurnLifecycle, seq uint64, input, finalResult string, provider llm.Provider, transport llm.CodingAgentTransport, startedAt time.Time) {
@@ -840,7 +842,9 @@ func (s *Session) completeRetainedTurn(lifecycle *canonicalTurnLifecycle, seq ui
 	completion.Metadata["source"] = "mcpagent_session"
 	completion.Metadata["provider"] = string(provider)
 	completion.Metadata["transport"] = string(transport)
+	endedAt := time.Now()
 	s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), completion)
+	s.emitRetainedStreamEnd(lifecycle, provider, startedAt, endedAt)
 }
 
 func (s *Session) Snapshot() *AgentSessionHandle {

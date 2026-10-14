@@ -108,5 +108,7 @@ func (s *Session) observeNativeInterrupt(lifecycle *canonicalTurnLifecycle, seq 
 	completion := events.NewUnifiedCompletionEvent("coding_agent", "retained", "", "", "cancelled", time.Since(lifecycle.startedAt), 1)
 	completion.Metadata["source"] = "mcpagent_session"
 	completion.Metadata["reason"] = "native_interrupt"
+	endedAt := time.Now()
 	s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), completion)
+	s.emitRetainedStreamEnd(lifecycle, "", lifecycle.startedAt, endedAt)
 }
