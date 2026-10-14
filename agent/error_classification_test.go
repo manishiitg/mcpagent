@@ -194,6 +194,32 @@ func TestAuthAndModelNotFoundClassification(t *testing.T) {
 	}
 }
 
+func TestAGYTimeoutWithHistoricalAuthStaysFailure(t *testing.T) {
+	for _, prefix := range []string{
+		`sidecar prompt has no matching user step after 90s (conversation "test-conversation", read error none)`,
+		`sidecar turn has no settled recorded answer within 15m0s (read error none)`,
+	} {
+		err := llmerrors.Classify("agy-cli", "test-model", fmt.Errorf("%s; pane tail:\nError 403, Status: PERMISSION_DENIED; unauthorized, permission denied", prefix))
+		wrapped := fmt.Errorf("selected LLM failed: %w", err)
+		if got := llmerrors.KindOf(wrapped); got != llmerrors.KindTimeout {
+			t.Fatalf("kind = %q, want timeout", got)
+		}
+		if isContextCanceledError(wrapped) {
+			t.Fatal("native sidecar timeout must emit a failure rather than a context cancellation")
+		}
+		if isAuthError(wrapped) || classifyLLMError(wrapped) != "connection_error" {
+			t.Fatal("historical provider auth text must not turn the timeout into a sign-in failure")
+		}
+		if !isUnconfirmedAGYTurnTimeout(wrapped) {
+			t.Fatal("an unconfirmed native receipt/answer must not retry the prompt")
+		}
+	}
+	ordinary := llmerrors.Classify("agy-cli", "test-model", fmt.Errorf("request timed out; pane tail:\nsidecar prompt has no matching user step after 90s"))
+	if isUnconfirmedAGYTurnTimeout(ordinary) {
+		t.Fatal("historical pane text must not suppress an ordinary provider timeout's retries")
+	}
+}
+
 // TestAuthAndModelNotFoundAreNotSameModelRetried locks the intent: neither kind
 // is on a same-model retry path. classifyLLMError returns a dedicated type, and
 // the retry loop's same-model-retry branches (zero_candidates / throttling /

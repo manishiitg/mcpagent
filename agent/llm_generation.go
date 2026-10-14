@@ -379,8 +379,8 @@ func isAuthError(err error) bool {
 	if err == nil || isContextCanceledError(err) {
 		return false
 	}
-	if llmerrors.KindOf(err) == llmerrors.KindAuth {
-		return true
+	if kind := llmerrors.KindOf(err); kind != llmerrors.KindUnknown {
+		return kind == llmerrors.KindAuth
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "invalid api key") ||
@@ -391,6 +391,18 @@ func isAuthError(err error) bool {
 		strings.Contains(msg, "unauthenticated") ||
 		strings.Contains(msg, "permission denied") ||
 		strings.Contains(msg, "accessdeniedexception")
+}
+
+// An AGY receipt/answer deadline does not prove that its native turn stopped.
+// Retrying the prompt could duplicate work already running in the sidecar.
+func isUnconfirmedAGYTurnTimeout(err error) bool {
+	var typed *llmerrors.Error
+	if !errors.As(err, &typed) || typed.Kind != llmerrors.KindTimeout || typed.Provider != "agy-cli" || typed.Err == nil {
+		return false
+	}
+	msg := strings.SplitN(typed.Err.Error(), "pane tail:", 2)[0]
+	return strings.Contains(msg, "sidecar prompt has no matching user step after") ||
+		strings.Contains(msg, "sidecar turn has no settled recorded answer within")
 }
 
 // isModelNotFoundError reports whether err means the model ID is unknown or
@@ -1460,6 +1472,9 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		}
 		errorType := classifyLLMError(err)
 		lastErr = err
+		if isUnconfirmedAGYTurnTimeout(err) {
+			break
+		}
 
 		// Special handling for retrying SAME model (throttling/zero candidates/internal errors)
 		// For zero_candidates errors: limit to 3 retries before returning the error
