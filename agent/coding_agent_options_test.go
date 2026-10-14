@@ -165,13 +165,16 @@ func TestAppendCodingAgentWorkingDirOptionCleansInactiveGeneratedArtifacts(t *te
 		}
 	}
 	mustWrite(".claude/skills/system-tools/SKILL.md", "generated")
+	mustWrite(".claude/skills/system-tools/"+projectfile.SkillMarkerFile, "x")
 	mustWrite(".pi/skills/system-tools/SKILL.md", "generated")
-	mustWrite(".pi/APPEND_SYSTEM.md", "<!-- mlp-session-instructions: orchestrator-generated -->\n")
+	mustWrite(".pi/skills/system-tools/"+projectfile.SkillMarkerFile, "x")
+	mustWrite(".pi/APPEND_SYSTEM.md", "<!-- mlp-session-instructions -->\n")
 	mustWrite(".pi/mcp.json", `{"mcpServers":{"api-bridge":{"command":"mcpbridge"}}}`)
 	mustWrite(".agents/skills/system-tools/SKILL.md", "generated")
+	mustWrite(".agents/skills/system-tools/"+projectfile.SkillMarkerFile, "x")
 	mustWrite(".agents/worker/keep.txt", "background runtime")
-	mustWrite("CLAUDE.md", "<!-- mlp-session-instructions: orchestrator-generated -->\n")
-	mustWrite("AGENTS.md", "<!-- mlp-session-instructions: orchestrator-generated -->\n")
+	mustWrite("CLAUDE.md", "<!-- mlp-session-instructions -->\n")
+	mustWrite("AGENTS.md", "<!-- mlp-session-instructions -->\n")
 
 	agent := &Agent{
 		provider:                           llm.ProviderCursorCLI,
@@ -186,12 +189,12 @@ func TestAppendCodingAgentWorkingDirOptionCleansInactiveGeneratedArtifacts(t *te
 			t.Fatalf("%s should be removed as inactive generated artifact, stat err=%v", rel, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(workDir, ".agents")); !os.IsNotExist(err) {
-		t.Fatalf(".agents should be removed as an inactive provider artifact, stat err=%v", err)
+	if body, err := os.ReadFile(filepath.Join(workDir, ".agents/worker/keep.txt")); err != nil || string(body) != "background runtime" {
+		t.Fatalf("unmarked runtime content must survive: body=%q err=%v", body, err)
 	}
 }
 
-func TestAppendCodingAgentWorkingDirOptionRemovesInactiveProviderDirsInWorkflow(t *testing.T) {
+func TestAppendCodingAgentWorkingDirOptionPreservesUnmarkedProviderFilesInWorkflow(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "workspace-docs", "Workflow", "demo")
 	mustWrite := func(rel, body string) {
 		t.Helper()
@@ -218,9 +221,16 @@ func TestAppendCodingAgentWorkingDirOptionRemovesInactiveProviderDirsInWorkflow(
 	}
 	_ = metadataFromCallOptions(agent.appendCodingAgentWorkingDirOptionForProvider(nil, llm.ProviderCursorCLI, "cursor-cli"))
 
-	for _, rel := range []string{".claude", ".pi", ".gemini", ".agents"} {
-		if _, err := os.Stat(filepath.Join(workDir, rel)); !os.IsNotExist(err) {
-			t.Fatalf("%s should be removed when Cursor starts in a workflow folder, stat err=%v", rel, err)
+	for rel, expected := range map[string]string{
+		".claude/skills/system-tools/SKILL.md": "generated",
+		".pi/APPEND_SYSTEM.md":                 "generated",
+		".gemini/settings.json":                `{"generated":true}`,
+		".agents/skills/system-tools/SKILL.md": "generated",
+		".agents/save-0001/marker.txt":         "stale runtime",
+	} {
+		body, err := os.ReadFile(filepath.Join(workDir, rel))
+		if err != nil || string(body) != expected {
+			t.Fatalf("unmarked file %s changed: body=%q err=%v", rel, body, err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(workDir, ".cursor", "mcp.json")); err != nil {
