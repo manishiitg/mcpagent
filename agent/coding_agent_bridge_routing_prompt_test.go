@@ -235,50 +235,51 @@ func TestFullCLIRoutingPromptFollowsNativeShellSetting(t *testing.T) {
 	}
 }
 
-func TestMuseRoutingClarificationRespectsCurrentShellPermission(t *testing.T) {
-	t.Setenv(nativeshell.EnvVar, "")
-	for _, mode := range []string{codingAgentToolsMCPOnly, codingAgentToolsFull} {
-		t.Run(mode, func(t *testing.T) {
-			a := &Agent{provider: llmproviders.ProviderMuseCLI, codingAgentToolsMode: mode, cliSecurityPolicy: confinedTestPolicy()}
-			a.appendBridgeRoutingInstructions(a.codingAgentProviderRoutingPreamble())
-			for _, want := range []string{
-				"Native shell and write restrictions apply to Muse's built-in tools",
-				"AgentWorks MCP shell remains available",
-				"authorized file writes",
-				"Report shell access unavailable only if the MCP shell itself returns",
-			} {
-				if got := a.outgoingSystemPrompt(); !strings.Contains(got, want) {
-					t.Fatalf("Muse routing missing %q: %s", want, got)
-				}
-			}
+// A local verification turn stopped without trying a granted managed write,
+// because Codex treated its native read-only sandbox as a bridge denial.
+func TestCLIRoutingDistinguishesNativeSandboxFromGrantedBridgeWrites(t *testing.T) {
+	for _, provider := range []llmproviders.Provider{
+		llmproviders.ProviderClaudeCode, llmproviders.ProviderCodexCLI,
+		llmproviders.ProviderCursorCLI, llmproviders.ProviderMuseCLI,
+		llmproviders.ProviderAgyCLI, llmproviders.ProviderPiCLI,
+	} {
+		t.Run(string(provider), func(t *testing.T) {
+			for _, mode := range []string{codingAgentToolsMCPOnly, codingAgentToolsFull} {
+				t.Run(mode, func(t *testing.T) {
+					for _, setting := range []string{"", "on"} {
+						t.Run("native-shell="+setting, func(t *testing.T) {
+							t.Setenv(nativeshell.EnvVar, setting)
+							a := &Agent{provider: provider, codingAgentToolsMode: mode, cliSecurityPolicy: confinedTestPolicy()}
+							a.appendBridgeRoutingInstructions(a.codingAgentProviderRoutingPreamble())
+							const clarification = "do not infer a bridge write denial from the native sandbox"
+							for _, want := range []string{"sandbox_mode: read-only, apply to native tools", "bridge tools enforce their own grants", clarification} {
+								if got := a.outgoingSystemPrompt(); !strings.Contains(got, want) {
+									t.Fatalf("routing missing %q: %s", want, got)
+								}
+							}
 
-			// A per-turn restriction must replace the previous turn's guidance,
-			// without claiming a shell that the bridge manifest will exclude.
-			ctx := context.WithValue(context.Background(), turnPolicyContextKey{}, normalizedToolPolicy{allowed: map[string]bool{"search_tools": true, "get_api_spec": true}})
-			if got := a.outgoingSystemPromptForContext(ctx); strings.Contains(got, "execute_shell_command") || strings.Contains(got, "MCP shell remains available") {
-				t.Fatalf("turn policy excludes the shell but prompt advertises it: %s", got)
-			}
-			if got := a.outgoingSystemPrompt(); !strings.Contains(got, "MCP shell remains available") {
-				t.Fatalf("a restricted turn removed the next turn's shell guidance: %s", got)
-			}
-			a.bridgeToolAdmit = func(name string) bool { return name != "execute_shell_command" }
-			if got := a.outgoingSystemPrompt(); strings.Contains(got, "execute_shell_command") || strings.Contains(got, "MCP shell remains available") {
-				t.Fatalf("profile excludes the shell but prompt advertises it: %s", got)
+							// A restricted turn must not claim a managed write route.
+							ctx := context.WithValue(context.Background(), turnPolicyContextKey{}, normalizedToolPolicy{allowed: map[string]bool{"search_tools": true, "get_api_spec": true}})
+							if got := a.outgoingSystemPromptForContext(ctx); strings.Contains(got, clarification) || strings.Contains(got, "execute_shell_command") || strings.Contains(got, "diff_patch_workspace_file") {
+								t.Fatalf("restricted turn advertises managed writes: %s", got)
+							}
+							if got := a.outgoingSystemPrompt(); !strings.Contains(got, clarification) {
+								t.Fatalf("restricted turn removed subsequent guidance: %s", got)
+							}
+
+							// Patch access still qualifies when shell access is absent.
+							a.bridgeToolAdmit = func(name string) bool { return name != "execute_shell_command" }
+							if got := a.outgoingSystemPrompt(); !strings.Contains(got, clarification) || strings.Contains(got, "execute_shell_command") {
+								t.Fatalf("patch-only profile has incorrect write guidance: %s", got)
+							}
+							a.bridgeToolAdmit = func(name string) bool { return name != "execute_shell_command" && name != "diff_patch_workspace_file" }
+							if got := a.outgoingSystemPrompt(); strings.Contains(got, clarification) {
+								t.Fatalf("profile without write routes advertises them: %s", got)
+							}
+						})
+					}
+				})
 			}
 		})
-	}
-}
-
-func TestMuseRoutingClarificationDoesNotLeakToOtherCLIsOrEnabledNativeShell(t *testing.T) {
-	t.Setenv(nativeshell.EnvVar, "on")
-	a := &Agent{provider: llmproviders.ProviderMuseCLI, codingAgentToolsMode: codingAgentToolsFull, cliSecurityPolicy: confinedTestPolicy()}
-	a.appendBridgeRoutingInstructions(a.codingAgentProviderRoutingPreamble())
-	if got := a.outgoingSystemPrompt(); strings.Contains(got, "Muse's built-in tools") {
-		t.Fatalf("enabled Full CLI shell described as restricted: %s", got)
-	}
-	t.Setenv(nativeshell.EnvVar, "")
-	a.provider = llmproviders.ProviderClaudeCode
-	if got := a.outgoingSystemPrompt(); strings.Contains(got, "Muse") || strings.Contains(got, "MCP shell remains available") {
-		t.Fatalf("Muse-specific workaround reached another CLI: %s", got)
 	}
 }

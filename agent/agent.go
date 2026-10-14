@@ -3230,7 +3230,7 @@ func (a *Agent) appendBridgeRoutingInstructions(defaultPreamble string) {
 
 // codingAgentProviderRoutingPreamble describes the tool mode configured for this
 // agent. The outbound variant also checks the turn's permissions before adding
-// Muse's shell clarification, so it cannot advertise an excluded bridge shell.
+// the native/bridge write clarification, so it cannot advertise excluded routes.
 func (a *Agent) codingAgentProviderRoutingPreamble() string {
 	return a.codingAgentProviderRoutingPreambleForContext(context.Background())
 }
@@ -3246,9 +3246,11 @@ func (a *Agent) codingAgentProviderRoutingPreambleForContext(ctx context.Context
 	} else {
 		preamble = "IMPORTANT: Provider-native filesystem, shell, edit, and browser tools are disabled for this session. Run commands and read, create or change files only through the declared bridge tools, with their exact names; never invent alternate prefixes or namespaces. If an action fails, choose another declared route or explain the specific blocker."
 	}
-	if a.provider == llmproviders.ProviderMuseCLI && (!a.nativeCodingToolsEnabled() || !nativeshell.Enabled()) &&
-		a.admitsCoreBridgeTool("execute_shell_command") && a.isToolAllowedForContext(ctx, "execute_shell_command") {
-		preamble += " Native shell and write restrictions apply to Muse's built-in tools; the permitted AgentWorks MCP shell remains available for commands and authorized file writes. Run terminal commands through the declared MCP execute_shell_command tool, using its exact provider tool identifier. Use search_tools and get_api_spec for platform tool discovery. Report shell access unavailable only if the MCP shell itself returns an availability or permission error."
+	for _, name := range []string{"execute_shell_command", "diff_patch_workspace_file"} {
+		if a.admitsCoreBridgeTool(name) && a.isToolAllowedForContext(ctx, name) {
+			preamble += " Provider-native sandbox restrictions, including sandbox_mode: read-only, apply to native tools. AgentWorks bridge tools enforce their own grants. Use permitted bridge tools for authorized writes; do not infer a bridge write denial from the native sandbox, and report actual permission or availability errors."
+			break
+		}
 	}
 	return preamble
 }
