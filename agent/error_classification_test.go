@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -280,5 +281,21 @@ func TestRetryLogCategoryMatchesActualErrorType(t *testing.T) {
 		if got := retryLogCategory(input); got != want {
 			t.Errorf("retryLogCategory(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+// AGY ending the turn itself (a finished error step) must show its own text and
+// must not be replayed, even though its text says "Internal error" (a retry class).
+func TestAGYTurnEndedByExecutorIsNotRetried(t *testing.T) {
+	ended := fmt.Errorf("selected LLM failed: %w", &llmerrors.Error{Kind: llmerrors.KindServerError, Provider: "agy-cli", Err: errors.New("Antigravity ended the turn: agent executor error: generating and executing: Error 500, Message: Internal error encountered., Status: INTERNAL")})
+	if !isAGYTurnEndedByExecutor(ended) {
+		t.Fatal("an AGY-ended turn must not retry the prompt")
+	}
+	if classifyLLMError(ended) != "internal_error" || isAuthError(ended) {
+		t.Fatalf("classified as %q", classifyLLMError(ended))
+	}
+	other := &llmerrors.Error{Kind: llmerrors.KindServerError, Provider: "agy-cli", Err: errors.New("Error 500, Message: Internal error encountered.")}
+	if isAGYTurnEndedByExecutor(other) || isAGYTurnEndedByExecutor(&llmerrors.Error{Kind: llmerrors.KindServerError, Provider: "codex-cli", Err: errors.New("Antigravity ended the turn: x")}) {
+		t.Fatal("only an AGY executor-ended turn may skip the retries")
 	}
 }

@@ -405,6 +405,15 @@ func isUnconfirmedAGYTurnTimeout(err error) bool {
 		strings.Contains(msg, "sidecar turn has no settled recorded answer within")
 }
 
+// AGY ended the turn itself (a finished error step, for example an upstream
+// 500). Tools may already have run in its native session, so replaying the
+// prompt could repeat their effects; the person can resend instead.
+func isAGYTurnEndedByExecutor(err error) bool {
+	var typed *llmerrors.Error
+	return errors.As(err, &typed) && typed.Provider == "agy-cli" && typed.Err != nil &&
+		strings.HasPrefix(typed.Err.Error(), "Antigravity ended the turn: ")
+}
+
 // isModelNotFoundError reports whether err means the model ID is unknown or
 // unavailable for the provider. This is a permanent config error — the model
 // ID will not become valid on retry — so the model is memoized and skipped on
@@ -1480,7 +1489,7 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		}
 		errorType := classifyLLMError(err)
 		lastErr = err
-		if isUnconfirmedAGYTurnTimeout(err) {
+		if isUnconfirmedAGYTurnTimeout(err) || isAGYTurnEndedByExecutor(err) {
 			break
 		}
 
