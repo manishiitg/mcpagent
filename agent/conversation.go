@@ -786,7 +786,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// The person sees plain words for a rejected API key; the raw provider text stays in the
 					// generation-error event above and in the returned error.
 					shown := genErr.Error()
-					if plain := plainAuthFailureMessage(string(a.provider), genErr); plain != "" {
+					if plain := plainAuthFailureMessage(string(a.provider), a.sessionID, genErr); plain != "" {
 						shown = plain
 					}
 					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, shown, turn+1, "conversation_error", time.Since(conversationStartTime))
