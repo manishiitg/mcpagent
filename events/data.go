@@ -1356,6 +1356,8 @@ const (
 	StreamingChunkSourceTranscript = "transcript"
 	StreamingChunkSourceContent    = "content"
 	StreamingChunkSourceTerminal   = "terminal"
+	// StreamingChunkSourcePromptAccepted marks the (empty) chunk a terminal coding CLI sends once it took the prompt.
+	StreamingChunkSourcePromptAccepted = "prompt_accepted"
 )
 
 func (e *StreamingChunkEvent) GetEventType() EventType {

@@ -710,6 +710,13 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				}
 			}
 
+		case llmtypes.StreamChunkTypePromptAccepted:
+			// The CLI took the prompt: the turn really began. No text; the app stops saying "Starting <agent>".
+			a.emitTypedEvent(ctx, &events.StreamingChunkEvent{
+				BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+				Source:        events.StreamingChunkSourcePromptAccepted,
+			})
+
 		case llmtypes.StreamChunkTypeTerminal:
 			if chunk.Content != "" {
 				sm.sawTerminal = true
