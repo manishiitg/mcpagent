@@ -16,6 +16,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestPerToolSessionIDHeaderOverridesBodyAndStripsArg(t *testing.T) {
@@ -361,5 +362,23 @@ func TestEveryExecuteHandlerUsesTheSharedErrorEnvelope(t *testing.T) {
 				"attribution, so neither the [TOOL_ERROR] log grep nor the frontend "+
 				"harness-error detector will see them", name)
 		}
+	}
+}
+
+// The API spec and the per-tool routes print sanitized tool names; a server with hyphenated tools
+// (notion-fetch) must still be called by its own name.
+func TestRealToolNameMapsSanitizedNameBackToTheServersName(t *testing.T) {
+	tools := []mcp.Tool{{Name: "notion-fetch"}, {Name: "notion-search"}, {Name: "plain_tool"}}
+	if got, ok := realToolName(tools, "notion_fetch"); !ok || got != "notion-fetch" {
+		t.Fatalf("notion_fetch = %q, %v; want notion-fetch", got, ok)
+	}
+	if _, ok := realToolName(tools, "plain_tool"); ok {
+		t.Fatal("a listed name must be called as is")
+	}
+	if _, ok := realToolName(append(tools, mcp.Tool{Name: "notion_fetch"}), "notion_fetch"); ok {
+		t.Fatal("an exact listed name wins over a sanitized match")
+	}
+	if _, ok := realToolName(tools, "missing"); ok {
+		t.Fatal("unknown name must stay unknown")
 	}
 }

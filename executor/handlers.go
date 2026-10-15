@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
@@ -427,6 +428,23 @@ func (h *ExecutorHandlers) HandleMCPExecute(w http.ResponseWriter, r *http.Reque
 	mcpToolStartTime := time.Now()
 	h.logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION START - Time: %s, Tool: %s, Server: %s", mcpToolStartTime.Format(time.RFC3339), req.Tool, req.Server))
 	result, err := client.CallTool(ctx, req.Tool, req.Args)
+	if err != nil && strings.Contains(req.Tool, "_") {
+		// The per-tool HTTP routes and the API spec carry the sanitized tool name (hyphens
+		// became underscores, lowercased), but the server only knows its real name
+		// (notion-fetch). Ask for the server's tools once and call the real name.
+		if tools, listErr := client.ListTools(ctx); listErr == nil {
+			if real, ok := realToolName(tools, req.Tool); ok {
+				h.logger.Info("🔧 [TOOL NAME] retrying with the server's own tool name",
+					loggerv2.String("asked", req.Tool), loggerv2.String("real", real), loggerv2.String("server", req.Server))
+				if retryResult, retryErr := client.CallTool(ctx, real, req.Args); retryErr == nil {
+					result, err, req.Tool = retryResult, nil, real
+				} else {
+					h.logger.Error("🔧 [TOOL NAME] retry with the server's own tool name failed", retryErr,
+						loggerv2.String("asked", req.Tool), loggerv2.String("real", real), loggerv2.String("server", req.Server))
+				}
+			}
+		}
+	}
 
 	// 🔧 BROKEN PIPE DETECTION AND RETRY
 	// When a workflow is stopped, MCP connections are closed which causes "transport closed"
@@ -838,3 +856,22 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 // enormous — a prompt, a file body, a SQL result. Logging them whole turns one
 // failure into an unreadable log; logging none of them means the line says a
 // tool failed without saying what was asked of it.
+
+// realToolName maps a sanitized tool name (SanitizePathSegment: hyphens to underscores, lowercased)
+// back to the name the server lists. It answers only when the asked name is not itself a listed
+// tool and exactly one listed tool sanitizes to it.
+func realToolName(tools []mcp.Tool, asked string) (string, bool) {
+	match := ""
+	for _, tool := range tools {
+		if tool.Name == asked {
+			return "", false
+		}
+		if strings.ToLower(strings.ReplaceAll(tool.Name, "-", "_")) == asked {
+			if match != "" {
+				return "", false
+			}
+			match = tool.Name
+		}
+	}
+	return match, match != ""
+}
