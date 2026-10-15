@@ -125,8 +125,11 @@ type Session struct {
 
 	// Tests replace this on an individual Session. Production always reads the
 	// provider adapter's authoritative retained transcript/sidecar.
-	retainedFinalResponse    func(llm.Provider, string, time.Time) string
-	retainedProgressMessages func(llm.Provider, string) []llmtypes.MessageContent
+	retainedFinalResponse func(llm.Provider, string, time.Time) string
+	// retainedEndedWithoutReply reads whether the CLI's own record shows the turn ended with no reply (interrupted or
+	// failed): a turn that settles that way has no final text for retainedFinalResponse to find.
+	retainedEndedWithoutReply func(llm.Provider, string, time.Time) (string, bool)
+	retainedProgressMessages  func(llm.Provider, string) []llmtypes.MessageContent
 	// retainedUsage reads the usage the CLI recorded for a retained turn; nil reads the provider adapter's transcript.
 	retainedUsage func(llm.Provider, string, string, time.Time) []llmtypes.RetainedTurnUsage
 }
@@ -593,6 +596,10 @@ func providerRefreshesRetainedWatcher(provider llm.Provider) bool {
 
 const retainedCompletionPollInterval = 100 * time.Millisecond
 
+// retainedEndedWithoutReplyGrace is how long the CLI's record must keep showing a turn ended with no reply before the
+// watcher settles it, so a record being written (an abort followed at once by a retry) is not mistaken for the end.
+var retainedEndedWithoutReplyGrace = 1500 * time.Millisecond
+
 // retainedLiveInputFinalGrace is how long a final response must stay final
 // before a watcher refreshed for live input accepts it. Claude writes the
 // running response's end_turn first and only ~100ms later appends the
@@ -661,6 +668,7 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 	s.stateMu.Lock()
 	watchCtx := s.watchCtx
 	reader := s.retainedFinalResponse
+	endedReader := s.retainedEndedWithoutReply
 	progressReader := s.retainedProgressMessages
 	s.stateMu.Unlock()
 	if watchCtx == nil {
@@ -668,6 +676,9 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 	}
 	if reader == nil {
 		reader = retainedturn.FinalResponse
+	}
+	if endedReader == nil {
+		endedReader = llmproviders.ReadCodingAgentRetainedTurnEndedWithoutReply
 	}
 	if progressReader == nil {
 		progressReader = func(provider llm.Provider, ownerSessionID string) []llmtypes.MessageContent {
@@ -681,7 +692,7 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 		chunkIndex := 0
 		tools := map[string]retainedNativeTool{}
 		var lastProgressRead time.Time
-		var finalSeenAt time.Time
+		var finalSeenAt, endedSeenAt time.Time
 		finalGrace := retainedLiveInputFinalGrace
 		if watch.followup {
 			// Everything the CLI wrote before the Run returned was streamed by
@@ -712,8 +723,23 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 				finalResult := strings.TrimSpace(reader(provider, s.agent.sessionID, startedAt))
 				if finalResult == "" {
 					finalSeenAt = time.Time{}
+					// The turn may have ended with no reply (the person interrupted it): the CLI's own record says so,
+					// and without this the watch would wait for a reply that never comes and the chat stay Working.
+					if reason, ended := endedReader(provider, s.agent.sessionID, startedAt); ended {
+						if endedSeenAt.IsZero() {
+							endedSeenAt = time.Now()
+						}
+						if time.Since(endedSeenAt) >= retainedEndedWithoutReplyGrace {
+							s.emitRetainedProgress(lifecycle, seq, provider, progressReader, &chunkIndex, tools)
+							s.completeRetainedTurnInterrupted(lifecycle, seq, input, reason, provider, transport, startedAt)
+							return
+						}
+					} else {
+						endedSeenAt = time.Time{}
+					}
 					continue
 				}
+				endedSeenAt = time.Time{}
 				if liveInput {
 					if finalSeenAt.IsZero() {
 						finalSeenAt = time.Now()
@@ -812,6 +838,34 @@ func (s *Session) completeRetainedTurnAnsweredByPrevious(lifecycle *canonicalTur
 	completion.Metadata["provider"] = string(provider)
 	completion.Metadata["transport"] = string(transport)
 	completion.Metadata[AnsweredByPreviousResponseMetadataKey] = true
+	endedAt := time.Now()
+	s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), completion)
+	s.emitRetainedStreamEnd(lifecycle, provider, startedAt, endedAt)
+}
+
+// completeRetainedTurnInterrupted closes a retained turn the CLI's own record shows ended with no reply (interrupted
+// or failed). It settles like any completion, with no final text and outcome "interrupted", so the host ends the turn
+// and the chat returns to idle.
+func (s *Session) completeRetainedTurnInterrupted(lifecycle *canonicalTurnLifecycle, seq uint64, input, reason string, provider llm.Provider, transport llm.CodingAgentTransport, startedAt time.Time) {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	s.stateMu.Lock()
+	if s.closed || !s.retainedActive || s.retainedSeq != seq {
+		s.stateMu.Unlock()
+		return
+	}
+	s.retainedActive = false
+	if s.activeTurn == lifecycle {
+		s.activeTurn = nil
+	}
+	s.stateMu.Unlock()
+	s.emitRetainedTurnUsage(lifecycle, provider, startedAt)
+	completion := events.NewUnifiedCompletionEvent("coding_agent", "retained", input, "", "completed", time.Since(startedAt), 1)
+	completion.Metadata["source"] = "mcpagent_session"
+	completion.Metadata["provider"] = string(provider)
+	completion.Metadata["transport"] = string(transport)
+	completion.Metadata[RetainedTurnOutcomeMetadataKey] = "interrupted"
+	completion.Metadata["stop_reason"] = reason
 	endedAt := time.Now()
 	s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), completion)
 	s.emitRetainedStreamEnd(lifecycle, provider, startedAt, endedAt)

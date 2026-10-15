@@ -104,6 +104,10 @@ const LiveInputFollowupMetadataKey = "live_input_followup"
 // copy of the previous answer; it only closes the input's turn.
 const AnsweredByPreviousResponseMetadataKey = "answered_by_previous_response"
 
+// RetainedTurnOutcomeMetadataKey is set on a retained turn's completion that carries no reply because the CLI's own
+// record shows the turn ended without one; the value is "interrupted" (the person stopped it, or the model call failed).
+const RetainedTurnOutcomeMetadataKey = "retained_turn_outcome"
+
 func (l *canonicalTurnLifecycle) markLiveInputFollowup() {
 	if l == nil {
 		return
