@@ -152,6 +152,33 @@ func retryLogCategory(errorType string) string {
 // retryOriginalModel handles same-model retry scheduling for transient errors.
 // Returns: shouldRetry (bool), delay (time.Duration), error
 func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt, maxRetries int, baseDelay, maxDelay time.Duration, turn int, logger loggerv2.Logger, usage observability.UsageMetrics) (bool, time.Duration, error) {
+	return retryOriginalModelWithReason(a, ctx, errorType, errorType, attempt, maxRetries, baseDelay, maxDelay, turn, logger, usage)
+}
+
+// retryReasonText is what the retry notice tells the person. A timeout is not a connection problem: a launch that
+// never produced a screen says what it was stuck on ("Muse did not start in 1m30s: it was showing a plugin hooks
+// review screen"), any other timeout says no response came in time. Everything else keeps its error type.
+func retryReasonText(errorType string, err error) string {
+	if llmerrors.KindOf(err) != llmerrors.KindTimeout {
+		return errorType
+	}
+	text := err.Error()
+	if i := strings.Index(text, "]: "); i >= 0 {
+		text = text[i+3:]
+	}
+	for _, cut := range []string{" Your message is saved", " (timed out"} {
+		if i := strings.Index(text, cut); i >= 0 {
+			text = text[:i]
+		}
+	}
+	text = strings.TrimRight(strings.TrimSpace(text), ".")
+	if strings.Contains(text, " did not start") && len(text) <= 160 && !strings.Contains(text, "\n") {
+		return text
+	}
+	return "no response in time"
+}
+
+func retryOriginalModelWithReason(a *Agent, ctx context.Context, errorType, reason string, attempt, maxRetries int, baseDelay, maxDelay time.Duration, turn int, logger loggerv2.Logger, usage observability.UsageMetrics) (bool, time.Duration, error) {
 	// Exponential backoff: 10s, 20s, 40s, 80s, 160s...
 	delay := baseDelay * time.Duration(1<<attempt)
 	if delay > maxDelay {
@@ -162,7 +189,7 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 	retryAttemptEvent := events.NewRetryAttemptEvent(
 		turn, attempt+1, maxRetries,
 		a.modelID, string(a.provider), "retry",
-		false, delay, fmt.Sprintf("%s - retrying original model", errorType),
+		false, delay, fmt.Sprintf("%s - retrying original model", reason),
 	)
 	a.emitTypedEvent(ctx, retryAttemptEvent)
 
@@ -1570,7 +1597,7 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			} else if errorType == "empty_content_error" {
 				retryLimit = min(maxRetries, maxRetriesEmptyContent)
 			}
-			shouldRetry, _, retryErr := retryOriginalModel(a, ctx, errorType, attempt, retryLimit, baseDelay, maxDelay, turn, logger, usage)
+			shouldRetry, _, retryErr := retryOriginalModelWithReason(a, ctx, errorType, retryReasonText(errorType, err), attempt, retryLimit, baseDelay, maxDelay, turn, logger, usage)
 			if retryErr != nil {
 				return nil, usage, retryErr
 			}

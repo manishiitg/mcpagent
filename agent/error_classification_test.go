@@ -299,3 +299,16 @@ func TestAGYTurnEndedByExecutorIsNotRetried(t *testing.T) {
 		t.Fatal("only an AGY executor-ended turn may skip the retries")
 	}
 }
+
+func TestRetryReasonNamesALaunchTimeoutNotAConnectionError(t *testing.T) {
+	launch := &llmerrors.Error{Kind: llmerrors.KindTimeout, Provider: "muse-cli", Err: fmt.Errorf("Muse did not start in 1m30s: it was showing a plugin hooks review screen. Your message is saved; press Retry. (timed out waiting for muse TUI to settle; latest pane:\nReview plugin hooks)")}
+	if got := retryReasonText("connection_error", launch); got != "Muse did not start in 1m30s: it was showing a plugin hooks review screen" {
+		t.Fatalf("launch timeout reason = %q", got)
+	}
+	if got := retryReasonText("connection_error", &llmerrors.Error{Kind: llmerrors.KindTimeout, Err: fmt.Errorf("deadline exceeded")}); got != "no response in time" {
+		t.Fatalf("plain timeout reason = %q", got)
+	}
+	if got := retryReasonText("connection_error", fmt.Errorf("connection refused")); got != "connection_error" {
+		t.Fatalf("a real connection error keeps its label, got %q", got)
+	}
+}
