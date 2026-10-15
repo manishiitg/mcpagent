@@ -482,6 +482,11 @@ func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
 		if registered.Kind == toolImplementationVirtual {
 			continue
 		}
+		// read_skill is intrinsic and never an HTTP endpoint; runtime_tools says
+		// so, so the HTTP manifest must not list it a second time.
+		if toolName == readSkillToolName {
+			continue
+		}
 		if !a.isToolAllowedForContext(ctx, toolName) {
 			if registered.Kind == toolImplementationDirect {
 				blockedCustomTools = append(blockedCustomTools, toolName)
