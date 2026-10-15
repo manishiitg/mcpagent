@@ -2100,6 +2100,7 @@ func (a *Agent) startAgentSession(ctx context.Context) {
 func (a *Agent) startLLMGeneration(ctx context.Context) {
 	// Emit LLM generation start event to create hierarchy
 	llmStartEvent := events.NewLLMGenerationStartEvent(0, a.modelID, a.temperature, len(a.filteredTools), 0)
+	llmStartEvent.Metadata = map[string]interface{}{"provider": string(a.provider), "model_id": a.modelID}
 	a.emitTypedEvent(ctx, llmStartEvent)
 }
 
@@ -2452,6 +2453,10 @@ func (a *Agent) endLLMGeneration(ctx context.Context, result string, turn int, t
 			llmEndEvent.Metadata[k] = v
 		}
 	}
+
+	// Identify the actual runtime and provider-resolved model, including aliases.
+	llmEndEvent.Metadata["provider"] = string(a.provider)
+	llmEndEvent.Metadata["model_id"] = effectiveModelIDFromResponse(resp, a.modelID)
 
 	a.emitTypedEvent(ctx, llmEndEvent)
 }

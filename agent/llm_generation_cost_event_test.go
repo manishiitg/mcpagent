@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -32,7 +33,8 @@ func TestLLMGenerationEndCarriesRuntimeCalculatedCost(t *testing.T) {
 	listener := &recordingAgentEventListener{}
 	agent := &Agent{
 		sessionID: "pulse-cost-test",
-		modelID:   "claude-opus-5",
+		modelID:   "selected-alias",
+		provider:  llm.ProviderClaudeCode,
 		llmModel:  pricedEventTestModel{},
 		logger:    loggerv2.NewNoop(),
 		listeners: []AgentEventListener{listener},
@@ -74,6 +76,9 @@ func TestLLMGenerationEndCarriesRuntimeCalculatedCost(t *testing.T) {
 	got, ok := completed.Metadata["cost_usd_estimated"].(float64)
 	if !ok || got != want {
 		t.Fatalf("cost_usd_estimated = %#v, want %.7f", completed.Metadata["cost_usd_estimated"], want)
+	}
+	if completed.Metadata["provider"] != string(llm.ProviderClaudeCode) || completed.Metadata["model_id"] != "claude-opus-5" {
+		t.Fatalf("generation identity must use the resolved model rather than the selected alias: %#v", completed.Metadata)
 	}
 	if gotModel := completed.Metadata["cost_model_id"]; gotModel != "claude-opus-5" {
 		t.Fatalf("cost_model_id = %#v, want claude-opus-5", gotModel)
@@ -197,4 +202,5 @@ func TestCodingCLIAggregateUsageDoesNotPretendToBeContextPercentage(t *testing.T
 		}
 		return
 	}
-	t.Fatal("LLMGenerationEnd event was not emitted")}
+	t.Fatal("LLMGenerationEnd event was not emitted")
+}
