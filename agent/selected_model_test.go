@@ -3,6 +3,7 @@ package mcpagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -66,9 +67,9 @@ func TestInitializationFailureDoesNotUseLegacyBackup(t *testing.T) {
 }
 
 // A quota refusal belongs to the selected account, in both the current Agent
-// and a fresh Agent for the next turn. The unavailable provider is intentional:
-// reaching its initialization error proves B passed the quota gate without a
-// real provider call or credentials.
+// and a fresh Agent for the next turn. Reaching initialization's account
+// resolver proves B passed the quota gate without a real provider call or
+// credentials. The resolver stops the test before any CLI is started.
 func TestQuotaCooldownIsScopedToAccount(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		for _, account := range []string{"account-A", ""} {
@@ -77,11 +78,20 @@ func TestQuotaCooldownIsScopedToAccount(t *testing.T) {
 				name = "shared/" + account
 			}
 			t.Run(name, func(t *testing.T) {
-				model := LLMModel{Provider: "unavailable-provider", ModelID: t.Name(), ConnectionID: account}
+				model := LLMModel{Provider: "codex-cli", ModelID: t.Name(), ConnectionID: account}
 				key := modelQuotaKey(model)
 				t.Cleanup(func() { forgetSharedModelQuotaExhaustion(key) })
 				reset := time.Now().Add(time.Hour)
-				a := &Agent{llmConfig: AgentLLMConfiguration{Primary: model}, logger: loggerv2.NewNoop()}
+				resolved := ""
+				stop := errors.New("test reached account resolution")
+				keys := &llm.ProviderAPIKeys{ResolveConnection: func(_ context.Context, provider llm.Provider, connectionID string) (*llm.ProviderAPIKeys, error) {
+					if provider != llm.ProviderCodexCLI {
+						t.Fatalf("unexpected provider: %s", provider)
+					}
+					resolved = connectionID
+					return nil, stop
+				}}
+				a := &Agent{llmConfig: AgentLLMConfiguration{Primary: model}, logger: loggerv2.NewNoop(), apiKeys: keys}
 				if shared {
 					markModelQuotaExhaustedShared(key, reset)
 				} else {
@@ -95,17 +105,24 @@ func TestQuotaCooldownIsScopedToAccount(t *testing.T) {
 					}
 				}
 				checkExhausted()
+				if resolved != "" {
+					t.Fatal("exhausted account reached provider initialization")
+				}
 				a.llmConfig.Primary.ConnectionID = "account-B"
 				_, _, err := generateContentWithRetry(a, context.Background(), nil, nil, 2)
-				if err == nil || llmerrors.KindOf(err) == llmerrors.KindQuotaExhausted || !strings.Contains(err.Error(), "unavailable-provider") {
+				if !errors.Is(err, stop) || resolved != "account-B" {
 					t.Fatalf("account B did not reach its own provider initialization: %v", err)
 				}
+				resolved = ""
 				a.llmConfig.Primary.ConnectionID = account
 				if account == "" {
 					// Explicit and implicit server accounts share the same cooldown.
 					a.llmConfig.Primary.ConnectionID = "global:" + model.Provider
 				}
 				checkExhausted()
+				if resolved != "" {
+					t.Fatal("account A lost its cached refusal after switching back")
+				}
 			})
 		}
 	}
