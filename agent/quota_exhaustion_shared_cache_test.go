@@ -12,7 +12,7 @@ import (
 // instance (the next turn), which is what a.quotaExhaustedModels alone
 // cannot do since agent_go builds a fresh Agent per request.
 func TestSharedQuotaExhaustionCrossesAgentInstances(t *testing.T) {
-	key := "cursor-cli/grok-4.6"
+	key := modelQuotaKey(LLMModel{Provider: "cursor-cli", ModelID: "grok-4.6"})
 	t.Cleanup(func() { forgetSharedModelQuotaExhaustion(key) })
 
 	if _, exhausted := sharedModelQuotaExhaustion(key); exhausted {
@@ -34,7 +34,7 @@ func TestSharedQuotaExhaustionCrossesAgentInstances(t *testing.T) {
 // A zero reset time means "exhausted, no reliable reset stated" (PLAT-101) —
 // distinct from not-exhausted, and must never be turned into a guessed time.
 func TestSharedQuotaExhaustionWithoutResetTimeStaysExhausted(t *testing.T) {
-	key := "claude-code/claude-sonnet-5"
+	key := modelQuotaKey(LLMModel{Provider: "claude-code", ModelID: "claude-sonnet-5"})
 	t.Cleanup(func() { forgetSharedModelQuotaExhaustion(key) })
 
 	markModelQuotaExhaustedShared(key, time.Time{})
@@ -48,7 +48,7 @@ func TestSharedQuotaExhaustionWithoutResetTimeStaysExhausted(t *testing.T) {
 // the per-agent map does, so a later turn retries the model instead of
 // treating a stale mark as permanent.
 func TestSharedQuotaExhaustionSelfClearsOnceReopened(t *testing.T) {
-	key := "codex-cli/gpt-5.6-sol"
+	key := modelQuotaKey(LLMModel{Provider: "codex-cli", ModelID: "gpt-5.6-sol"})
 	t.Cleanup(func() { forgetSharedModelQuotaExhaustion(key) })
 
 	markModelQuotaExhaustedShared(key, time.Now().Add(-time.Minute))
@@ -69,7 +69,7 @@ func TestSharedQuotaExhaustionSelfClearsOnceReopened(t *testing.T) {
 // once unknownResetCooldown passes, unlike a stated reset time which is
 // authoritative and never guessed at.
 func TestSharedQuotaExhaustionWithUnknownResetExpiresAfterCooldown(t *testing.T) {
-	key := "cursor-cli/auto"
+	key := modelQuotaKey(LLMModel{Provider: "cursor-cli", ModelID: "auto"})
 	t.Cleanup(func() {
 		forgetSharedModelQuotaExhaustion(key)
 		os.Unsetenv("QUOTA_UNKNOWN_RESET_COOLDOWN_SECONDS")
@@ -96,7 +96,7 @@ func TestSharedQuotaExhaustionWithUnknownResetExpiresAfterCooldown(t *testing.T)
 // that value is authoritative (PLAT-101) and only expires when it actually
 // passes, not on the shorter unknown-reset schedule.
 func TestSharedQuotaExhaustionStatedResetIgnoresTheCooldown(t *testing.T) {
-	key := "claude-code/claude-sonnet-5"
+	key := modelQuotaKey(LLMModel{Provider: "claude-code", ModelID: "claude-sonnet-5"})
 	t.Cleanup(func() {
 		forgetSharedModelQuotaExhaustion(key)
 		os.Unsetenv("QUOTA_UNKNOWN_RESET_COOLDOWN_SECONDS")
@@ -117,7 +117,7 @@ func TestSharedQuotaExhaustionStatedResetIgnoresTheCooldown(t *testing.T) {
 }
 
 func TestForgetSharedModelQuotaExhaustion(t *testing.T) {
-	key := "pi-cli/google/gemini-3.8-flash"
+	key := modelQuotaKey(LLMModel{Provider: "pi-cli", ModelID: "google/gemini-3.8-flash"})
 	markModelQuotaExhaustedShared(key, time.Time{})
 	forgetSharedModelQuotaExhaustion(key)
 	if _, exhausted := sharedModelQuotaExhaustion(key); exhausted {
@@ -128,7 +128,7 @@ func TestForgetSharedModelQuotaExhaustion(t *testing.T) {
 // Concurrent turns across sessions mark and read the same shared cache; run
 // under -race to prove the mutex actually protects the map.
 func TestSharedQuotaExhaustionConcurrentAccess(t *testing.T) {
-	key := "cursor-cli/auto"
+	key := modelQuotaKey(LLMModel{Provider: "cursor-cli", ModelID: "auto"})
 	t.Cleanup(func() { forgetSharedModelQuotaExhaustion(key) })
 
 	var wg sync.WaitGroup

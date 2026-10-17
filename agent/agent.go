@@ -1252,8 +1252,8 @@ type Agent struct {
 	// A zero value means exhausted with no reliable reset time. That is a real
 	// state, distinct from "recovers at T": it is skipped like any exhausted
 	// model, but yields no resume time and must never be turned into a guess.
-	// Key: "provider/model_id"
-	quotaExhaustedModels map[string]time.Time
+	// Key: provider, model and account connection.
+	quotaExhaustedModels map[quotaModelKey]time.Time
 }
 
 // LLMModel represents a single LLM configuration

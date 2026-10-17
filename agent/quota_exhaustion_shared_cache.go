@@ -1,44 +1,42 @@
 package mcpagent
 
 import (
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
-// sharedQuotaExhaustedModels persists quota-exhaustion state across Agent
-// instances within this process. Each chat/workflow turn builds a fresh
-// *Agent (agent_go's server does this per request), so a.quotaExhaustedModels
-// alone only protects retries WITHIN one turn's own retry loop -- the very
-// next turn on the same session (or a different session sharing the same
-// account) rediscovers an already-known exhaustion the slow way, waiting
-// through the provider CLI's own internal backoff again. Observed live on
-// RTS 2026-09-03: cursor-cli/grok-4.6 took 142s to report resource_exhausted,
-// and the next chat turn on the same session paid that 142s again rather
-// than skipping the model immediately.
-//
-// Keyed identically to a.quotaExhaustedModels ("provider/model_id"); same
-// zero-value-means-unknown-reset semantics (PLAT-101): a stated reset time
-// (from the provider's own typed error) lets a later turn retry the model
-// once its window reopens, and that value is never invented here -- it is
-// returned to callers exactly as given, including into the workflow
-// capacity-wait suspend path, which must not be told a guessed time.
-//
-// Cursor never states a reset time at all (confirmed live 2026-09-03: its
-// CLI error is plain text -- "Connection lost, reconnecting..." then
-// "RetriableError: [resource_exhausted]" -- no timestamp, no retry-after).
-// So every Cursor exhaustion takes the zero/unknown branch. Before this
-// cache existed that was harmless: a fresh Agent retried for real on every
-// turn anyway (slow, but self-healing). Backing an unknown-reset mark with
-// *no* expiry at all would make it permanent for the life of the process --
-// worse than before, since the same live incident recovered in about 13
-// minutes with nothing telling us so. entry.learnedAt + unknownResetCooldown
-// is a purely internal "worth trying again" throttle, never surfaced as a
-// resetAt to any caller, so it cannot masquerade as a provider-stated fact.
+// quotaModelKey keeps quota state with the account that incurred it. Blank
+// connections use the server account; credentials never become part of the key.
+type quotaModelKey struct {
+	provider     string
+	modelID      string
+	connectionID string
+}
+
+func modelQuotaKey(model LLMModel) quotaModelKey {
+	connectionID := strings.TrimSpace(model.ConnectionID)
+	if connectionID == "" {
+		connectionID = "global:" + model.Provider
+	}
+	return quotaModelKey{provider: model.Provider, modelID: model.ModelID, connectionID: connectionID}
+}
+
+func (key quotaModelKey) String() string {
+	return fmt.Sprintf("%s/%s account=%q", key.provider, key.modelID, key.connectionID)
+}
+
+// sharedQuotaExhaustedModels persists account/model exhaustion across fresh
+// Agent instances. Both caches use the same key. A provider-stated reset is
+// authoritative (PLAT-101); an unknown reset stays zero and is never invented.
+// Unknown-reset shared marks expire after an internal cooldown so later turns
+// can discover recovery. That throttle must never be returned as RetryAt.
 var (
 	sharedQuotaExhaustedMu     sync.RWMutex
-	sharedQuotaExhaustedModels = map[string]sharedQuotaExhaustionEntry{}
+	sharedQuotaExhaustedModels = map[quotaModelKey]sharedQuotaExhaustionEntry{}
 )
 
 type sharedQuotaExhaustionEntry struct {
@@ -63,7 +61,7 @@ func unknownResetCooldown() time.Duration {
 // across the process, so every subsequent turn -- regardless of which Agent
 // instance handles it -- skips the model immediately instead of relearning
 // it from a slow provider round trip.
-func markModelQuotaExhaustedShared(key string, resetAt time.Time) {
+func markModelQuotaExhaustedShared(key quotaModelKey, resetAt time.Time) {
 	sharedQuotaExhaustedMu.Lock()
 	defer sharedQuotaExhaustedMu.Unlock()
 	sharedQuotaExhaustedModels[key] = sharedQuotaExhaustionEntry{resetAt: resetAt, learnedAt: time.Now()}
@@ -76,7 +74,7 @@ func markModelQuotaExhaustedShared(key string, resetAt time.Time) {
 // handling. An unknown-reset mark additionally expires after
 // unknownResetCooldown so the model gets a real retry periodically instead
 // of being benched for the rest of the process's life.
-func sharedModelQuotaExhaustion(key string) (resetAt time.Time, exhausted bool) {
+func sharedModelQuotaExhaustion(key quotaModelKey) (resetAt time.Time, exhausted bool) {
 	sharedQuotaExhaustedMu.RLock()
 	entry, exhausted := sharedQuotaExhaustedModels[key]
 	sharedQuotaExhaustedMu.RUnlock()
@@ -101,7 +99,7 @@ func sharedModelQuotaExhaustion(key string) (resetAt time.Time, exhausted bool) 
 
 // forgetSharedModelQuotaExhaustion clears a model's shared exhaustion record.
 // Used by tests to avoid cross-test leakage of the package-level cache.
-func forgetSharedModelQuotaExhaustion(key string) {
+func forgetSharedModelQuotaExhaustion(key quotaModelKey) {
 	sharedQuotaExhaustedMu.Lock()
 	delete(sharedQuotaExhaustedModels, key)
 	sharedQuotaExhaustedMu.Unlock()

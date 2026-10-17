@@ -16,10 +16,10 @@ import (
 // losing the run.
 
 func TestExhaustedModelIsRetriedOnceItsWindowReopens(t *testing.T) {
-	a := &Agent{quotaExhaustedModels: map[string]time.Time{
-		"claudecode/sonnet": time.Now().Add(-time.Minute), // reopened a minute ago
+	a := &Agent{quotaExhaustedModels: map[quotaModelKey]time.Time{
+		modelQuotaKey(LLMModel{Provider: "claudecode", ModelID: "sonnet"}): time.Now().Add(-time.Minute), // reopened a minute ago
 	}}
-	resetAt, exhausted := a.quotaExhaustedModels["claudecode/sonnet"]
+	resetAt, exhausted := a.quotaExhaustedModels[modelQuotaKey(LLMModel{Provider: "claudecode", ModelID: "sonnet"})]
 	if !exhausted {
 		t.Fatal("precondition: model should be recorded as exhausted")
 	}
@@ -34,10 +34,10 @@ func TestExhaustedModelIsRetriedOnceItsWindowReopens(t *testing.T) {
 }
 
 func TestExhaustedModelWithoutResetTimeStaysSkipped(t *testing.T) {
-	a := &Agent{quotaExhaustedModels: map[string]time.Time{
-		"claudecode/sonnet": {}, // exhausted, no reliable reset stated
+	a := &Agent{quotaExhaustedModels: map[quotaModelKey]time.Time{
+		modelQuotaKey(LLMModel{Provider: "claudecode", ModelID: "sonnet"}): {}, // exhausted, no reliable reset stated
 	}}
-	resetAt, exhausted := a.quotaExhaustedModels["claudecode/sonnet"]
+	resetAt, exhausted := a.quotaExhaustedModels[modelQuotaKey(LLMModel{Provider: "claudecode", ModelID: "sonnet"})]
 	if !exhausted {
 		t.Fatal("model should still be recorded as exhausted")
 	}

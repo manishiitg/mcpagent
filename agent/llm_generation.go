@@ -1403,7 +1403,6 @@ func latestHumanMessageTextForProviderContinuation(messages []llmtypes.MessageCo
 // GenerateContentWithRetry retries transient failures on the selected model.
 func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
 	logger := getLogger(a)
-	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry START - Messages: %d, Options: %d, Turn: %d", len(messages), len(opts), turn))
 
 	maxRetries := 5
 	if env := os.Getenv("LLM_MAX_RETRIES"); env != "" {
@@ -1437,7 +1436,8 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	llmConfig := a.getEffectiveLLMConfig()
 
 	model := llmConfig.Primary
-	key := model.Provider + "/" + model.ModelID
+	key := modelQuotaKey(model)
+	logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry START - Messages: %d, Options: %d, Turn: %d, Quota scope: %s", len(messages), len(opts), turn, key))
 	resetAt, exhausted := a.quotaExhaustedModels[key]
 	if !exhausted {
 		resetAt, exhausted = sharedModelQuotaExhaustion(key)
@@ -1533,13 +1533,12 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		shouldRetrySameModel := false
 		if errorType == "quota_exhausted_error" {
 			// Permanent quota exhaustion (daily/monthly) — retrying same model is pointless.
-			// Remember this model so future turns skip it immediately, in
+			// Remember this account/model so future turns skip it immediately, in
 			// this turn and in every later turn regardless
 			// of which *Agent instance handles it.
 			if a.quotaExhaustedModels == nil {
-				a.quotaExhaustedModels = make(map[string]time.Time)
+				a.quotaExhaustedModels = make(map[quotaModelKey]time.Time)
 			}
-			key := model.Provider + "/" + model.ModelID
 			// Zero when the provider stated no reliable reset: still skipped,
 			// but never retried on a guessed schedule.
 			resetAt := llmerrors.RetryAtOrZero(err)
@@ -1559,9 +1558,8 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			// Unknown/unavailable model ID — a permanent config error. Memoize it
 			// (like quota) so future turns skip it.
 			if a.quotaExhaustedModels == nil {
-				a.quotaExhaustedModels = make(map[string]time.Time)
+				a.quotaExhaustedModels = make(map[quotaModelKey]time.Time)
 			}
-			key := model.Provider + "/" + model.ModelID
 			// A missing model is a config error, not a window that reopens:
 			// the zero reset keeps it skipped permanently rather than
 			// retried on a schedule. Shared so a broken model_id learned by
