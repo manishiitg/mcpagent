@@ -25,14 +25,14 @@ func piBridgeOnlyFromOptions(t *testing.T, opts []llmtypes.CallOption) bool {
 	return value
 }
 
-// Pi stays bridge-only in every mode until it has a confined full mode.
+// Confined Full CLI gives Pi its own tools (owner, 2026-10-20: native shell on everywhere); other modes stay bridge-only.
 func TestPiBridgeOnlyToolsFollowsAgentToolsMode(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		toolsMode      string
 		wantBridgeOnly bool
 	}{
-		{"full stays bridge-only", codingAgentToolsFull, true},
+		{"confined full uses Pi's own tools", codingAgentToolsFull, false},
 		{"default is bridge-only", "", true},
 		{"explicit mcp_only is bridge-only", "mcp_only", true},
 	} {

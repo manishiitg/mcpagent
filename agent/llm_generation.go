@@ -1094,8 +1094,10 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 		// Hardcoding bridge-only here made AgentToolsMode provider-dependent:
 		// a caller selecting native tools got them everywhere except Pi,
 		// silently, with no error to explain the difference.
-		// Pi stays bridge-only in every mode until it has a confined full mode.
-		bridgeOnly := true
+		// Full CLI (confined by Landlock/Seatbelt) gives Pi its own tools, shell included, like the other CLIs
+		// (owner, 2026-10-20: native shell on everywhere, superseding Pi's bridge-only rule from PLAT-390).
+		// Unconfined or mcp_only stays bridge-only.
+		bridgeOnly := !a.fullCLIEnabled()
 		opts = append(opts,
 			llm.WithPiMCPConfig(bridgeConfig),
 			llm.WithPiBridgeOnlyTools(bridgeOnly),
