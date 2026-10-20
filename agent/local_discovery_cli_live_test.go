@@ -35,7 +35,6 @@ func TestLocalCLIDiscoverySkillsAndResume(t *testing.T) {
 			workdir := t.TempDir()
 			var calls atomic.Int32
 			configure := func(a *Agent) string {
-				a.toolDiscovery = true
 				if err := a.ensureRuntimeHTTPSkill(); err != nil {
 					t.Fatal(err)
 				}

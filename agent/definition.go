@@ -78,12 +78,9 @@ type GenerationRuntimeConfig struct {
 }
 
 type ToolRuntimeConfig struct {
-	SelectedTools   []string
-	SelectedServers []string
-	CodeExecution   bool
-	// Discovery replaces the upfront HTTP tool-name inventory with live search.
-	// Native API tool-calling schemas are unaffected.
-	Discovery         bool
+	SelectedTools     []string
+	SelectedServers   []string
+	CodeExecution     bool
 	ParallelExecution bool
 	Timeout           time.Duration
 	DisableCache      bool
@@ -302,9 +299,6 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	}
 	if tools.CodeExecution {
 		options = append(options, withCodeExecutionMode(true))
-	}
-	if tools.Discovery {
-		options = append(options, func(a *Agent) { a.toolDiscovery = true })
 	}
 	if tools.ParallelExecution {
 		options = append(options, withParallelToolExecution(true))

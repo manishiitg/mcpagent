@@ -24,8 +24,8 @@ import (
 // Use search_tools for authorized discovery; this tool loads exact schemas.
 func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Optional: an omitted server_name means "resolve by tool name", which is the
-	// contract everywhere else. It only narrows a real MCP tool name (as listed
-	// in the tool index) to one server; authorization never depends on it.
+	// contract everywhere else. It only narrows a real MCP tool name (as returned
+	// by discovery) to one server; authorization never depends on it.
 	serverName, _ := args["server_name"].(string)
 
 	// Parse tool_name: accepts string or []string (JSON array)
@@ -445,142 +445,6 @@ func (a *Agent) getCodeExecutionAPIBaseURL() string {
 	}
 
 	return strings.TrimRight(baseURL, "/") + sessionPrefix
-}
-
-// buildToolIndex returns a JSON index of available servers and their tool names.
-// This is included in the system prompt so the LLM knows what's available.
-// It builds the index purely from agent internal state (no filesystem scanning).
-func (a *Agent) buildToolIndex() (string, error) {
-	return a.buildToolIndexForContext(context.Background())
-}
-
-func (a *Agent) buildToolIndexForContext(ctx context.Context) (string, error) {
-	type ServerInfo struct {
-		Endpoint string   `json:"endpoint"`
-		Tools    []string `json:"tools"`
-	}
-	type CustomToolsInfo struct {
-		Endpoint string                `json:"endpoint"`
-		Groups   map[string]ServerInfo `json:"groups"`
-	}
-	type ToolIndex struct {
-		CustomTools CustomToolsInfo       `json:"custom_tools"`
-		MCPServers  map[string]ServerInfo `json:"mcp_servers"`
-	}
-
-	index := ToolIndex{
-		CustomTools: CustomToolsInfo{
-			Endpoint: "$MCP_CUSTOM/{tool}",
-			Groups:   make(map[string]ServerInfo),
-		},
-		MCPServers: make(map[string]ServerInfo),
-	}
-
-	registry, err := a.canonicalRegistry()
-	if err != nil {
-		return "", err
-	}
-
-	// Build the index from one canonical registry. Categories are display-only;
-	// every callable address remains the globally unique tool name.
-	serverToolsMap := make(map[string]map[string]bool)
-	customToolsByCategory := make(map[string][]string)
-	var blockedCustomTools []string
-	for _, registered := range registry.snapshot() {
-		toolName := registered.Name
-		if registered.Kind == toolImplementationVirtual {
-			continue
-		}
-		// read_skill is intrinsic and never an HTTP endpoint; runtime_tools says
-		// so, so the HTTP manifest must not list it a second time.
-		if toolName == readSkillToolName {
-			continue
-		}
-		if !a.isToolAllowedForContext(ctx, toolName) {
-			if registered.Kind == toolImplementationDirect {
-				blockedCustomTools = append(blockedCustomTools, toolName)
-			}
-			continue
-		}
-		if registered.Kind == toolImplementationDirect {
-			if registered.DisplayGroup != "" {
-				customToolsByCategory[registered.DisplayGroup] = append(customToolsByCategory[registered.DisplayGroup], toolName)
-			}
-			continue
-		}
-
-		serverName := registered.Source
-
-		// Apply server-level filtering
-		shouldInclude := a.toolFilter.ShouldIncludeServer(serverName)
-		if !shouldInclude {
-			normalized := strings.ReplaceAll(serverName, "-", "_")
-			shouldInclude = a.toolFilter.ShouldIncludeServer(normalized)
-		}
-		if !shouldInclude {
-			continue
-		}
-
-		normalized := strings.ReplaceAll(serverName, "-", "_")
-		if serverToolsMap[normalized] == nil {
-			serverToolsMap[normalized] = make(map[string]bool)
-		}
-		// Listed under its server's route, so by the name the route takes.
-		serverToolsMap[normalized][registered.realName()] = true
-	}
-
-	for serverName, toolsSet := range serverToolsMap {
-		tools := make([]string, 0, len(toolsSet))
-		for toolName := range toolsSet {
-			tools = append(tools, toolName)
-		}
-		sort.Strings(tools)
-		index.MCPServers[serverName] = ServerInfo{
-			Endpoint: "$MCP_MCP/" + serverName + "/{tool}",
-			Tools:    tools,
-		}
-	}
-
-	// Add direct tools grouped by optional display metadata.
-	// Even in code execution mode, custom tools must appear here so that Claude Code
-	// (which uses the MCP bridge and can only discover tools via get_api_spec) can
-	// find and call them via HTTP API. For non-Claude-Code providers, the tools are
-	// also available as direct LLM calls — having them in the index is harmless.
-	// Respect toolAllowList: if set, only include allowed custom tools in the index.
-	if a.logger != nil && len(blockedCustomTools) > 0 {
-		sort.Strings(blockedCustomTools)
-		a.logger.Info("🔒 [TOOL_ALLOW_LIST] buildToolIndex blocked custom tools",
-			loggerv2.Int("blocked_count", len(blockedCustomTools)),
-			loggerv2.Any("blocked", blockedCustomTools))
-	}
-	for category, tools := range customToolsByCategory {
-		sort.Strings(tools)
-		index.CustomTools.Groups[category] = ServerInfo{
-			Endpoint: "$MCP_CUSTOM/{tool}",
-			Tools:    tools,
-		}
-	}
-
-	jsonData, err := json.Marshal(index)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal tool index: %w", err)
-	}
-
-	if a.logger != nil {
-		totalTools := 0
-		for _, pkg := range index.MCPServers {
-			totalTools += len(pkg.Tools)
-		}
-		for _, pkg := range index.CustomTools.Groups {
-			totalTools += len(pkg.Tools)
-		}
-		a.logger.Info("Built tool index",
-			loggerv2.Int("mcp_servers", len(index.MCPServers)),
-			loggerv2.Int("custom_groups", len(index.CustomTools.Groups)),
-			loggerv2.Int("total_tools", totalTools))
-	}
-
-	return string(jsonData), nil
 }
 
 // getAgentGeneratedDir returns the agent-specific generated directory

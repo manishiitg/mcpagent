@@ -2,6 +2,8 @@ package mcpagent
 
 import "strings"
 
+const runtimeDiscoveryInstructions = "Find authorized tools with search_tools, then load their exact input schemas and routes with get_api_spec. Discovery and schema lookup never grant permission."
+
 // Runtime mechanics only. Product procedures belong to caller-owned skills.
 // Names come from the same admission predicate as the direct bridge manifest.
 func bridgeRoutingExplicitInstructions(admits func(name string) bool, additionalBridgeTools ...string) string {

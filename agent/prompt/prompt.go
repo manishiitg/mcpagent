@@ -22,7 +22,6 @@ const (
 	VirtualToolsSectionPlaceholder = "{{VIRTUAL_TOOLS_SECTION}}"
 	CurrentDatePlaceholder         = "{{CURRENT_DATE}}"
 	CurrentTimePlaceholder         = "{{CURRENT_TIME}}"
-	ToolStructurePlaceholder       = "{{TOOL_STRUCTURE}}"
 	CorePrinciplesPlaceholder      = "{{CORE_PRINCIPLES}}"
 	ToolUsagePlaceholder           = "{{TOOL_USAGE}}"
 	LargeOutputHandlingPlaceholder = "{{LARGE_OUTPUT_HANDLING}}"

@@ -27,7 +27,6 @@ func discoveryResult(t *testing.T, a *Agent, ctx context.Context, args map[strin
 
 func TestDiscoveryUsesLiveSessionAndTurnPermissions(t *testing.T) {
 	a := codeExecutionPromptAgent()
-	a.toolDiscovery = true
 	addDirectToolFixture(t, a, directToolFixture("read_record", "records"))
 	addDirectToolFixture(t, a, directToolFixture("delete_record", "private_admin"))
 	a.setToolAccess([]string{"read_record"})
@@ -112,7 +111,7 @@ func TestDiscoveryFiltersMCPServersAndPaginates(t *testing.T) {
 
 func TestDynamicRuntimePreservesCallerInstructionsAndSkills(t *testing.T) {
 	a := codeExecutionPromptAgent()
-	a.provider, a.modelID, a.toolDiscovery = llm.ProviderAgyCLI, "gemini-3.8-flash-high", true
+	a.provider, a.modelID = llm.ProviderAgyCLI, "gemini-3.8-flash-high"
 	a.setInstructions("PRODUCT POLICY")
 	a.appendInstructions("CALLER DYNAMIC INSTRUCTION")
 	mustAttachSkill(t, a, &llmtypes.Skill{Name: "fresh-skill", Description: "Handle a fresh capability", Content: "FRESH BODY"})
@@ -149,7 +148,6 @@ func TestDiscoverySurvivesCoreBridgePolicyAndPreservesNativeAPIMode(t *testing.T
 	if def == nil || def.Name != "search_tools" {
 		t.Fatal("bridge lost discovery under a restrictive profile")
 	}
-	a.toolDiscovery = true
 	a.setInstructions("API PRODUCT POLICY")
 	if a.instructions() != "API PRODUCT POLICY" {
 		t.Fatal("native API mode gained HTTP/discovery prompt")
@@ -193,6 +191,7 @@ func TestHTTPDiscoveryEnforcesPolicyWithoutInProcessTurnContext(t *testing.T) {
 func TestDiscoveryPromptBudgetWithFixedToolFixture(t *testing.T) {
 	a := codeExecutionPromptAgent()
 	a.setInstructions("PRODUCT IDENTITY AND ACCESS POLICY")
+	before := a.outgoingSystemPrompt()
 	for i := 0; i < 70; i++ {
 		addDirectToolFixture(t, a, directToolFixture(fmt.Sprintf("fixture_custom_%02d", i), fmt.Sprintf("group_%02d", i%22)))
 	}
@@ -201,11 +200,9 @@ func TestDiscoveryPromptBudgetWithFixedToolFixture(t *testing.T) {
 		tool.Kind, tool.Source = toolImplementationMCP, "fixture-server"
 		addDirectToolFixture(t, a, tool)
 	}
-	inventory := a.outgoingSystemPrompt()
-	a.toolDiscovery = true
 	discovery := a.outgoingSystemPrompt()
-	if len(discovery) >= len(inventory)/2 || strings.Contains(discovery, "fixture_custom_") || strings.Contains(discovery, "fixture_mcp_") {
-		t.Fatalf("discovery still carries a catalog: inventory=%d discovery=%d", len(inventory), len(discovery))
+	if discovery != before || strings.Contains(discovery, "fixture_custom_") || strings.Contains(discovery, "fixture_mcp_") {
+		t.Fatal("registering 114 tools expanded the system prompt")
 	}
-	t.Logf("same 114-tool fixture with shared runtime: inventory=%d bytes discovery=%d bytes", len(inventory), len(discovery))
+	t.Logf("114 tools add no catalog bytes; discovery prompt=%d bytes", len(discovery))
 }

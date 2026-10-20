@@ -265,19 +265,3 @@ func TestNoAttachedSkillsMeansNoReadSkillTool(t *testing.T) {
 		t.Fatal("read_skill should not exist without attached skills")
 	}
 }
-
-// read_skill is intrinsic ("never call it over HTTP"), so the HTTP tool manifest
-// must not list it again.
-func TestToolIndexDoesNotListIntrinsicReadSkill(t *testing.T) {
-	agent := &Agent{}
-	if err := agent.attachSkill(&llmtypes.Skill{Name: "ref", Description: "d", Content: "c"}); err != nil {
-		t.Fatal(err)
-	}
-	index, err := agent.buildToolIndexForContext(context.Background())
-	if err != nil {
-		t.Skipf("tool index needs a fuller agent: %v", err)
-	}
-	if strings.Contains(index, readSkillToolName) {
-		t.Fatalf("manifest lists %s: %s", readSkillToolName, index)
-	}
-}

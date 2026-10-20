@@ -3,40 +3,18 @@ package prompt
 import (
 	"strings"
 	"time"
-
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // GetCodeExecutionInstructions returns the code execution mode instructions section.
-// workspacePath is retained for compatibility. Product environment and file rules
-// belong to caller instructions; current routing is composed by the Agent.
-func GetCodeExecutionInstructions(workspacePath string) string {
-	return "## Code execution\n\n{{TOOL_STRUCTURE}}\n\nUse this session's declared tools and runtime routing instructions. Discover exact tool contracts before invoking HTTP tools."
-}
-
-// BuildAvailableToolsSection renders the one replaceable, agent-facing tool
-// manifest used by both the default prompt builder and request-time composition.
-func BuildAvailableToolsSection(toolStructureJSON string) string {
-	var inventory string
-	if toolStructureJSON == "" {
-		inventory = "Tool inventory is unavailable. Do not guess tool names; report that discovery is unavailable.\n"
-	} else {
-		inventory = "The following custom tools and real MCP servers are accessible via HTTP API.\n" +
-			"Call get_api_spec(tool_name=\"...\") to get the full API spec for specific tools.\n\n" +
-			"```json\n" + toolStructureJSON + "\n```\n\n" +
-			"Group keys are display labels. Use the runtime routing instructions and get_api_spec for call contracts.\n"
-	}
-
-	return "<available_tools>\n" +
-		"**AVAILABLE SERVERS AND TOOLS:**\n\n" +
-		inventory +
-		"</available_tools>"
+// Product environment and file rules belong to caller instructions; current
+// routing is composed by the Agent.
+func GetCodeExecutionInstructions() string {
+	return "## Code execution\n\nFind authorized tools with search_tools and load their exact schemas and routes with get_api_spec. Use this session's declared tools and runtime routing instructions."
 }
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
-// toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
-func BuildSystemPromptWithoutTools(mode interface{}, useCodeExecutionMode bool, toolStructureJSON string, logger loggerv2.Logger, enableParallelToolExecution bool) string {
+func BuildSystemPromptWithoutTools(useCodeExecutionMode bool, enableParallelToolExecution bool) string {
 
 	// Get current date and time
 	now := time.Now()
@@ -73,10 +51,7 @@ func BuildSystemPromptWithoutTools(mode interface{}, useCodeExecutionMode bool, 
 	// Build tool usage section based on mode
 	var toolUsageSection string
 	if useCodeExecutionMode {
-		codeExecutionInstructions := GetCodeExecutionInstructions("")
-
-		toolStructureSection := BuildAvailableToolsSection(toolStructureJSON)
-		codeExecutionInstructions = strings.ReplaceAll(codeExecutionInstructions, ToolStructurePlaceholder, toolStructureSection)
+		codeExecutionInstructions := GetCodeExecutionInstructions()
 
 		toolUsageSection = `<code_usage>
 ` + codeExecutionInstructions + `

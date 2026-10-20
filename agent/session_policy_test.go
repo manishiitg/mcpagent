@@ -14,7 +14,7 @@ type definitionObserver struct{}
 func (definitionObserver) HandleEvent(context.Context, *events.AgentEvent) error { return nil }
 func (definitionObserver) Name() string                                          { return "definition-observer" }
 
-func TestTurnToolPolicyControlsRequestTimeManifestWithoutMutatingDefinition(t *testing.T) {
+func TestTurnToolPolicyControlsDiscoveryWithoutMutatingDefinition(t *testing.T) {
 	agent := &Agent{
 		systemPrompt:         "inspect the workflow",
 		useCodeExecutionMode: true,
@@ -42,11 +42,18 @@ func TestTurnToolPolicyControlsRequestTimeManifestWithoutMutatingDefinition(t *t
 	}
 	ctx := context.WithValue(context.Background(), turnPolicyContextKey{}, policy)
 	prompt := agent.outgoingSystemPromptForContext(ctx)
-	if !strings.Contains(prompt, "allowed_tool") {
-		t.Fatalf("authorized tool missing from prompt: %s", prompt)
+	if strings.Contains(prompt, "allowed_tool") || strings.Contains(prompt, "blocked_tool") || !strings.Contains(prompt, "search_tools") {
+		t.Fatalf("prompt must use discovery without listing tools: %s", prompt)
 	}
-	if strings.Contains(prompt, "blocked_tool") {
-		t.Fatalf("blocked tool leaked into prompt: %s", prompt)
+	available := discoveryResult(t, agent, ctx, nil)
+	if !strings.Contains(available, "allowed_tool") || strings.Contains(available, "blocked_tool") {
+		t.Fatalf("turn policy not enforced by discovery: %s", available)
+	}
+	if _, err := agent.handleGetAPISpec(ctx, map[string]interface{}{"tool_name": "allowed_tool"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agent.handleGetAPISpec(ctx, map[string]interface{}{"tool_name": "blocked_tool"}); err == nil {
+		t.Fatal("blocked tool became accessible after removing the prompt inventory")
 	}
 	if _, ok := agent.toolRegistry.lookup("blocked_tool"); !ok {
 		t.Fatal("runtime policy mutated the canonical definition")

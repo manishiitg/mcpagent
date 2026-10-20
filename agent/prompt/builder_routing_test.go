@@ -6,9 +6,9 @@ import (
 )
 
 func TestCodeExecutionTutorialDefersToRuntimeContract(t *testing.T) {
-	text := GetCodeExecutionInstructions("")
-	if !strings.Contains(text, ToolStructurePlaceholder) || !strings.Contains(text, "runtime routing instructions") {
-		t.Fatal("missing inventory/runtime contract")
+	text := GetCodeExecutionInstructions()
+	if strings.Contains(text, "{{TOOL_STRUCTURE}}") || !strings.Contains(text, "runtime routing instructions") || !strings.Contains(text, "search_tools") || !strings.Contains(text, "get_api_spec") {
+		t.Fatal("generic prompt must use discovery without an inventory placeholder")
 	}
 	for _, duplicate := range []string{"curl", "MCP_AUTH", "STEP_OUTPUT_DIR", "VAR_GROUP_NAME", "query_workflow_db"} {
 		if strings.Contains(text, duplicate) {
@@ -17,13 +17,16 @@ func TestCodeExecutionTutorialDefersToRuntimeContract(t *testing.T) {
 	}
 }
 
-func TestAvailableToolsSectionPreservesInventoryWithoutASecondTutorial(t *testing.T) {
-	inventory := `{"custom_tools":{"groups":{"workflow_db":{"tools":["query_workflow_db"]}}},"mcp_servers":{}}`
-	section := BuildAvailableToolsSection(inventory)
-	if !strings.Contains(section, inventory) || !strings.Contains(section, "get_api_spec") {
-		t.Fatal("lost legacy inventory discovery")
+func TestDefaultPromptUsesDiscoveryWithoutToolInventory(t *testing.T) {
+	text := BuildSystemPromptWithoutTools(true, false)
+	for _, absent := range []string{"legacy_private_tool", "<available_tools>", "{{TOOL_STRUCTURE}}"} {
+		if strings.Contains(text, absent) {
+			t.Fatalf("default prompt embedded %q", absent)
+		}
 	}
-	if strings.Contains(section, "MCP_AUTH") || strings.Contains(section, "agent_browser") {
-		t.Fatal("manifest teaches a second transport contract or unadmitted tool")
+	for _, want := range []string{"search_tools", "get_api_spec"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("default prompt lost %q", want)
+		}
 	}
 }

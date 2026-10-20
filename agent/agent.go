@@ -536,7 +536,7 @@ func withSelectedServers(servers []string) agentOption {
 // The LLM uses get_api_spec to discover endpoints, then writes code in any language
 // (Python, bash, curl, etc.) to call them.
 //
-//   - Enabled: get_api_spec only. MCP and custom tools via HTTP API.
+//   - Enabled: search_tools and get_api_spec. MCP and custom tools via HTTP API.
 //   - Disabled: All MCP tools are exposed directly (Standard mode).
 //
 // Default: false (Standard mode)
@@ -1134,11 +1134,10 @@ type Agent struct {
 	currentHierarchyLevel int    // Track current hierarchy level (0=root, 1=child, etc.)
 
 	// Code execution mode configuration
-	// When enabled: Custom tools + get_api_spec virtual tool are exposed to the LLM
+	// When enabled: Direct runtime tools plus search_tools and get_api_spec are exposed to the LLM
 	// MCP server tools are accessed via HTTP API (documented in OpenAPI specs from get_api_spec)
 	// When disabled (default): All MCP tools are added directly as LLM tools
 	useCodeExecutionMode bool
-	toolDiscovery        bool
 
 	// Cache configuration
 	// When enabled: Skips cache lookup and always performs fresh connections
@@ -1903,22 +1902,10 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			loggerv2.String("agent_ptr", fmt.Sprintf("%p", ag)))
 	}
 
-	// In code execution mode, build tool index from agent internal state
-	var toolStructureJSON string
-	if ag.useCodeExecutionMode {
-		toolStructure, err := ag.buildToolIndex()
-		if err != nil {
-			logger.Warn("Failed to build tool index for system prompt", loggerv2.Error(err))
-		} else {
-			toolStructureJSON = toolStructure
-		}
-	}
-
-	// Always rebuild system prompt with the correct agent mode and tool structure
-	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts
-	// In code execution mode, tool structure is automatically included
+	// Build default instructions for the configured tool surface.
+	// Code execution discovers authorized tools on demand; no catalog is embedded.
 	if !ag.hasCustomSystemPrompt {
-		ag.systemPrompt = prompt.BuildSystemPromptWithoutTools(string(ag.agentMode), ag.useCodeExecutionMode, toolStructureJSON, ag.logger, ag.enableParallelToolExecution)
+		ag.systemPrompt = prompt.BuildSystemPromptWithoutTools(ag.useCodeExecutionMode, ag.enableParallelToolExecution)
 	}
 
 	// Initialize the filtered-tool set used by the outgoing LLM call.

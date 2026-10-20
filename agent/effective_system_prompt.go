@@ -5,18 +5,16 @@ import (
 	"strings"
 
 	"github.com/manishiitg/mcpagent/agent/prompt"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	llm "github.com/manishiitg/multi-llm-provider-go"
 )
 
 const (
 	availableToolsOpenTag  = "<available_tools>"
 	availableToolsCloseTag = "</available_tools>"
-	effectiveToolsMarker   = "\x00mcpagent-effective-tools\x00"
 )
 
-// effectiveSystemPrompt composes instructions with the current, authorized
-// tool manifest at the final read boundary. The stored systemPrompt is not a
+// effectiveSystemPrompt composes product and runtime discovery instructions
+// at the final read boundary. The stored systemPrompt is not a
 // source of tool truth: registration and allow-list state can change after it
 // was set, and custom prompts can replace it entirely.
 func (a *Agent) effectiveSystemPromptForContext(ctx context.Context) string {
@@ -81,6 +79,9 @@ func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base
 		routing := ""
 		if a.bridgeRoutingInstructionsOverride != nil {
 			routing = *a.bridgeRoutingInstructionsOverride
+			if a.useCodeExecutionMode {
+				routing = strings.TrimSpace(routing + "\n" + runtimeDiscoveryInstructions)
+			}
 		} else {
 			if a.bridgeRoutingPreamble != nil {
 				if llm.IsCodingAgentProvider(a.provider, a.modelID) {
@@ -104,44 +105,17 @@ func (a *Agent) composeEffectiveSystemPromptForContext(ctx context.Context, base
 			base = strings.TrimSpace(base + "\n\n<runtime_tools>\n" + routing + "\n</runtime_tools>")
 		}
 	}
-	if !a.useCodeExecutionMode {
-		return strings.ReplaceAll(base, prompt.ToolStructurePlaceholder, "")
-	}
-
-	if a.toolDiscovery {
-		// Discovery is already specified by runtime_tools; remove stale catalogs.
-		return replaceEffectiveToolsSection(base, "")
-	}
-
-	toolStructure, err := a.buildToolIndexForContext(ctx)
-	if err != nil {
-		if a.logger != nil {
-			a.logger.Warn("Failed to build request-time tool manifest", loggerv2.Error(err))
-		}
-		toolStructure = ""
-	}
-	section := prompt.BuildAvailableToolsSection(toolStructure)
-	return replaceEffectiveToolsSection(base, section)
+	// Never reinsert an upfront catalog, even for legacy callers that omitted
+	// Discovery or restored prompts containing an older inventory. Search and
+	// schema lookup consult the live authorized registry instead. Native API
+	// schemas remain supplied through the provider's normal tool-call surface.
+	return stripToolInventory(base)
 }
 
-// replaceEffectiveToolsSection replaces a placeholder or tagged manifest in
-// place and otherwise appends one. It removes every stale tagged copy first, so
-// retries and prompt overwrites are idempotent and always leave balanced tags.
-func replaceEffectiveToolsSection(base, section string) string {
-	working := base
-
-	if strings.Contains(working, prompt.ToolStructurePlaceholder) {
-		working = strings.Replace(working, prompt.ToolStructurePlaceholder, effectiveToolsMarker, 1)
-		working = strings.ReplaceAll(working, prompt.ToolStructurePlaceholder, "")
-	} else if start, end, ok := firstTaggedRange(working, availableToolsOpenTag, availableToolsCloseTag); ok {
-		working = working[:start] + effectiveToolsMarker + working[end:]
-	} else {
-		working = strings.TrimRight(working, "\n") + "\n\n" + effectiveToolsMarker
-	}
-
-	working = removeTaggedSections(working, availableToolsOpenTag, availableToolsCloseTag)
-	working = strings.Replace(working, effectiveToolsMarker, section, 1)
-	return strings.TrimSpace(working)
+// stripToolInventory removes stored catalogs and unresolved inventory markers.
+// Prompt composition never generates or inserts a catalog.
+func stripToolInventory(base string) string {
+	return strings.TrimSpace(removeTaggedSections(strings.ReplaceAll(base, "{{TOOL_STRUCTURE}}", ""), availableToolsOpenTag, availableToolsCloseTag))
 }
 
 func firstTaggedRange(input, openTag, closeTag string) (int, int, bool) {
