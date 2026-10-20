@@ -166,6 +166,9 @@ func TestBridgeRoutingBlockSaysAMissingDirectToolIsNotMissing(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Fatalf("the bridge routing block does not say %q:\n%s", want, got)
 	}
+	if !strings.Contains(got, "get_api_spec(tool_name=\"search_tools\") returns its session-scoped virtual route and schema") {
+		t.Fatal("runtime discovery lost its supported HTTP route guidance")
+	}
 }
 
 // A coding CLI's own shell has no platform credentials; only the bridge shell does. Agents that reach

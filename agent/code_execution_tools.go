@@ -77,11 +77,18 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 		return "", err
 	}
 	customToolsForSpec := make(map[string]openapi.CustomToolForOpenAPI)
+	var virtualToolsForSpec []llmtypes.Tool
 	mcpToolsByServer := make(map[string][]llmtypes.Tool)
 	var unknown, notAllowed []string
 	for _, name := range sortedNames {
 		if !a.isToolAllowedForContext(ctx, name) || !codeexec.IsSessionToolAllowed(a.sessionID, name) {
 			notAllowed = append(notAllowed, name)
+			continue
+		}
+		// Discovery uses the existing authenticated, session-scoped virtual
+		// HTTP bridge. Keep its route distinct from custom/MCP tool execution.
+		if name == "search_tools" && serverName == "" {
+			virtualToolsForSpec = append(virtualToolsForSpec, searchToolsDefinition())
 			continue
 		}
 		registered, ok := registry.lookup(name)
@@ -139,6 +146,9 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 	if len(customToolsForSpec) > 0 {
 		sections = append(sections, openapi.GenerateCustomToolsCompactSpec("custom", customToolsForSpec, baseURL))
 	}
+	if len(virtualToolsForSpec) > 0 {
+		sections = append(sections, openapi.GenerateVirtualToolsCompactSpec(virtualToolsForSpec, baseURL))
+	}
 	serverNames := make([]string, 0, len(mcpToolsByServer))
 	for name := range mcpToolsByServer {
 		serverNames = append(serverNames, name)
@@ -170,7 +180,6 @@ func (a *Agent) unavailableToolsError(ctx context.Context, registry *canonicalTo
 		// Permission denials are already attributed correctly; leave them byte-identical.
 		return fmt.Errorf("tools_unavailable: unknown=%v not_allowed=%v", unknown, notAllowed)
 	}
-
 	missing := a.serversMissingTools(registry)
 	blamed := a.blameMissingServer(registry, requestedServer, missing)
 

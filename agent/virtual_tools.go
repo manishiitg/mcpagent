@@ -32,7 +32,7 @@ func (a *Agent) createVirtualTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_api_spec",
-			Description: "Get the OpenAPI specification for specific tool(s). Pass the tool names you want to call — that is the address. Find exact names with search_tools or the session tool inventory.",
+			Description: "Get the OpenAPI specification for HTTP-backed platform or connected-app tools. Pass exact tool names from search_tools or the session tool inventory. Also accepts search_tools itself, including in mixed batches, and returns its authenticated session-scoped virtual HTTP route and discovery schema.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

@@ -211,6 +211,22 @@ func GenerateCustomToolsCompactSpec(category string, tools map[string]CustomTool
 	return sb.String()
 }
 
+// GenerateVirtualToolsCompactSpec documents runtime tools that support the
+// session-scoped virtual HTTP executor. Callers supply only admitted tools.
+func GenerateVirtualToolsCompactSpec(tools []llmtypes.Tool, baseURL string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("base: %s\n", baseURL))
+	sb.WriteString("auth: Bearer $MCP_API_TOKEN\n\n")
+	for _, tool := range tools {
+		if tool.Function == nil {
+			continue
+		}
+		endpoint := "/tools/virtual/" + SanitizePathSegment(tool.Function.Name)
+		writeCompactEntry(&sb, "POST", endpoint, tool.Function.Description, tool.Function.Parameters)
+	}
+	return sb.String()
+}
+
 // writeCompactEntry writes a single endpoint block in compact format.
 // The tool description is stripped of markdown and rendered as indented comment lines
 // so the LLM has enough context to choose between tools.

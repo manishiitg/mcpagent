@@ -15,7 +15,7 @@ func (a *Agent) ensureRuntimeHTTPSkill() error {
 	}
 	names := "Choose admitted names from the current tool list."
 	if a.toolDiscovery {
-		names = "Discover exact admitted names through search_tools; broaden or enumerate a returned group/server when a query misses."
+		names = "Discover exact admitted names through search_tools; broaden or enumerate a returned group/server when a query misses. Prefer the declared direct search_tools tool. For HTTP discovery, get_api_spec(tool_name=\"search_tools\") returns its authenticated session-scoped virtual route; use that route rather than $MCP_CUSTOM/search_tools."
 	}
 	return a.attachSkill(&llmtypes.Skill{
 		Name:        runtimeHTTPSkillName,
