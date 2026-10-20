@@ -129,7 +129,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			loggerv2.Int("attempt", attempt))
 
 		if isNonRetryableConnectError(err) {
-			return fmt.Errorf("failed to connect to MCP server '%s': %w", c.getServerName(), err)
+			return c.refusedConnectError(err)
 		}
 		if attempt == maxRetries {
 			return fmt.Errorf("failed to connect to MCP server '%s' after %d attempts: %w", c.getServerName(), maxRetries, err)
@@ -333,7 +333,7 @@ func (c *Client) ConnectWithRetry(ctx context.Context) error {
 			loggerv2.Int("attempt", attempt+1))
 
 		if isNonRetryableConnectError(err) {
-			return fmt.Errorf("failed to connect to MCP server '%s': %w", c.getServerName(), err)
+			return c.refusedConnectError(err)
 		}
 		// If this was the last attempt, don't sleep
 		if attempt == c.retryConfig.MaxRetries {
@@ -993,4 +993,13 @@ func (c *Client) DiscoverOAuthEndpoints(ctx context.Context) (*oauth.OAuthEndpoi
 // token, or a 4xx/401 on initialize. Retrying those only cost each chat start about 8 s per broken connection.
 func isNonRetryableConnectError(err error) bool {
 	return errors.Is(err, oauth.ErrNoValidToken) || errors.Is(err, transport.ErrLegacySSEServer) || errors.Is(err, transport.ErrUnauthorized)
+}
+
+// refusedConnectError names the server and, when it answered with an error, what it said (for example Slack: "App is
+// not enabled for Slack MCP server access"), so the person sees the real reason instead of a transport error.
+func (c *Client) refusedConnectError(err error) error {
+	if reason := serverRefusal(c.config.URL); reason != "" && !errors.Is(err, oauth.ErrNoValidToken) {
+		return fmt.Errorf("failed to connect to MCP server '%s': the server said: %s: %w", c.getServerName(), reason, err)
+	}
+	return fmt.Errorf("failed to connect to MCP server '%s': %w", c.getServerName(), err)
 }

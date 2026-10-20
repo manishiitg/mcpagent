@@ -228,10 +228,12 @@ func NewAgentConnectionWithSession(
 			if err != nil {
 				logger.Error(fmt.Sprintf("Failed to get/create connection for %s", srvName), err,
 					loggerv2.String("session_id", sessionID))
+				mcpclient.ReportConnectResult(srvName, err)
 				result.err = err
 				return
 			}
 
+			mcpclient.ReportConnectResult(srvName, nil)
 			result.client = client
 			result.wasCreated = wasCreated
 
