@@ -43,9 +43,7 @@ func (h *HTTPManager) CreateClient() (*client.Client, error) {
 	if len(h.headers) > 0 {
 		options = append(options, transport.WithHTTPHeaders(h.headers))
 	}
-	if h.httpClient != nil {
-		options = append(options, transport.WithHTTPBasicClient(h.httpClient))
-	}
+	options = append(options, transport.WithHTTPBasicClient(withStatusLogging(h.httpClient)))
 
 	// Create StreamableHTTP transport
 	httpTransport, err := transport.NewStreamableHTTP(h.url, options...)
