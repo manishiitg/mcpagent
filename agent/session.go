@@ -82,12 +82,6 @@ func RegisterHTTPSession(httpSessionID, mcpSessionID string) {
 	registry.RegisterHTTPSession(httpSessionID, mcpSessionID)
 }
 
-// Deprecated: browser MCP servers are no longer session-scoped.
-func RegisterBrowserSessionOverride(sessionID, browserSessionID string) {
-	registry := mcpclient.GetSessionRegistry()
-	registry.RegisterBrowserSessionOverride(sessionID, browserSessionID)
-}
-
 func ResolveConnectionSessionID(sessionID, serverName string) string {
 	registry := mcpclient.GetSessionRegistry()
 	return registry.ResolveConnectionSessionID(sessionID, serverName)

@@ -68,15 +68,6 @@ func New(config MCPServerConfig, logger loggerv2.Logger) *Client {
 	}
 }
 
-// NewWithRetryConfig creates a new MCP client with custom retry configuration
-func NewWithRetryConfig(config MCPServerConfig, retryConfig RetryConfig, logger loggerv2.Logger) *Client {
-	return &Client{
-		config:      config,
-		retryConfig: retryConfig,
-		logger:      logger,
-	}
-}
-
 // Connect establishes a connection to the MCP server with retry logic
 func (c *Client) Connect(ctx context.Context) error {
 	// A refused public-only server is refused once, never retried.
@@ -390,11 +381,6 @@ func (c *Client) Ping(ctx context.Context) error {
 // GetServerInfo returns information about the connected server
 func (c *Client) GetServerInfo() *mcp.Implementation {
 	return c.serverInfo
-}
-
-// GetMCPClient returns the underlying MCP client (for pooled client usage)
-func (c *Client) GetMCPClient() *client.Client {
-	return c.mcpClient
 }
 
 // ListTools returns all available tools from the server

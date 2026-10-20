@@ -339,47 +339,15 @@ mcp oauth logout Notion
 
 ## Testing
 
-### Running E2E Test
+Run the credential-free MCP OAuth connection regressions:
 
-```bash
-# Build test binary
-cd /Users/mipl/ai-work/mcpagent
-go build -o mcpagent-test ./cmd/testing
-
-# Run OAuth test
-./mcpagent-test test oauth-flow --log-file logs/oauth-test.log
-
-# With debug output
-./mcpagent-test test oauth-flow --log-level debug
+```sh
+go test ./mcpclient -run 'TestConnectFailsFastWithoutOAuthToken|TestConnectWithRetryDoesNotNestConnectRetries' -count=1
 ```
 
-### Test Steps
-
-1. **Create Config** - Temporary Notion MCP config with OAuth auto-discovery
-2. **OAuth Login** - Interactive browser-based authentication
-3. **Verify Token** - Check token file created with correct permissions
-4. **Test Connection** - Use cached token to connect to Notion MCP
-5. **Test Logout** - Remove token and verify cleanup
-
-### Prerequisites
-
-- Notion account with workspace access
-- Browser installed and can open automatically
-- Network connection to mcp.notion.com
-- Port 8080 available for OAuth callback
-
-### Success Criteria
-
-A successful test should:
-1. Create temporary OAuth config
-2. Open browser to Notion auth page automatically
-3. Wait for user to complete authentication
-4. Receive OAuth callback with authorization code
-5. Exchange code for access token and refresh token
-6. Save token to file with 0600 permissions
-7. Successfully connect using cached token
-8. Clean up token file on logout
-9. Complete without panics or unexpected errors
+For a real OAuth integration, use the application's connector sign-in flow,
+then verify that its MCP tools can connect with the saved account. Do not print
+tokens while checking sign-in or renewal.
 
 ---
 

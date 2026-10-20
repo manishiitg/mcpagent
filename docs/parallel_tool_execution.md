@@ -7,10 +7,10 @@ When the LLM returns multiple tool calls in a single response, the agent can exe
 ## Enabling
 
 ```go
-agent, err := mcpagent.NewAgent(
-    ctx, llmModel, "config.json",
-    mcpagent.WithParallelToolExecution(true),
-)
+runtime := mcpagent.RuntimeConfig{
+    Tools: mcpagent.ToolRuntimeConfig{ParallelExecution: true},
+}
+// Pass runtime with your AgentDefinition to NewAgentFromDefinition.
 ```
 
 Default: `false` (sequential execution).
@@ -80,29 +80,16 @@ This allows event listeners and tracers to distinguish between parallel and sequ
 
 ## Testing
 
-Run the parallel tool execution test:
+Run the credential-free routing regression, which checks that parallel preparation
+never borrows another MCP server's client:
 
-```bash
-go run ./cmd/testing parallel-tool-exec \
-  --provider vertex \
-  --model gemini-3-flash-preview \
-  --log-level info
+```sh
+go test ./agent -run '^TestPrepareParallelToolExecutionDoesNotUseAnotherServersClientForLazyServer$' -count=1
 ```
 
-The test:
-1. Runs the same prompt with `WithParallelToolExecution(true)` and then with sequential execution (default)
-2. Compares wall-clock duration, overlap count, and `IsParallel` flag values
-3. Validates that the parallel run has `IsParallel=true` on all tool call events and the sequential run has `IsParallel=false`
-
-### Expected output
-
-```
-Parallel execution completed  duration=10.6s  tool_calls=6  is_parallel_true=6  is_parallel_false=0
-Sequential execution completed duration=13.8s  tool_calls=6  is_parallel_true=0  is_parallel_false=6
-Speedup: 1.30x faster with parallel execution
-Parallel run: 6/6 tool calls marked IsParallel=true
-Sequential run: all 6 tool calls marked IsParallel=false (correct)
-```
+For a live application check, issue independent tool calls in a session with
+`RuntimeConfig.Tools.ParallelExecution` enabled and inspect the `IsParallel`
+event field and ordered results.
 
 ## When to Use
 
@@ -122,6 +109,6 @@ It is safe to enable because:
 |------|---------|
 | `agent/parallel_tool_execution.go` | Fork-join implementation |
 | `agent/conversation.go:920` | Entry point — branches to parallel or sequential |
-| `agent/agent.go` | `WithParallelToolExecution()` option |
+| `agent/agent.go` | `RuntimeConfig.Tools.ParallelExecution` |
 | `events/data.go` | `ToolCallStartEvent.IsParallel` field |
-| `cmd/testing/parallel-tool-exec/` | Integration test |
+| `agent/sequential_mcp_routing_test.go` | Routing regression |

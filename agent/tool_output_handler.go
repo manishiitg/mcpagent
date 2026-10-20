@@ -329,11 +329,6 @@ func (h *ToolOutputHandler) SetThreshold(threshold int) {
 	h.Threshold = threshold
 }
 
-// SetOutputFolder updates the output folder path
-func (h *ToolOutputHandler) SetOutputFolder(folder string) {
-	h.OutputFolder = folder
-}
-
 // SetEnabled enables or disables the tool output handler
 func (h *ToolOutputHandler) SetEnabled(enabled bool) {
 	h.Enabled = enabled
@@ -560,29 +555,4 @@ func GetMaxContextTokenLimit(modelContextWindow int) int {
 		return limit
 	}
 	return DefaultMaxContextTokenLimit
-}
-
-// EstimateMessagesTokenCount estimates total tokens across all messages
-// This is used for pre-flight checks before calling the LLM API
-func (h *ToolOutputHandler) EstimateMessagesTokenCount(messages []llmtypes.MessageContent, modelID string) int {
-	totalTokens := 0
-	for _, msg := range messages {
-		for _, part := range msg.Parts {
-			switch p := part.(type) {
-			case llmtypes.TextContent:
-				totalTokens += h.CountTokensForModel(p.Text, modelID)
-			case llmtypes.ToolCallResponse:
-				totalTokens += h.CountTokensForModel(p.Content, modelID)
-			case string:
-				totalTokens += h.CountTokensForModel(p, modelID)
-			}
-		}
-	}
-	return totalTokens
-}
-
-// ExceedsContextLimit checks if messages would exceed the safe context limit
-func (h *ToolOutputHandler) ExceedsContextLimit(messages []llmtypes.MessageContent, modelID string, limit int) (bool, int) {
-	totalTokens := h.EstimateMessagesTokenCount(messages, modelID)
-	return totalTokens > limit, totalTokens
 }

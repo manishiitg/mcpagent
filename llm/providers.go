@@ -123,10 +123,6 @@ func StartCodingAgentTransportSession(ctx context.Context, model llmtypes.Model,
 	return llmproviders.StartCodingAgentTransportSession(ctx, model, handle, options...)
 }
 
-func StartCodingAgentTmuxSession(ctx context.Context, model llmtypes.Model, handle llmtypes.CodingProviderSessionHandle, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
-	return llmproviders.StartCodingAgentTransportSession(ctx, model, handle, options...)
-}
-
 func SendCodingAgentLiveInput(ctx context.Context, provider Provider, modelID, ownerSessionID, message string) error {
 	return llmproviders.SendCodingAgentLiveInput(ctx, provider, modelID, ownerSessionID, message)
 }
@@ -158,25 +154,11 @@ const (
 	MetadataKeyTools                      = "claude_code_tools"
 )
 
-// SendClaudeCodeInput sends user input to a live Claude Code interactive
-// session registered for the owning application session. (Renamed from
-// SendClaudeCodeExperimentalInput to match the upstream Experimental→Interactive
-// rename; no callers used the old name.)
-func SendClaudeCodeInput(ctx context.Context, sessionID, message string) error {
-	return llmproviders.SendClaudeCodeInput(ctx, sessionID, message)
-}
-
 // AwaitClaudeInputDurable waits for the transcript proof that a previous
 // live input reached the Claude Code CLI. Host applications call it after
 // the fast pane ack; a zero timeout selects the adapter's env-tuned budget.
 func AwaitClaudeInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
 	return llmproviders.AwaitClaudeInputDurable(ctx, sessionID, message, timeout)
-}
-
-// SendCodexCLIInteractiveInput sends user input to a live Codex CLI interactive
-// session registered for the owning application session.
-func SendCodexCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
-	return llmproviders.SendCodexCLIInteractiveInput(ctx, sessionID, message)
 }
 
 // AwaitCodexInputDurable waits for the rollout proof that a previous live
@@ -186,23 +168,11 @@ func AwaitCodexInputDurable(ctx context.Context, sessionID, message string, time
 	return llmproviders.AwaitCodexInputDurable(ctx, sessionID, message, timeout)
 }
 
-// SendCursorCLIInteractiveInput sends user input to a live Cursor CLI
-// interactive session registered for the owning application session.
-func SendCursorCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
-	return llmproviders.SendCursorCLIInteractiveInput(ctx, sessionID, message)
-}
-
 // AwaitCursorInputDurable waits for the store proof that a previous live
 // input reached the Cursor CLI. Host applications call it after the fast
 // pane ack; a zero timeout selects the adapter's env-tuned budget.
 func AwaitCursorInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
 	return llmproviders.AwaitCursorInputDurable(ctx, sessionID, message, timeout)
-}
-
-// SendPiCLIInteractiveInput sends user input to a live Pi CLI interactive
-// session registered for the owning application session.
-func SendPiCLIInteractiveInput(ctx context.Context, sessionID, message string) error {
-	return llmproviders.SendPiCLIInteractiveInput(ctx, sessionID, message)
 }
 
 // AwaitPiInputDurable waits for the marker proof that a previous live
@@ -242,47 +212,9 @@ func ClosePiCLIInteractiveSessionByTmux(tmuxSessionName, reason string) {
 	llmproviders.ClosePiCLIInteractiveSessionByTmux(tmuxSessionName, reason)
 }
 
-// WithClaudeCodeInteractiveSessionID links a Claude Code experimental run to
-// the owning application session so live follow-up input can be sent to it.
-func WithClaudeCodeInteractiveSessionID(id string) llmtypes.CallOption {
-	return llmproviders.WithClaudeCodeInteractiveSessionID(id)
-}
-
-// WithClaudeCodePersistentInteractiveSession keeps the Claude Code experimental
-// tmux session alive across completed interactive chat turns.
-func WithClaudeCodePersistentInteractiveSession(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithClaudeCodePersistentInteractiveSession(enabled)
-}
-
 // WithClaudeCodeWorkingDir sets the process working directory for Claude Code.
 func WithClaudeCodeWorkingDir(dir string) llmtypes.CallOption {
 	return llmproviders.WithClaudeCodeWorkingDir(dir)
-}
-
-// WithClaudeCodeProjectInstructionOnly makes the Claude Code adapter carry the
-// per-session system prompt solely via <workingDir>/CLAUDE.md (auto-loaded as
-// project instructions), skipping --system-prompt-file / --append-system-prompt
-// so the prompt is applied once instead of doubled. Falls back to the flag if
-// the CLAUDE.md projection is disabled or its write fails.
-func WithClaudeCodeProjectInstructionOnly(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithClaudeCodeProjectInstructionOnly(enabled)
-}
-
-// WithCodexProjectInstructionOnly carries the codex system prompt solely via
-// the projected AGENTS.md, skipping the developer_instructions /
-// model_instructions_file CLI override, so the prompt is applied once instead
-// of doubled. Falls back to the override if the projection is disabled/fails.
-func WithCodexProjectInstructionOnly(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithCodexProjectInstructionOnly(enabled)
-}
-
-// WithMuseProjectInstructionOnly carries the muse system prompt solely via
-// the projected AGENTS.md, skipping the inline preamble, so the prompt is
-// applied once instead of doubled. Falls back to inline if the projection
-// is disabled/fails. Muse has no system-prompt flag, so the file is the
-// only dedicated channel.
-func WithMuseProjectInstructionOnly(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithMuseProjectInstructionOnly(enabled)
 }
 
 // WithMuseStreamTranscript opts muse tmux turns into transcript streaming
@@ -297,30 +229,6 @@ func WithMuseStreamTmuxScreen(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithMuseStreamTmuxScreen(enabled)
 }
 
-// WithCodexInteractiveSessionID links a Codex CLI interactive run to the owning
-// application session so live follow-up input can be sent to it.
-func WithCodexInteractiveSessionID(id string) llmtypes.CallOption {
-	return llmproviders.WithCodexInteractiveSessionID(id)
-}
-
-// WithCodexPersistentInteractiveSession keeps Codex CLI interactive tmux
-// sessions alive across completed chat turns.
-func WithCodexPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithCodexPersistentInteractiveSession(enabled)
-}
-
-// WithCursorInteractiveSessionID links a Cursor CLI interactive run to the
-// owning application session so live follow-up input can be sent to it.
-func WithCursorInteractiveSessionID(id string) llmtypes.CallOption {
-	return llmproviders.WithCursorInteractiveSessionID(id)
-}
-
-// WithCursorPersistentInteractiveSession keeps Cursor CLI interactive tmux
-// sessions alive across completed chat turns.
-func WithCursorPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithCursorPersistentInteractiveSession(enabled)
-}
-
 // WithCursorWorkingDir sets the Cursor Agent CLI workspace/cwd.
 func WithCursorWorkingDir(dir string) llmtypes.CallOption {
 	return llmproviders.WithCursorWorkingDir(dir)
@@ -329,11 +237,6 @@ func WithCursorWorkingDir(dir string) llmtypes.CallOption {
 // WithCursorMCPConfig writes a temporary/restored .cursor/mcp.json for Cursor.
 func WithCursorMCPConfig(config string) llmtypes.CallOption {
 	return llmproviders.WithCursorMCPConfig(config)
-}
-
-// WithCursorProjectConfig writes a temporary/restored .cursor/cli.json for Cursor.
-func WithCursorProjectConfig(config string) llmtypes.CallOption {
-	return llmproviders.WithCursorProjectConfig(config)
 }
 
 // WithMuseMCPConfig mounts the document's mcpServers in a per-launch private
@@ -362,27 +265,6 @@ func WithMuseToolAllowlist(toolNames []string) llmtypes.CallOption {
 	return llmproviders.WithMuseToolAllowlist(toolNames)
 }
 
-// WithCursorForce enables Cursor Agent CLI's --force flag.
-func WithCursorForce() llmtypes.CallOption {
-	return llmproviders.WithCursorForce()
-}
-
-// WithCursorAutoReview enables Cursor's Smart Auto approval classifier.
-func WithCursorAutoReview() llmtypes.CallOption {
-	return func(opts *llmtypes.CallOptions) {
-		if opts.Metadata == nil {
-			opts.Metadata = &llmtypes.Metadata{}
-		}
-		if opts.Metadata.Custom == nil {
-			opts.Metadata.Custom = make(map[string]interface{})
-		}
-		// Keep the metadata key here rather than requiring mcpagent's own module
-		// to immediately pin the newest provider module. The Cursor adapter owns
-		// the flag interpretation; its public contract is this stable key.
-		opts.Metadata.Custom["cursor_auto_review"] = true
-	}
-}
-
 // WithCursorApproveMCPs enables Cursor Agent CLI's --approve-mcps flag, which
 // auto-accepts the "approve this MCP server?" TUI consent dialog so bridge
 // tool calls do not stall waiting for human approval. Only useful alongside
@@ -396,18 +278,6 @@ func WithCursorApproveMCPs() llmtypes.CallOption {
 // It does not enable --force.
 func WithCursorAutoApproveWebSearch() llmtypes.CallOption {
 	return llmproviders.WithCursorAutoApproveWebSearch()
-}
-
-// WithCursorMode sets Cursor Agent CLI's --mode flag. Leave empty for normal
-// agent mode (the default chat path).
-//
-// CAUTION: "ask" and "plan" are conversational stances, not just "block
-// built-in Write/Shell". Cursor hard-refuses natural-language write requests
-// with "Switch to Agent mode and ask…", making chat unusable for any turn
-// that requires writes. Only safe when prompts explicitly name an MCP tool
-// to call (e.g. structured-mode E2E tests). For general chat, leave mode empty.
-func WithCursorMode(mode string) llmtypes.CallOption {
-	return llmproviders.WithCursorMode(mode)
 }
 
 // WithCursorDenyBuiltinTools installs a per-session .cursor/hooks.json that
@@ -426,23 +296,6 @@ func WithCursorDenyBuiltinTools(enabled bool) llmtypes.CallOption {
 // denied.
 func WithCursorFullNativeTools() llmtypes.CallOption {
 	return llmproviders.WithCursorFullNativeTools()
-}
-
-// WithCursorSandbox sets Cursor Agent CLI's --sandbox flag ("enabled"/"disabled").
-func WithCursorSandbox(mode string) llmtypes.CallOption {
-	return llmproviders.WithCursorSandbox(mode)
-}
-
-// WithPiInteractiveSessionID links a Pi CLI interactive run to the owning
-// application session so live follow-up input can be sent to it.
-func WithPiInteractiveSessionID(id string) llmtypes.CallOption {
-	return llmproviders.WithPiInteractiveSessionID(id)
-}
-
-// WithPiPersistentInteractiveSession keeps Pi CLI tmux sessions alive across
-// completed chat turns.
-func WithPiPersistentInteractiveSession(enabled bool) llmtypes.CallOption {
-	return llmproviders.WithPiPersistentInteractiveSession(enabled)
 }
 
 // WithPiResumeSessionID resumes a Pi native session created with --session-id.
@@ -469,16 +322,6 @@ func WithPiMCPConfig(config string) llmtypes.CallOption {
 // custom tools, including the MCP adapter, enabled.
 func WithPiBridgeOnlyTools(enabled bool) llmtypes.CallOption {
 	return llmproviders.WithPiBridgeOnlyTools(enabled)
-}
-
-// WithPiMCPExtension overrides the Pi MCP adapter extension source.
-func WithPiMCPExtension(source string) llmtypes.CallOption {
-	return llmproviders.WithPiMCPExtension(source)
-}
-
-// WithPiStatuslineExtension overrides the Pi statusline extension source.
-func WithPiStatuslineExtension(source string) llmtypes.CallOption {
-	return llmproviders.WithPiStatuslineExtension(source)
 }
 
 // Config holds configuration for LLM initialization (agent_go version)
@@ -668,14 +511,6 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 	return p.Model.GenerateContent(ctx, messages, options...)
 }
 
-// SearchWeb calls a model's native web search capability when available.
-func SearchWeb(ctx context.Context, model llmtypes.Model, query string, options ...CallOption) (string, error) {
-	if wrapped, ok := model.(*ProviderAwareLLM); ok {
-		return llmproviders.SearchWeb(ctx, wrapped.Model, query, options...)
-	}
-	return llmproviders.SearchWeb(ctx, model, query, options...)
-}
-
 // WithOpenRouterUsage enables usage parameter for OpenRouter requests to get cache token information
 func WithOpenRouterUsage() CallOption {
 	return func(opts *CallOptions) {
@@ -710,21 +545,6 @@ func WithMCPReadyFile(path string) CallOption {
 // CAUTION: This allows the agent to execute any tool without user confirmation.
 func WithDangerouslySkipPermissions() CallOption {
 	return llmproviders.WithDangerouslySkipPermissions()
-}
-
-// WithClaudeCodePermissionMode sets Claude Code's native permission policy.
-// The metadata key is written locally so mcpagent can adopt this provider
-// capability without forcing all downstream module versions to move in lockstep.
-func WithClaudeCodePermissionMode(mode string) CallOption {
-	return func(opts *llmtypes.CallOptions) {
-		if opts.Metadata == nil {
-			opts.Metadata = &llmtypes.Metadata{}
-		}
-		if opts.Metadata.Custom == nil {
-			opts.Metadata.Custom = make(map[string]interface{})
-		}
-		opts.Metadata.Custom["claude_code_permission_mode"] = mode
-	}
 }
 
 // WithClaudeCodeSettings sets the --settings flag for the Claude Code CLI.
@@ -768,15 +588,6 @@ func WithClaudeCodeEffort(level string) CallOption {
 // WithCodexResumeSessionID resumes a Codex CLI session by thread ID.
 func WithCodexResumeSessionID(id string) CallOption {
 	return llmproviders.WithCodexResumeSessionID(id)
-}
-
-// WithCursorResumeSessionID resumes a Cursor CLI chat by session ID — the
-// id cursor-agent emits in its stream-json init event (and that is also the
-// directory name under ~/.cursor/chats/<md5(cwd)>/<id>). Mirrors the
-// claude-code / codex equivalents so a restored chat can pick up
-// cursor's native chat memory instead of starting fresh.
-func WithCursorResumeSessionID(id string) CallOption {
-	return llmproviders.WithCursorResumeSessionID(id)
 }
 
 // WithCodexApprovalPolicy sets the approval_policy for the Codex CLI.
@@ -874,11 +685,6 @@ func WithCodexDisableShellTool() CallOption {
 	return llmproviders.WithCodexDisableShellTool()
 }
 
-// WithCodexFullAuto enables --full-auto mode for the Codex CLI.
-func WithCodexFullAuto() CallOption {
-	return llmproviders.WithCodexFullAuto()
-}
-
 // WithCodexSandbox sets the --sandbox flag for the Codex CLI.
 func WithCodexSandbox(sandbox string) CallOption {
 	return llmproviders.WithCodexSandbox(sandbox)
@@ -899,11 +705,6 @@ func WithCodexConfigOverrides(overrides []string) CallOption {
 // bridge tool schemas and credentials can exceed tmux command limits.
 func WithCodexMCPServers(mcpJSON string) CallOption {
 	return llmproviders.WithCodexMCPServers(mcpJSON)
-}
-
-// WithCodexEnableFeatures enables one or more Codex CLI features (comma-separated).
-func WithCodexEnableFeatures(features string) CallOption {
-	return llmproviders.WithCodexEnableFeatures(features)
 }
 
 // Re-export helper functions from llm-providers

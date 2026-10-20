@@ -107,7 +107,6 @@ func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 		"ReadAgentDiagnostics",
 		"ReadAgentRuntimeInfo",
 		"ReadAgentSystemPrompt",
-		"RegisterBrowserSessionOverride",
 		"RegisterHTTPSession",
 		"RemoveIsolatedSessionWorkspace",
 		"ResolveConnectionSessionID",

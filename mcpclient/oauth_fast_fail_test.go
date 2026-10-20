@@ -59,11 +59,8 @@ func TestConnectFailsFastWithoutOAuthToken(t *testing.T) {
 // Connect (its own 3-attempt loop), tripling every retry and stacking both
 // backoffs.
 func TestConnectWithRetryDoesNotNestConnectRetries(t *testing.T) {
-	c := NewWithRetryConfig(
-		MCPServerConfig{Command: "/nonexistent/mlp-mcp-server-binary"},
-		RetryConfig{MaxRetries: 2, InitialDelay: time.Millisecond, MaxDelay: 2 * time.Millisecond, BackoffFactor: 2, ConnectTimeout: 5 * time.Second},
-		loggerv2.NewNoop(),
-	)
+	c := New(MCPServerConfig{Command: "/nonexistent/mlp-mcp-server-binary"}, loggerv2.NewNoop())
+	c.retryConfig = RetryConfig{MaxRetries: 2, InitialDelay: time.Millisecond, MaxDelay: 2 * time.Millisecond, BackoffFactor: 2, ConnectTimeout: 5 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	start := time.Now()

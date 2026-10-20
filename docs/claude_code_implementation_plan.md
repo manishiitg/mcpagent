@@ -103,20 +103,9 @@ These events use the exact same `AgentEvent` structures as native tool execution
 
 ## Testing
 
-### Integration Test (`cmd/testing/parallel-tool-exec`)
-Verified with `--provider claude-code`:
-*   Agent creates with auto-enabled streaming.
-*   `ToolCallStart` and `ToolCallEnd` events are received by the event listener.
-*   Tool name, call ID, args, result, and duration populated correctly.
-*   Test passes with `tool_calls >= 1`.
+### Coding-agent continuation checks
 
-```bash
-# Run with claude-code provider
-unset CLAUDECODE && go run ./cmd/testing parallel-tool-exec \
-  --provider claude-code \
-  --log-file logs/parallel-claude-code.log \
-  --log-level debug
-```
+Run `make test-p0-resume` for the credential-free Go runtime continuation contract. Adapter regressions live with the coding-agent provider implementations.
 
 ### Unit Test (`multi-llm-provider-go`)
 ```bash

@@ -15,21 +15,6 @@ func TestResolveConnectionSessionID(t *testing.T) {
 	}
 }
 
-func TestDeprecatedBrowserSessionCompatibilityShimsAreNoOps(t *testing.T) {
-	registry := &SessionConnectionRegistry{
-		connLocks: make(map[string]*sync.Mutex),
-	}
-
-	if IsBrowserScopedServer("playwright") {
-		t.Fatal("legacy browser server must not regain session-scoped behavior")
-	}
-	registry.RegisterBrowserSessionOverride("tool-session", "browser-session")
-	registry.ClearBrowserSessionOverride("tool-session")
-	if got := registry.ResolveConnectionSessionID("tool-session", "playwright"); got != "global" {
-		t.Fatalf("compatibility shims must preserve global connection pooling, got %q", got)
-	}
-}
-
 func TestHTTPSessionForMCPSessionTracksOnlyLiveRelationship(t *testing.T) {
 	registry := GetSessionRegistry()
 	httpSessionID := "reverse-http-session-test"
