@@ -111,6 +111,7 @@ func TestPackageFunctionSurfaceDoesNotRegrow(t *testing.T) {
 		"RemoveIsolatedSessionWorkspace",
 		"ResolveConnectionSessionID",
 		"RetireReplacedAgent",
+		"SetAccountPhraseResolver",
 		"SnapshotAgentSession",
 		"StartAgentTransportSession",
 		"SubscribeAgentEvents",
