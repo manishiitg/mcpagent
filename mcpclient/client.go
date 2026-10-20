@@ -18,6 +18,7 @@ import (
 	"github.com/manishiitg/mcpagent/oauth"
 
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -988,6 +989,8 @@ func (c *Client) DiscoverOAuthEndpoints(ctx context.Context) (*oauth.OAuthEndpoi
 // used to spend ~19s per agent start re-checking a token file that only an
 // interactive login can create, and every workflow turn on a deployment with
 // an unauthenticated connector paid that before the model was even launched.
+// isNonRetryableConnectError reports a connect failure the server gave as an answer, not a network hiccup: no
+// token, or a 4xx/401 on initialize. Retrying those only cost each chat start about 8 s per broken connection.
 func isNonRetryableConnectError(err error) bool {
-	return errors.Is(err, oauth.ErrNoValidToken)
+	return errors.Is(err, oauth.ErrNoValidToken) || errors.Is(err, transport.ErrLegacySSEServer) || errors.Is(err, transport.ErrUnauthorized)
 }
