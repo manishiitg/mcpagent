@@ -12,8 +12,6 @@ import (
 
 // AgentEventType represents the type of event in the agent flow
 // Note: EventType constants are now defined in types.go
-// DefaultLargeToolOutputThreshold is the default character threshold for considering tool output as "large"
-const DefaultLargeToolOutputThreshold = 20000
 
 type AgentEventType = EventType
 
@@ -988,90 +986,6 @@ func NewSystemPromptEventWithTokens(content string, turn int, tokenCount int) *S
 		Content:    content,
 		Turn:       turn,
 		TokenCount: tokenCount,
-	}
-}
-
-// LargeToolOutputDetectedEvent represents detection of a large tool output
-type LargeToolOutputDetectedEvent struct {
-	BaseEventData
-	ToolName        string `json:"tool_name"`
-	OutputSize      int    `json:"output_size"`
-	Threshold       int    `json:"threshold"`
-	OutputFolder    string `json:"output_folder"`
-	ServerAvailable bool   `json:"server_available"`
-}
-
-func (e *LargeToolOutputDetectedEvent) GetEventType() EventType {
-	return LargeToolOutputDetected
-}
-
-// LargeToolOutputFileWrittenEvent represents successful file writing of large tool output
-type LargeToolOutputFileWrittenEvent struct {
-	BaseEventData
-	ToolName     string `json:"tool_name"`
-	FilePath     string `json:"file_path"`
-	OutputSize   int    `json:"output_size"`
-	FileSize     int64  `json:"file_size"`
-	OutputFolder string `json:"output_folder"`
-	Preview      string `json:"preview,omitempty"` // First 500 lines for observability
-}
-
-func (e *LargeToolOutputFileWrittenEvent) GetEventType() EventType {
-	return LargeToolOutputFileWritten
-}
-
-// LargeToolOutputFileWriteErrorEvent represents error in writing large tool output to file
-type LargeToolOutputFileWriteErrorEvent struct {
-	BaseEventData
-	ToolName     string `json:"tool_name"`
-	Error        string `json:"error"`
-	OutputSize   int    `json:"output_size"`
-	OutputFolder string `json:"output_folder"`
-	FallbackUsed bool   `json:"fallback_used"`
-}
-
-func (e *LargeToolOutputFileWriteErrorEvent) GetEventType() EventType {
-	return LargeToolOutputFileWriteError
-}
-
-// Constructor functions for large tool output events
-func NewLargeToolOutputDetectedEvent(toolName string, outputSize int, outputFolder string) *LargeToolOutputDetectedEvent {
-	return &LargeToolOutputDetectedEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		ToolName:        toolName,
-		OutputSize:      outputSize,
-		Threshold:       DefaultLargeToolOutputThreshold, // Default threshold
-		OutputFolder:    outputFolder,
-		ServerAvailable: true, // Will be set by caller
-	}
-}
-
-func NewLargeToolOutputFileWrittenEvent(toolName, filePath string, outputSize int, preview string) *LargeToolOutputFileWrittenEvent {
-	return &LargeToolOutputFileWrittenEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		ToolName:     toolName,
-		FilePath:     filePath,
-		OutputSize:   outputSize,
-		FileSize:     0,                    // Will be set by caller if needed
-		OutputFolder: "tool_output_folder", // Default
-		Preview:      preview,
-	}
-}
-
-func NewLargeToolOutputFileWriteErrorEvent(toolName, error string, outputSize int) *LargeToolOutputFileWriteErrorEvent {
-	return &LargeToolOutputFileWriteErrorEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		ToolName:     toolName,
-		Error:        error,
-		OutputSize:   outputSize,
-		OutputFolder: "tool_output_folder", // Default
-		FallbackUsed: true,
 	}
 }
 

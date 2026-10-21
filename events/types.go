@@ -55,10 +55,6 @@ const (
 	// Debug events
 	TokenUsage EventType = "token_usage"
 
-	// Large output events
-	LargeToolOutputDetected    EventType = "large_tool_output_detected"
-	LargeToolOutputFileWritten EventType = "large_tool_output_file_written"
-
 	// Error and model events
 	MaxTurnsReached  EventType = "max_turns_reached"
 	ContextCancelled EventType = "context_cancelled"
@@ -84,9 +80,8 @@ const (
 	LLMGenerationWithRetry EventType = "llm_generation_with_retry"
 
 	// Additional event types from mcpagent
-	RetryAttempt                  EventType = "retry_attempt"
-	BrokenPipe                    EventType = "broken_pipe"
-	LargeToolOutputFileWriteError EventType = "large_tool_output_file_write_error"
+	RetryAttempt EventType = "retry_attempt"
+	BrokenPipe   EventType = "broken_pipe"
 
 	// Unified completion event
 	EventTypeUnifiedCompletion EventType = "unified_completion"
