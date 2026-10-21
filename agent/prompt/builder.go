@@ -80,17 +80,6 @@ func BuildSystemPromptWithoutTools(useCodeExecutionMode bool, enableParallelTool
 </tool_usage>`
 	}
 
-	// Build context offloading section (only for simple mode)
-	var largeOutputHandlingSection string
-	if useCodeExecutionMode {
-		largeOutputHandlingSection = "" // Not available in code execution mode
-	} else {
-		largeOutputHandlingSection = `
-CONTEXT OFFLOADING:
-Large tool outputs (>1000 chars) are automatically offloaded to filesystem (offload context pattern).
-Use 'search_large_output' with operation='read', operation='search', or operation='query' to access them.`
-	}
-
 	// Always use Simple system prompt template
 	prompt := SystemPromptTemplate
 
@@ -98,7 +87,6 @@ Use 'search_large_output' with operation='read', operation='search', or operatio
 	prompt = strings.ReplaceAll(prompt, CorePrinciplesPlaceholder, corePrinciplesSection)
 	prompt = strings.ReplaceAll(prompt, ToolUsagePlaceholder, toolUsageSection)
 	prompt = strings.ReplaceAll(prompt, VirtualToolsSectionPlaceholder, "")
-	prompt = strings.ReplaceAll(prompt, LargeOutputHandlingPlaceholder, largeOutputHandlingSection)
 	prompt = strings.ReplaceAll(prompt, CurrentDatePlaceholder, currentDate)
 	prompt = strings.ReplaceAll(prompt, CurrentTimePlaceholder, currentTime)
 

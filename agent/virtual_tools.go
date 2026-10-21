@@ -19,14 +19,6 @@ type VirtualTool struct {
 func (a *Agent) createVirtualTools() []llmtypes.Tool {
 	var virtualTools []llmtypes.Tool
 
-	// Add context offloading virtual tools if enabled
-	// In code execution mode, context offloading tools are not needed
-	// (the LLM writes code that calls HTTP endpoints directly)
-	if !a.useCodeExecutionMode {
-		largeOutputTools := a.createLargeOutputVirtualTools()
-		virtualTools = append(virtualTools, largeOutputTools...)
-	}
-
 	// Add get_api_spec tool — returns OpenAPI spec for specific tool(s)
 	getAPISpecTool := llmtypes.Tool{
 		Type: "function",
@@ -69,10 +61,6 @@ func (a *Agent) handleVirtualTool(ctx context.Context, toolName string, args map
 	case "get_api_spec":
 		return a.handleGetAPISpec(ctx, args)
 	default:
-		// Check if it's a context offloading virtual tool
-		if a.enableContextOffloading {
-			return a.handleLargeOutputVirtualTool(ctx, toolName, args)
-		}
 		return "", fmt.Errorf("unknown virtual tool: %s", toolName)
 	}
 }

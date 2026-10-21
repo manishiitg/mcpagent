@@ -21,13 +21,6 @@ type AgentDiagnostics struct {
 	Usage       Usage
 	ServerNames []string
 	Connections int
-	LargeOutput LargeOutputDiagnostics
-}
-
-type LargeOutputDiagnostics struct {
-	Enabled      bool
-	OutputFolder string
-	SessionID    string
 }
 
 func ReadAgentDiagnostics(agent *Agent) AgentDiagnostics {
@@ -57,13 +50,6 @@ func ReadAgentDiagnostics(agent *Agent) AgentDiagnostics {
 		},
 		ServerNames: agent.getServerNames(),
 		Connections: len(agent.clients),
-	}
-	if handler := agent.getToolOutputHandler(); handler != nil {
-		diagnostics.LargeOutput = LargeOutputDiagnostics{
-			Enabled:      agent.enableContextOffloading,
-			OutputFolder: handler.GetToolOutputFolder(),
-			SessionID:    handler.GetSessionID(),
-		}
 	}
 	return diagnostics
 }

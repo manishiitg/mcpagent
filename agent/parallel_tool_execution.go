@@ -588,40 +588,6 @@ func executeToolCall(
 			}
 		}
 
-		// Context offloading
-		if a.enableContextOffloading && a.shouldUseWrapperTokenCounting() {
-			if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.modelID) {
-				detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
-				detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
-				a.emitTypedEvent(ctx, detectedEvent)
-
-				filePath, writeErr := a.toolOutputHandler.WriteToolOutputToFile(resultText, tc.FunctionCall.Name)
-				if writeErr == nil {
-					preview := a.toolOutputHandler.ExtractFirstNCharacters(resultText, 100)
-					fileWrittenEvent := events.NewLargeToolOutputFileWrittenEvent(tc.FunctionCall.Name, filePath, len(resultText), preview)
-					a.emitTypedEvent(ctx, fileWrittenEvent)
-					fileMessage := a.toolOutputHandler.CreateToolOutputMessageWithPreview(tc.ID, filePath, resultText, 50, false)
-					resultText = fileMessage
-				} else {
-					fileErrorEvent := events.NewLargeToolOutputFileWriteErrorEvent(tc.FunctionCall.Name, writeErr.Error(), len(resultText))
-					a.emitTypedEvent(ctx, fileErrorEvent)
-				}
-			}
-		}
-
-		// Safety check: Apply max token limit truncation regardless of context offloading setting
-		// This prevents API errors from prompts exceeding model context limits
-		if a.shouldUseWrapperTokenCounting() && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.modelID) {
-			truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.modelID, tc.FunctionCall.Name)
-			if wasTruncated {
-				v2Logger.Warn("Tool output exceeded max token limit, truncated",
-					loggerv2.String("tool", tc.FunctionCall.Name),
-					loggerv2.Int("original_length", len(resultText)),
-					loggerv2.Int("truncated_length", len(truncatedResult)),
-					loggerv2.Int("max_tokens", a.toolOutputHandler.GetMaxToolOutputTokens()))
-				resultText = truncatedResult
-			}
-		}
 	} else {
 		resultText = "Tool execution completed but no result returned"
 	}

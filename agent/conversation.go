@@ -153,7 +153,6 @@ func finalAssistantTextFromCodingTrail(messages []llmtypes.MessageContent) strin
 func isVirtualTool(toolName string) bool {
 	// Check hardcoded virtual tools (includes all possible virtual tools)
 	virtualTools := []string{
-		"search_large_output",
 		"get_api_spec", // Code execution mode tool
 	}
 	for _, vt := range virtualTools {
@@ -562,12 +561,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// The filtered set selected during pre-call setup is what the LLM will see.
 
-	// Calculate token count for the system prompt if tool output handler is available
-	var tokenCount int
-	if a.modelID != "" && a.shouldUseWrapperTokenCounting() {
-		tokenCount = a.toolOutputHandler.CountTokensForModel(effectivePrompt, a.modelID)
-	}
-	systemPromptEvent := events.NewSystemPromptEventWithTokens(effectivePrompt, 0, tokenCount)
+	systemPromptEvent := events.NewSystemPromptEventWithTokens(effectivePrompt, 0, 0)
 	a.emitTypedEvent(ctx, systemPromptEvent)
 
 	// Loop detection: track recent tool calls and responses to detect infinite loops
@@ -1024,7 +1018,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						v2Logger.Warn(fmt.Sprintf("[AGENT DEBUG] AskWithHistory Turn %d: Tool '%s' not mapped to any server. Providing feedback to LLM.", turn+1, tc.FunctionCall.Name))
 
 						// Generate helpful feedback instead of failing
-						feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- search_large_output (read/search/query operations for offloaded files)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
+						feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
 
 						// Emit tool call error event for observability
 						v2Logger.Error(toolerr.Marker+" tool not found", nil,
@@ -1405,53 +1399,6 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						}
 					}
 
-					// Context offloading: Check if tool output should be offloaded to filesystem
-					if a.enableContextOffloading && a.shouldUseWrapperTokenCounting() {
-						// Check if output exceeds threshold for context offloading
-						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.modelID) {
-
-							// Emit context offloading detection event
-							detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
-							detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
-							a.emitTypedEvent(ctx, detectedEvent)
-
-							// Offload large output to filesystem (context offloading)
-							filePath, writeErr := a.toolOutputHandler.WriteToolOutputToFile(resultText, tc.FunctionCall.Name)
-							if writeErr == nil {
-								// Extract first 100 characters for Langfuse observability
-								preview := a.toolOutputHandler.ExtractFirstNCharacters(resultText, 100)
-
-								// Emit successful file write event with preview
-								fileWrittenEvent := events.NewLargeToolOutputFileWrittenEvent(tc.FunctionCall.Name, filePath, len(resultText), preview)
-								a.emitTypedEvent(ctx, fileWrittenEvent)
-
-								// Create message with file path, first 50% of threshold, and instructions
-								fileMessage := a.toolOutputHandler.CreateToolOutputMessageWithPreview(tc.ID, filePath, resultText, 50, false)
-
-								// Replace the result text with the file message
-								resultText = fileMessage
-
-							} else {
-								// Emit file write error event
-								fileErrorEvent := events.NewLargeToolOutputFileWriteErrorEvent(tc.FunctionCall.Name, writeErr.Error(), len(resultText))
-								a.emitTypedEvent(ctx, fileErrorEvent)
-							}
-						}
-					}
-
-					// Safety check: Apply max token limit truncation regardless of context offloading setting
-					// This prevents API errors from prompts exceeding model context limits
-					if a.shouldUseWrapperTokenCounting() && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.modelID) {
-						truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.modelID, tc.FunctionCall.Name)
-						if wasTruncated {
-							v2Logger.Warn("Tool output exceeded max token limit, truncated",
-								loggerv2.String("tool", tc.FunctionCall.Name),
-								loggerv2.Int("original_length", len(resultText)),
-								loggerv2.Int("truncated_length", len(truncatedResult)),
-								loggerv2.Int("max_tokens", a.toolOutputHandler.GetMaxToolOutputTokens()))
-							resultText = truncatedResult
-						}
-					}
 				} else {
 					resultText = "Tool execution completed but no result returned"
 				}

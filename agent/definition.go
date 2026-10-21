@@ -61,7 +61,6 @@ type RuntimeConfig struct {
 	ResumeHandle  *AgentSessionHandle
 	Generation    GenerationRuntimeConfig
 	Tools         ToolRuntimeConfig
-	Context       ContextRuntimeConfig
 	Coding        CodingRuntimeConfig
 	MCP           MCPRuntimeConfig
 	Workspace     WorkspaceRuntimeConfig
@@ -86,13 +85,6 @@ type ToolRuntimeConfig struct {
 	DisableCache      bool
 
 	AdditionalBridge []string
-}
-
-type ContextRuntimeConfig struct {
-	Offloading                    *bool
-	LargeOutputThreshold          int
-	ToolOutputRetentionPeriod     time.Duration
-	CleanupToolOutputOnSessionEnd bool
 }
 
 type CodingRuntimeConfig struct {
@@ -312,20 +304,6 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 
 	if len(tools.AdditionalBridge) > 0 {
 		options = append(options, withAdditionalBridgeTools(tools.AdditionalBridge...))
-	}
-
-	contextConfig := runtime.Context
-	if contextConfig.Offloading != nil {
-		options = append(options, withContextOffloading(*contextConfig.Offloading))
-	}
-	if contextConfig.LargeOutputThreshold > 0 {
-		options = append(options, withLargeOutputThreshold(contextConfig.LargeOutputThreshold))
-	}
-	if contextConfig.ToolOutputRetentionPeriod != 0 {
-		options = append(options, withToolOutputRetentionPeriod(contextConfig.ToolOutputRetentionPeriod))
-	}
-	if contextConfig.CleanupToolOutputOnSessionEnd {
-		options = append(options, withCleanupToolOutputOnSessionEnd(true))
 	}
 
 	coding := runtime.Coding

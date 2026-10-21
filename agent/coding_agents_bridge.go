@@ -15,6 +15,10 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
+// DefaultToolOutputFolder is the folder under the agent working directory where the coding-agent
+// bridge saves tool output that is too large to return inline.
+const DefaultToolOutputFolder = "tool_output_folder"
+
 // piReadyMarkerAcquisition records who most recently received the STABLE
 // readiness-marker path for a given working directory, and when.
 type piReadyMarkerAcquisition struct {
@@ -318,7 +322,7 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 		bridgeEnv["MCP_SESSION_ID"] = a.sessionID
 	}
 	// Coding CLI providers call mcpbridge outside the normal Agent conversation
-	// loop, so their large tool results cannot use ToolOutputHandler directly.
+	// loop, so their large tool results are handled by the bridge.
 	// Give the bridge an explicit persistent folder under the agent's real
 	// working directory; this remains stable even when the CLI itself runs in an
 	// isolated temporary cwd.

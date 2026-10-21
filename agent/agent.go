@@ -337,61 +337,6 @@ func withToolChoice(toolChoice string) agentOption {
 	}
 }
 
-// withContextOffloading enables the "Context Offloading" pattern.
-//
-// When enabled, if a tool returns a massive output (exceeding LargeOutputThreshold),
-// the agent will automatically save it to a file and provide the LLM with a "virtual tool"
-// to read that file on demand, rather than flooding the context window.
-//
-// Default: true (Enabled)
-func withContextOffloading(enabled bool) agentOption {
-	return func(a *Agent) {
-		a.enableContextOffloading = enabled
-	}
-}
-
-// withLargeOutputThreshold sets the token count threshold for context offloading.
-//
-// Tool outputs larger than this value will be offloaded to the filesystem.
-// The count is based on token estimate, not character count.
-//
-// Parameters:
-//   - threshold: Token count limit.
-//
-// Default: 10,000 tokens
-func withLargeOutputThreshold(threshold int) agentOption {
-	return func(a *Agent) {
-		a.largeOutputThreshold = threshold
-	}
-}
-
-// withToolOutputRetentionPeriod sets the retention policy for offloaded tool output files.
-//
-// Files created by context offloading will be deleted if they are older than this duration.
-// A periodic cleanup routine runs every hour to remove files older than the retention period.
-//
-// Parameters:
-//   - retentionPeriod: Duration to keep files. Set to 0 to disable automatic cleanup.
-//
-// Default: 7 days (DefaultToolOutputRetentionPeriod). Periodic cleanup runs every hour.
-func withToolOutputRetentionPeriod(retentionPeriod time.Duration) agentOption {
-	return func(a *Agent) {
-		a.toolOutputRetentionPeriod = retentionPeriod
-	}
-}
-
-// withCleanupToolOutputOnSessionEnd configures immediate cleanup behavior.
-//
-// If enabled, all tool output files created during this session will be deleted
-// when EndAgentSession is called.
-//
-// Default: false (Files persist for debugging or future reference)
-func withCleanupToolOutputOnSessionEnd(enabled bool) agentOption {
-	return func(a *Agent) {
-		a.cleanupToolOutputOnSessionEnd = enabled
-	}
-}
-
 // withParallelToolExecution enables concurrent execution of multiple tool calls.
 //
 // When the LLM returns multiple tool calls in a single response, they will be
@@ -961,22 +906,6 @@ type Agent struct {
 	// flags), which are gone.
 	codingAgentTransport llm.CodingAgentTransport
 
-	// Context offloading: handles offloading large tool outputs to filesystem
-	toolOutputHandler *ToolOutputHandler
-
-	// Context offloading configuration: enables virtual tools for accessing offloaded outputs
-	enableContextOffloading bool
-
-	// Context offloading threshold: custom threshold for when to offload tool outputs (0 = use default)
-	largeOutputThreshold int
-
-	// Tool output cleanup configuration
-	toolOutputRetentionPeriod     time.Duration // How long to keep tool output files (0 = use default, default: 7 days)
-	cleanupToolOutputOnSessionEnd bool          // Whether to clean up current session folder on session end
-	cleanupMu                     sync.Mutex    // Protects cleanup routine lifecycle fields
-	cleanupTicker                 *time.Ticker  // Ticker for periodic cleanup of old tool output files
-	cleanupDone                   chan struct{} // Closed to signal the cleanup routine to stop
-
 	// Parallel tool execution configuration
 	// When enabled and LLM returns multiple tool calls in a single response,
 	// tool calls execute concurrently using goroutines (fork-join pattern).
@@ -1334,11 +1263,6 @@ func (a *Agent) getProvider() llm.Provider {
 	return a.provider
 }
 
-// GetToolOutputHandler returns the tool output handler
-func (a *Agent) getToolOutputHandler() *ToolOutputHandler {
-	return a.toolOutputHandler
-}
-
 // GetLLMModelConfig returns the agent's primary LLM configuration as an LLMModel.
 // If LLMConfig.Primary is set (via withLLMConfig), it's returned directly.
 // Otherwise, constructs one from the legacy provider/ModelID/APIKeys fields.
@@ -1487,21 +1411,17 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Create agent with default values
 	ag := &Agent{
-		ctx:                           ctx,
-		llmModel:                      llm,
-		tracers:                       []observability.Tracer{}, // Default: empty tracers array
-		maxTurns:                      GetDefaultMaxTurns(),
-		temperature:                   0.0,    // Default temperature
-		toolChoice:                    "auto", // Default tool choice
-		modelID:                       modelID,
-		agentMode:                     SimpleAgent,                      // Default to simple mode
-		traceID:                       "",                               // Default: empty trace ID
-		provider:                      "",                               // Will be set by caller or extracted
-		enableContextOffloading:       true,                             // Default to enabled
-		largeOutputThreshold:          0,                                // Default: 0 means use default threshold (10000)
-		toolOutputRetentionPeriod:     DefaultToolOutputRetentionPeriod, // Default: 7 days
-		cleanupToolOutputOnSessionEnd: false,                            // Default: false means files persist after session
-		logger:                        loggerv2.NewDefault(),            // Default logger
+		ctx:         ctx,
+		llmModel:    llm,
+		tracers:     []observability.Tracer{}, // Default: empty tracers array
+		maxTurns:    GetDefaultMaxTurns(),
+		temperature: 0.0,    // Default temperature
+		toolChoice:  "auto", // Default tool choice
+		modelID:     modelID,
+		agentMode:   SimpleAgent,           // Default to simple mode
+		traceID:     "",                    // Default: empty trace ID
+		provider:    "",                    // Will be set by caller or extracted
+		logger:      loggerv2.NewDefault(), // Default logger
 
 		// Initialize hierarchy tracking fields
 		currentParentEventID:  "", // Start with no parent
@@ -1608,25 +1528,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 	logger.Info("✅ [DEBUG] newAgent: NewAgentConnectionWithSession completed successfully", loggerv2.String("duration", connectionDuration.String()), loggerv2.Int("clients_count", len(clients)), loggerv2.Int("tools_count", len(allLLMTools)), loggerv2.Int("servers_count", len(servers)), loggerv2.String("session_id", ag.sessionID))
 
-	// Initialize tool output handler
-	toolOutputHandler := NewToolOutputHandler()
-
-	// Apply custom threshold if set via withLargeOutputThreshold option
-	if ag.largeOutputThreshold > 0 {
-		toolOutputHandler.SetThreshold(ag.largeOutputThreshold)
-		logger.Info("Context offloading threshold set", loggerv2.Int("threshold", ag.largeOutputThreshold))
-	}
-
-	// Large output handling is now done via virtual tools, not MCP server
-	// Virtual tools are enabled by default and handle file operations directly
-	toolOutputHandler.SetServerAvailable(true) // Always available with virtual tools
-
-	// Set session ID for organizing files by conversation
-	toolOutputHandler.SetSessionID(string(ag.traceID))
-
-	// Set LLM for provider-aware token counting
-	toolOutputHandler.SetLLM(llm)
-
 	// Update the existing agent with connection data
 	ag.clients = clients
 	ag.toolToServer = toolToServer
@@ -1649,11 +1550,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		ag.systemPrompt = systemPrompt
 	}
 	ag.servers = servers
-	ag.toolOutputHandler = toolOutputHandler
 	ag.configPath = configPath
-
-	// Start periodic cleanup routine for tool output files
-	ag.startCleanupRoutine()
 
 	// In code execution mode, OpenAPI specs are generated on-demand per server
 	// when the LLM calls get_api_spec(server_name=...) — no upfront code generation needed
@@ -1937,11 +1834,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Warn("[BRIDGE_DEBUG] CLAUDE_CODE: UseCodeExecutionMode was not pre-set — enforcing now (safety net)")
 		}
 
-		if ag.enableContextOffloading {
-			ag.enableContextOffloading = false
-			logger.Debug("🔧 [CLAUDE_CODE] Disabled Context Offloading (handled natively by CLI)")
-		}
-
 		// Auto-enable streaming — required for tool call observability events
 		// (ToolCallStart/ToolCallEnd) since the CLI manages its own agentic loop
 		if !ag.enableStreaming {
@@ -1958,11 +1850,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.useCodeExecutionMode {
 			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [CODEX_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.enableContextOffloading {
-			ag.enableContextOffloading = false
-			logger.Debug("🔧 [CODEX_CLI] Disabled Context Offloading (handled natively by CLI)")
 		}
 
 		if !ag.enableStreaming {
@@ -1999,11 +1886,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.enableContextOffloading {
-			ag.enableContextOffloading = false
-			logger.Debug("🔧 [CURSOR_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-
 		if !ag.enableStreaming {
 			ag.enableStreaming = true
 			logger.Debug("🔧 [CURSOR_CLI] Auto-enabled streaming (required for tool call observability)")
@@ -2023,11 +1905,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 			logger.Debug("🔧 [MUSE_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
 		}
 
-		if ag.enableContextOffloading {
-			ag.enableContextOffloading = false
-			logger.Debug("🔧 [MUSE_CLI] Disabled Context Offloading (handled natively by CLI)")
-		}
-
 		if !ag.enableStreaming {
 			ag.enableStreaming = true
 			logger.Debug("🔧 [MUSE_CLI] Auto-enabled streaming (required for tool call observability)")
@@ -2044,11 +1921,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		if !ag.useCodeExecutionMode {
 			ag.useCodeExecutionMode = true
 			logger.Debug("🔧 [PI_CLI] Auto-enabled Code Execution Mode (CLI manages its own agentic loop)")
-		}
-
-		if ag.enableContextOffloading {
-			ag.enableContextOffloading = false
-			logger.Debug("🔧 [PI_CLI] Disabled Context Offloading (handled natively by CLI)")
 		}
 
 		if !ag.enableStreaming {
@@ -2728,37 +2600,11 @@ func (a *Agent) endAgentSession(ctx context.Context, conversationDuration time.D
 	a.emitTypedEvent(ctx, agentEndEvent)
 
 	// Stop periodic cleanup routine
-	a.stopCleanupRoutine()
 	a.closeStreamingTracers()
 
 	// Cleanup agent-specific generated directory (only in code execution mode)
 	if a.useCodeExecutionMode {
 		a.cleanupAgentGeneratedDir()
-	}
-
-	// Cleanup tool output files
-	if a.toolOutputHandler != nil {
-		// Clean up old files if retention period is configured
-		if a.toolOutputRetentionPeriod > 0 {
-			if err := a.toolOutputHandler.CleanupOldFiles(a.toolOutputRetentionPeriod); err != nil {
-				if a.logger != nil {
-					a.logger.Warn("Failed to cleanup old tool output files", loggerv2.Error(err))
-				}
-			} else if a.logger != nil {
-				a.logger.Info("Cleaned up old tool output files", loggerv2.Any("retention_period", a.toolOutputRetentionPeriod))
-			}
-		}
-
-		// Clean up current session folder if enabled
-		if a.cleanupToolOutputOnSessionEnd {
-			if err := a.toolOutputHandler.CleanupCurrentSessionFolder(); err != nil {
-				if a.logger != nil {
-					a.logger.Warn("Failed to cleanup current session tool output folder", loggerv2.Error(err))
-				}
-			} else if a.logger != nil {
-				a.logger.Info("Cleaned up current session tool output folder")
-			}
-		}
 	}
 }
 
@@ -2779,81 +2625,6 @@ func (a *Agent) cleanupAgentGeneratedDir() {
 		}
 	} else if a.logger != nil {
 		a.logger.Info("🧹 Cleaned up agent directory", loggerv2.String("directory", agentDir))
-	}
-}
-
-// startCleanupRoutine starts the background cleanup routine for old tool output files.
-// It runs periodically (every hour by default) to clean up files older than the retention period.
-// This ensures cleanup happens even if sessions don't end properly or agents run for long periods.
-func (a *Agent) startCleanupRoutine() {
-	// Only start if context offloading is enabled and retention period is set
-	if !a.enableContextOffloading || a.toolOutputHandler == nil {
-		return
-	}
-
-	// If retention period is 0, automatic cleanup is disabled
-	if a.toolOutputRetentionPeriod == 0 {
-		return
-	}
-
-	// Use default retention period if negative (safety check)
-	retentionPeriod := a.toolOutputRetentionPeriod
-	if retentionPeriod < 0 {
-		retentionPeriod = DefaultToolOutputRetentionPeriod
-	}
-
-	// Capture lifecycle state in locals so Close never races with the goroutine
-	// while detaching the Agent's cleanup fields.
-	a.cleanupMu.Lock()
-	if a.cleanupTicker != nil {
-		a.cleanupMu.Unlock()
-		return
-	}
-	ticker := time.NewTicker(DefaultToolOutputCleanupInterval)
-	done := make(chan struct{})
-	a.cleanupTicker = ticker
-	a.cleanupDone = done
-	a.cleanupMu.Unlock()
-
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				// Perform periodic cleanup
-				if a.toolOutputHandler != nil && retentionPeriod > 0 {
-					if err := a.toolOutputHandler.CleanupOldFiles(retentionPeriod); err != nil {
-						if a.logger != nil {
-							a.logger.Warn("Periodic cleanup of old tool output files failed", loggerv2.Error(err))
-						}
-					} else if a.logger != nil {
-						a.logger.Debug("Periodic cleanup of old tool output files completed", loggerv2.Any("retention_period", retentionPeriod))
-					}
-				}
-			case <-done:
-				if a.logger != nil {
-					a.logger.Debug("Tool output cleanup routine stopped")
-				}
-				return
-			}
-		}
-	}()
-}
-
-// stopCleanupRoutine stops the background cleanup routine.
-// This should be called when the agent is closed or session ends to prevent resource leaks.
-func (a *Agent) stopCleanupRoutine() {
-	a.cleanupMu.Lock()
-	ticker := a.cleanupTicker
-	done := a.cleanupDone
-	a.cleanupTicker = nil
-	a.cleanupDone = nil
-	a.cleanupMu.Unlock()
-
-	if ticker != nil {
-		ticker.Stop()
-	}
-	if done != nil {
-		close(done)
 	}
 }
 
@@ -3100,7 +2871,6 @@ func (a *Agent) Close() error {
 	closeTurnSessionForAgent(a)
 
 	// Stop periodic cleanup routine
-	a.stopCleanupRoutine()
 	a.closeStreamingTracers()
 
 	// Connections are shared and managed by the session registry. Do not close

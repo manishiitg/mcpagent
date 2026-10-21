@@ -13,7 +13,6 @@ const SystemPromptTemplate = `<session_info>
 
 <virtual_tools>
 {{VIRTUAL_TOOLS_SECTION}}
-{{LARGE_OUTPUT_HANDLING}}
 </virtual_tools>`
 
 // Placeholder constants for easy replacement
@@ -24,7 +23,6 @@ const (
 	CurrentTimePlaceholder         = "{{CURRENT_TIME}}"
 	CorePrinciplesPlaceholder      = "{{CORE_PRINCIPLES}}"
 	ToolUsagePlaceholder           = "{{TOOL_USAGE}}"
-	LargeOutputHandlingPlaceholder = "{{LARGE_OUTPUT_HANDLING}}"
 )
 
 // NormalizeForAppend tidies a system prompt before another block is appended

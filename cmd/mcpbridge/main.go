@@ -90,7 +90,7 @@ func truncateBridgeErrorText(s string) string {
 }
 
 // maxBridgeToolResultBytes bounds the text returned over stdio MCP. Coding
-// agents call mcpbridge directly, outside mcpagent's ToolOutputHandler, so the
+// agents call mcpbridge directly, outside mcpagent, so the
 // normal large-output offloading path cannot protect this boundary. A single
 // large result is embedded in several JSON envelopes (HTTP response, MCP
 // content, and the CLI's JSONL event stream); keeping the inner text at 128 KiB

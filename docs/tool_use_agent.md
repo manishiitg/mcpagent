@@ -60,7 +60,7 @@ The execution logic resides in `pkg/mcpagent/conversation.go`.
 3.  **Routing**: The agent determines the type of tool (MCP, Virtual, or Custom).
 4.  **Execution**:
     *   **MCP Tools**: Forwarded to the appropriate MCP server via `client.CallTool`.
-    *   **Virtual Tools**: Executed locally by the agent (e.g., `get_api_spec`, `search_large_output`).
+    *   **Virtual Tools**: Executed locally by the agent (e.g., `get_api_spec`).
     *   **Custom Tools**: Executed as native Go functions.
 5.  **Result Handling**: The output is captured and appended to the conversation history.
 6.  **Iteration**: The loop continues until the LLM provides a final text response or `MaxTurns` is reached.
