@@ -134,6 +134,7 @@ func TestTypedErrorsClassifyWithoutStringMatching(t *testing.T) {
 	}{
 		{llmerrors.KindContextTooLong, "max_token_error"},
 		{llmerrors.KindQuotaExhausted, "quota_exhausted_error"},
+		{llmerrors.KindBilling, "billing_error"},
 		{llmerrors.KindRateLimit, "throttling_error"},
 		{llmerrors.KindNetwork, "connection_error"},
 		{llmerrors.KindTimeout, "connection_error"},

@@ -472,6 +472,8 @@ func classifyLLMError(err error) string {
 		return "auth_error"
 	case llmerrors.KindModelNotFound:
 		return "model_not_found_error"
+	case llmerrors.KindBilling:
+		return "billing_error"
 	case llmerrors.KindQuotaExhausted:
 		return "quota_exhausted_error"
 	case llmerrors.KindRateLimit:
