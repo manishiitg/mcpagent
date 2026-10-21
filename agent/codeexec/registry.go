@@ -139,6 +139,9 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 		logger.Debug("Updating existing tool registry (merging new tools/clients)")
 	}
 
+	globalRegistry.mu.Lock()
+	defer globalRegistry.mu.Unlock()
+
 	// Merge MCP clients
 	for serverName, client := range mcpClients {
 		if existing, exists := globalRegistry.mcpClients[serverName]; exists {
@@ -214,6 +217,8 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 
 // GetRegistry returns the global tool registry
 func GetRegistry() *ToolRegistry {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	return globalRegistry
 }
 
@@ -222,7 +227,7 @@ func GetRegistry() *ToolRegistry {
 // so scope enforcement only kicks in when a session is actually active.
 // It normalizes hyphen/underscore variants (e.g. "google_sheets" matches "google-sheets").
 func IsServerInScope(serverName string) bool {
-	registry := globalRegistry
+	registry := GetRegistry()
 	if registry == nil {
 		return true
 	}
@@ -246,7 +251,7 @@ func IsServerInScope(serverName string) bool {
 // ScopedServerNames returns the names of all MCP servers currently registered in the global
 // tool registry. Returns nil if the registry is not initialized or has no clients.
 func ScopedServerNames() []string {
-	registry := globalRegistry
+	registry := GetRegistry()
 	if registry == nil {
 		return nil
 	}
@@ -303,6 +308,9 @@ func InitRegistryVirtualToolsForSession(sessionID string, virtualTools map[strin
 		}
 	}
 
+	globalRegistry.mu.Lock()
+	defer globalRegistry.mu.Unlock()
+
 	// Ensure sessionVirtualTools map is initialized
 	if globalRegistry.sessionVirtualTools == nil {
 		globalRegistry.sessionVirtualTools = make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
@@ -341,71 +349,47 @@ func CallVirtualToolWithSession(ctx context.Context, sessionID string, toolName 
 		return "", fmt.Errorf("tool registry not initialized")
 	}
 
-	registry.mu.RLock()
-	defer registry.mu.RUnlock()
-
-	// Priority 1: Check session-scoped virtual tools first (if sessionID provided)
-	if sessionID != "" && registry.sessionVirtualTools != nil {
-		if sessionTools, exists := registry.sessionVirtualTools[sessionID]; exists {
-			if executor, exists := sessionTools[toolName]; exists {
-				if registry.logger != nil {
-					registry.logger.Debug("Using session-scoped virtual tool",
-						loggerv2.String("session_id", sessionID),
-						loggerv2.String("tool", toolName))
-				}
-				result, err := executor(ctx, args)
-				if err != nil && shouldRetryVirtualToolWithLatestScope(err) {
-					if latestScopeID, latestExecutor := registry.latestVirtualToolExecutorLocked(sessionID, toolName); latestExecutor != nil {
-						if registry.logger != nil {
-							registry.logger.Warn("Retrying virtual tool with latest scope after stale empty discovery",
-								loggerv2.String("tool", toolName),
-								loggerv2.String("stale_scope_id", sessionID),
-								loggerv2.String("latest_scope_id", latestScopeID),
-								loggerv2.Error(err))
-						}
-						return latestExecutor(ctx, args)
-					}
-				}
-				return result, err
-			}
-		}
-		// Session exists but tool not found in session scope - fall through to global
-		if registry.logger != nil {
-			registry.logger.Debug("Virtual tool not found in session scope, falling back to global",
-				loggerv2.String("session_id", sessionID),
-				loggerv2.String("tool", toolName))
-		}
-		if latestScopeID, latestExecutor := registry.latestVirtualToolExecutorLocked(sessionID, toolName); latestExecutor != nil {
+	executor, scoped, err := registry.virtualToolExecutor(sessionID, toolName)
+	if err != nil {
+		return "", err
+	}
+	result, err := executor(ctx, args)
+	if scoped && err != nil && shouldRetryVirtualToolWithLatestScope(err) {
+		registry.mu.RLock()
+		latestScopeID, latestExecutor := registry.latestVirtualToolExecutorLocked(sessionID, toolName)
+		registry.mu.RUnlock()
+		if latestExecutor != nil {
 			if registry.logger != nil {
-				registry.logger.Debug("Using latest virtual tool scope for base session",
-					loggerv2.String("session_id", sessionID),
+				registry.logger.Warn("Retrying virtual tool with latest scope after stale empty discovery",
+					loggerv2.String("tool", toolName),
+					loggerv2.String("stale_scope_id", sessionID),
 					loggerv2.String("latest_scope_id", latestScopeID),
-					loggerv2.String("tool", toolName))
+					loggerv2.Error(err))
 			}
 			return latestExecutor(ctx, args)
 		}
 	}
+	return result, err
+}
 
-	// A call for a session never falls back to the global virtual tools: they
-	// are closures over whichever agent registered last, so the fallback would
-	// run another session's search_large_output or get_api_spec.
+func (registry *ToolRegistry) virtualToolExecutor(sessionID, toolName string) (func(context.Context, map[string]interface{}) (string, error), bool, error) {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
 	if sessionID != "" {
-		return "", fmt.Errorf("virtual tool %s is not registered for session %s", toolName, sessionID)
+		if executor := registry.sessionVirtualTools[sessionID][toolName]; executor != nil {
+			return executor, true, nil
+		}
+		if _, executor := registry.latestVirtualToolExecutorLocked(sessionID, toolName); executor != nil {
+			return executor, false, nil
+		}
+		// Global virtual closures belong to whichever session registered last.
+		return nil, false, fmt.Errorf("virtual tool %s is not registered for session %s", toolName, sessionID)
 	}
-
-	// Priority 2: sessionless calls use the global virtual tools
-	executor, exists := registry.virtualTools[toolName]
-	if !exists {
-		return "", fmt.Errorf("virtual tool %s not found (checked session: %s)", toolName, sessionID)
+	executor := registry.virtualTools[toolName]
+	if executor == nil {
+		return nil, false, fmt.Errorf("virtual tool %s not found (checked session: %s)", toolName, sessionID)
 	}
-
-	if registry.logger != nil {
-		registry.logger.Debug("Using global virtual tool (no session scope)",
-			loggerv2.String("tool", toolName),
-			loggerv2.String("session_id", sessionID))
-	}
-
-	return executor(ctx, args)
+	return executor, false, nil
 }
 
 func baseSessionFromVirtualScopeID(scopeID string) string {
@@ -500,6 +484,9 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 		}
 	}
 
+	globalRegistry.mu.Lock()
+	defer globalRegistry.mu.Unlock()
+
 	// Ensure sessionCustomTools map is initialized
 	if globalRegistry.sessionCustomTools == nil {
 		globalRegistry.sessionCustomTools = make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
@@ -541,10 +528,7 @@ func IsSessionToolAllowed(sessionID, toolName string) bool {
 // When set, CallCustomToolWithSession will reject tools not in the list.
 // Pass nil to clear the restriction (all tools allowed).
 func SetSessionToolAllowList(sessionID string, allowList map[string]bool) {
-	// NOTE: Uses allowListMu (NOT registry.mu) to avoid deadlock.
-	// registry.mu.RLock() is held for the entire duration of tool execution in
-	// CallCustomToolWithSession. A registry.mu.Lock() here would block indefinitely
-	// while any long-running tool (e.g., execute_shell_command) is running.
+	// Policy has its own mutex; registry lookups never hold a lock during execution.
 	registry := GetRegistry()
 	if registry == nil {
 		return
@@ -775,6 +759,16 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 
 	sessionID = registry.registryScopeForSession(sessionID, toolName)
 
+	executor, err := registry.customToolExecutor(sessionID, toolName)
+	if err != nil {
+		return "", err
+	}
+	return executor(ctx, args)
+}
+
+// Copy the selected closure while locked. Routes can create and clean up child
+// sessions, so invoking that closure under the registry lock would deadlock.
+func (registry *ToolRegistry) customToolExecutor(sessionID, toolName string) (func(context.Context, map[string]interface{}) (string, error), error) {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
 
@@ -787,7 +781,7 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 						loggerv2.String("session_id", sessionID),
 						loggerv2.String("tool", toolName))
 				}
-				return executor(ctx, args)
+				return executor, nil
 			}
 			// Reserved tools like get_api_spec are registered in this session's
 			// VIRTUAL partition, not its custom one. The model addresses every
@@ -804,11 +798,11 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 								loggerv2.String("session_id", sessionID),
 								loggerv2.String("tool", toolName))
 						}
-						return executor(ctx, args)
+						return executor, nil
 					}
 				}
 			}
-			return "", fmt.Errorf("custom tool %s is not registered for session %s", toolName, sessionID)
+			return nil, fmt.Errorf("custom tool %s is not registered for session %s", toolName, sessionID)
 		}
 		// No registry exists for this session yet. Keep the legacy global path for
 		// non-workflow callers that have not initialized session-scoped tools.
@@ -822,7 +816,7 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 	// Priority 2: Fall back to global custom tools
 	executor, exists := registry.customTools[toolName]
 	if !exists {
-		return "", fmt.Errorf("custom tool %s not found (checked session: %s)", toolName, sessionID)
+		return nil, fmt.Errorf("custom tool %s not found (checked session: %s)", toolName, sessionID)
 	}
 
 	if registry.logger != nil {
@@ -831,7 +825,7 @@ func CallCustomToolWithSession(ctx context.Context, sessionID string, toolName s
 			loggerv2.String("session_id", sessionID))
 	}
 
-	return executor(ctx, args)
+	return executor, nil
 }
 
 // CleanupSession removes all session-scoped tools for a given session
@@ -841,9 +835,6 @@ func CleanupSession(sessionID string) {
 		return
 	}
 
-	// NOTE: Use registry.mu (not registryMu) to avoid deadlock with
-	// CallCustomToolWithSession which holds registry.mu.RLock() during
-	// long-running tool executions.
 	registry := GetRegistry()
 	if registry == nil {
 		return
