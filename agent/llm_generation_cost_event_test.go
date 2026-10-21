@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -9,7 +10,53 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 )
+
+func TestPiGenerationPricesFreshAndCachedUsageWithoutGuessingOtherRoutes(t *testing.T) {
+	for _, tt := range []struct {
+		name, selected, effective string
+		fresh, output, cached     int
+		actual, want              float64
+	}{
+		{"google", "google/gemini-3.7-flash", "google/gemini-3.7-flash", 2522, 1730, 154264, 0, 0.0199488},
+		{"vertex", "google-vertex/gemini-3.7-flash", "google-vertex/gemini-3.7-flash", 2954, 1007, 79943, 0, 0.011987475},
+		{"native actual wins", "google/gemini-3.7-flash", "google/gemini-3.7-flash", 2522, 1730, 154264, 0.123, 0.123},
+		{"unknown google model", "google/unknown-model", "google/unknown-model", 2522, 1730, 154264, 0, 0},
+		{"custom route", "custom/gemini-3.7-flash", "gemini-3.7-flash", 2522, 1730, 154264, 0, 0},
+		{"openrouter route", "openrouter/google/gemini-3.7-flash", "openrouter/google/gemini-3.7-flash", 2522, 1730, 154264, 0, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			listener := &recordingAgentEventListener{}
+			a := &Agent{sessionID: "pi-pricing", modelID: tt.selected, provider: llm.ProviderPiCLI,
+				llmModel: picli.NewPiCLIAdapter("", tt.selected, nil), logger: loggerv2.NewNoop(), listeners: []AgentEventListener{listener}}
+			additional := map[string]interface{}{"pi_model": tt.effective, "cache_read_input_tokens": tt.cached, "prompt_tokens_include_cache": false}
+			if tt.actual > 0 {
+				additional["cost_usd"] = tt.actual
+			}
+			resp := &llmtypes.ContentResponse{Choices: []*llmtypes.ContentChoice{{GenerationInfo: &llmtypes.GenerationInfo{
+				InputTokens: &tt.fresh, OutputTokens: &tt.output, CachedContentTokens: &tt.cached, Additional: additional,
+			}}}}
+			a.endLLMGeneration(context.Background(), "", 1, 0, time.Second, events.UsageMetrics{PromptTokens: tt.fresh, CompletionTokens: tt.output, TotalTokens: tt.fresh + tt.output + tt.cached}, resp)
+			var completed *events.LLMGenerationEndEvent
+			for _, event := range listener.events {
+				if value, ok := event.Data.(*events.LLMGenerationEndEvent); ok {
+					completed = value
+				}
+			}
+			if completed == nil {
+				t.Fatal("missing cost event")
+			}
+			got, _ := completed.Metadata["cost_usd_estimated"].(float64)
+			if math.Abs(got-tt.want) > 1e-12 || math.Abs(a.lastTurnCost-tt.want) > 1e-12 {
+				t.Fatalf("cost event=%v runtime=%v, want %v", got, a.lastTurnCost, tt.want)
+			}
+			if tt.actual > 0 && completed.Metadata["cost_usd"] != tt.actual {
+				t.Fatal("native cost was overwritten")
+			}
+		})
+	}
+}
 
 type pricedEventTestModel struct{}
 
@@ -123,6 +170,19 @@ func TestRuntimePricingDoesNotSubtractSeparateCacheTwice(t *testing.T) {
 	want := 0.00025 + 0.0025 + 0.0005
 	if got != want {
 		t.Fatalf("cost_usd_estimated = %.9f, want %.9f", got, want)
+	}
+}
+
+func TestSubscriptionRuntimeKeepsItsShadowEstimateWithNativeDollarUsage(t *testing.T) {
+	a := &Agent{sessionID: "subscription-pricing", modelID: "claude-opus-5", provider: llm.ProviderClaudeCode,
+		llmModel: pricedEventTestModel{}, logger: loggerv2.NewNoop()}
+	fresh, output := 100, 10
+	resp := &llmtypes.ContentResponse{Choices: []*llmtypes.ContentChoice{{GenerationInfo: &llmtypes.GenerationInfo{
+		InputTokens: &fresh, OutputTokens: &output, Additional: map[string]interface{}{"cost_usd": 0.123},
+	}}}}
+	a.endLLMGeneration(context.Background(), "", 1, 0, time.Second, events.UsageMetrics{PromptTokens: fresh, CompletionTokens: output}, resp)
+	if math.Abs(a.lastTurnCost-0.00075) > 1e-12 {
+		t.Fatalf("subscription shadow estimate changed to native dollars: %v", a.lastTurnCost)
 	}
 }
 

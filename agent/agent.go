@@ -2285,9 +2285,11 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	a.cumulativeReasoningCost += reasoningCost
 	a.cumulativeCacheCost += cacheCost
 
-	// Use provider-reported cost if available and calculated cost is zero
+	// Pi's native API cost wins over its registry fallback. Keep the existing
+	// runtime estimate for subscription providers: their reported dollar value
+	// is API-equivalent usage, not a charge to that login.
 	turnCost := inputCost + outputCost + reasoningCost + cacheCost
-	if turnCost == 0 && providerReportedCost > 0 {
+	if providerReportedCost > 0 && (turnCost == 0 || a.provider == llm.ProviderPiCLI) {
 		turnCost = providerReportedCost
 	}
 	a.cumulativeTotalCost += turnCost
