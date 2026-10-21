@@ -572,12 +572,20 @@ func marshalBridgeToolDef(name, description string, parameters interface{}, tool
 // bridge reads at startup and returns its path. The name is a hash of the
 // content, so launches with the same tools reuse one stable path (a path that
 // changed every launch would defeat pi-cli's MCP config cache, see PLAT-186).
-// The definitions are the same text get_api_spec returns, not a secret, so the
-// file is readable by the CLI's own account.
+// The list names a project's custom tools, so the file is private (0600) and
+// lives in the agent's own working directory or a private 0700 directory,
+// never loose in a shared temp directory.
 func (a *Agent) writeBridgeToolsFile(toolsJSON []byte) (string, error) {
 	dir := strings.TrimSpace(a.codingAgentWorkingDir)
 	if dir == "" {
-		dir = os.TempDir()
+		// No stable directory to keep it in, so there is no path to keep stable
+		// either: use a fresh 0700 directory, removed when the agent closes.
+		private, err := os.MkdirTemp("", "mcpbridge-tools-")
+		if err != nil {
+			return "", fmt.Errorf("bridge_start_failed: create private directory for the tool list file (%d bytes): %w", len(toolsJSON), err)
+		}
+		a.bridgeToolsTempDir = private
+		dir = private
 	}
 	sum := sha256.Sum256(toolsJSON)
 	path := filepath.Join(dir, ".mcpbridge-tools-"+hex.EncodeToString(sum[:8])+".json")
@@ -592,7 +600,7 @@ func (a *Agent) writeBridgeToolsFile(toolsJSON []byte) (string, error) {
 	_, writeErr := tmp.Write(toolsJSON)
 	closeErr := tmp.Close()
 	if writeErr == nil && closeErr == nil {
-		writeErr = os.Chmod(tmpPath, 0o644) // #nosec G302 -- not a secret, see above
+		writeErr = os.Chmod(tmpPath, 0o600)
 	}
 	if writeErr == nil && closeErr == nil {
 		writeErr = os.Rename(tmpPath, path)

@@ -1011,6 +1011,9 @@ type Agent struct {
 	// instead -- the original pre-PLAT-186 behavior, still fully safe,
 	// just without that one launch's caching benefit.
 	bridgeReadyFile string
+	// bridgeToolsTempDir is the private directory holding the bridge tool list
+	// when the agent has no working directory; removed on Close.
+	bridgeToolsTempDir string
 
 	// toolArgTransformers maps tool names to functions that mutate their arguments in-place
 	// before execution. This is the PRIMARY interception point — agent-internal tool calls
@@ -2601,6 +2604,10 @@ func (a *Agent) endAgentSession(ctx context.Context, conversationDuration time.D
 
 	// Stop periodic cleanup routine
 	a.closeStreamingTracers()
+
+	if a.bridgeToolsTempDir != "" {
+		_ = os.RemoveAll(a.bridgeToolsTempDir)
+	}
 
 	// Cleanup agent-specific generated directory (only in code execution mode)
 	if a.useCodeExecutionMode {
