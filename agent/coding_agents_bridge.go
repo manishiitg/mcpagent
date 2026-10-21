@@ -1,6 +1,9 @@
 package mcpagent
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -313,10 +316,18 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 		return "", fmt.Errorf("failed to marshal tool definitions: %w", err)
 	}
 
+	// The tool list can be hundreds of KiB, and Linux rejects a single
+	// environment string over 128 KiB (spawn E2BIG), which left Builder chats
+	// with no tools at all. The bridge reads the list from a file instead.
+	toolsFile, err := a.writeBridgeToolsFile(toolsJSON)
+	if err != nil {
+		return "", err
+	}
+
 	bridgeEnv := map[string]string{
-		"MCP_API_URL":   apiURL,
-		"MCP_API_TOKEN": apiToken,
-		"MCP_TOOLS":     string(toolsJSON),
+		"MCP_API_URL":    apiURL,
+		"MCP_API_TOKEN":  apiToken,
+		"MCP_TOOLS_FILE": toolsFile,
 	}
 	if a.sessionID != "" {
 		bridgeEnv["MCP_SESSION_ID"] = a.sessionID
@@ -340,7 +351,7 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	}
 	// Route mcpbridge stderr to a log file for debugging startup/crash issues.
 	// Claude Code swallows the subprocess stderr, so without this there is no
-	// record of why the bridge failed (e.g. empty MCP_TOOLS, parse errors, crashes).
+	// record of why the bridge failed (e.g. an unreadable MCP_TOOLS_FILE, parse errors, crashes).
 	bridgeEnv["MCP_BRIDGE_LOG"] = os.TempDir() + "/mcpbridge.log"
 	// Readiness-marker path: the bridge creates it on tools/list (tools
 	// connected); the adapter waits for it before a cold session's first
@@ -555,4 +566,40 @@ func marshalBridgeToolDef(name, description string, parameters interface{}, tool
 		InputSchema: inputSchema,
 		Type:        toolType,
 	}
+}
+
+// writeBridgeToolsFile stores the serialized tool definitions in a file the
+// bridge reads at startup and returns its path. The name is a hash of the
+// content, so launches with the same tools reuse one stable path (a path that
+// changed every launch would defeat pi-cli's MCP config cache, see PLAT-186).
+// The definitions are the same text get_api_spec returns, not a secret, so the
+// file is readable by the CLI's own account.
+func (a *Agent) writeBridgeToolsFile(toolsJSON []byte) (string, error) {
+	dir := strings.TrimSpace(a.codingAgentWorkingDir)
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	sum := sha256.Sum256(toolsJSON)
+	path := filepath.Join(dir, ".mcpbridge-tools-"+hex.EncodeToString(sum[:8])+".json")
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, toolsJSON) { //nolint:gosec // path is built from the agent's own working directory
+		return path, nil
+	}
+	tmp, err := os.CreateTemp(dir, ".mcpbridge-tools-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("bridge_start_failed: create tool list file in %q (%d bytes): %w", dir, len(toolsJSON), err)
+	}
+	tmpPath := tmp.Name()
+	_, writeErr := tmp.Write(toolsJSON)
+	closeErr := tmp.Close()
+	if writeErr == nil && closeErr == nil {
+		writeErr = os.Chmod(tmpPath, 0o644) // #nosec G302 -- not a secret, see above
+	}
+	if writeErr == nil && closeErr == nil {
+		writeErr = os.Rename(tmpPath, path)
+	}
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("bridge_start_failed: write tool list file %q (%d bytes): %v %v", path, len(toolsJSON), writeErr, closeErr)
+	}
+	return path, nil
 }

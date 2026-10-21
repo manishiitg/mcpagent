@@ -75,7 +75,7 @@ func TestMCPBridgeImagesE2E(t *testing.T) {
 	defs, _ := json.Marshal([]ToolDef{{Name: "getFrames", Server: "jam", Type: "mcp", InputSchema: json.RawMessage(`{"type":"object","properties":{"image_only":{"type":"boolean"}}}`)}})
 	bridge, err := client.NewStdioMCPClient(buildLargeOutputE2EBridge(t), append(os.Environ(),
 		"MCP_API_URL="+api.URL, "MCP_API_TOKEN=frame-test", "MCP_SESSION_ID="+session,
-		"MCP_TOOL_OUTPUT_DIR="+outputDir, "MCP_TOOLS="+string(defs)))
+		"MCP_TOOL_OUTPUT_DIR="+outputDir, "MCP_TOOLS_FILE="+writeBridgeToolsFileForTest(t, defs)))
 	if err != nil {
 		t.Fatal(err)
 	}

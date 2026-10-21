@@ -1,5 +1,5 @@
 // mcpbridge is a stdio MCP server that bridges tool calls to HTTP API endpoints.
-// It receives tool definitions via the MCP_TOOLS env var and forwards each tool
+// It reads tool definitions from the file named by MCP_TOOLS_FILE and forwards each tool
 // call to the appropriate per-tool HTTP endpoint with bearer token authentication.
 //
 // This binary is launched by Claude Code via --mcp-config as a subprocess.
@@ -59,7 +59,7 @@ func makeReadyFileWriter(readyPath string) func() {
 	}
 }
 
-// ToolDef is the serialized tool definition passed via MCP_TOOLS env var.
+// ToolDef is the serialized tool definition read from the file named by MCP_TOOLS_FILE.
 type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
@@ -150,18 +150,26 @@ func main() {
 			}
 		}
 	}
-	toolsJSON := os.Getenv("MCP_TOOLS")
+	toolsFile := strings.TrimSpace(os.Getenv("MCP_TOOLS_FILE"))
+	var toolsJSON string
+	if toolsFile != "" {
+		raw, err := os.ReadFile(filepath.Clean(toolsFile)) //nolint:gosec // path comes from the launcher's own env, not from a model or user
+		if err != nil {
+			log.Fatalf("bridge_start_failed: cannot read MCP_TOOLS_FILE %q: %v", toolsFile, err)
+		}
+		toolsJSON = string(raw)
+	}
 	virtualScopeID := os.Getenv("MCP_VIRTUAL_SCOPE_ID") // Per-agent scope for virtual tools (prevents parent/child overwrite)
 	sessionID := os.Getenv("MCP_SESSION_ID")
 	toolOutputDir := bridgeToolOutputDir()
 
 	if apiURL == "" || apiToken == "" || toolsJSON == "" {
-		log.Fatal("MCP_API_URL, MCP_API_TOKEN, and MCP_TOOLS env vars are required")
+		log.Fatal("MCP_API_URL, MCP_API_TOKEN, and MCP_TOOLS_FILE are required")
 	}
 
 	var toolDefs []ToolDef
 	if err := json.Unmarshal([]byte(toolsJSON), &toolDefs); err != nil {
-		log.Fatalf("Failed to parse MCP_TOOLS: %v", err)
+		log.Fatalf("Failed to parse MCP_TOOLS_FILE %q: %v", toolsFile, err)
 	}
 
 	// Signal readiness the moment the CLI finishes its tools/list handshake, so

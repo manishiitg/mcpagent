@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -22,4 +23,15 @@ func buildLargeOutputE2EBridge(t *testing.T) string {
 		t.Fatalf("build real mcpbridge: %v\n%s", err, output)
 	}
 	return binary
+}
+
+// writeBridgeToolsFileForTest stores a tool list the way the launcher does and
+// returns the path for MCP_TOOLS_FILE.
+func writeBridgeToolsFileForTest(t *testing.T, toolsJSON []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "tools.json")
+	if err := os.WriteFile(path, toolsJSON, 0o600); err != nil {
+		t.Fatalf("write tool list file: %v", err)
+	}
+	return path
 }

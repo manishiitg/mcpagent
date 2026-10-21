@@ -72,7 +72,7 @@ func TestMCPBridgePreservesShellOutputOnToolFailureE2E(t *testing.T) {
 		"MCP_API_URL="+api.URL,
 		"MCP_API_TOKEN="+token,
 		"MCP_SESSION_ID="+sessionID,
-		"MCP_TOOLS="+string(toolsJSON),
+		"MCP_TOOLS_FILE="+writeBridgeToolsFileForTest(t, toolsJSON),
 	))
 	if err != nil {
 		t.Fatalf("start real mcpbridge: %v", err)

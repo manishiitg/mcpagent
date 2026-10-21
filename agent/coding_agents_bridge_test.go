@@ -111,8 +111,12 @@ func TestBuildBridgeMCPConfigOmitsCoreToolsTheProfileExcluded(t *testing.T) {
 		var defs []struct {
 			Name string `json:"name"`
 		}
-		if err := json.Unmarshal([]byte(env["MCP_TOOLS"].(string)), &defs); err != nil {
-			t.Fatalf("invalid MCP_TOOLS: %v", err)
+		raw, readErr := os.ReadFile(env["MCP_TOOLS_FILE"].(string))
+		if readErr != nil {
+			t.Fatalf("read MCP_TOOLS_FILE: %v", readErr)
+		}
+		if err := json.Unmarshal(raw, &defs); err != nil {
+			t.Fatalf("invalid MCP_TOOLS_FILE: %v", err)
 		}
 		out := make([]string, 0, len(defs))
 		for _, d := range defs {
@@ -436,7 +440,7 @@ func TestBuildBridgeMCPConfigReadyFileFallsBackToPrivatePathForConcurrentLaunche
 	}
 }
 
-func TestBuildBridgeMCPConfigFailsWhenToolOutputDirectoryCannotBeCreated(t *testing.T) {
+func TestBuildBridgeMCPConfigFailsWhenWorkingDirectoryIsUnusable(t *testing.T) {
 	t.Setenv("MCP_BRIDGE_BINARY", "/usr/local/bin/mcpbridge")
 	t.Setenv("MCP_API_URL", "http://localhost:8080")
 	t.Setenv("MCP_API_TOKEN", "test-token")
@@ -449,8 +453,8 @@ func TestBuildBridgeMCPConfigFailsWhenToolOutputDirectoryCannotBeCreated(t *test
 	agent.codingAgentWorkingDir = workingDir
 
 	_, err := agent.buildBridgeMCPConfig()
-	if err == nil || !strings.Contains(err.Error(), "create MCP tool output directory") {
-		t.Fatalf("buildBridgeMCPConfig error = %v, want tool output directory creation failure", err)
+	if err == nil || !strings.Contains(err.Error(), "bridge_start_failed") {
+		t.Fatalf("buildBridgeMCPConfig error = %v, want a bridge_start_failed error for an unusable working directory", err)
 	}
 }
 
@@ -1056,11 +1060,14 @@ func bridgeToolsFromConfig(t *testing.T, configJSON string) map[string]BridgeToo
 	servers := config["mcpServers"].(map[string]interface{})
 	bridge := servers["api-bridge"].(map[string]interface{})
 	env := bridge["env"].(map[string]interface{})
-	toolsJSON := env["MCP_TOOLS"].(string)
+	toolsJSON, readErr := os.ReadFile(env["MCP_TOOLS_FILE"].(string))
+	if readErr != nil {
+		t.Fatalf("read MCP_TOOLS_FILE: %v", readErr)
+	}
 
 	var defs []BridgeToolDef
-	if err := json.Unmarshal([]byte(toolsJSON), &defs); err != nil {
-		t.Fatalf("invalid MCP_TOOLS JSON: %v", err)
+	if err := json.Unmarshal(toolsJSON, &defs); err != nil {
+		t.Fatalf("invalid MCP_TOOLS_FILE JSON: %v", err)
 	}
 
 	tools := make(map[string]BridgeToolDef, len(defs))

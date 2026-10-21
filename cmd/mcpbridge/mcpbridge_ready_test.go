@@ -53,7 +53,7 @@ func TestMcpbridgeWritesReadyFileOnToolsList(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"MCP_API_URL=http://127.0.0.1:1/unused",
 		"MCP_API_TOKEN=test-token",
-		`MCP_TOOLS=[{"name":"echo","description":"echo tool","type":"custom"}]`,
+		"MCP_TOOLS_FILE="+writeBridgeToolsFileForTest(t, []byte(`[{"name":"echo","description":"echo tool","type":"custom"}]`)),
 		"MCP_READY_FILE="+marker,
 	)
 	stdin, err := cmd.StdinPipe()
