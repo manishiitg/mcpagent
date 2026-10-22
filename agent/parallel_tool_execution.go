@@ -290,7 +290,7 @@ func prepareToolExecution(
 	if tc.FunctionCall.Name == "" {
 		v2Logger.Error("Empty tool name detected in tool call", nil,
 			loggerv2.Int("turn", turn+1),
-			loggerv2.String("arguments", tc.FunctionCall.Arguments))
+			loggerv2.String("arguments", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 
 		feedbackMessage := generateEmptyToolNameFeedback(tc.FunctionCall.Arguments)
 		v2Logger.Error(toolerr.Marker+" empty tool name", nil,
@@ -475,7 +475,7 @@ func executeToolCall(
 		loggerv2.String("server_name", plan.serverName),
 		loggerv2.String("tool_call_id", tc.ID),
 		loggerv2.Int("turn", turn+1),
-		loggerv2.String("arguments", string(argsJSON)),
+		loggerv2.String("arguments", toolerr.TruncateArgsForLog(string(argsJSON))),
 		loggerv2.String("timeout", timeoutStr))
 
 	// Cache hit event

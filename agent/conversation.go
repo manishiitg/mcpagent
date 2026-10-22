@@ -912,7 +912,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				if tc.FunctionCall.Name == "" {
 					v2Logger.Error("AskWithHistory: Empty tool name detected in tool call", nil,
 						loggerv2.Int("turn", turn+1),
-						loggerv2.String("arguments", tc.FunctionCall.Arguments))
+						loggerv2.String("arguments", toolerr.TruncateArgsForLog(tc.FunctionCall.Arguments)))
 
 					// Generate feedback message for empty tool name
 					feedbackMessage := generateEmptyToolNameFeedback(tc.FunctionCall.Arguments)
@@ -1136,7 +1136,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					loggerv2.String("server_name", serverName),
 					loggerv2.String("tool_call_id", tc.ID),
 					loggerv2.Int("turn", turn+1),
-					loggerv2.String("arguments", string(argsJSON)),
+					loggerv2.String("arguments", toolerr.TruncateArgsForLog(string(argsJSON))),
 					loggerv2.String("timeout", timeoutStr))
 
 				// Add cache hit event during tool execution to show cached connection usage

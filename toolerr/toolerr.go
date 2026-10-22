@@ -427,7 +427,7 @@ func renderArgValue(raw json.RawMessage) string {
 }
 
 // redactSecretValuesForLog replaces the values of the argument fields that carry a secret a person gave an agent to
-// store (`value`, `values`, and `secrets.set` of a settings call) with a marker, at any depth, so a failed secret call
+// store (`value`, `values`, `api_key`, `client_secret`, and `secrets.set` of a settings call) with a marker, at any depth, so a failed secret call
 // never writes the secret into the log. Names and every other field are kept. Input that is not JSON is returned as is.
 func redactSecretValuesForLog(argsJSON string) string {
 	var parsed any
@@ -441,7 +441,7 @@ func redactSecretValuesForLog(argsJSON string) string {
 		case map[string]any:
 			for key, value := range typed {
 				lower := strings.ToLower(key)
-				if lower == "value" || lower == "values" || (lower == "set" && strings.ToLower(parent) == "secrets") {
+				if lower == "value" || lower == "values" || lower == "api_key" || lower == "client_secret" || (lower == "set" && strings.ToLower(parent) == "secrets") {
 					if value != nil {
 						typed[key] = "[redacted]"
 						changed = true
