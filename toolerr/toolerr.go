@@ -441,7 +441,7 @@ func redactSecretValuesForLog(argsJSON string) string {
 		case map[string]any:
 			for key, value := range typed {
 				lower := strings.ToLower(key)
-				if lower == "value" || lower == "values" || lower == "api_key" || lower == "client_secret" || (lower == "set" && strings.ToLower(parent) == "secrets") {
+				if lower == "value" || lower == "values" || lower == "api_key" || lower == "client_secret" || lower == "credential" || (lower == "set" && strings.ToLower(parent) == "secrets") {
 					if value != nil {
 						typed[key] = "[redacted]"
 						changed = true

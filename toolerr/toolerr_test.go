@@ -435,6 +435,7 @@ func TestTruncateArgsForLogRedactsSecretValues(t *testing.T) {
 		`{"operation":"set_value","values":{"API_KEY":"s3cr3t-value"}}`,
 		`{"operation":"set_secret","name":"API_KEY","value":"s3cr3t-value"}`,
 		`{"name":"example","api_key":"s3cr3t-value"}`,
+		`{"arguments":{"credential":"s3cr3t-value"}}`,
 		`{"name":"example","client_id":"app","client_secret":"s3cr3t-value"}`,
 		`{"workflow_id":"w","secrets":{"set":{"API_KEY":"s3cr3t-value"}}}`,
 	} {
