@@ -378,8 +378,8 @@ const (
 // off entirely and had to be recovered from the error text. Keys are cheap and
 // always diagnostic; only values are trimmed.
 //
-// Non-object or malformed input falls back to plain truncation, so this is
-// never worse than what it replaces.
+// Valid non-object input falls back to plain truncation. Malformed JSON is
+// omitted because a partial credential field cannot be safely decoded.
 func TruncateArgsForLog(argsJSON string) string {
 	trimmed := strings.TrimSpace(redactSecretValuesForLog(argsJSON))
 	if trimmed == "" {
@@ -428,11 +428,15 @@ func renderArgValue(raw json.RawMessage) string {
 
 // redactSecretValuesForLog replaces the values of the argument fields that carry a secret a person gave an agent to
 // store (`value`, `values`, `api_key`, `client_secret`, and `secrets.set` of a settings call) with a marker, at any depth, so a failed secret call
-// never writes the secret into the log. Names and every other field are kept. Input that is not JSON is returned as is.
+// never writes the secret into the log. Names and every other field are kept.
+// Malformed JSON is omitted; it may contain an incomplete secret value.
 func redactSecretValuesForLog(argsJSON string) string {
+	if strings.TrimSpace(argsJSON) == "" {
+		return argsJSON
+	}
 	var parsed any
 	if err := json.Unmarshal([]byte(argsJSON), &parsed); err != nil {
-		return argsJSON
+		return "[redacted] (invalid JSON arguments omitted)"
 	}
 	changed := false
 	var walk func(node any, parent string) any

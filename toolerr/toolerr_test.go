@@ -438,6 +438,11 @@ func TestTruncateArgsForLogRedactsSecretValues(t *testing.T) {
 		`{"arguments":{"credential":"s3cr3t-value"}}`,
 		`{"name":"example","client_id":"app","client_secret":"s3cr3t-value"}`,
 		`{"workflow_id":"w","secrets":{"set":{"API_KEY":"s3cr3t-value"}}}`,
+		`{"api_key":"s3cr3t-value`,
+		`{"arguments":{"credential":"s3cr3t-value"`,
+		`{"client_secret":"s3cr3t-value",`,
+		`{"value":"s3cr3t-value`,
+		`{"values":{"API_KEY":"s3cr3t-value"}`,
 	} {
 		out := TruncateArgsForLog(in)
 		if strings.Contains(out, "s3cr3t-value") || !strings.Contains(out, "[redacted]") {
