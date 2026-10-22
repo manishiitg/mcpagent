@@ -156,15 +156,18 @@ func TestCodingAgentProviderRoutingPromptDoesNotNameExcludedBridgeTools(t *testi
 	}
 }
 
-// Codex answered "the UI control tools aren't available" after searching its own tool list (ALL_TOOLS): the runtime block, the single owner of tool discovery, must say that a tool
-// missing from the CLI's own list or its own tool search is not missing (Excellence, 2026-10-04). Every coding CLI gets this block.
-func TestBridgeRoutingBlockSaysAMissingDirectToolIsNotMissing(t *testing.T) {
+// The direct list is not the whole platform catalog, but a tool can actually
+// be absent from the current chat. Discovery must not become an endless search.
+func TestBridgeRoutingBlockDistinguishesDirectToolsFromUnavailableTools(t *testing.T) {
 	a := &Agent{}
 	a.appendBridgeRoutingInstructions(testDefaultPreamble)
 	got := a.instructions()
-	want := "A tool missing from your own tool list or your runtime's own tool search is not missing: use search_tools."
+	want := "A tool absent from your direct tool list may still be available through search_tools."
 	if !strings.Contains(got, want) {
 		t.Fatalf("the bridge routing block does not say %q:\n%s", want, got)
+	}
+	if !strings.Contains(got, "explain that it is unavailable in this chat; do not keep searching") {
+		t.Fatal("discovery must stop when the current inventory has no such tool")
 	}
 	if !strings.Contains(got, "get_api_spec(tool_name=\"search_tools\") returns its session-scoped virtual route and schema") {
 		t.Fatal("runtime discovery lost its supported HTTP route guidance")
