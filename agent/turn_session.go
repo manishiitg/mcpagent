@@ -580,9 +580,9 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 	}
 	refreshRetainedWatcher := !runWasActive && providerRefreshesRetainedWatcher(delivery.Provider)
 	if (!wasActive || refreshRetainedWatcher) && delivery.DeliveryStatus == UserMessageDeliveryStatusSentToCLI && delivery.Transport == llm.CodingAgentTransportTmux {
-		// Claude, Cursor, and Muse can queue follow-ups behind the current reply. Refresh the
-		// watcher so the previous final cannot complete the newly submitted request.
-		s.startRetainedCompletionWatchFor(lifecycle, input, delivery.Provider, delivery.Transport, wasActive)
+		// Replace the retained reader generation after every CLI send, so a
+		// final read in flight before delivery cannot close the newer input.
+		s.startRetainedCompletionWatchFor(lifecycle, input, delivery.Provider, delivery.Transport, wasActive, sentAt)
 	} else if !wasActive {
 		clearStarting()
 	}
@@ -590,7 +590,11 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 }
 
 func providerRefreshesRetainedWatcher(provider llm.Provider) bool {
-	return provider == llm.ProviderClaudeCode || provider == llm.ProviderCursorCLI || provider == llm.ProviderMuseCLI
+	switch provider {
+	case llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderMuseCLI, llm.ProviderPiCLI, llm.ProviderAgyCLI:
+		return true
+	}
+	return false
 }
 
 const retainedCompletionPollInterval = 100 * time.Millisecond
@@ -616,8 +620,13 @@ func (s *Session) startRetainedCompletionWatch(lifecycle *canonicalTurnLifecycle
 // a watcher refreshed for a message sent into a running response: its final
 // must survive retainedLiveInputFinalGrace, re-read every poll, so queued
 // follow-ups appended after the old end_turn cancel it.
-func (s *Session) startRetainedCompletionWatchFor(lifecycle *canonicalTurnLifecycle, input string, provider llm.Provider, transport llm.CodingAgentTransport, liveInput bool) {
+func (s *Session) startRetainedCompletionWatchFor(lifecycle *canonicalTurnLifecycle, input string, provider llm.Provider, transport llm.CodingAgentTransport, liveInput bool, acceptedAt ...time.Time) {
 	startedAt := time.Now()
+	if len(acceptedAt) > 0 && !acceptedAt[0].IsZero() {
+		// A native tool can commit before delivery's acknowledgement returns.
+		// Reading only after the acknowledgement silently dropped that tool.
+		startedAt = acceptedAt[0]
+	}
 	s.stateMu.Lock()
 	s.retainedStarting = false
 	if s.closed {

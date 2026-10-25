@@ -21,7 +21,7 @@ func (c *retainedProgressCapture) HandleEvent(_ context.Context, event *events.A
 }
 
 func TestRetainedProgressStreamsWhileFinalIsPending(t *testing.T) {
-	for _, provider := range []llm.Provider{llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderMuseCLI, llm.ProviderPiCLI} {
+	for _, provider := range []llm.Provider{llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderMuseCLI, llm.ProviderPiCLI, llm.ProviderAgyCLI} {
 		t.Run(string(provider), func(t *testing.T) { testRetainedProgressStreamsWhileFinalIsPending(t, provider) })
 	}
 }

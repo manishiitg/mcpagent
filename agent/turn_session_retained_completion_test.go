@@ -252,13 +252,38 @@ func testRetainedFollowupReplacesInFlightCompletionRead(t *testing.T, provider l
 	}
 }
 
-func TestProvidersThatQueueRetainedFollowupsRefreshTheirWatcher(t *testing.T) {
-	for _, provider := range []llm.Provider{llm.ProviderClaudeCode, llm.ProviderCursorCLI, llm.ProviderMuseCLI} {
-		if !providerRefreshesRetainedWatcher(provider) {
-			t.Errorf("providerRefreshesRetainedWatcher(%s) = false, want true", provider)
-		}
-	}
-	if providerRefreshesRetainedWatcher(llm.ProviderPiCLI) {
-		t.Error("Pi should keep its existing in-flight watcher")
+// PLAT-872: an acknowledgement can arrive after native work has committed.
+// Every supported CLI must replace stale in-flight reads and retain the
+// before-send boundary, including Pi/Agy/Codex which previously did not refresh.
+func TestRetainedFollowupKeepsTheBeforeDeliveryBoundary(t *testing.T) {
+	for _, provider := range []llm.Provider{llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderMuseCLI, llm.ProviderPiCLI, llm.ProviderAgyCLI} {
+		t.Run(string(provider), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			beforeSend := time.Now().Add(-time.Second)
+			read := make(chan time.Time, 1)
+			s := &Session{agent: &Agent{sessionID: t.Name()}, watchCtx: ctx,
+				retainedProgressMessages: (&transcriptFixture{}).read,
+				retainedFinalResponse: func(_ llm.Provider, _ string, start time.Time) string {
+					select {
+					case read <- start:
+					default:
+					}
+					return ""
+				},
+			}
+			if !providerRefreshesRetainedWatcher(provider) {
+				t.Fatal("follow-up kept a stale watcher")
+			}
+			s.startRetainedCompletionWatchFor(newCanonicalTurnLifecycle(""), "follow-up", provider, llm.CodingAgentTransportTmux, true, beforeSend)
+			select {
+			case got := <-read:
+				if !got.Equal(beforeSend) {
+					t.Fatal("native work before the acknowledgement was excluded")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("follow-up has no reader")
+			}
+		})
 	}
 }
