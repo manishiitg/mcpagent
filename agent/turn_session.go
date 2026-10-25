@@ -141,10 +141,9 @@ func (a *Agent) Start(context.Context) (*Session, error) {
 	}
 	watchCtx, watchCancel := context.WithCancel(context.Background())
 	session := &Session{
-		agent:                 a,
-		watchCtx:              watchCtx,
-		watchCancel:           watchCancel,
-		retainedFinalResponse: retainedturn.FinalResponse,
+		agent:       a,
+		watchCtx:    watchCtx,
+		watchCancel: watchCancel,
 	}
 	registerTurnSession(a.sessionID, session)
 	// Question cards exist only where a person answers them (the builder
@@ -675,7 +674,11 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 		watchCtx = context.Background()
 	}
 	if reader == nil {
-		reader = retainedturn.FinalResponse
+		reader = func(provider llm.Provider, sessionID string, start time.Time) string {
+			text, nativeID, roots := retainedturn.FinalResponseWithMetadata(provider, sessionID, start)
+			lifecycle.setNativePublication(nativeID, roots)
+			return text
+		}
 	}
 	if endedReader == nil {
 		endedReader = llmproviders.ReadCodingAgentRetainedTurnEndedWithoutReply

@@ -18,6 +18,11 @@ func FinalResponse(provider llmproviders.Provider, ownerSessionID string, turnSt
 	return finalResponse(messages)
 }
 
+func FinalResponseWithMetadata(provider llmproviders.Provider, ownerSessionID string, turnStart time.Time) (string, string, []string) {
+	response := llmproviders.ReadCodingAgentRetainedTurnResponse(provider, ownerSessionID, turnStart)
+	return finalResponse(response.Messages), response.NativeSessionID, response.NativeContinuationRoots
+}
+
 // finalResponse picks the last AI-role message that is PURELY text -- no
 // ToolCall part anywhere in the same message -- and returns its text.
 //

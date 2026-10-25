@@ -276,6 +276,7 @@ func (a *Agent) updateCodingProviderSessionHandleFromResponse(resp *llmtypes.Con
 		handle = a.withContinuationWorkingDir(handle)
 		a.codingProviderSessionHandle = handle
 		a.applyCodingProviderSessionHandle(handle)
+		notifyNativeRuntime(a)
 	}
 }
 

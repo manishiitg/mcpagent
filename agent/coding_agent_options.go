@@ -202,6 +202,23 @@ func extractCodingAgentSessionIDs(a *Agent, resp *llmtypes.ContentResponse) {
 	if additional == nil {
 		return
 	}
+	if session, ok := LookupSession(a.sessionID); ok {
+		var roots []string
+		switch values := additional["native_continuation_roots"].(type) {
+		case []string:
+			roots = values
+		case []interface{}:
+			for _, v := range values {
+				if root, ok := v.(string); ok {
+					roots = append(roots, root)
+				}
+			}
+		}
+		handle := a.currentAgentSessionHandle()
+		if handle != nil {
+			session.currentTurnLifecycle().setNativePublication(handle.Provider.NativeSessionID, roots)
+		}
+	}
 	if sid, ok := additional["claude_code_session_id"].(string); ok && sid != "" {
 		a.claudeCodeSessionID = sid
 	}

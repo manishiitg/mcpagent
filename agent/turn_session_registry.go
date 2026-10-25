@@ -17,6 +17,7 @@ func registerTurnSession(sessionID string, session *Session) {
 		return
 	}
 	turnSessions.Store(sessionID, session)
+	notifyNativeRuntime(session.agent)
 }
 
 // LookupSession resolves the durable, transport-neutral turn session for a

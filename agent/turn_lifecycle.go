@@ -27,6 +27,18 @@ type canonicalTurnLifecycle struct {
 	// returns. The completion carries the marker so hosts keep the input's
 	// turn open instead of settling it on this (older) response.
 	liveInputFollowup bool
+	nativeSessionID   string
+	nativeRoots       []string
+}
+
+func (l *canonicalTurnLifecycle) setNativePublication(session string, roots []string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.nativeSessionID = session
+	l.nativeRoots = append([]string(nil), roots...)
 }
 
 func newTurnID() string {
@@ -86,6 +98,8 @@ func (l *canonicalTurnLifecycle) prepareEvent(eventData events.EventData) bool {
 	}
 	completion.Metadata["turn_id"] = l.id
 	completion.Metadata["canonical_turn_completion"] = true
+	completion.Metadata["native_session_id"] = l.nativeSessionID
+	completion.Metadata["native_continuation_roots"] = append([]string(nil), l.nativeRoots...)
 	if l.liveInputFollowup {
 		completion.Metadata[LiveInputFollowupMetadataKey] = true
 	}
