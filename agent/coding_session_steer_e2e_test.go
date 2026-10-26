@@ -92,6 +92,18 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			agent.addEventListener(signal)
 			store := NewMemoryCodingSessionStore()
 
+			var nativeSession *Session
+			var capture *turnEndCapture
+			if tc.provider == llm.ProviderCodexCLI {
+				capture = &turnEndCapture{toolEnded: make(chan struct{}), arrived: make(chan struct{}, 8)}
+				agent.addEventListener(capture)
+				nativeSession, err = agent.Start(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer nativeSession.Close()
+			}
+
 			// Start the turn: a long tool call holds it open long enough to steer into.
 			type turnResult struct {
 				answer string
@@ -99,10 +111,14 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			}
 			done := make(chan turnResult, 1)
 			go func() {
-				ans, aerr := agent.continueConversation(ctx, convID,
-					"Run exactly this one shell command and wait for it: sleep 25 && echo COMMAND_DONE. "+
-						"When it finishes, report the word it printed, then stop.", store)
-				done <- turnResult{answer: ans, err: aerr}
+				prompt := "Run exactly this one shell command and wait for it: sleep 25 && echo COMMAND_DONE. When it finishes, report the word it printed, then stop."
+				if nativeSession != nil {
+					result, runErr := nativeSession.Run(ctx, Turn{Input: prompt})
+					done <- turnResult{answer: result.Text, err: runErr}
+				} else {
+					ans, aerr := agent.continueConversation(ctx, convID, prompt, store)
+					done <- turnResult{answer: ans, err: aerr}
+				}
 			}()
 
 			// Wait until the turn is provably mid-tool, then give it a moment to settle
@@ -143,9 +159,17 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			time.Sleep(2 * time.Second)
 
 			// Steer a new instruction INTO the running turn via the library entry point.
-			delivered, err := agent.deliver(ctx, convID,
-				fmt.Sprintf("Additional instruction: in your final reply, also include the exact word %s on its own line.", steerWord),
-				store)
+			instruction := fmt.Sprintf("Additional instruction: in your final reply, also include the exact word %s on its own line.", steerWord)
+			var delivered Delivered
+			if nativeSession != nil {
+				receipt, sendErr := nativeSession.Send(ctx, instruction)
+				err = sendErr
+				if receipt.Status == UserMessageDeliveryStatusSentToCLI && receipt.Transport == llm.CodingAgentTransportAppServer {
+					delivered.Mode = DeliveryModeSteered
+				}
+			} else {
+				delivered, err = agent.deliver(ctx, convID, instruction, store)
+			}
 			if err != nil {
 				t.Fatalf("Deliver (steer mid-turn): %v", err)
 			}
@@ -161,6 +185,15 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			}
 			if res.err != nil {
 				t.Fatalf("steered turn errored: %v", res.err)
+			}
+			if capture != nil {
+				completions := capture.snapshot()
+				if len(completions) != 1 {
+					t.Fatalf("got %d completions for native steered turn", len(completions))
+				}
+				if completions[0].metadata[LiveInputFollowupMetadataKey] == true {
+					t.Fatal("app-server completion incorrectly waits for a tmux follow-up")
+				}
 			}
 			answer := strings.TrimSpace(res.answer)
 			t.Logf("[%s] steered turn answer: %q", tc.name, answer)

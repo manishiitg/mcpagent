@@ -16,14 +16,14 @@
     "usage is renderable \u2014 input and output tokens are non-zero so the product's usage line is not 'Input 0 Output 0'; note when cache_tokens is absent on a provider that normally caches"
   ],
   "output": {
-    "conversation_id": "steer-771df1d4",
+    "conversation_id": "steer-b8260b0e",
     "delivery_mode": "steered",
     "provider": "Codex",
     "steer_reached_model": "steered word only appears if the mid-turn live input reached the model",
     "steer_word_obeyed": true,
-    "steered_word": "PURPLE_96c7ae50fbe5",
+    "steered_word": "PURPLE_5de0b44f77b2",
     "tool_completed": true,
-    "turn_answer": "COMMAND_DONE\n\nPURPLE_96c7ae50fbe5"
+    "turn_answer": "COMMAND_DONE\n\nPURPLE_5de0b44f77b2"
   },
   "fingerprint": "fb104ed11ee48805",
   "agent_review": {
@@ -31,6 +31,6 @@
     "reviewed_fingerprint": "fb104ed11ee48805",
     "reviewer": "codex-appserver",
     "issues": [],
-    "notes": "Reviewed real Codex 0.164.0 app-server capture: tool completed and the running turn obeyed the later steering token. Final output is clean. This record does not establish detailed chunk timing or reasoning/usage rendering."
+    "notes": "Reviewed real Codex 0.164.0 app-server Session.Run + Session.Send capture: COMMAND_DONE and the later steering token appear cleanly in the same final answer. Live test asserted exactly one canonical completion and no tmux follow-up marker. The pre-fix run failed that marker assertion; corrected run passed in 48.525s. Compact record does not establish per-chunk pacing or reasoning/usage rendering."
   }
 }

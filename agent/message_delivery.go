@@ -233,5 +233,5 @@ func (a *Agent) liveInputUsesTmux() bool {
 		return false
 	}
 	contract, isCodingAgent := llm.GetCodingAgentProviderContract(a.getProvider(), a.modelID)
-	return isCodingAgent && contract.SupportsLiveInput && !a.usesStructuredTransport()
+	return isCodingAgent && contract.Transport == llm.CodingAgentTransportTmux && contract.SupportsLiveInput && !a.usesStructuredTransport()
 }

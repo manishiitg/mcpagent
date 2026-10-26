@@ -123,6 +123,12 @@ func TestFileCodingSessionStore(t *testing.T) {
 // provider contract (all tmux CLI providers steerable today; a non-coding
 // provider is not).
 func TestSupportsSteeringMatchesContract(t *testing.T) {
+	// PLAT-872-19: native steering completes the current Run; marking it as a
+	// tmux follow-up leaves the host waiting for a second completion.
+	if (&Agent{provider: llm.ProviderCodexCLI}).liveInputUsesTmux() {
+		t.Fatal("app-server incorrectly uses tmux follow-up completion")
+	}
+
 	for _, provider := range []llm.Provider{
 		llm.ProviderClaudeCode, llm.ProviderCodexCLI, llm.ProviderCursorCLI, llm.ProviderPiCLI,
 	} {
