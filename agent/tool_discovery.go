@@ -54,13 +54,14 @@ func (a *Agent) handleSearchTools(ctx context.Context, args map[string]interface
 	if err != nil {
 		return "", err
 	}
-	limit, err := discoveryInteger(args, "limit", 10, 1, 20)
+	limit, err := discoveryInteger(args, "limit", 10, 1, 1_000_000)
 	if err != nil {
 		return "", err
 	}
 	// A page of one or two tools made weaker models page through a group call by call (28 calls in one turn), so a
-	// smaller request is raised to the default page rather than refused.
-	limit = max(limit, discoveryMinPageSize)
+	// smaller request is raised to the default page rather than refused. A larger one (agents ask for 30) gets the
+	// largest page instead of an error that costs them a turn.
+	limit = min(max(limit, discoveryMinPageSize), 20)
 	registry, err := a.canonicalRegistry()
 	if err != nil {
 		return "", err

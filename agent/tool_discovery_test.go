@@ -102,7 +102,11 @@ func TestDiscoveryFiltersMCPServersAndPaginates(t *testing.T) {
 	if strings.Contains(last, "next_offset") || !strings.Contains(last, "selected-server_9") {
 		t.Fatalf("last page failed: %s", last)
 	}
-	for _, args := range []map[string]interface{}{{"offset": -1}, {"limit": 21}, {"limit": 1.5}, {"query": 1}, {"group": strings.Repeat("x", 513)}} {
+	// Agents asked for limit 30 and lost a turn to an error (PLAT-825); a large page is capped, not refused.
+	if _, err := a.handleSearchTools(context.Background(), map[string]interface{}{"limit": float64(30)}); err != nil {
+		t.Fatalf("limit 30 refused: %v", err)
+	}
+	for _, args := range []map[string]interface{}{{"offset": -1}, {"limit": 1.5}, {"query": 1}, {"group": strings.Repeat("x", 513)}} {
 		if _, err := a.handleSearchTools(context.Background(), args); err == nil {
 			t.Fatalf("accepted invalid input: %#v", args)
 		}
