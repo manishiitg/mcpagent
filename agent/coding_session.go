@@ -353,7 +353,7 @@ func (a *Agent) usesStructuredTransport() bool {
 	// WithMuseStructuredTransport alongside). A persistent-interactive muse
 	// chat therefore steers and records tmux handles like cursor.
 	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
-		return contract.Transport != llm.CodingAgentTransportTmux
+		return contract.Transport == llm.CodingAgentTransportStructured
 	}
 	return false
 }

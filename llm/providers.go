@@ -52,6 +52,7 @@ type CLISecurityPolicy = llmtypes.CLISecurityPolicy
 const (
 	CodingAgentTransportTmux       = llmproviders.CodingAgentTransportTmux
 	CodingAgentTransportStructured = llmproviders.CodingAgentTransportStructured
+	CodingAgentTransportAppServer  = llmproviders.CodingAgentTransportAppServer
 )
 
 func GetCodingAgentProviderContract(provider Provider, modelID string) (CodingAgentProviderContract, bool) {

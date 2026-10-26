@@ -108,6 +108,8 @@ github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261025093137-54e280e0cba8
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261025093137-54e280e0cba8/go.mod h1:fr7WUUOqYFzI7+2zVubwRK7GoL/tfyf2fuKzqxONOUI=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261025164433-2df1e753d655 h1:fL494HasTK4V4kShpPbMphh9YRuxj9W2VD6nZYKLa98=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261025164433-2df1e753d655/go.mod h1:fr7WUUOqYFzI7+2zVubwRK7GoL/tfyf2fuKzqxONOUI=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261026141320-061e71bec878 h1:aVTxvBj4dPjlEWXdrH0gFmzach10knzkbQUeSSrAf9o=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261026141320-061e71bec878/go.mod h1:AIrs6ufwUk40d9pI/P8+vCGn2P6D14UqHrxfp4KZBA8=
 github.com/mark3labs/mcp-go v1.0.0 h1:CZqCzXwUiTOstkIdW1MyOZGuM+LaKMEJSu+ZYluN4DU=
 github.com/mark3labs/mcp-go v1.0.0/go.mod h1:r2fW4o3wsoJ7IMsx1Wuq5xeP8PRGXPDfNveoGAYbb/s=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
@@ -116,6 +118,8 @@ github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOF
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/openai/openai-go/v3 v3.36.0 h1:PXYyY/v1S6WXGBEdFoNUFqKX7p3O5az2HMXklIeRXzk=
 github.com/openai/openai-go/v3 v3.36.0/go.mod h1:cdufnVK14cWcT9qA1rRtrXx4FTRsgbDPW7Ia7SS5cZo=
+github.com/pelletier/go-toml/v2 v2.2.4 h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=
+github.com/pelletier/go-toml/v2 v2.2.4/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pkoukk/tiktoken-go v0.1.8 h1:85ENo+3FpWgAACBaEUVp+lctuTcYUO7BtmfhlN/QTRo=
 github.com/pkoukk/tiktoken-go v0.1.8/go.mod h1:9NiV+i9mJKGj1rYOT+njbv+ZwA/zJxYdewGl6qVatpg=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=

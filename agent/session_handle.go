@@ -338,8 +338,12 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	// Codex/Cursor (found live: multi-turn wrote a hallucinated build id).
 	if llm.IsTmuxCodingAgentProvider(a.provider, a.modelID) && !a.usesStructuredTransport() {
 		handle.Transport = llmtypes.CodingProviderTransportTmux
-	} else if llm.IsCodingAgentProvider(a.provider, a.modelID) {
-		handle.Transport = llmtypes.CodingProviderTransportStructured
+	} else if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
+		if contract.Transport == llm.CodingAgentTransportAppServer {
+			handle.Transport = llmtypes.CodingProviderTransportAppServer
+		} else {
+			handle.Transport = llmtypes.CodingProviderTransportStructured
+		}
 	}
 	if getter, ok := codingAgentNativeSessionIDGetters[a.provider]; ok {
 		handle.NativeSessionID = strings.TrimSpace(getter(a))

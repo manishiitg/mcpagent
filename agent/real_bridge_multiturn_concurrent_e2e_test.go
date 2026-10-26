@@ -360,7 +360,10 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 			if err := validateCanonicalTurnContract(listener.events[:turn1End], result1); err != nil {
 				t.Fatal(err)
 			}
-			tmux1 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
+			session1 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
+			if tc.provider == llm.ProviderCodexCLI {
+				session1 = agent.codingProviderSessionHandle.NativeSessionID
+			}
 			_, t1tools, t1content := captureRealBridge(listener.events[:turn1End])
 			if !strings.Contains(ans1, codeWord) {
 				t.Fatalf("turn 1 answer missing the build id (tool did not run): %q", ans1)
@@ -378,7 +381,10 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 			}
 			ans2 := result2.Text
 			turn2Elapsed := time.Since(turn2Start)
-			tmux2 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
+			session2 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
+			if tc.provider == llm.ProviderCodexCLI {
+				session2 = agent.codingProviderSessionHandle.NativeSessionID
+			}
 			_, t2tools, t2content := captureRealBridge(listener.events[turn1End:])
 			if err := validateCanonicalTurnContract(listener.events[turn1End:], result2); err != nil {
 				t.Fatal(err)
@@ -386,8 +392,8 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 
 			// Session reused across turns → the cold-turn readiness wait is skipped on
 			// turn 2 (it only runs on a freshly created session).
-			if tmux1 == "" || tmux1 != tmux2 {
-				t.Fatalf("persistent session was NOT reused across turns: tmux1=%q tmux2=%q", tmux1, tmux2)
+			if session1 == "" || session1 != session2 {
+				t.Fatalf("persistent session was NOT reused across turns: session1=%q session2=%q", session1, session2)
 			}
 			if t2tools == 0 || t2content == 0 {
 				t.Fatalf("turn 2 did not stream: tools=%d content=%d", t2tools, t2content)
@@ -402,25 +408,25 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 				t.Fatalf("turn 2 did not carry the turn-1 build id into report.md (context not preserved): %q", string(report))
 			}
 
-			t.Logf("[%s] multi-turn OK: reused tmux=%s; turn1(tools=%d content=%d) turn2(tools=%d content=%d elapsed=%s)",
-				tc.name, tmux1, t1tools, t1content, t2tools, t2content, turn2Elapsed.Round(time.Second))
+			t.Logf("[%s] multi-turn OK: reused session=%s; turn1(tools=%d content=%d) turn2(tools=%d content=%d elapsed=%s)",
+				tc.name, session1, t1tools, t1content, t2tools, t2content, turn2Elapsed.Round(time.Second))
 
 			rec := agentreview.WriteWithCriteria(t, "TestRealBridgeStreamingMultiTurn_"+tc.name,
 				tc.name+" persistent multi-turn through the REAL bridge: turn 1 reads a build id, turn 2 reuses the session and writes it into report.md",
 				realBridgeReviewCriteria(tc.provider),
 				agyReviewFacts(tc.provider, map[string]any{
-					"provider":              tc.name,
-					"reused_tmux_session":   tmux1 == tmux2,
-					"turn1_answer":          strings.TrimSpace(ans1),
-					"turn1_tool_events":     t1tools,
-					"turn1_content_chunks":  t1content,
-					"turn2_answer":          strings.TrimSpace(ans2),
-					"turn2_tool_events":     t2tools,
-					"turn2_content_chunks":  t2content,
-					"report_md_on_disk":     string(report),
-					"build_id_only_in_file": codeWord,
+					"provider":                tc.name,
+					"reused_provider_session": session1 == session2,
+					"turn1_answer":            strings.TrimSpace(ans1),
+					"turn1_tool_events":       t1tools,
+					"turn1_content_chunks":    t1content,
+					"turn2_answer":            strings.TrimSpace(ans2),
+					"turn2_tool_events":       t2tools,
+					"turn2_content_chunks":    t2content,
+					"report_md_on_disk":       string(report),
+					"build_id_only_in_file":   codeWord,
 				}),
-				map[string]any{"reused": tmux1 == tmux2, "turn1_streamed": t1tools > 0 && t1content > 0, "turn2_streamed": t2tools > 0 && t2content > 0},
+				map[string]any{"reused": session1 == session2, "turn1_streamed": t1tools > 0 && t1content > 0, "turn2_streamed": t2tools > 0 && t2content > 0},
 			)
 			agentreview.RequireReviewed(t, rec)
 		})

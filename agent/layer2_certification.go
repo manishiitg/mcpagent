@@ -13,8 +13,9 @@ import (
 type Layer2Transport string
 
 const (
-	Layer2TransportTmux Layer2Transport = "tmux"
-	Layer2TransportJSON Layer2Transport = "json"
+	Layer2TransportTmux      Layer2Transport = "tmux"
+	Layer2TransportJSON      Layer2Transport = "json"
+	Layer2TransportAppServer Layer2Transport = "app-server"
 )
 
 // Layer2Certification is one release-blocking Layer-2 capability: a real-CLI
@@ -153,6 +154,10 @@ var layer2SystemPromptJSONExclusions = map[string]string{
 // green. Add a row here when a capability graduates to release-blocking; the
 // consistency + evidence tests then enforce it.
 var Layer2P0Certifications = []Layer2Certification{
+	{"multi_turn.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeStreamingMultiTurn", true, "native app-server thread reuse with real MCP tools and canonical completion"},
+	{"steering.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestCodingSessionDeliverSteerMidTurn", true, "native turn/steer while the real MCP bridge is executing"},
+	{"concurrency.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeStreamingConcurrent", true, "independent native app-server threads through the SDK"},
+
 	// --- tmux: agent-reviewed real-CLI evidence ---
 	// Muse is certified on every tmux row: it runs on a persistent TUI pane
 	// with transcript streaming, mid-turn live-input steering, and native

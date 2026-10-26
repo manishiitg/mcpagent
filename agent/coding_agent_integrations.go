@@ -315,7 +315,7 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 		// tools connected (tools/list answered) — see BuildBridgeMCPConfig.
 		opts = append(opts, llm.WithMCPReadyFile(a.bridgeReadyFile))
 	}
-	a.logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge through a session TOML profile (MCP tool timeout=%s, layer=codex_mcp_client)", mcpToolTimeout))
+	a.logger.Info(fmt.Sprintf("🌉 [CODEX_CLI] Configured MCP bridge through app-server thread config (MCP tool timeout=%s, layer=codex_mcp_client)", mcpToolTimeout))
 
 	if model.Options != nil {
 		if effort, ok := model.Options["reasoning_effort"].(string); ok && effort != "" {
@@ -323,19 +323,7 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 			a.logger.Info(fmt.Sprintf("🧠 [CODEX_CLI] Reasoning effort set to: %s", effort))
 		}
 	}
-	a.logger.Info("🌉 Using Codex CLI with shell disabled, MCP bridge, and auto-approval")
-	if a.wantsStructuredTransport() {
-		opts = append(opts, llm.WithCodexStructuredTransport(true))
-	} else if a.enableStreaming {
-		opts = append(opts, llmproviders.WithCodexStreamTranscript(true))
-		opts = append(opts, llm.WithCodexStreamTmuxScreen(true))
-	}
-	// See appendClaudeCodeIntegrationOptions' matching comment: content
-	// streaming needs this separate, explicit opt-in beyond EnableStreaming.
-	if a.streamingCallback != nil {
-		opts = append(opts, llm.WithCodexStreamTranscript(true))
-		opts = append(opts, llm.WithCodexStreamTmuxScreen(true))
-	}
+	a.logger.Info("🌉 Using Codex app-server with the configured native tools, MCP bridge, and auto-approval")
 	return opts, nil
 }
 

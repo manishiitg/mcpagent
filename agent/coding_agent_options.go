@@ -82,7 +82,8 @@ func codingAgentInteractiveEnabledForProvider(provider llm.Provider, modelID, se
 	if strings.TrimSpace(sessionID) == "" {
 		return false
 	}
-	return llm.IsTmuxCodingAgentProvider(provider, modelID)
+	contract, ok := llm.GetCodingAgentProviderContract(provider, modelID)
+	return ok && contract.UsesPersistentSession
 }
 
 func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {

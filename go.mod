@@ -5,7 +5,7 @@ go 1.25.12
 require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261025164433-2df1e753d655
+	github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261026141320-061e71bec878
 	github.com/mark3labs/mcp-go v1.0.0
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/oauth2 v0.36.0
@@ -52,6 +52,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/openai/openai-go/v3 v3.36.0 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pkoukk/tiktoken-go v0.1.8 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
