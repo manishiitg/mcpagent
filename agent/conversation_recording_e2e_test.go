@@ -89,7 +89,7 @@ func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, 
 	// Real token usage must be recorded. convrecord deliberately carries no USD
 	// cost (see convrecord.go doc) — pricing is the caller's own decision, made
 	// from these token counts using whatever rate table/policy it has.
-	if !strings.Contains(string(raw), `"prompt_tokens"`) || strings.Contains(string(raw), `"prompt_tokens": 0`) {
+	if contract, ok := llm.GetCodingAgentProviderContract(provider, modelID); ok && contract.SurfacesTokenUsage && (!strings.Contains(string(raw), `"prompt_tokens"`) || strings.Contains(string(raw), `"prompt_tokens": 0`)) {
 		t.Fatalf("expected non-zero prompt_tokens in recorded turn, got: %s", raw)
 	}
 
@@ -131,12 +131,18 @@ func runConversationRecordingCase(t *testing.T, provider llm.Provider, modelID, 
 	})
 	resumedAnswer, _, err := agent2.askWithHistory(ctx, resumedMessages)
 	if err != nil {
+		if provider == llm.ProviderCursorCLI {
+			t.Fatalf("ACP fresh-history replay failed: %v", err)
+		}
 		t.Logf("[best-effort] resume turn errored (not a convrecord defect — round-trip already proven hard above): %v", err)
 		return
 	}
 	if strings.Contains(resumedAnswer, canary) {
 		t.Logf("resume verified: second agent recalled the fact from convrecord.LoadHistory: %q", resumedAnswer)
 	} else {
+		if provider == llm.ProviderCursorCLI {
+			t.Fatalf("ACP fresh session lost supplied history: %q", resumedAnswer)
+		}
 		t.Logf("[best-effort] resumed agent did not echo the fact (model chose not to / used a tool): %q — round-trip fidelity already proven hard above", resumedAnswer)
 	}
 }

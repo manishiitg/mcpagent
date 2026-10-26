@@ -26,7 +26,7 @@ func TestLayer2P0RegistryConsistent(t *testing.T) {
 		if len(c.Providers) == 0 {
 			t.Errorf("cert %q lists no providers", c.ID)
 		}
-		if c.Transport != Layer2TransportTmux && c.Transport != Layer2TransportJSON && c.Transport != Layer2TransportAppServer && c.Transport != Layer2TransportRPC {
+		if c.Transport != Layer2TransportTmux && c.Transport != Layer2TransportJSON && c.Transport != Layer2TransportAppServer && c.Transport != Layer2TransportRPC && c.Transport != Layer2TransportACP {
 			t.Errorf("cert %q has invalid transport %q", c.ID, c.Transport)
 		}
 		if seen[c.ID] {
@@ -105,6 +105,9 @@ func TestLayer2ProviderSetsDerived(t *testing.T) {
 		if c.Transport == Layer2TransportAppServer {
 			base = []string{"Codex"}
 		}
+		if c.Transport == Layer2TransportACP {
+			base = []string{"Cursor"}
+		}
 		if c.Transport == Layer2TransportRPC {
 			base = []string{"Pi"}
 		}
@@ -142,6 +145,9 @@ func TestLayer2P0AgentReviewedEvidence(t *testing.T) {
 		}
 		for _, p := range c.Providers {
 			path := filepath.Join(dir, c.TestName+"_"+p+".json")
+			if c.Transport == Layer2TransportACP && c.TestName == "TestRealBridgeStreamingE2E" {
+				path = filepath.Join(dir, "TestRealBridgeStreaming_cursor_acp.json")
+			}
 			// #nosec G304 - path is built from the in-repo registry, not user input.
 			data, err := os.ReadFile(path)
 			if err != nil {

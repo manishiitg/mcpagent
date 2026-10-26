@@ -361,7 +361,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			session1 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
-			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI {
+			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI || tc.provider == llm.ProviderCursorCLI {
 				session1 = agent.codingProviderSessionHandle.NativeSessionID
 			}
 			_, t1tools, t1content := captureRealBridge(listener.events[:turn1End])
@@ -382,7 +382,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 			ans2 := result2.Text
 			turn2Elapsed := time.Since(turn2Start)
 			session2 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
-			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI {
+			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI || tc.provider == llm.ProviderCursorCLI {
 				session2 = agent.codingProviderSessionHandle.NativeSessionID
 			}
 			_, t2tools, t2content := captureRealBridge(listener.events[turn1End:])

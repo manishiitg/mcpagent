@@ -17,6 +17,7 @@ const (
 	Layer2TransportJSON      Layer2Transport = "json"
 	Layer2TransportAppServer Layer2Transport = "app-server"
 	Layer2TransportRPC       Layer2Transport = "rpc"
+	Layer2TransportACP       Layer2Transport = "acp"
 )
 
 // Layer2Certification is one release-blocking Layer-2 capability: a real-CLI
@@ -181,6 +182,17 @@ var Layer2P0Certifications = []Layer2Certification{
 	{"skills.rpc", Layer2TransportRPC, []string{"Pi"}, "TestTmuxSkillsSurviveNewAgent", false, "attached skills read through SDK"},
 	{"convrecord.rpc", Layer2TransportRPC, []string{"Pi"}, "TestConversationRecordingWritesRealTurnData", false, "record and reload real turns and usage"},
 
+	{"message_modes.acp", Layer2TransportACP, []string{"Cursor"}, "TestRealBridgeMessageModes", true, "native final and delta-stream reconstruction; no raw terminal channel"},
+	{"streaming.acp", Layer2TransportACP, []string{"Cursor"}, "TestRealBridgeStreamingE2E", true, "native SDK delta stream, tool lifecycle, reconstruction and measured output pacing"},
+	{"multi_turn.acp", Layer2TransportACP, []string{"Cursor"}, "TestRealBridgeStreamingMultiTurn", true, "native ACP thread reuse with real MCP tools and canonical completion"},
+	{"concurrency.acp", Layer2TransportACP, []string{"Cursor"}, "TestRealBridgeStreamingConcurrent", true, "independent native ACP threads through the SDK"},
+	{"continuity.acp", Layer2TransportACP, []string{"Cursor"}, "TestCodingSessionContinuityAfterLoss", true, "native thread resume after process loss"},
+	{"tool_failure_recovery.acp", Layer2TransportACP, []string{"Cursor"}, "TestRealBridgeStreamingToolFailureRecovery", true, "real MCP failure followed by successful retry"},
+	{"tool_failure_giveup.acp", Layer2TransportACP, []string{"Cursor"}, "TestRealBridgeStreamingToolFailureGiveUp", true, "permanent MCP failure without fabrication"},
+	{"markdown_fidelity.acp", Layer2TransportACP, []string{"Cursor"}, "TestRealBridgeMarkdownFidelity", true, "exact markdown and no duplicated output"},
+	{"system_prompt.acp", Layer2TransportACP, []string{"Cursor"}, "TestTmuxSystemPromptSurvivesNewAgent", false, "native instructions through SDK"},
+	{"skills.acp", Layer2TransportACP, []string{"Cursor"}, "TestTmuxSkillsSurviveNewAgent", false, "attached skills read through SDK"},
+	{"convrecord.acp", Layer2TransportACP, []string{"Cursor"}, "TestConversationRecordingWritesRealTurnData", false, "record and reload real turns and usage"},
 	// --- tmux: agent-reviewed real-CLI evidence ---
 	// Muse is certified on every tmux row: it runs on a persistent TUI pane
 	// with transcript streaming, mid-turn live-input steering, and native

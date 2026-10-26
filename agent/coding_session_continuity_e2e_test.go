@@ -12,6 +12,7 @@ import (
 	"github.com/manishiitg/mcpagent/internal/agentreview"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 )
 
 // TestCodingSessionContinuityAfterLoss proves the library's continuity
@@ -76,6 +77,8 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 			tmuxSession := strings.TrimSpace(handle.Provider.TmuxSession)
 			if tc.provider == llm.ProviderCodexCLI {
 				codexcli.CloseCodexCLIInteractiveSessionForOwner(handle.SessionID, "test process loss")
+			} else if tc.provider == llm.ProviderCursorCLI {
+				cursorcli.CloseCursorCLIInteractiveSessionForOwner(handle.SessionID, "test process loss")
 			} else if tc.provider == llm.ProviderPiCLI {
 				llm.ClosePiCLIInteractiveSessionForOwner(handle.SessionID, "test process loss")
 			} else {
