@@ -155,6 +155,9 @@ func TestDeliverUserMessageReportsActualStructuredTransport(t *testing.T) {
 func TestDeliverUserMessageRefusesQueueWhenNoTurnIsRunning(t *testing.T) {
 	for _, agent := range []*Agent{
 		{provider: llm.ProviderOpenAI, modelID: "gpt-5"},
+		{provider: llm.ProviderCodexCLI, modelID: "gpt-5.6-sol"},
+		{provider: llm.ProviderPiCLI, modelID: "google/gemini-3.8-flash"},
+		{provider: llm.ProviderCursorCLI, modelID: "composer-2.5"},
 		{provider: llm.ProviderClaudeCode, modelID: "claude-sonnet-5", codingAgentTransport: llm.CodingAgentTransportStructured},
 	} {
 		_, err := agent.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{SessionID: "idle", Message: "see the new ticket"})
@@ -164,6 +167,23 @@ func TestDeliverUserMessageRefusesQueueWhenNoTurnIsRunning(t *testing.T) {
 		}
 		if got := agent.drainSteerMessages(); len(got) != 0 {
 			t.Fatalf("%s: message stranded in the steer queue: %#v", agent.provider, got)
+		}
+	}
+}
+
+// PLAT-872-24: a native turn can finish before its outer SDK turn. Its
+// pre-write rejection must queue once at the outer boundary, never become 409.
+func TestNativeTurnNotStartedQueuesAtActiveOuterBoundary(t *testing.T) {
+	for _, provider := range []llm.Provider{llm.ProviderCodexCLI, llm.ProviderPiCLI} {
+		a := &Agent{provider: provider, modelID: "test"}
+		a.setTurnInFlight(true)
+		result, err := a.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{SessionID: "native-no-process", Message: "follow up", Intent: UserMessageDeliveryIntentLiveInput})
+		if err != nil || result.DeliveryStatus != UserMessageDeliveryStatusQueuedForInjection {
+			t.Fatalf("%s: result=%+v err=%v", provider, result, err)
+		}
+		got := a.drainSteerMessages()
+		if len(got) != 1 || got[0] != "follow up" {
+			t.Fatalf("%s: queued=%v", provider, got)
 		}
 	}
 }

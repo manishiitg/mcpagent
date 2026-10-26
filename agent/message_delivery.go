@@ -2,11 +2,13 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // stuckSteerQueueAge bounds how long a queued steer message may wait for a
@@ -158,6 +160,12 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 		}
 	}
 
+	// PLAT-872-24: native protocols steer only an active turn. A retained
+	// process between turns must resume through the normal generation path.
+	if isCodingAgent && contract.Transport != llm.CodingAgentTransportTmux && !a.isTurnInFlight() {
+		return result, &CodingAgentDeliveryError{Kind: DeliveryErrorKindNoSession, Provider: provider, Reason: "no turn is running to take the message; start a new turn"}
+	}
+
 	// Transport-aware, not just contract-aware: the same provider is steerable on
 	// tmux but query-only on the structured/JSON transport, which has no live pane
 	// to send-keys into. usesStructuredTransport() gates the tmux live-input path
@@ -172,7 +180,7 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 			err = llm.SendCodingAgentRetainedInput(ctx, provider, a.modelID, req.SessionID, message)
 		}
 		if err != nil {
-			if isInteractiveSessionNotRegistered(err) && a.isTurnInFlight() {
+			if (isInteractiveSessionNotRegistered(err) || errors.Is(err, llmtypes.ErrCodingAgentInputNotSent)) && a.isTurnInFlight() {
 				// No pooled TUI while a turn runs: an API-continuation turn,
 				// or a TUI turn whose pane is still booting. Either way the
 				// outer conversation loop is running, so queue for its next
@@ -202,6 +210,9 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 				}
 				result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
 				return result, nil
+			}
+			if errors.Is(err, llmtypes.ErrCodingAgentInputNotSent) {
+				return result, &CodingAgentDeliveryError{Kind: DeliveryErrorKindNoSession, Provider: provider, Reason: err.Error()}
 			}
 			return result, fmt.Errorf("failed to submit live input to %s: %w", provider, err)
 		}

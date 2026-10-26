@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -374,8 +375,20 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 
 			// Turn 2 — SAME session; carry the turn-1 build id into a real file write.
 			turn2Start := time.Now()
-			result2, err := runtimeSession.Run(ctx, Turn{Input: fmt.Sprintf(
-				"Using the build id from the previous step, use execute_shell_command to write a GitHub-flavored markdown table to %s with a header row and the rows '| build_id | <that build id> |' and '| status | ok |'. Then run: cat %s and reply with its contents.", reportPath, reportPath)})
+			followup := fmt.Sprintf("Using the build id from the previous step, use execute_shell_command to write a GitHub-flavored markdown table to %s with a header row and the rows '| build_id | <that build id> |' and '| status | ok |'. Then run: cat %s and reply with its contents.", reportPath, reportPath)
+			if contract, ok := llm.GetCodingAgentProviderContract(tc.provider, tc.modelID); ok && contract.Transport != llm.CodingAgentTransportTmux {
+				// PLAT-872-24: exercise the host's retained Send shortcut after
+				// a real completed turn, then its normal new-turn fallback.
+				_, sendErr := runtimeSession.Send(ctx, followup)
+				var deliveryErr *CodingAgentDeliveryError
+				if !errors.As(sendErr, &deliveryErr) || deliveryErr.Kind != DeliveryErrorKindNoSession {
+					t.Fatalf("idle Send must prove non-delivery, got %v", sendErr)
+				}
+				if _, statErr := os.Stat(reportPath); !os.IsNotExist(statErr) {
+					t.Fatalf("idle Send unexpectedly wrote report: %v", statErr)
+				}
+			}
+			result2, err := runtimeSession.Run(ctx, Turn{Input: followup})
 			if err != nil {
 				t.Fatalf("turn 2: %v", err)
 			}
