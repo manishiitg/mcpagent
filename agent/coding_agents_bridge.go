@@ -75,6 +75,9 @@ type BridgeToolDef struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 	Server      string          `json:"server,omitempty"` // MCP server name (empty for custom/virtual)
 	Type        string          `json:"type"`             // "mcp", "custom", or "virtual"
+	// Resolved direct-tool timeout; zero means no tool deadline. The CLI bridge
+	// still applies the existing provider/backstop cap (PLAT-861-344).
+	TimeoutMillis *int64 `json:"timeout_ms,omitempty"`
 }
 
 // bridgeTools is the explicit list of tools exposed through the coding-agent MCP
@@ -476,7 +479,12 @@ func defaultBridgeToolDef(name, toolType string, logger loggerv2.Logger) *Bridge
 	}
 	switch name {
 	case "execute_shell_command":
-		return marshalBridgeToolDef(name, codeexec.ShellCommandDescription, codeexec.ShellCommandParams, toolType, logger)
+		def := marshalBridgeToolDef(name, codeexec.ShellCommandDescription, codeexec.ShellCommandParams, toolType, logger)
+		if def != nil {
+			millis := int64(0) // The intrinsic shell uses its existing long-running backstop.
+			def.TimeoutMillis = &millis
+		}
+		return def
 	case "diff_patch_workspace_file":
 		return marshalBridgeToolDef(name, "Apply a unified diff patch to a workspace file.", map[string]interface{}{
 			"type": "object",
@@ -524,7 +532,16 @@ func (a *Agent) lookupBridgeTool(name, toolType string, logger loggerv2.Logger) 
 			description = tool.Definition.Function.Description
 			parameters = tool.Definition.Function.Parameters
 		}
-		return marshalBridgeToolDef(name, description, parameters, toolType, logger)
+		def := marshalBridgeToolDef(name, description, parameters, toolType, logger)
+		if def != nil {
+			timeout := tool.Timeout
+			if timeout < 0 {
+				timeout = getToolExecutionTimeout(a)
+			}
+			millis := timeout.Milliseconds()
+			def.TimeoutMillis = &millis
+		}
+		return def
 
 	case "virtual":
 		for _, tool := range a.tools {

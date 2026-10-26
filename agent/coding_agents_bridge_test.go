@@ -38,6 +38,37 @@ func TestLookupBridgeToolSynthesizesGetAPISpecWhenFilteredFromTools(t *testing.T
 	}
 }
 
+// PLAT-861-344: native CLI serialization must preserve the same declared tool
+// deadline that direct Go dispatch uses, including zero and the agent default.
+func TestBridgeSerializationPreservesDeclaredToolTimeout(t *testing.T) {
+	a := bridgeTestAgent()
+	a.toolTimeout = 2 * time.Minute
+	for _, tc := range []struct {
+		name           string
+		declared, want time.Duration
+	}{
+		{"collect_records", 30 * time.Minute, 30 * time.Minute},
+		{"unlimited", 0, 0},
+		{"agent_default", -1, 2 * time.Minute},
+	} {
+		if err := a.registerCustomToolWithTimeout(tc.name, "", nil, func(context.Context, map[string]interface{}) (string, error) { return "", nil }, tc.declared, "workflow"); err != nil {
+			t.Fatal(err)
+		}
+		def := a.lookupBridgeTool(tc.name, "custom", loggerv2.NewDefault())
+		raw, err := json.Marshal(def)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var readback BridgeToolDef
+		if err = json.Unmarshal(raw, &readback); err != nil {
+			t.Fatal(err)
+		}
+		if readback.TimeoutMillis == nil || *readback.TimeoutMillis != tc.want.Milliseconds() {
+			t.Fatalf("%s lost declared timeout: %s", tc.name, raw)
+		}
+	}
+}
+
 func TestIsCodingCLIProviderExcludesKimiAPIProvider(t *testing.T) {
 	tests := []struct {
 		name     string

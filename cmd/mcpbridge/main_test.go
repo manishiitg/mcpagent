@@ -33,11 +33,25 @@ func TestBridgeMaxCallParsesOnlyPositiveSeconds(t *testing.T) {
 	}
 }
 
-func TestClarificationUsesLongRunningBridgeTimeout(t *testing.T) {
-	if !isLongRunningDelegationTool("custom", "request_clarification") {
-		t.Fatal("human clarification must not expire at the ordinary tool timeout")
-	}
-	if isLongRunningDelegationTool("mcp", "request_clarification") {
-		t.Fatal("an external MCP tool must not inherit the platform clarification timeout")
+// PLAT-861-344: dynamically named script tools used to lose their 30m deadline
+// and get cut off at the ordinary 5m bridge limit.
+func TestBridgeUsesDeclaredToolTimeoutWithinExistingCaps(t *testing.T) {
+	millis := func(d time.Duration) *int64 { v := d.Milliseconds(); return &v }
+	for _, tc := range []struct {
+		name      string
+		def       ToolDef
+		cap, want time.Duration
+	}{
+		{"dynamic script", ToolDef{Name: "collect_records", Type: "custom", TimeoutMillis: millis(30 * time.Minute)}, 90 * time.Minute, 30 * time.Minute},
+		{"no tool deadline", ToolDef{Type: "custom", TimeoutMillis: millis(0)}, 90 * time.Minute, 90 * time.Minute},
+		{"provider cap", ToolDef{Type: "custom", TimeoutMillis: millis(30 * time.Minute)}, 270 * time.Second, 270 * time.Second},
+		{"ordinary discovery", ToolDef{Type: "virtual"}, 90 * time.Minute, 5 * time.Minute},
+		{"external MCP cannot borrow platform deadline", ToolDef{Type: "mcp", TimeoutMillis: millis(30 * time.Minute)}, 90 * time.Minute, 5 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bridgeToolHTTPTimeout(tc.def, 5*time.Minute, tc.cap); got != tc.want {
+				t.Fatalf("timeout=%v want %v", got, tc.want)
+			}
+		})
 	}
 }

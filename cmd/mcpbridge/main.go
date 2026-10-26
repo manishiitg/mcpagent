@@ -61,23 +61,25 @@ func makeReadyFileWriter(readyPath string) func() {
 
 // ToolDef is the serialized tool definition read from the file named by MCP_TOOLS_FILE.
 type ToolDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
-	Server      string          `json:"server"` // MCP server name (empty for custom/virtual)
-	Type        string          `json:"type"`   // "mcp", "custom", or "virtual"
+	Name          string          `json:"name"`
+	Description   string          `json:"description"`
+	InputSchema   json.RawMessage `json:"input_schema"`
+	Server        string          `json:"server"` // MCP server name (empty for custom/virtual)
+	Type          string          `json:"type"`   // "mcp", "custom", or "virtual"
+	TimeoutMillis *int64          `json:"timeout_ms,omitempty"`
 }
 
-func isLongRunningDelegationTool(toolType, toolName string) bool {
-	if toolType != "custom" {
-		return false
+// The trusted parent owns direct-tool deadlines. Dynamic tools must not lose
+// them at the CLI boundary; existing provider/backstop caps still apply.
+func bridgeToolHTTPTimeout(def ToolDef, defaultTimeout, longRunningTimeout time.Duration) time.Duration {
+	if def.Type != "custom" || def.TimeoutMillis == nil {
+		return defaultTimeout
 	}
-	switch toolName {
-	case "call_sub_agent", "call_generic_agent", "execute_shell_command", "request_clarification":
-		return true
-	default:
-		return false
+	declared := time.Duration(*def.TimeoutMillis) * time.Millisecond
+	if declared <= 0 || declared > longRunningTimeout {
+		return longRunningTimeout
 	}
+	return declared
 }
 
 func truncateBridgeErrorText(s string) string {
@@ -200,8 +202,6 @@ func main() {
 			longRunningTimeout = limit
 		}
 	}
-	defaultHTTPClient := &http.Client{Timeout: defaultTimeout}
-	longRunningHTTPClient := &http.Client{Timeout: longRunningTimeout}
 
 	for _, td := range toolDefs {
 		def := td // capture loop variable
@@ -256,13 +256,10 @@ func main() {
 				httpReq.Header.Set("X-Session-ID", sessionID)
 			}
 
-			httpClient := defaultHTTPClient
-			if isLongRunningDelegationTool(def.Type, def.Name) {
-				httpClient = longRunningHTTPClient
-			}
+			httpClient := &http.Client{Timeout: bridgeToolHTTPTimeout(def, defaultTimeout, longRunningTimeout)}
 
 			started := time.Now()
-			bridgeLogf("mcpbridge: tool call start type=%s tool=%s url=%s args_bytes=%d diff_bytes=%d filepath=%q session=%s", def.Type, def.Name, url, len(argsJSON), diffBytes, filepathArg, sessionID)
+			bridgeLogf("mcpbridge: tool call start type=%s tool=%s url=%s args_bytes=%d diff_bytes=%d filepath=%q session=%s timeout=%s", def.Type, def.Name, url, len(argsJSON), diffBytes, filepathArg, sessionID, httpClient.Timeout)
 			resp, err := httpClient.Do(httpReq) // #nosec G704 -- Sends to the parent-configured bridge service; callers control the JSON body, not the destination.
 			if err != nil {
 				log.Printf("mcpbridge: tool call http error type=%s tool=%s duration=%s error=%v", def.Type, def.Name, time.Since(started), err)
@@ -318,7 +315,7 @@ func main() {
 		})
 	}
 
-	bridgeLogf("mcpbridge: starting with %d tools, API URL: %s, default_http_timeout=%s, long_running_http_timeout=%s", len(toolDefs), apiURL, defaultHTTPClient.Timeout, longRunningTimeout)
+	bridgeLogf("mcpbridge: starting with %d tools, API URL: %s, default_http_timeout=%s, long_running_http_timeout=%s", len(toolDefs), apiURL, defaultTimeout, longRunningTimeout)
 
 	if err := server.ServeStdio(s); err != nil {
 		log.Fatalf("mcpbridge: stdio server error: %v", err)
