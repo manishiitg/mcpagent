@@ -45,7 +45,7 @@ type multiTurnProviderCase struct {
 var multiTurnProviderCases = []multiTurnProviderCase{
 	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", withClaudeCodePersistentInteractiveSession, true},
 	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", withCodexPersistentInteractiveSession, false},
-	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "auto", withCursorPersistentInteractiveSession, true},
+	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "composer-2.5", withCursorPersistentInteractiveSession, true},
 	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.8-flash", withPiPersistentInteractiveSession, true},
 	// Muse's internal session controls can bypass PreToolUse.
 	{"Muse", "muse", llm.ProviderMuseCLI, "muse-spark-1.3-contributor", withMusePersistentInteractiveSession, false},

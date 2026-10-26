@@ -264,3 +264,20 @@ func TestCodingCLIAggregateUsageDoesNotPretendToBeContextPercentage(t *testing.T
 	}
 	t.Fatal("LLMGenerationEnd event was not emitted")
 }
+
+// PLAT-872-21: missing native ACP usage must not render as measured zero tokens.
+func TestNativeMissingUsageDoesNotEmitZeroTotal(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	a := &Agent{sessionID: "missing-usage", provider: llm.ProviderCursorCLI, modelID: "composer-2.5", logger: loggerv2.NewNoop(), listeners: []AgentEventListener{listener}}
+	a.emitTotalTokenUsageEvent(context.Background(), time.Second)
+	if len(listener.events) != 0 {
+		t.Fatal("unavailable usage emitted as zero")
+	}
+	a.cumulativePromptTokens = 10
+	a.cumulativeCompletionTokens = 5
+	a.cumulativeTotalTokens = 15
+	a.emitTotalTokenUsageEvent(context.Background(), time.Second)
+	if len(listener.events) != 1 {
+		t.Fatal("reported usage was hidden")
+	}
+}

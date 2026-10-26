@@ -2330,6 +2330,12 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 	a.tokenTrackingMutex.RLock()
 	defer a.tokenTrackingMutex.RUnlock()
 
+	// Native ACP does not report token counts. An empty counter is unknown,
+	// not a measured zero-token turn (PLAT-872-21).
+	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok && !contract.SurfacesTokenUsage && a.cumulativeTotalTokens == 0 && a.cumulativePromptTokens == 0 && a.cumulativeCompletionTokens == 0 {
+		return
+	}
+
 	// Calculate context window usage percentage
 	var contextUsagePercent float64
 	currentUsage := a.currentContextWindowUsage

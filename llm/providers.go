@@ -54,6 +54,7 @@ const (
 	CodingAgentTransportStructured = llmproviders.CodingAgentTransportStructured
 	CodingAgentTransportAppServer  = llmproviders.CodingAgentTransportAppServer
 	CodingAgentTransportRPC        = llmproviders.CodingAgentTransportRPC
+	CodingAgentTransportACP        = llmproviders.CodingAgentTransportACP
 )
 
 func GetCodingAgentProviderContract(provider Provider, modelID string) (CodingAgentProviderContract, bool) {
@@ -168,13 +169,6 @@ func AwaitClaudeInputDurable(ctx context.Context, sessionID, message string, tim
 // pane ack; a zero timeout selects the adapter's env-tuned budget.
 func AwaitCodexInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
 	return llmproviders.AwaitCodexInputDurable(ctx, sessionID, message, timeout)
-}
-
-// AwaitCursorInputDurable waits for the store proof that a previous live
-// input reached the Cursor CLI. Host applications call it after the fast
-// pane ack; a zero timeout selects the adapter's env-tuned budget.
-func AwaitCursorInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
-	return llmproviders.AwaitCursorInputDurable(ctx, sessionID, message, timeout)
 }
 
 // AwaitPiInputDurable waits for the marker proof that a previous live
@@ -607,13 +601,6 @@ func WithClaudeStructuredTransport(enabled bool) CallOption {
 	return llmproviders.WithClaudeStructuredTransport(enabled)
 }
 
-// WithCursorStructuredTransport selects `cursor-agent --print --output-format
-// stream-json` instead of the tmux interactive transport. OFF by default —
-// see WithCodexStructuredTransport doc comment for the rationale.
-func WithCursorStructuredTransport(enabled bool) CallOption {
-	return llmproviders.WithCursorStructuredTransport(enabled)
-}
-
 // WithMuseStructuredTransport selects `muse exec --json` instead of the tmux
 // interactive transport. OFF by default — the adapter runs the tmux lane
 // unless this option explicitly requests the one-shot JSON lane.
@@ -635,11 +622,6 @@ func WithClaudeStreamTranscript(enabled bool) CallOption {
 	return llmproviders.WithClaudeStreamTranscript(enabled)
 }
 
-// WithCursorStreamTranscript is WithCodexStreamTranscript for Cursor CLI.
-func WithCursorStreamTranscript(enabled bool) CallOption {
-	return llmproviders.WithCursorStreamTranscript(enabled)
-}
-
 // WithClaudeStreamTmuxScreen controls whether Claude Code's raw tmux-pane
 // snapshots are included in the general stream. Product chat should normally
 // disable this and consume WithClaudeStreamTranscript instead; an explicit
@@ -651,11 +633,6 @@ func WithClaudeStreamTmuxScreen(enabled bool) CallOption {
 // WithCodexStreamTmuxScreen is WithClaudeStreamTmuxScreen for Codex CLI.
 func WithCodexStreamTmuxScreen(enabled bool) CallOption {
 	return llmproviders.WithCodexStreamTmuxScreen(enabled)
-}
-
-// WithCursorStreamTmuxScreen is WithClaudeStreamTmuxScreen for Cursor CLI.
-func WithCursorStreamTmuxScreen(enabled bool) CallOption {
-	return llmproviders.WithCursorStreamTmuxScreen(enabled)
 }
 
 // WithCodexReasoningEffort sets the model_reasoning_effort for the Codex CLI.

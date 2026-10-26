@@ -145,7 +145,7 @@ func assertBridgeOrWebsearchOnly(t *testing.T, toolNames []string, tl toolLifecy
 	var native []string
 	for _, id := range tl.order {
 		tn := tl.starts[id]
-		if !isBridgeOrWebsearchTool(tn) && !callInvokesBridge(tl.args[id]) {
+		if !tl.denied[id] && !isBridgeOrWebsearchTool(tn) && !callInvokesBridge(tl.args[id]) {
 			native = append(native, tn)
 		}
 	}
@@ -362,7 +362,7 @@ func realBridgeProviderCases() []realBridgeProviderCase {
 		{name: "codex", provider: llm.ProviderCodexCLI, modelID: "gpt-5.6-luna", cliBin: "codex", strictBridgeOnly: false},
 		// cursor reaches the bridge via its GetMcpTools/CallMcpTool meta-tools; the
 		// mcpagent cursor integration auto-approves the MCP bridge (WithCursorApproveMCPs).
-		{name: "cursor", provider: llm.ProviderCursorCLI, modelID: "cursor-cli", cliBin: "cursor-agent", strictBridgeOnly: true},
+		{name: "cursor", provider: llm.ProviderCursorCLI, modelID: "composer-2.5", cliBin: "cursor-agent", strictBridgeOnly: true},
 		// pi streams structured chunks natively via its injected marker hook and
 		// needs a Gemini/Pi key.
 		{
@@ -445,6 +445,9 @@ type realBridgeTransport struct {
 // "Measured matrix". Update that table when these numbers change materially;
 // it is the durable proof the product transport decision rests on.
 func realBridgeTransports(provider llm.Provider) []realBridgeTransport {
+	if provider == llm.ProviderCursorCLI {
+		return []realBridgeTransport{{name: "acp"}}
+	}
 	if provider == llm.ProviderPiCLI {
 		return []realBridgeTransport{{name: "rpc"}}
 	}
@@ -746,7 +749,9 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	// above: containment is the stronger guarantee, and a tool-lifecycle failure
 	// must never mask a policy violation by aborting the test first.
 	assertToolLifecycleComplete(t, toolLife)
-	assertTurnTokenUsage(t, tokenUsage)
+	if contract, ok := llm.GetCodingAgentProviderContract(pc.provider, pc.modelID); ok && contract.SurfacesTokenUsage {
+		assertTurnTokenUsage(t, tokenUsage)
+	}
 
 	cleanJoined := reassembleCleanStream(cleanRun)
 	if !strings.Contains(cleanJoined, "|") || !strings.Contains(cleanJoined, codeWord) {
@@ -1052,11 +1057,12 @@ type toolLifecycle struct {
 	starts map[string]string // toolCallID -> name
 	args   map[string]string // toolCallID -> call body (arguments / code-mode script)
 	ends   map[string]string // toolCallID -> name
+	denied map[string]bool   // exact native permission refusal, not a successful execution
 	order  []string
 }
 
 func collectToolLifecycle(evs []*events.AgentEvent) toolLifecycle {
-	tl := toolLifecycle{starts: map[string]string{}, args: map[string]string{}, ends: map[string]string{}}
+	tl := toolLifecycle{starts: map[string]string{}, args: map[string]string{}, ends: map[string]string{}, denied: map[string]bool{}}
 	for _, ev := range evs {
 		switch d := ev.Data.(type) {
 		case *events.ToolCallStartEvent:
@@ -1067,6 +1073,9 @@ func collectToolLifecycle(evs []*events.AgentEvent) toolLifecycle {
 			tl.args[d.ToolCallID] = d.ToolParams.Arguments
 		case *events.ToolCallEndEvent:
 			tl.ends[d.ToolCallID] = d.ToolName
+		case *events.ToolCallErrorEvent:
+			tl.ends[d.ToolCallID] = d.ToolName
+			tl.denied[d.ToolCallID] = strings.TrimSpace(d.Error) == "Error: Permission denied"
 		}
 	}
 	return tl

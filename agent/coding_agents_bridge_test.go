@@ -743,9 +743,7 @@ func TestAppendCursorCLIIntegrationOptionsEnablesBridgeAndDenyHooks(t *testing.T
 	if got[cursorcli.MetadataKeyDenyBuiltinTools] != true {
 		t.Fatalf("Cursor deny-builtin metadata = %#v, want true", got[cursorcli.MetadataKeyDenyBuiltinTools])
 	}
-	if got[cursorcli.MetadataKeyStreamTranscript] != true {
-		t.Fatalf("Cursor transcript streaming metadata = %#v, want true", got[cursorcli.MetadataKeyStreamTranscript])
-	}
+
 	if _, ok := got[cursorcli.MetadataKeyForce]; ok {
 		t.Fatalf("Cursor force metadata should not be set when bridge is configured: %#v", got[cursorcli.MetadataKeyForce])
 	}
@@ -871,14 +869,6 @@ func TestCodingCLIStreamingKeepsTranscriptAndTerminalSnapshots(t *testing.T) {
 			tmuxMetadataKey: codexcli.MetadataKeyStreamTmuxScreen,
 			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
 				return agent.appendCodexCLIIntegrationOptions(nil, LLMModel{})
-			},
-		},
-		{
-			name:            "cursor",
-			metadataKey:     cursorcli.MetadataKeyStreamTranscript,
-			tmuxMetadataKey: cursorcli.MetadataKeyStreamTmuxScreen,
-			append: func(agent *Agent) ([]llmtypes.CallOption, error) {
-				return agent.appendCursorCLIIntegrationOptions(nil)
 			},
 		},
 		{

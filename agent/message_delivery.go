@@ -118,11 +118,11 @@ func (a *Agent) deliverControlKey(ctx context.Context, req ControlKeyDeliveryReq
 	}
 
 	contract, isCodingAgent := llm.GetCodingAgentProviderContract(provider, a.modelID)
-	if !isCodingAgent || !contract.SupportsLiveInput {
+	if !isCodingAgent || !contract.SupportsInterrupt {
 		return result, &CodingAgentDeliveryError{
 			Kind:     DeliveryErrorKindNotSupported,
 			Provider: provider,
-			Reason:   "provider transport does not support live tmux control keys",
+			Reason:   "provider transport does not support interruption",
 		}
 	}
 	result.Transport = contract.Transport

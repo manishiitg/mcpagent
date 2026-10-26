@@ -71,8 +71,8 @@ var StreamingCriteria = []string{
 		"under a Thinking label, not the model's reasoning; say which it is rather than assuming",
 	"tool calls completed — every started tool has a matching end (tool_calls_started == " +
 		"tool_calls_ended); a started-but-never-ended call leaves a spinning chip in the UI",
-	"usage is renderable — input and output tokens are non-zero so the product's usage line is " +
-		"not 'Input 0 Output 0'; note when cache_tokens is absent on a provider that normally caches",
+	"usage matches native evidence — require input/output counts when the provider surfaces them; " +
+		"otherwise record usage as unavailable, never claim zero cost; note absent cache counts",
 }
 
 func reviewDir() string {

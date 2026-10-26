@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
-	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 )
@@ -284,21 +283,9 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	if a.logger != nil {
 		a.logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
 		a.logger.Info("⏱️ [CURSOR_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
-		a.logger.Info("🌉 Using Cursor CLI in tmux mode with MCP bridge and deny-builtin hooks (no --force; hooks gate built-ins)")
+		a.logger.Info("🌉 Using Cursor native ACP with the scoped MCP bridge and CLI permissions")
 	}
-	if a.wantsStructuredTransport() {
-		opts = append(opts, llm.WithCursorStructuredTransport(true))
-	} else if a.enableStreaming {
-		opts = append(opts, llmproviders.WithCursorStreamTranscript(true))
-		opts = append(opts, llm.WithCursorStreamTmuxScreen(true))
-	}
-	// See appendClaudeCodeIntegrationOptions' matching comment (coding_agent_
-	// integrations.go): content streaming needs this separate, explicit
-	// opt-in beyond EnableStreaming.
-	if a.streamingCallback != nil {
-		opts = append(opts, llm.WithCursorStreamTranscript(true))
-		opts = append(opts, llm.WithCursorStreamTmuxScreen(true))
-	}
+
 	return opts, nil
 }
 
