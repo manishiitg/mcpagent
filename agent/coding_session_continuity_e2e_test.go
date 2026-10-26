@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/internal/agentreview"
+	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 )
 
 // TestCodingSessionContinuityAfterLoss proves the library's continuity
@@ -29,9 +31,6 @@ import (
 func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
 		t.Skip("set RUN_MCPAGENT_REAL_BRIDGE_E2E=1 to run the real-bridge continuity e2e")
-	}
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux required to simulate session loss")
 	}
 	t.Setenv("MCP_BRIDGE_BINARY", ensureRealBridgeBinary(t))
 
@@ -75,14 +74,21 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 
 			// --- simulate session loss: destroy the live tmux session ---
 			tmuxSession := strings.TrimSpace(handle.Provider.TmuxSession)
-			if tmuxSession == "" {
-				t.Fatalf("no tmux session name on the handle; cannot simulate loss: %+v", handle.Provider)
-			}
-			killOut, _ := exec.Command("tmux", "kill-session", "-t", tmuxSession).CombinedOutput() //nolint:gosec // tmuxSession is an adapter-generated session name, not user input
-			t.Logf("[%s] killed tmux session %q to force resume: %s", tc.name, tmuxSession, strings.TrimSpace(string(killOut)))
-			// Confirm it is actually gone.
-			if lsErr := exec.Command("tmux", "has-session", "-t", tmuxSession).Run(); lsErr == nil { //nolint:gosec // tmuxSession is an adapter-generated session name, not user input
-				t.Fatalf("tmux session %q still alive after kill — cannot prove the resume path", tmuxSession)
+			if tc.provider == llm.ProviderCodexCLI {
+				codexcli.CloseCodexCLIInteractiveSessionForOwner(handle.SessionID, "test process loss")
+			} else {
+				if _, err := exec.LookPath("tmux"); err != nil {
+					t.Fatal("tmux required to simulate session loss")
+				}
+				if tmuxSession == "" {
+					t.Fatalf("no tmux session name on the handle; cannot simulate loss: %+v", handle.Provider)
+				}
+				killOut, _ := exec.Command("tmux", "kill-session", "-t", tmuxSession).CombinedOutput() //nolint:gosec // tmuxSession is an adapter-generated session name, not user input
+				t.Logf("[%s] killed tmux session %q to force resume: %s", tc.name, tmuxSession, strings.TrimSpace(string(killOut)))
+				// Confirm it is actually gone.
+				if lsErr := exec.Command("tmux", "has-session", "-t", tmuxSession).Run(); lsErr == nil { //nolint:gosec // tmuxSession is an adapter-generated session name, not user input
+					t.Fatalf("tmux session %q still alive after kill — cannot prove the resume path", tmuxSession)
+				}
 			}
 
 			// --- turn 2: recall the code word — only native --resume can supply it ---
@@ -101,7 +107,7 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 			}
 
 			rec := agentreview.WriteWithCriteria(t, "TestCodingSessionContinuityAfterLoss_"+tc.name,
-				tc.name+": ContinueConversation continuity survives live-session loss: a code word stated in turn 1 is recalled in turn 2 after the tmux session is killed, via native --resume off the persisted handle",
+				tc.name+": ContinueConversation continuity survives live-session loss: a code word stated in turn 1 is recalled in turn 2 after its process is closed, via native resume off the persisted handle",
 				realBridgeReviewCriteria(tc.provider),
 				agyReviewFacts(tc.provider, map[string]any{
 					"provider":              tc.name,

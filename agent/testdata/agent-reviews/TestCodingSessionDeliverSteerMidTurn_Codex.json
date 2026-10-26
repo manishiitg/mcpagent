@@ -16,14 +16,14 @@
     "usage is renderable \u2014 input and output tokens are non-zero so the product's usage line is not 'Input 0 Output 0'; note when cache_tokens is absent on a provider that normally caches"
   ],
   "output": {
-    "conversation_id": "steer-b8260b0e",
+    "conversation_id": "steer-089cccdf",
     "delivery_mode": "steered",
     "provider": "Codex",
     "steer_reached_model": "steered word only appears if the mid-turn live input reached the model",
     "steer_word_obeyed": true,
-    "steered_word": "PURPLE_5de0b44f77b2",
+    "steered_word": "PURPLE_18af3b0d9b3a",
     "tool_completed": true,
-    "turn_answer": "COMMAND_DONE\n\nPURPLE_5de0b44f77b2"
+    "turn_answer": "COMMAND_DONE\n\nPURPLE_18af3b0d9b3a"
   },
   "fingerprint": "fb104ed11ee48805",
   "agent_review": {
@@ -31,6 +31,6 @@
     "reviewed_fingerprint": "fb104ed11ee48805",
     "reviewer": "codex-appserver",
     "issues": [],
-    "notes": "Reviewed real Codex 0.164.0 app-server Session.Run + Session.Send capture: COMMAND_DONE and the later steering token appear cleanly in the same final answer. Live test asserted exactly one canonical completion and no tmux follow-up marker. The pre-fix run failed that marker assertion; corrected run passed in 48.525s. Compact record does not establish per-chunk pacing or reasoning/usage rendering."
+    "notes": "Reviewed actual Session.Run/Session.Send result: native steered delivery, completed slow tool, final COMMAND_DONE and exact PURPLE_18af3b0d9b3a. Live assertions enforce one canonical completion without pending tmux follow-up. Compact output does not certify pacing."
   }
 }

@@ -38,11 +38,16 @@ func buildStructuredBridgeAgentWithShell(t *testing.T, ctx context.Context, tc s
 		stopExecutor()
 		t.Fatalf("InitializeLLM: %v", err)
 	}
-	agent, err := newAgent(ctx, llmModel, configPath,
+	opts := []agentOption{
 		withProvider(tc.provider), withAPIConfig(apiURL, apiToken),
 		withStreaming(true), withCodingAgentWorkingDir(workDir),
 		tc.structuredOption,
-		withSessionID("jsontoolfail-"+realBridgeRandHex(4)))
+		withSessionID("jsontoolfail-" + realBridgeRandHex(4)),
+	}
+	if tc.provider == llm.ProviderCodexCLI {
+		opts = append(opts, withCodingAgentToolsMode(codingAgentToolsMCPOnly))
+	}
+	agent, err := newAgent(ctx, llmModel, configPath, opts...)
 	if err != nil {
 		stopExecutor()
 		t.Fatalf("newAgent: %v", err)
@@ -79,6 +84,9 @@ func requireCodexStructuredToolIdentity(t *testing.T, provider string, evs []*ev
 			starts[data.ToolCallID] = data.ToolName
 		case *events.ToolCallEndEvent:
 			ends[data.ToolCallID] = data.ToolName
+		case *events.ToolCallErrorEvent:
+			// A failed tool has an error terminal event, not a successful end.
+			ends[data.ToolCallID] = data.ToolName
 		}
 	}
 	if len(starts) == 0 {
@@ -90,17 +98,24 @@ func requireCodexStructuredToolIdentity(t *testing.T, provider string, evs []*ev
 		if strings.TrimSpace(startName) == "" {
 			t.Fatalf("Codex structured ToolCallStart %q has an empty name; the app would render generic \"tool\"", id)
 		}
-		if startName != "execute_shell_command" {
-			t.Fatalf("Codex structured ToolCallStart %q name = %q, want execute_shell_command", id, startName)
+		if startName != "execute_shell_command" && startName != "search_tools" && startName != "get_api_spec" && startName != "read_skill" {
+			t.Fatalf("Codex MCP-only ToolCallStart %q has unexpected tool %q", id, startName)
 		}
 		endName, ok := ends[id]
 		if !ok {
-			t.Fatalf("Codex structured ToolCallStart %q has no matching ToolCallEnd", id)
+			t.Fatalf("Codex structured ToolCallStart %q has no matching tool completion/error", id)
 		}
 		if endName != startName {
 			t.Fatalf("Codex structured tool %q changed name: start=%q end=%q", id, startName, endName)
 		}
 		pairs = append(pairs, startName+"->"+endName)
+	}
+	calledShell := false
+	for _, name := range starts {
+		calledShell = calledShell || name == "execute_shell_command"
+	}
+	if !calledShell {
+		t.Fatal("Codex never called the fixture shell tool")
 	}
 	sort.Strings(pairs)
 	return pairs
@@ -283,7 +298,7 @@ func TestStructuredTransportToolFailureGiveUp(t *testing.T) {
 			// (1) The tool was actually attempted (handler counter or a streamed
 			// tool-call event — Cursor routes through its GetMcpTools/CallMcpTool
 			// meta-tool so its handler counter can read 0 even on a real attempt).
-			if nCalls == 0 && len(toolNames) == 0 {
+			if (tc.provider == llm.ProviderCodexCLI && nCalls == 0) || (nCalls == 0 && len(toolNames) == 0) {
 				t.Fatalf("the failing tool was never called (no handler invocation and no streamed tool-call event)")
 			}
 			// (2) It did NOT fabricate the build id — that value is obtainable ONLY

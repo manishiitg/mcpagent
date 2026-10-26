@@ -16,16 +16,16 @@
     "usage is renderable \u2014 input and output tokens are non-zero so the product's usage line is not 'Input 0 Output 0'; note when cache_tokens is absent on a provider that normally caches"
   ],
   "output": {
-    "build_id_only_in_file": "BUILD_ID_d4e48e5300fb",
+    "build_id_only_in_file": "BUILD_ID_0a112d4234a1",
     "provider": "Codex",
-    "report_md_on_disk": "| key | value |\n| --- | --- |\n| build_id | BUILD_ID_d4e48e5300fb |\n| status | ok |\n",
+    "report_md_on_disk": "| key | value |\n| --- | --- |\n| build_id | BUILD_ID_0a112d4234a1 |\n| status | ok |\n",
     "reused_provider_session": true,
-    "turn1_answer": "BUILD_ID_d4e48e5300fb",
-    "turn1_content_chunks": 18,
+    "turn1_answer": "BUILD_ID_0a112d4234a1",
+    "turn1_content_chunks": 20,
     "turn1_tool_events": 1,
-    "turn2_answer": "| key | value |\n| --- | --- |\n| build_id | BUILD_ID_d4e48e5300fb |\n| status | ok |",
-    "turn2_content_chunks": 47,
-    "turn2_tool_events": 3
+    "turn2_answer": "| key | value |\n| --- | --- |\n| build_id | BUILD_ID_0a112d4234a1 |\n| status | ok |",
+    "turn2_content_chunks": 42,
+    "turn2_tool_events": 2
   },
   "fingerprint": "2209fcae5cace408",
   "agent_review": {
@@ -33,6 +33,6 @@
     "reviewed_fingerprint": "2209fcae5cace408",
     "reviewer": "codex-appserver",
     "issues": [],
-    "notes": "Reviewed real Codex 0.164.0 app-server capture: the same native thread reused the build ID from turn one in an actual file written on turn two; final markdown matches the file and both turns emitted tool/content events. No terminal artifacts or duplicate final text. This compact record does not establish per-chunk pacing, reasoning or usage rendering."
+    "notes": "Reviewed first read ID and second-turn table against on-disk report. The same native session retains BUILD_ID_0a112d4234a1 and the report matches final markdown without duplication. Compact event counts do not establish detailed pacing/interleaving."
   }
 }

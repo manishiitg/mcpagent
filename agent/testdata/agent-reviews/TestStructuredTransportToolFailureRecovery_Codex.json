@@ -8,21 +8,25 @@
     "correct text <-> tool interleaving order (narration then the tool it describes)",
     "tool calls are the real intended tools (not leaked internal/shell noise where MCP tools were expected)",
     "the final answer is coherent and matches the work performed",
-    "real work actually happened (e.g. the file was written to disk)"
+    "real work actually happened (e.g. the file was written to disk)",
+    "paced for a watching human \u2014 where the record carries first_signal_ms / longest_silence_ms, something shows up promptly and keeps updating; a long opening wait or one long mid-turn silence reads as a hung app even when the final output is perfect",
+    "actually streamed rather than delivered late \u2014 delivered_in_one_block=true, or a clean_content_spread_ms near zero, means the text appeared all at once at the end; that is a single late delivery wearing streaming's clothes, and the chunk COUNT alone cannot tell the difference",
+    "thinking claims match the evidence \u2014 thinking_event_count=0 means the turn surfaced NO reasoning content, so any 'thinking' a product shows for it must be streamed reply text under a Thinking label, not the model's reasoning; say which it is rather than assuming",
+    "tool calls completed \u2014 every started tool has a matching end (tool_calls_started == tool_calls_ended); a started-but-never-ended call leaves a spinning chip in the UI",
+    "usage is renderable \u2014 input and output tokens are non-zero so the product's usage line is not 'Input 0 Output 0'; note when cache_tokens is absent on a provider that normally caches"
   ],
   "output": {
-    "answer": "BUILD_ID_849117ca3e5a",
-    "clean_stream": "I\u2019ll read the requested build identifier now.\nBUILD_ID_849117ca3e5a",
-    "content_chunks": 2,
+    "answer": "BUILD_ID_1bf7fa3890bd",
+    "clean_stream": "I\u2019ll read the build ID now.\n\nBUILD_ID_1bf7fa3890bd",
+    "content_chunks": 19,
     "injected_first_failure": "TRANSIENT_TOOL_FAILURE on call #1",
     "provider": "Codex",
-    "recovered_build_id": "BUILD_ID_849117ca3e5a",
-    "streamed_tool_events": 3,
+    "recovered_build_id": "BUILD_ID_1bf7fa3890bd",
+    "streamed_tool_events": 2,
     "tool_handler_calls": 2,
     "tool_names": [
-      "",
-      "",
-      ""
+      "execute_shell_command",
+      "execute_shell_command"
     ],
     "transport": "structured/json"
   },
@@ -30,8 +34,8 @@
   "agent_review": {
     "verdict": "good",
     "reviewed_fingerprint": "2a9c660ffc54f543",
-    "reviewer": "claude-sonnet-5",
-    "issues": null,
-    "notes": "Codex structured/json recovers from a mid-stream bridge tool failure: handler failed call #1, model retried (tool_handler_calls=2), stream stayed alive, turn completed with the correct build id (obtainable only via a successful tool run). Clean narration, no garbling. Proves graceful tool-failure recovery on the JSON transport."
+    "reviewer": "codex-appserver",
+    "issues": [],
+    "notes": "Read clean narration and recovered BUILD_ID_1bf7fa3890bd. Two actual handler calls and named bridge events show injected failure then retry; terminal identity check accepts the canonical error event for the failed call. No fabricated result or garbled text."
   }
 }

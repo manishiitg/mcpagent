@@ -409,7 +409,7 @@ func TestRealBridgeStreamingE2E(t *testing.T) {
 		if only != "" && only != pc.name {
 			continue
 		}
-		for _, tr := range realBridgeTransports() {
+		for _, tr := range realBridgeTransports(pc.provider) {
 			if onlyTransport != "" && onlyTransport != tr.name {
 				continue
 			}
@@ -444,7 +444,10 @@ type realBridgeTransport struct {
 // docs/design/product_api_transport_for_coding_agents.md, section
 // "Measured matrix". Update that table when these numbers change materially;
 // it is the durable proof the product transport decision rests on.
-func realBridgeTransports() []realBridgeTransport {
+func realBridgeTransports(provider llm.Provider) []realBridgeTransport {
+	if provider == llm.ProviderCodexCLI {
+		return []realBridgeTransport{{name: "app-server"}}
+	}
 	return []realBridgeTransport{
 		{name: "tmux"},
 		{name: "structured", opts: []agentOption{withCodingAgentTransport(llm.CodingAgentTransportStructured)}},
@@ -625,7 +628,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	for _, ev := range listener.events {
 		switch d := ev.Data.(type) {
 		case *events.StreamingChunkEvent:
-			if d.IsToolCall || strings.TrimSpace(d.Content) == "" {
+			if d.IsToolCall || d.Content == "" || (!d.IsDelta && strings.TrimSpace(d.Content) == "") {
 				continue
 			}
 			contentChunks++
@@ -782,6 +785,9 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	if tr.name != "tmux" {
 		recordName += "_" + tr.name
 	}
+	if pc.provider == llm.ProviderCodexCLI {
+		recordName = "TestRealBridgeStreamingE2E_Codex"
+	}
 	rec := agentreview.Write(t, recordName,
 		pc.name+" over "+tr.name+" via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",
 		map[string]any{
@@ -845,7 +851,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	agentreview.RequireReviewed(t, rec)
 }
 
-// TestRealBridgeMarkdownFidelityE2E is the P0 companion to
+// TestRealBridgeMarkdownFidelity is the P0 companion to
 // TestRealBridgeStreamingE2E, purpose-built to answer "can we properly extract
 // complex markdown, including nested code fences, with no duplication" — the
 // existing table test only exercised a GFM table with presence-only
@@ -863,7 +869,7 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 //
 // Gated by the same RUN_MCPAGENT_REAL_BRIDGE_E2E=1 / MCPAGENT_REAL_BRIDGE_ONLY
 // convention as TestRealBridgeStreamingE2E; runs across all CLI providers.
-func TestRealBridgeMarkdownFidelityE2E(t *testing.T) {
+func TestRealBridgeMarkdownFidelity(t *testing.T) {
 	if os.Getenv("RUN_MCPAGENT_REAL_BRIDGE_E2E") != "1" {
 		t.Skip("set RUN_MCPAGENT_REAL_BRIDGE_E2E=1 to run the real-bridge markdown fidelity e2e")
 	}
@@ -936,22 +942,24 @@ func runRealBridgeMarkdownFidelity(t *testing.T, pc realBridgeProviderCase, brid
 	}
 
 	var cleanTexts, toolNames []string
+	var cleanRun []cleanChunk
 	var toolChunks int
 	for _, ev := range listener.events {
 		switch d := ev.Data.(type) {
 		case *events.StreamingChunkEvent:
-			if d.IsToolCall || strings.TrimSpace(d.Content) == "" {
+			if d.IsToolCall || d.Content == "" || (!d.IsDelta && strings.TrimSpace(d.Content) == "") {
 				continue
 			}
 			if d.Source != events.StreamingChunkSourceTerminal {
 				cleanTexts = append(cleanTexts, d.Content)
+				cleanRun = append(cleanRun, cleanChunk{text: d.Content, isDelta: d.IsDelta})
 			}
 		case *events.ToolCallStartEvent:
 			toolChunks++
 			toolNames = append(toolNames, d.ToolName)
 		}
 	}
-	cleanJoined := strings.Join(cleanTexts, "\n")
+	cleanJoined := reassembleCleanStream(cleanRun)
 	t.Logf("markdown fidelity: %d tool-call event(s) %v; answer=%q", toolChunks, toolNames, strings.TrimSpace(answer))
 
 	// Real WRITE through the bridge.

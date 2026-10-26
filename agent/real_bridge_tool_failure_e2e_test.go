@@ -51,6 +51,9 @@ func newRealBridgeAgentWithShell(t *testing.T, ctx context.Context, tc multiTurn
 		withStreaming(true), withCodingAgentWorkingDir(workDir),
 		withSessionID(sessionID),
 	}
+	if tc.provider == llm.ProviderCodexCLI {
+		agentOpts = append(agentOpts, withCodingAgentToolsMode(codingAgentToolsMCPOnly))
+	}
 	var untrust func()
 	if tc.provider == llm.ProviderAgyCLI {
 		// Peers take the interactive lane from the session id alone; agy's
@@ -268,7 +271,7 @@ func TestRealBridgeStreamingToolFailureGiveUp(t *testing.T) {
 			// connection error on both attempts"). toolNames (real streamed
 			// tool-call events) is the provider-agnostic signal that actually
 			// proves an attempt happened; accept either.
-			if nCalls == 0 && len(toolNames) == 0 {
+			if (tc.provider == llm.ProviderCodexCLI && nCalls == 0) || (nCalls == 0 && len(toolNames) == 0) {
 				t.Fatalf("the failing tool was never called (no handler invocation and no streamed tool-call event)")
 			}
 			// (3) No FABRICATED success: the build id is obtainable ONLY via a real tool

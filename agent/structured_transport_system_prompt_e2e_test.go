@@ -28,7 +28,7 @@ type structuredTransportProviderCase struct {
 
 var structuredTransportProviderCases = []structuredTransportProviderCase{
 	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "auto", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
-	{"Codex", "codex", llm.ProviderCodexCLI, "codex-cli", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
+	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
 	{"Pi", "pi", llm.ProviderPiCLI, "pi-cli", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
 	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", withCodingAgentTransport(llm.CodingAgentTransportStructured)},
 	{"Muse", "muse", llm.ProviderMuseCLI, "muse-spark-1.3-contributor", withCodingAgentTransport(llm.CodingAgentTransportStructured)},

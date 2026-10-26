@@ -160,12 +160,17 @@ func TestRealBridgeMessageModes(t *testing.T) {
 			}
 			// mode1 (raw tmux): the terminal pane is available AND separable from mode3 —
 			// it contains the raw frames (ANSI), which mode3 does not.
-			if strings.TrimSpace(mode1RawTmux) == "" {
+			if tc.provider == llm.ProviderCodexCLI {
+				if mode1RawTmux != "" {
+					t.Fatal("app-server leaked terminal output")
+				}
+			} else if strings.TrimSpace(mode1RawTmux) == "" {
 				t.Fatalf("mode1 (raw tmux) is empty — the terminal view is not available")
 			}
 
+			summary := tc.name + ": real bridge Source+IsDelta reconstruct streaming and final text; terminal output follows the transport contract"
 			rec := agentreview.Write(t, "TestRealBridgeMessageModes_"+tc.name,
-				tc.name+": the 3 user message modes built from a REAL bridge turn via Source+IsDelta: raw tmux / non-streaming final / streaming (tools removed)",
+				summary,
 				map[string]any{
 					"provider":                   tc.name,
 					"mode1_raw_tmux_head":        mcpFirstN(mode1RawTmux, 240),

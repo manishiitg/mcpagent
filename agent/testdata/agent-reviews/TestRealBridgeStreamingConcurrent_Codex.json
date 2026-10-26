@@ -18,10 +18,10 @@
   "output": {
     "no_cross_leak": true,
     "provider": "Codex",
-    "worker0_answer": "BUILD_ID_0_ea854ef230",
-    "worker0_build_id": "BUILD_ID_0_ea854ef230",
-    "worker1_answer": "BUILD_ID_1_46fedb308c",
-    "worker1_build_id": "BUILD_ID_1_46fedb308c"
+    "worker0_answer": "BUILD_ID_0_c07a4677a3",
+    "worker0_build_id": "BUILD_ID_0_c07a4677a3",
+    "worker1_answer": "BUILD_ID_1_9715209e25",
+    "worker1_build_id": "BUILD_ID_1_9715209e25"
   },
   "fingerprint": "aa599858c82d4599",
   "agent_review": {
@@ -29,6 +29,6 @@
     "reviewed_fingerprint": "aa599858c82d4599",
     "reviewer": "codex-appserver",
     "issues": [],
-    "notes": "Reviewed real Codex 0.164.0 app-server capture: two parallel sessions each returned only its own random build ID read by the real bridge. No cross-session token leakage. This compact record establishes isolation, not per-chunk timing or usage rendering."
+    "notes": "Read both random file IDs and replies: each worker returns exactly its own ID with no cross-session value. Compact record certifies isolation, not pacing."
   }
 }

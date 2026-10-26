@@ -154,9 +154,19 @@ var layer2SystemPromptJSONExclusions = map[string]string{
 // green. Add a row here when a capability graduates to release-blocking; the
 // consistency + evidence tests then enforce it.
 var Layer2P0Certifications = []Layer2Certification{
+	{"message_modes.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeMessageModes", true, "native final and delta-stream reconstruction; no raw terminal channel"},
+	{"streaming.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeStreamingE2E", true, "native SDK delta stream, tool lifecycle, reconstruction and measured output pacing"},
 	{"multi_turn.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeStreamingMultiTurn", true, "native app-server thread reuse with real MCP tools and canonical completion"},
 	{"steering.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestCodingSessionDeliverSteerMidTurn", true, "native turn/steer while the real MCP bridge is executing"},
 	{"concurrency.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeStreamingConcurrent", true, "independent native app-server threads through the SDK"},
+
+	{"continuity.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestCodingSessionContinuityAfterLoss", true, "native thread resume after process loss"},
+	{"tool_failure_recovery.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeStreamingToolFailureRecovery", true, "real MCP failure followed by successful retry"},
+	{"tool_failure_giveup.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeStreamingToolFailureGiveUp", true, "permanent MCP failure without fabrication"},
+	{"markdown_fidelity.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestRealBridgeMarkdownFidelity", true, "exact markdown and no duplicated output"},
+	{"system_prompt.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestTmuxSystemPromptSurvivesNewAgent", false, "native instructions through SDK"},
+	{"skills.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestTmuxSkillsSurviveNewAgent", false, "attached skills read through SDK"},
+	{"convrecord.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestConversationRecordingWritesRealTurnData", false, "record and reload real turns and usage"},
 
 	// --- tmux: agent-reviewed real-CLI evidence ---
 	// Muse is certified on every tmux row: it runs on a persistent TUI pane
@@ -183,7 +193,7 @@ var Layer2P0Certifications = []Layer2Certification{
 	{"convrecord.tmux", Layer2TransportTmux, layer2TmuxProviders(), "TestConversationRecordingWritesRealTurnData", false, "record->reload round-trip + real token usage (no USD — pricing is a caller decision)"},
 
 	// --- json/structured: agent-reviewed real-CLI evidence (Claude gained a lane this line of work) ---
-	{"multi_turn.json", Layer2TransportJSON, layer2JSONProviders(), "TestStructuredTransportMultiTurn", true, "native --resume: codex exec resume / cursor --resume / pi --session-id / claude --resume / muse --session-id / agy --conversation"},
+	{"multi_turn.json", Layer2TransportJSON, layer2JSONProviders(), "TestStructuredTransportMultiTurn", true, "native --resume: codex native thread/resume (bounded calls) / cursor --resume / pi --session-id / claude --resume / muse --session-id / agy --conversation"},
 	{"steering_queue.json", Layer2TransportJSON, layer2JSONProviders(), "TestStructuredTransportDeliverQueuesMidTurn", true, "query-only transport: Deliver QUEUES, never live-steers"},
 	{"tool_failure_recovery.json", Layer2TransportJSON, layer2JSONProviders(), "TestStructuredTransportToolFailureRecovery", true, "recovers from a mid-stream tool failure. Agy: build id withheld from disk (mounted turns keep native reads live with no bridge-only knob), so only a genuine tool retry can recover it"},
 	{"tool_failure_giveup.json", Layer2TransportJSON, layer2JSONProviders(), "TestStructuredTransportToolFailureGiveUp", true, "gives up without fabricating. Codex runs bridge-only with native code-exec features disabled and must emit named execute_shell_command ToolCallStart events, so both execution and UI tool identity are falsifiable. Agy: build id withheld from disk (same live-native-reads reason), so a natively-read id can never false-fail the no-fabrication assertion"},

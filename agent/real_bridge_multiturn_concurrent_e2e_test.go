@@ -260,7 +260,7 @@ func captureRealBridge(evs []*events.AgentEvent) (cleanText string, toolCalls, c
 	for _, ev := range evs {
 		switch d := ev.Data.(type) {
 		case *events.StreamingChunkEvent:
-			if d.IsToolCall || strings.TrimSpace(d.Content) == "" || d.Source == events.StreamingChunkSourceTerminal {
+			if d.IsToolCall || d.Content == "" || (!d.IsDelta && strings.TrimSpace(d.Content) == "") || d.Source == events.StreamingChunkSourceTerminal {
 				continue
 			}
 			if d.IsDelta {

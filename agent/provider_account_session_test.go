@@ -16,4 +16,11 @@ func TestProviderAccountContinuationCannotCrossAccounts(t *testing.T) {
 	if a.currentAgentSessionHandle().ConnectionID != "account-B" {
 		t.Fatal("continuation lost account binding")
 	}
+	// The same account can resume its own native thread; denying everything
+	// would hide a broken account resolver (PLAT-872-19).
+	own := &AgentSessionHandle{SessionID: "owner-B", ConnectionID: "account-B", Provider: llmtypes.CodingProviderSessionHandle{Provider: "codex-cli", NativeSessionID: "thread-B"}}
+	a.applyAgentSessionHandle(own)
+	if a.codexSessionID != "thread-B" || a.sessionID != "owner-B" {
+		t.Fatal("same-account native continuation was refused")
+	}
 }
