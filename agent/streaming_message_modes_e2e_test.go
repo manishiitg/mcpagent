@@ -160,9 +160,9 @@ func TestRealBridgeMessageModes(t *testing.T) {
 			}
 			// mode1 (raw tmux): the terminal pane is available AND separable from mode3 —
 			// it contains the raw frames (ANSI), which mode3 does not.
-			if tc.provider == llm.ProviderCodexCLI {
+			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI {
 				if mode1RawTmux != "" {
-					t.Fatal("app-server leaked terminal output")
+					t.Fatal("native protocol leaked terminal output")
 				}
 			} else if strings.TrimSpace(mode1RawTmux) == "" {
 				t.Fatalf("mode1 (raw tmux) is empty — the terminal view is not available")

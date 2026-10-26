@@ -49,9 +49,6 @@ func TestCLISandboxContract(t *testing.T) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.provider == llm.ProviderPiCLI {
-				t.Skip("Pi is bridge-only: it has no native tools to confine")
-			}
 			if _, err := exec.LookPath(tc.binary); err != nil {
 				t.Skipf("%s unavailable", tc.binary)
 			}

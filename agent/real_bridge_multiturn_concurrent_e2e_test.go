@@ -46,7 +46,7 @@ var multiTurnProviderCases = []multiTurnProviderCase{
 	{"Claude", "claude", llm.ProviderClaudeCode, "claude-haiku-4-5", withClaudeCodePersistentInteractiveSession, true},
 	{"Codex", "codex", llm.ProviderCodexCLI, "gpt-5.6-luna", withCodexPersistentInteractiveSession, false},
 	{"Cursor", "cursor-agent", llm.ProviderCursorCLI, "auto", withCursorPersistentInteractiveSession, true},
-	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.7-flash", withPiPersistentInteractiveSession, true},
+	{"Pi", "pi", llm.ProviderPiCLI, "google/gemini-3.8-flash", withPiPersistentInteractiveSession, true},
 	// Muse's internal session controls can bypass PreToolUse.
 	{"Muse", "muse", llm.ProviderMuseCLI, "muse-spark-1.3-contributor", withMusePersistentInteractiveSession, false},
 	// Agy runs its tmux rows in the TUI sidecar (persistent interactive);
@@ -361,7 +361,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			session1 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
-			if tc.provider == llm.ProviderCodexCLI {
+			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI {
 				session1 = agent.codingProviderSessionHandle.NativeSessionID
 			}
 			_, t1tools, t1content := captureRealBridge(listener.events[:turn1End])
@@ -382,7 +382,7 @@ func TestRealBridgeStreamingMultiTurn(t *testing.T) {
 			ans2 := result2.Text
 			turn2Elapsed := time.Since(turn2Start)
 			session2 := strings.TrimSpace(agent.codingProviderSessionHandle.TmuxSession)
-			if tc.provider == llm.ProviderCodexCLI {
+			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI {
 				session2 = agent.codingProviderSessionHandle.NativeSessionID
 			}
 			_, t2tools, t2content := captureRealBridge(listener.events[turn1End:])

@@ -19,12 +19,12 @@ func TestPiGenerationPricesFreshAndCachedUsageWithoutGuessingOtherRoutes(t *test
 		fresh, output, cached     int
 		actual, want              float64
 	}{
-		{"google", "google/gemini-3.7-flash", "google/gemini-3.7-flash", 2522, 1730, 154264, 0, 0.0199488},
+		{"google", "google/gemini-3.8-flash", "google/gemini-3.8-flash", 2522, 1730, 154264, 0, 0.0199488},
 		{"vertex", "google-vertex/gemini-3.7-flash", "google-vertex/gemini-3.7-flash", 2954, 1007, 79943, 0, 0.011987475},
-		{"native actual wins", "google/gemini-3.7-flash", "google/gemini-3.7-flash", 2522, 1730, 154264, 0.123, 0.123},
+		{"native actual wins", "google/gemini-3.8-flash", "google/gemini-3.8-flash", 2522, 1730, 154264, 0.123, 0.123},
 		{"unknown google model", "google/unknown-model", "google/unknown-model", 2522, 1730, 154264, 0, 0},
 		{"custom route", "custom/gemini-3.7-flash", "gemini-3.7-flash", 2522, 1730, 154264, 0, 0},
-		{"openrouter route", "openrouter/google/gemini-3.7-flash", "openrouter/google/gemini-3.7-flash", 2522, 1730, 154264, 0, 0},
+		{"openrouter route", "openrouter/google/gemini-3.8-flash", "openrouter/google/gemini-3.8-flash", 2522, 1730, 154264, 0, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			listener := &recordingAgentEventListener{}

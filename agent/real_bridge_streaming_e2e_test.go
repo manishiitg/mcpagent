@@ -366,7 +366,7 @@ func realBridgeProviderCases() []realBridgeProviderCase {
 		// pi streams structured chunks natively via its injected marker hook and
 		// needs a Gemini/Pi key.
 		{
-			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.7-flash", cliBin: "pi",
+			name: "pi", provider: llm.ProviderPiCLI, modelID: "google/gemini-3.8-flash", cliBin: "pi",
 			apiKeyEnvs:       []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "PI_API_KEY"},
 			makeKeys:         func(k string) *llm.ProviderAPIKeys { return &llm.ProviderAPIKeys{PiCLI: &k} },
 			strictBridgeOnly: true,
@@ -445,6 +445,9 @@ type realBridgeTransport struct {
 // "Measured matrix". Update that table when these numbers change materially;
 // it is the durable proof the product transport decision rests on.
 func realBridgeTransports(provider llm.Provider) []realBridgeTransport {
+	if provider == llm.ProviderPiCLI {
+		return []realBridgeTransport{{name: "rpc"}}
+	}
 	if provider == llm.ProviderCodexCLI {
 		return []realBridgeTransport{{name: "app-server"}}
 	}
@@ -787,6 +790,9 @@ func runRealBridgeStreaming(t *testing.T, pc realBridgeProviderCase, bridgeBin s
 	}
 	if pc.provider == llm.ProviderCodexCLI {
 		recordName = "TestRealBridgeStreamingE2E_Codex"
+	}
+	if pc.provider == llm.ProviderPiCLI {
+		recordName = "TestRealBridgeStreamingE2E_Pi"
 	}
 	rec := agentreview.Write(t, recordName,
 		pc.name+" over "+tr.name+" via the REAL mcpbridge → executor → real execute_shell_command: read a build-id file, write a markdown table, read it back — streamed at the mcpagent layer",

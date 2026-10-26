@@ -3,7 +3,6 @@ package mcpagent
 import (
 	"context"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -34,18 +33,13 @@ func TestPiCLIMcpAgentGeminiE2E(t *testing.T) {
 	defer cancel()
 
 	sessionID := "pi-mcpagent-e2e-" + strings.ReplaceAll(t.Name(), "/", "-")
-	var tmuxSessionName string
 	t.Cleanup(func() {
 		llm.ClosePiCLIInteractiveSessionForOwner(sessionID, "test cleanup")
-		if strings.TrimSpace(tmuxSessionName) != "" {
-			llm.ClosePiCLIInteractiveSessionByTmux(tmuxSessionName, "test cleanup")
-			_ = exec.Command("tmux", "kill-session", "-t", tmuxSessionName).Run() // #nosec G204 -- test cleanup for a test-generated tmux session name.
-		}
 	})
 
 	agent := &Agent{
 		provider:                       llm.ProviderPiCLI,
-		modelID:                        "google/gemini-3.7-flash",
+		modelID:                        "google/gemini-3.8-flash",
 		sessionID:                      sessionID,
 		codingAgentWorkingDir:          t.TempDir(),
 		piPersistentInteractiveSession: false,
@@ -56,7 +50,7 @@ func TestPiCLIMcpAgentGeminiE2E(t *testing.T) {
 
 	model := LLMModel{
 		Provider: string(llm.ProviderPiCLI),
-		ModelID:  "google/gemini-3.7-flash",
+		ModelID:  "google/gemini-3.8-flash",
 		APIKey:   &apiKey,
 		Options: map[string]interface{}{
 			"pi_provider": "google",
@@ -85,7 +79,6 @@ func TestPiCLIMcpAgentGeminiE2E(t *testing.T) {
 	if handle.Transport != llmtypes.CodingProviderTransportTmux {
 		t.Fatalf("handle transport = %q, want %q", handle.Transport, llmtypes.CodingProviderTransportTmux)
 	}
-	tmuxSessionName = strings.TrimSpace(handle.TmuxSession)
 	if strings.TrimSpace(handle.TmuxSession) == "" {
 		t.Fatalf("expected Pi CLI tmux session handle, got %#v", handle)
 	}

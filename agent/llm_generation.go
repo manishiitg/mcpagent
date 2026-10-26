@@ -1121,10 +1121,7 @@ func (a *Agent) appendPiCLIIntegrationOptions(opts []llmtypes.CallOption) ([]llm
 		opts = append(opts, llm.WithPiResumeSessionID(a.piSessionID))
 	}
 	a.logger.Info("⏱️ [PI_CLI] Native MCP request timeouts complement request cancellation and the mcpbridge HTTP backstop")
-	a.logger.Info("🌉 Using Pi CLI in tmux marker mode with MCP bridge and live input support")
-	if a.wantsStructuredTransport() {
-		opts = append(opts, llm.WithPiStructuredTransport(true))
-	}
+	a.logger.Info("🌉 Using Pi CLI through native RPC with MCP bridge and live input support")
 	return opts, nil
 }
 

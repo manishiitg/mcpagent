@@ -94,7 +94,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 
 			var nativeSession *Session
 			var capture *turnEndCapture
-			if tc.provider == llm.ProviderCodexCLI {
+			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI {
 				capture = &turnEndCapture{toolEnded: make(chan struct{}), arrived: make(chan struct{}, 8)}
 				agent.addEventListener(capture)
 				nativeSession, err = agent.Start(ctx)
@@ -164,7 +164,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			if nativeSession != nil {
 				receipt, sendErr := nativeSession.Send(ctx, instruction)
 				err = sendErr
-				if receipt.Status == UserMessageDeliveryStatusSentToCLI && receipt.Transport == llm.CodingAgentTransportAppServer {
+				if receipt.Status == UserMessageDeliveryStatusSentToCLI && (receipt.Transport == llm.CodingAgentTransportAppServer || receipt.Transport == llm.CodingAgentTransportRPC) {
 					delivered.Mode = DeliveryModeSteered
 				}
 			} else {

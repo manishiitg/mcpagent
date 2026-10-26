@@ -26,7 +26,7 @@ func TestLayer2P0RegistryConsistent(t *testing.T) {
 		if len(c.Providers) == 0 {
 			t.Errorf("cert %q lists no providers", c.ID)
 		}
-		if c.Transport != Layer2TransportTmux && c.Transport != Layer2TransportJSON && c.Transport != Layer2TransportAppServer {
+		if c.Transport != Layer2TransportTmux && c.Transport != Layer2TransportJSON && c.Transport != Layer2TransportAppServer && c.Transport != Layer2TransportRPC {
 			t.Errorf("cert %q has invalid transport %q", c.ID, c.Transport)
 		}
 		if seen[c.ID] {
@@ -104,6 +104,9 @@ func TestLayer2ProviderSetsDerived(t *testing.T) {
 		base := layer2TmuxProviders()
 		if c.Transport == Layer2TransportAppServer {
 			base = []string{"Codex"}
+		}
+		if c.Transport == Layer2TransportRPC {
+			base = []string{"Pi"}
 		}
 		if c.Transport == Layer2TransportJSON {
 			base = layer2JSONProviders()

@@ -16,6 +16,7 @@ const (
 	Layer2TransportTmux      Layer2Transport = "tmux"
 	Layer2TransportJSON      Layer2Transport = "json"
 	Layer2TransportAppServer Layer2Transport = "app-server"
+	Layer2TransportRPC       Layer2Transport = "rpc"
 )
 
 // Layer2Certification is one release-blocking Layer-2 capability: a real-CLI
@@ -140,7 +141,6 @@ func layer2ProvidersExcept(providers []string, except map[string]string) []strin
 // message-modes row. Every entry needs a reason (enforced); an empty reason
 // fails the registry test.
 var layer2MessageModesTmuxExclusions = map[string]string{
-	"Pi":  "documented model-verbosity non-bug, left strict",
 	"Agy": "contract SupportsTerminalStream=false: the sidecar emits one content chunk per turn with no pane stream, so mode1 raw-terminal reconstruction is unrepresentable; the live TUI pane itself is the terminal view",
 }
 
@@ -167,6 +167,19 @@ var Layer2P0Certifications = []Layer2Certification{
 	{"system_prompt.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestTmuxSystemPromptSurvivesNewAgent", false, "native instructions through SDK"},
 	{"skills.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestTmuxSkillsSurviveNewAgent", false, "attached skills read through SDK"},
 	{"convrecord.app-server", Layer2TransportAppServer, []string{"Codex"}, "TestConversationRecordingWritesRealTurnData", false, "record and reload real turns and usage"},
+
+	{"message_modes.rpc", Layer2TransportRPC, []string{"Pi"}, "TestRealBridgeMessageModes", true, "native final and delta-stream reconstruction; no raw terminal channel"},
+	{"streaming.rpc", Layer2TransportRPC, []string{"Pi"}, "TestRealBridgeStreamingE2E", true, "native SDK delta stream, tool lifecycle, reconstruction and measured output pacing"},
+	{"multi_turn.rpc", Layer2TransportRPC, []string{"Pi"}, "TestRealBridgeStreamingMultiTurn", true, "native RPC thread reuse with real MCP tools and canonical completion"},
+	{"steering.rpc", Layer2TransportRPC, []string{"Pi"}, "TestCodingSessionDeliverSteerMidTurn", true, "native steer while the real MCP bridge is executing"},
+	{"concurrency.rpc", Layer2TransportRPC, []string{"Pi"}, "TestRealBridgeStreamingConcurrent", true, "independent native RPC threads through the SDK"},
+	{"continuity.rpc", Layer2TransportRPC, []string{"Pi"}, "TestCodingSessionContinuityAfterLoss", true, "native thread resume after process loss"},
+	{"tool_failure_recovery.rpc", Layer2TransportRPC, []string{"Pi"}, "TestRealBridgeStreamingToolFailureRecovery", true, "real MCP failure followed by successful retry"},
+	{"tool_failure_giveup.rpc", Layer2TransportRPC, []string{"Pi"}, "TestRealBridgeStreamingToolFailureGiveUp", true, "permanent MCP failure without fabrication"},
+	{"markdown_fidelity.rpc", Layer2TransportRPC, []string{"Pi"}, "TestRealBridgeMarkdownFidelity", true, "exact markdown and no duplicated output"},
+	{"system_prompt.rpc", Layer2TransportRPC, []string{"Pi"}, "TestTmuxSystemPromptSurvivesNewAgent", false, "native instructions through SDK"},
+	{"skills.rpc", Layer2TransportRPC, []string{"Pi"}, "TestTmuxSkillsSurviveNewAgent", false, "attached skills read through SDK"},
+	{"convrecord.rpc", Layer2TransportRPC, []string{"Pi"}, "TestConversationRecordingWritesRealTurnData", false, "record and reload real turns and usage"},
 
 	// --- tmux: agent-reviewed real-CLI evidence ---
 	// Muse is certified on every tmux row: it runs on a persistent TUI pane

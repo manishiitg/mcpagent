@@ -53,6 +53,7 @@ const (
 	CodingAgentTransportTmux       = llmproviders.CodingAgentTransportTmux
 	CodingAgentTransportStructured = llmproviders.CodingAgentTransportStructured
 	CodingAgentTransportAppServer  = llmproviders.CodingAgentTransportAppServer
+	CodingAgentTransportRPC        = llmproviders.CodingAgentTransportRPC
 )
 
 func GetCodingAgentProviderContract(provider Provider, modelID string) (CodingAgentProviderContract, bool) {
@@ -205,12 +206,6 @@ func CleanupPiCLIInteractiveSessions(ctx context.Context) error {
 // owning application session id.
 func ClosePiCLIInteractiveSessionForOwner(ownerSessionID, reason string) {
 	llmproviders.ClosePiCLIInteractiveSessionForOwner(ownerSessionID, reason)
-}
-
-// ClosePiCLIInteractiveSessionByTmux closes a tracked Pi CLI session by tmux
-// session name.
-func ClosePiCLIInteractiveSessionByTmux(tmuxSessionName, reason string) {
-	llmproviders.ClosePiCLIInteractiveSessionByTmux(tmuxSessionName, reason)
 }
 
 // WithClaudeCodeWorkingDir sets the process working directory for Claude Code.
@@ -617,13 +612,6 @@ func WithClaudeStructuredTransport(enabled bool) CallOption {
 // see WithCodexStructuredTransport doc comment for the rationale.
 func WithCursorStructuredTransport(enabled bool) CallOption {
 	return llmproviders.WithCursorStructuredTransport(enabled)
-}
-
-// WithPiStructuredTransport selects `pi --print --mode json` instead of the
-// tmux interactive transport. OFF by default — see
-// WithCodexStructuredTransport doc comment for the rationale.
-func WithPiStructuredTransport(enabled bool) CallOption {
-	return llmproviders.WithPiStructuredTransport(enabled)
 }
 
 // WithMuseStructuredTransport selects `muse exec --json` instead of the tmux

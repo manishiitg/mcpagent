@@ -76,6 +76,8 @@ func TestCodingSessionContinuityAfterLoss(t *testing.T) {
 			tmuxSession := strings.TrimSpace(handle.Provider.TmuxSession)
 			if tc.provider == llm.ProviderCodexCLI {
 				codexcli.CloseCodexCLIInteractiveSessionForOwner(handle.SessionID, "test process loss")
+			} else if tc.provider == llm.ProviderPiCLI {
+				llm.ClosePiCLIInteractiveSessionForOwner(handle.SessionID, "test process loss")
 			} else {
 				if _, err := exec.LookPath("tmux"); err != nil {
 					t.Fatal("tmux required to simulate session loss")
