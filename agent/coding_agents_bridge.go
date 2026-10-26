@@ -16,6 +16,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // DefaultToolOutputFolder is the folder under the agent working directory where the coding-agent
@@ -575,7 +576,15 @@ func marshalBridgeToolDef(name, description string, parameters interface{}, tool
 				loggerv2.String("tool", name), loggerv2.Error(err))
 			return nil
 		}
-		inputSchema = schemaBytes
+		var full map[string]interface{}
+		if err := json.Unmarshal(schemaBytes, &full); err != nil {
+			logger.Warn("Invalid tool schema, skipping", loggerv2.String("tool", name), loggerv2.Error(err))
+			return nil
+		}
+		inputSchema, err = json.Marshal(llmtypes.ModelToolSchema(full))
+		if err != nil {
+			return nil
+		}
 	}
 	return &BridgeToolDef{
 		Name:        name,

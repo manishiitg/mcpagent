@@ -69,6 +69,40 @@ func TestBridgeSerializationPreservesDeclaredToolTimeout(t *testing.T) {
 	}
 }
 
+// PLAT-825-142: a raw native tool must keep validation branches on the server
+// while its CLI MCP catalog advertises only model-compatible root fields.
+func TestBridgeAdvertisesFlatSchemaWithoutChangingSource(t *testing.T) {
+	a := bridgeTestAgent()
+	schema := map[string]interface{}{
+		"type":       "object",
+		"properties": map[string]interface{}{"path": map[string]interface{}{"type": "string"}},
+		"oneOf":      []interface{}{map[string]interface{}{"required": []interface{}{"path"}}},
+	}
+	if err := a.registerCustomToolWithTimeout("lookup", "", schema, func(context.Context, map[string]interface{}) (string, error) { return "", nil }, 0, "workflow"); err != nil {
+		t.Fatal(err)
+	}
+	def := a.lookupBridgeTool("lookup", "custom", loggerv2.NewDefault())
+	var advertised map[string]interface{}
+	if err := json.Unmarshal(def.InputSchema, &advertised); err != nil {
+		t.Fatal(err)
+	}
+	if advertised["oneOf"] != nil {
+		t.Fatal("CLI catalog retained root composition")
+	}
+	registered, _ := a.lookupDirectTool("lookup")
+	raw, err := json.Marshal(registered.Definition.Function.Parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained map[string]interface{}
+	if err := json.Unmarshal(raw, &retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained["oneOf"] == nil {
+		t.Fatal("advertising changed the canonical source schema")
+	}
+}
+
 func TestIsCodingCLIProviderExcludesKimiAPIProvider(t *testing.T) {
 	tests := []struct {
 		name     string
