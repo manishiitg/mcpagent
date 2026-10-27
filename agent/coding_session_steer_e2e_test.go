@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -81,6 +82,12 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			workDir := t.TempDir()
 			convID := "steer-" + realBridgeRandHex(4)
 			steerWord := "PURPLE_" + realBridgeRandHex(6)
+			toolProof := "DONE_" + realBridgeRandHex(6)
+			proofPath := filepath.Join(workDir, "completed.txt")
+			inputPath := filepath.Join(workDir, "tool-input.txt")
+			if err := os.WriteFile(inputPath, []byte(toolProof), 0600); err != nil {
+				t.Fatal(err)
+			}
 
 			agent, cleanup, err := buildRealBridgeAgent(ctx, tc, t.TempDir(), workDir, convID, true)
 			if err != nil {
@@ -96,7 +103,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 
 			var nativeSession *Session
 			var capture *turnEndCapture
-			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI || queuedTransport {
+			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI || (tc.provider == llm.ProviderClaudeCode && os.Getenv("CLAUDE_CODE_TRANSPORT") == "sdk") || queuedTransport {
 				capture = &turnEndCapture{toolEnded: make(chan struct{}), arrived: make(chan struct{}, 8)}
 				agent.addEventListener(capture)
 				nativeSession, err = agent.Start(ctx)
@@ -113,7 +120,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			}
 			done := make(chan turnResult, 1)
 			go func() {
-				prompt := "Run exactly this one shell command and wait for it: sleep 25 && echo COMMAND_DONE. When it finishes, report the word it printed, then stop."
+				prompt := fmt.Sprintf("Run exactly this one shell command and wait for it: sleep 25 && cat %s | tee %s. When it finishes, report COMMAND_DONE followed by the unknown word it printed, then stop.", inputPath, proofPath)
 				if nativeSession != nil {
 					result, runErr := nativeSession.Run(ctx, Turn{Input: prompt})
 					done <- turnResult{answer: result.Text, err: runErr}
@@ -169,7 +176,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 				if receipt.Status == UserMessageDeliveryStatusQueuedForInjection {
 					delivered.Mode = DeliveryModeQueued
 				}
-				if receipt.Status == UserMessageDeliveryStatusSentToCLI && (receipt.Transport == llm.CodingAgentTransportAppServer || receipt.Transport == llm.CodingAgentTransportRPC) {
+				if receipt.Status == UserMessageDeliveryStatusSentToCLI && (receipt.Transport == llm.CodingAgentTransportAppServer || receipt.Transport == llm.CodingAgentTransportRPC || receipt.Transport == llm.CodingAgentTransportSDK) {
 					delivered.Mode = DeliveryModeSteered
 				}
 			} else {
@@ -214,6 +221,12 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			t.Logf("[%s] steered turn answer: %q", tc.name, answer)
 
 			// The tool ran (COMMAND_DONE) AND the mid-turn steer landed (steerWord).
+			if proof, err := os.ReadFile(proofPath); err != nil || string(proof) != toolProof {
+				t.Fatalf("native tool never completed its actual file write: %v", err)
+			}
+			if !strings.Contains(answer, toolProof) {
+				t.Fatalf("answer never consumed the tool result: %q", answer)
+			}
 			if !strings.Contains(answer, "COMMAND_DONE") {
 				t.Fatalf("the long tool call did not complete in-turn; answer=%q", answer)
 			}
@@ -228,23 +241,28 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			if queuedTransport {
 				reviewName += "_Queued"
 			}
-			reviewSummary:=tc.name+": live input reaches a running turn"
-			if queuedTransport {reviewSummary=tc.name+": two queued inputs both reach the next native-resumed turn after a real MCP tool completes"}
-			rec := agentreview.Write(t, reviewName,
+			reviewSummary := tc.name + ": live input reaches a running turn"
+			if queuedTransport {
+				reviewSummary = tc.name + ": two queued inputs both reach the next native-resumed turn after a real MCP tool completes"
+			}
+			rec := agentreview.WriteWithCriteria(t, reviewName,
 				reviewSummary,
+				[]string{"delivery mode is steered for a live-input transport, queued only for a query-only transport", "the real shell produced its completion file and the final answer contains the hidden tool-result word", "the final answer contains the steer word with no fabricated claim of completion", "native Session.Run produces exactly one canonical completion; this record does not certify browser rendering or complete token accounting"},
 				agyReviewFacts(tc.provider, map[string]any{
-					"provider":                  tc.name,
-					"conversation_id":           convID,
-					"delivery_mode":             string(delivered.Mode),
-					"second_queued_word":        secondWord,
-					"second_queued_word_obeyed": !queuedTransport || strings.Contains(answer, secondWord),
-					"steered_word":              steerWord,
-					"turn_answer":               answer,
-					"tool_completed":            strings.Contains(answer, "COMMAND_DONE"),
-					"steer_word_obeyed":         strings.Contains(answer, steerWord),
-					"steer_reached_model":       "steered word only appears if the mid-turn live input reached the model",
+					"provider":                        tc.name,
+					"conversation_id":                 convID,
+					"delivery_mode":                   string(delivered.Mode),
+					"second_queued_word":              secondWord,
+					"second_queued_word_obeyed":       !queuedTransport || strings.Contains(answer, secondWord),
+					"steered_word":                    steerWord,
+					"turn_answer":                     answer,
+					"tool_completed":                  strings.Contains(answer, toolProof),
+					"hidden_tool_word":                toolProof,
+					"actual_completion_file_verified": true,
+					"steer_word_obeyed":               strings.Contains(answer, steerWord),
+					"steer_reached_model":             "steered word only appears if the mid-turn live input reached the model",
 				}),
-				map[string]any{"steered_mid_turn": strings.Contains(answer, steerWord), "tool_ran": strings.Contains(answer, "COMMAND_DONE")},
+				map[string]any{"steered_mid_turn": strings.Contains(answer, steerWord), "tool_result_consumed": strings.Contains(answer, toolProof), "actual_file_verified": true},
 			)
 			agentreview.RequireReviewed(t, rec)
 		})

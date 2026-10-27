@@ -175,7 +175,8 @@ func TestDeliverUserMessageRefusesQueueWhenNoTurnIsRunning(t *testing.T) {
 // PLAT-872-24: a native turn can finish before its outer SDK turn. Its
 // pre-write rejection must queue once at the outer boundary, never become 409.
 func TestNativeTurnNotStartedQueuesAtActiveOuterBoundary(t *testing.T) {
-	for _, provider := range []llm.Provider{llm.ProviderCodexCLI, llm.ProviderPiCLI} {
+	t.Setenv("CLAUDE_CODE_TRANSPORT", "sdk")
+	for _, provider := range []llm.Provider{llm.ProviderCodexCLI, llm.ProviderPiCLI, llm.ProviderClaudeCode} {
 		a := &Agent{provider: provider, modelID: "test"}
 		a.setTurnInFlight(true)
 		result, err := a.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{SessionID: "native-no-process", Message: "follow up", Intent: UserMessageDeliveryIntentLiveInput})

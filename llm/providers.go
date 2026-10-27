@@ -54,6 +54,7 @@ const (
 	CodingAgentTransportStructured = llmproviders.CodingAgentTransportStructured
 	CodingAgentTransportAppServer  = llmproviders.CodingAgentTransportAppServer
 	CodingAgentTransportRPC        = llmproviders.CodingAgentTransportRPC
+	CodingAgentTransportSDK        = llmproviders.CodingAgentTransportSDK
 	CodingAgentTransportACP        = llmproviders.CodingAgentTransportACP
 )
 
