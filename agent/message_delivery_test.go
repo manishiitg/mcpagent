@@ -3,11 +3,13 @@ package mcpagent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
@@ -176,6 +178,8 @@ func TestDeliverUserMessageRefusesQueueWhenNoTurnIsRunning(t *testing.T) {
 // pre-write rejection must queue once at the outer boundary, never become 409.
 func TestNativeTurnNotStartedQueuesAtActiveOuterBoundary(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_TRANSPORT", "sdk")
+	defer func(wait time.Duration) { nativeSteerStartWait = wait }(nativeSteerStartWait)
+	nativeSteerStartWait = 0 // the provider turn already ended; no start window to wait out
 	for _, provider := range []llm.Provider{llm.ProviderCodexCLI, llm.ProviderPiCLI, llm.ProviderClaudeCode} {
 		a := &Agent{provider: provider, modelID: "test"}
 		a.setTurnInFlight(true)
@@ -213,5 +217,32 @@ func TestDeliverRejectsQueueAfterFinalDrain(t *testing.T) {
 	a.setTurnInFlight(true)
 	if pending := a.drainSteerMessages(); len(pending) != 0 {
 		t.Fatal("cancelled input leaked to a later turn")
+	}
+}
+
+// Server B 2026-10-27: a message sent 2s into a Cursor SDK turn was refused while the SDK turn was starting and
+// parked in the steer queue, so the agent saw it only after its first answer. A native transport keeps offering
+// the message during that window and steers it into the running turn; nothing waits in the queue.
+func TestNativeSteerDuringTurnStartIsDeliveredNotQueued(t *testing.T) {
+	t.Setenv("CURSOR_CLI_TRANSPORT", "sdk")
+	defer func(send func(context.Context, llm.Provider, string, string, string) error, interval time.Duration) {
+		sendCodingAgentLiveInput, nativeSteerRetryInterval = send, interval
+	}(sendCodingAgentLiveInput, nativeSteerRetryInterval)
+	nativeSteerRetryInterval = time.Millisecond
+	attempts := 0
+	sendCodingAgentLiveInput = func(context.Context, llm.Provider, string, string, string) error {
+		if attempts++; attempts < 3 {
+			return fmt.Errorf("%w: no active Cursor SDK turn", llmtypes.ErrCodingAgentInputNotSent)
+		}
+		return nil
+	}
+	a := &Agent{provider: llm.ProviderCursorCLI, modelID: "composer-2.5"}
+	a.setTurnInFlight(true)
+	result, err := a.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{SessionID: "starting", Message: "is pr ready?", Intent: UserMessageDeliveryIntentLiveInput})
+	if err != nil || result.DeliveryStatus != UserMessageDeliveryStatusSentToCLI || attempts != 3 {
+		t.Fatalf("result=%+v err=%v attempts=%d, want steered on the third offer", result, err, attempts)
+	}
+	if got := a.drainSteerMessages(); len(got) != 0 {
+		t.Fatalf("message parked in the steer queue: %#v", got)
 	}
 }
