@@ -307,12 +307,16 @@ func (a *Agent) tryClaimTurnInFlight() bool {
 		return false
 	}
 	a.turnInFlight = true
+	a.openSteerQueue()
 	return true
 }
 
 func (a *Agent) setTurnInFlight(v bool) {
 	a.turnInFlightMu.Lock()
 	a.turnInFlight = v
+	if v {
+		a.openSteerQueue()
+	}
 	a.turnInFlightMu.Unlock()
 }
 
@@ -487,7 +491,9 @@ func (a *Agent) deliver(ctx context.Context, conversationID, message string, sto
 		}
 		return Delivered{Mode: DeliveryModeSteered}, nil
 	default: // decideQueue
-		a.addSteerMessage(message)
+		if !a.addSteerMessage(message) {
+			return Delivered{}, &CodingAgentDeliveryError{Kind: DeliveryErrorKindNoSession, Provider: a.provider, Reason: "the turn has finished accepting input; start a new turn"}
+		}
 		return Delivered{Mode: DeliveryModeQueued}, nil
 	}
 }

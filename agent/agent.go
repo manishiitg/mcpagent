@@ -926,6 +926,7 @@ type Agent struct {
 	// pendingSteerEnqueuedAt parallels pendingSteerMessages so delivery can
 	// prove a queue is orphaned (oldest entry never drained) and break a
 	// stuck turn instead of parking messages forever.
+	steerQueueClosed       bool
 	pendingSteerMessages   []string
 	pendingSteerEnqueuedAt []time.Time
 	steerMu                sync.Mutex
@@ -1219,11 +1220,15 @@ type AgentAzureConfig = llm.AzureAPIConfig
 
 // AddSteerMessage queues a user message to be injected into the conversation
 // between tool results and the next LLM call. Thread-safe — called by HTTP handlers.
-func (a *Agent) addSteerMessage(msg string) {
+func (a *Agent) addSteerMessage(msg string) bool {
 	a.steerMu.Lock()
 	defer a.steerMu.Unlock()
+	if a.steerQueueClosed {
+		return false
+	}
 	a.pendingSteerMessages = append(a.pendingSteerMessages, msg)
 	a.pendingSteerEnqueuedAt = append(a.pendingSteerEnqueuedAt, time.Now())
+	return true
 }
 
 // DrainSteerMessages returns and clears all pending steer messages.
@@ -1252,13 +1257,13 @@ func (a *Agent) oldestQueuedSteerAge() (time.Duration, bool) {
 }
 
 // resetStuckTurnState clears a turn-in-flight flag that outlived its turn
-// and drops messages queued for a drain that will never come. It returns
-// the dropped count. Call only after proving no turn can drain —
+// and returns queued messages to the caller for the replacement turn.
+// Call only after proving no turn can drain —
 // resetting a live turn's flag would allow overlapping turns.
-func (a *Agent) resetStuckTurnState() int {
-	dropped := len(a.drainSteerMessages())
+func (a *Agent) resetStuckTurnState() []string {
+	pending := a.drainSteerMessages()
 	a.setTurnInFlight(false)
-	return dropped
+	return pending
 }
 
 // GetProvider returns the provider
@@ -3580,3 +3585,27 @@ func (a *Agent) getGeneratedDir() string {
 
 	return path
 }
+
+// The final empty drain closes admission under the same lock used by send.
+// A late message starts a new turn instead of being stranded after completion.
+func (a *Agent) drainFinalSteerMessages() []string {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	pending := a.pendingSteerMessages
+	a.pendingSteerMessages = nil
+	a.pendingSteerEnqueuedAt = nil
+	if len(pending) == 0 {
+		a.steerQueueClosed = true
+	}
+	return pending
+}
+func (a *Agent) closeSteerQueue() []string {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	a.steerQueueClosed = true
+	pending := a.pendingSteerMessages
+	a.pendingSteerMessages = nil
+	a.pendingSteerEnqueuedAt = nil
+	return pending
+}
+func (a *Agent) openSteerQueue() { a.steerMu.Lock(); a.steerQueueClosed = false; a.steerMu.Unlock() }

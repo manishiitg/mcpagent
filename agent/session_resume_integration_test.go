@@ -522,19 +522,20 @@ func TestClearCodingProviderNativeSessionRejectsMismatchedID(t *testing.T) {
 	}
 }
 
-func TestLatestHumanMessageTextForProviderContinuation(t *testing.T) {
+func TestQueuedHumanMessagesAllReachProviderContinuation(t *testing.T) {
 	messages := []llmtypes.MessageContent{
 		llmtypes.TextPart(llmtypes.ChatMessageTypeSystem, "system"),
 		llmtypes.TextPart(llmtypes.ChatMessageTypeHuman, "old message"),
 		llmtypes.TextPart(llmtypes.ChatMessageTypeAI, "old response"),
 		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "new", "message"),
+		llmtypes.TextPart(llmtypes.ChatMessageTypeHuman, "second queued message"),
 	}
-	got, ok := latestHumanMessageTextForProviderContinuation(messages)
+	got, ok := pendingHumanTextForProviderContinuation(messages)
 	if !ok {
 		t.Fatal("expected latest human message")
 	}
-	if got != "new\nmessage" {
-		t.Fatalf("latest message = %q, want new\\nmessage", got)
+	if got != "new\nmessage\n\nsecond queued message" {
+		t.Fatalf("queued input missing or replayed: %q", got)
 	}
 }
 

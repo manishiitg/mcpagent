@@ -74,6 +74,7 @@ func (a *Agent) currentAgentSessionHandle() *AgentSessionHandle {
 		providerHandle = a.legacyCodingProviderSessionHandle()
 	}
 	providerHandle = a.withContinuationWorkingDir(providerHandle)
+	providerHandle = a.withCurrentCodingTransport(providerHandle)
 	if providerHandle.Empty() && strings.TrimSpace(a.sessionID) == "" {
 		return nil
 	}
@@ -135,8 +136,8 @@ func (a *Agent) applyAgentSessionHandle(handle *AgentSessionHandle) bool {
 	if a.logger != nil {
 		a.logger.Debug(fmt.Sprintf("Applying coding-agent session handle: session=%q provider=%q nativeSessionID=%q workingDir=%q isolated=%v", a.sessionID, handle.Provider.Provider, handle.Provider.NativeSessionID, handle.Provider.WorkingDir, a.isolatedSessionWorkspace))
 	}
-	a.codingProviderSessionHandle = handle.Provider
-	a.applyCodingProviderSessionHandle(handle.Provider)
+	a.codingProviderSessionHandle = a.withCurrentCodingTransport(handle.Provider)
+	a.applyCodingProviderSessionHandle(a.codingProviderSessionHandle)
 	// A persisted handle identifies the provider-native conversation, but its
 	// model describes the previous turn. Preserve an explicitly configured
 	// model for this agent so role changes (for example Builder -> Pulse) can
@@ -336,15 +337,7 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	// native session through the tmux path (`Continuing … with native session`)
 	// instead of `--json --resume`, silently losing all turn-1 context on
 	// Codex/Cursor (found live: multi-turn wrote a hallucinated build id).
-	if llm.IsTmuxCodingAgentProvider(a.provider, a.modelID) && !a.usesStructuredTransport() {
-		handle.Transport = llmtypes.CodingProviderTransportTmux
-	} else if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
-		if contract.Transport == llm.CodingAgentTransportAppServer {
-			handle.Transport = llmtypes.CodingProviderTransportAppServer
-		} else {
-			handle.Transport = llmtypes.CodingProviderTransportStructured
-		}
-	}
+	handle = a.withCurrentCodingTransport(handle)
 	if getter, ok := codingAgentNativeSessionIDGetters[a.provider]; ok {
 		handle.NativeSessionID = strings.TrimSpace(getter(a))
 	}
@@ -362,6 +355,21 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	handle.WorkingDir = a.resolveContinuationWorkingDir("")
 	if handle.NativeSessionID == "" && handle.ProjectDirID == "" && handle.WorkingDir == "" {
 		return llmtypes.CodingProviderSessionHandle{}
+	}
+	return handle
+}
+
+// A saved native conversation does not select today's process transport. Clear
+// obsolete terminal identity before the reaper or continuation sees it (PLAT-872).
+func (a *Agent) withCurrentCodingTransport(handle llmtypes.CodingProviderSessionHandle) llmtypes.CodingProviderSessionHandle {
+	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
+		handle.Transport = string(contract.Transport)
+		if contract.Transport == llm.CodingAgentTransportTmux && a.usesStructuredTransport() {
+			handle.Transport = llmtypes.CodingProviderTransportStructured
+		}
+		if handle.Transport != llmtypes.CodingProviderTransportTmux {
+			handle.TmuxSession = ""
+		}
 	}
 	return handle
 }

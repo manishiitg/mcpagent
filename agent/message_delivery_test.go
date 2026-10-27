@@ -94,14 +94,15 @@ func TestDeliverUserMessageBreaksStuckQueueToNewTurn(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected no-target error when the steer queue is proven orphaned")
 	}
-	if !strings.Contains(err.Error(), "interactive session registered") {
-		t.Fatalf("error = %v, want pool-miss error", err)
+	var deliveryErr *CodingAgentDeliveryError
+	if !errors.As(err, &deliveryErr) || deliveryErr.Kind != DeliveryErrorKindNoSession || len(deliveryErr.UnsentMessages) != 1 || deliveryErr.UnsentMessages[0] != "first, never drained" {
+		t.Fatalf("expected definite refusal with recovered queue, got %#v", err)
 	}
 	if agent.isTurnInFlight() {
 		t.Fatal("turn flag still set after stuck-queue break")
 	}
 	if got := agent.drainSteerMessages(); len(got) != 0 {
-		t.Fatalf("queued messages = %#v, want orphaned queue dropped", got)
+		t.Fatalf("queued messages = %#v, want queue transferred to NoSession recovery", got)
 	}
 }
 
@@ -185,5 +186,31 @@ func TestNativeTurnNotStartedQueuesAtActiveOuterBoundary(t *testing.T) {
 		if len(got) != 1 || got[0] != "follow up" {
 			t.Fatalf("%s: queued=%v", provider, got)
 		}
+	}
+}
+
+// PLAT-872 review: sends between the final drain and Run cleanup used to be
+// acknowledged into a queue with nobody left to consume it.
+func TestDeliverRejectsQueueAfterFinalDrain(t *testing.T) {
+	a := &Agent{provider: llm.ProviderCursorCLI, modelID: "composer-2.5"}
+	a.setTurnInFlight(true)
+	if pending := a.drainFinalSteerMessages(); len(pending) != 0 {
+		t.Fatal(pending)
+	}
+	_, err := a.deliverUserMessage(context.Background(), UserMessageDeliveryRequest{SessionID: "owner", Message: "late input"})
+	var deliveryErr *CodingAgentDeliveryError
+	if !errors.As(err, &deliveryErr) || deliveryErr.Kind != DeliveryErrorKindNoSession {
+		t.Fatalf("late input was accepted: %v", err)
+	}
+	a.setTurnInFlight(true)
+	if !a.addSteerMessage("unfinished input") {
+		t.Fatal("new turn queue stayed closed")
+	}
+	if pending := a.closeSteerQueue(); len(pending) != 1 || pending[0] != "unfinished input" {
+		t.Fatalf("stopped turn lost its undelivered input: %#v", pending)
+	}
+	a.setTurnInFlight(true)
+	if pending := a.drainSteerMessages(); len(pending) != 0 {
+		t.Fatal("cancelled input leaked to a later turn")
 	}
 }

@@ -1246,7 +1246,7 @@ func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, mess
 			a.logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Starting %s transport session (%s) for native session %s", model.Provider, transport, continuationHandle.NativeSessionID))
 			return llm.StartCodingAgentTransportSession(ctx, llmInstance, continuationHandle, opts...)
 		}
-		latestMessage, msgOK := latestHumanMessageTextForProviderContinuation(messages)
+		latestMessage, msgOK := pendingHumanTextForProviderContinuation(messages)
 		if !msgOK {
 			return nil, fmt.Errorf("cannot continue coding-agent session: latest human message not found")
 		}
@@ -1370,35 +1370,30 @@ func (a *Agent) drainStreamingWithoutEnd(sm *streamingManager) {
 	<-sm.streamingDone
 }
 
-func latestHumanMessageTextForProviderContinuation(messages []llmtypes.MessageContent) (string, bool) {
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != llmtypes.ChatMessageTypeHuman {
-			continue
-		}
+// Preserve every queued human input; native resume already contains the
+// conversation through the last assistant turn (PLAT-872).
+func pendingHumanTextForProviderContinuation(messages []llmtypes.MessageContent) (string, bool) {
+	var inputs []string
+	for _, message := range llmtypes.PendingHumanMessages(messages) {
 		var parts []string
-		for _, part := range messages[i].Parts {
+		for _, part := range message.Parts {
 			switch typed := part.(type) {
 			case llmtypes.TextContent:
-				if strings.TrimSpace(typed.Text) != "" {
-					parts = append(parts, typed.Text)
-				}
+				parts = append(parts, typed.Text)
 			case *llmtypes.TextContent:
-				if typed != nil && strings.TrimSpace(typed.Text) != "" {
+				if typed != nil {
 					parts = append(parts, typed.Text)
 				}
 			case string:
-				if strings.TrimSpace(typed) != "" {
-					parts = append(parts, typed)
-				}
+				parts = append(parts, typed)
 			}
 		}
-		text := strings.TrimSpace(strings.Join(parts, "\n"))
-		if text != "" {
-			return text, true
+		if text := strings.TrimSpace(strings.Join(parts, "\n")); text != "" {
+			inputs = append(inputs, text)
 		}
-		return "", false
 	}
-	return "", false
+	text := strings.Join(inputs, "\n\n")
+	return text, text != ""
 }
 
 // GenerateContentWithRetry retries transient failures on the selected model.

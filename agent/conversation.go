@@ -346,6 +346,13 @@ func ensureSystemPromptForContext(ctx context.Context, a *Agent, messages []llmt
 
 // AskWithHistory runs an interaction using the provided message history (multi-turn conversation).
 func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	a.openSteerQueue()
+	defer func() {
+		if pending := a.closeSteerQueue(); len(pending) > 0 {
+			a.emitTypedEvent(context.WithoutCancel(ctx), events.NewConversationErrorEvent(strings.Join(pending, "\n\n"), "Queued messages were not sent because this response stopped. Please send them again.", 0, "queued_input_not_sent", 0))
+		}
+	}()
+
 	// Use agent's logger if available, otherwise use default
 	v2Logger := a.logger
 	v2Logger.Debug("Entered AskWithHistory", loggerv2.Int("message_count", len(messages)))
@@ -1587,7 +1594,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 				messages = append(messages, assistantMessage)
 			}
-			if steerMsgs := a.drainSteerMessages(); len(steerMsgs) > 0 {
+			if steerMsgs := a.drainFinalSteerMessages(); len(steerMsgs) > 0 {
 				messages = injectSteerMessages(ctx, a, messages, steerMsgs, turn, "Injected steer message after final assistant response")
 				continue
 			}

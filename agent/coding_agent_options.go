@@ -82,7 +82,7 @@ func codingAgentInteractiveEnabledForProvider(provider llm.Provider, modelID, se
 		return false
 	}
 	contract, ok := llm.GetCodingAgentProviderContract(provider, modelID)
-	return ok && contract.UsesPersistentSession
+	return ok && contract.RequiresOwnerSessionID
 }
 
 func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {

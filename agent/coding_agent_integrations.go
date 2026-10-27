@@ -103,6 +103,8 @@ func (a *Agent) nativeCodingToolsEnabled() bool {
 
 func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 	claudeHTTPHooksEnabled := claudeHTTPRoutingHooksEnabled()
+	contract, _ := llm.GetCodingAgentProviderContract(llm.ProviderClaudeCode, model.ModelID)
+	sdk := string(contract.Transport) == "sdk"
 
 	// Use restricted permissions instead of skipping them entirely. Allow our
 	// bridge tools and WebSearch to run without prompts. In enforced mode the
@@ -123,7 +125,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// than the agent asking in plain text.
 	nativeQuestions := a.claudeNativeQuestionsEnabled()
 	var questionHook claudeNativeQuestionHookFile
-	if nativeQuestions {
+	if nativeQuestions && !sdk {
 		var hookErr error
 		questionHook, hookErr = prepareClaudeNativeQuestionHook(bridgeConfig)
 		if hookErr != nil {
@@ -171,7 +173,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 		}
 	}
 
-	if nativeQuestions {
+	if nativeQuestions && !sdk {
 		settingsJSON, err = addClaudeNativeQuestionHook(settingsJSON, questionHook)
 		if err != nil {
 			return nil, fmt.Errorf("connect Claude native questions: %w", err)
@@ -197,7 +199,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	}
 	if a.wantsStructuredTransport() {
 		opts = append(opts, llm.WithClaudeStructuredTransport(true))
-	} else if a.enableStreaming {
+	} else if a.enableStreaming && !sdk {
 		opts = append(opts, llmproviders.WithClaudeStreamTranscript(true))
 		// Transcript events power formatted chat, while terminal snapshots power
 		// raw/terminal consumers. They are independent projections of the same
@@ -215,7 +217,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// is auto-enabled above purely for tool-call observability and does NOT
 	// imply this). Only worth the tailing cost when a caller actually
 	// registered a StreamingCallback to consume the content.
-	if a.streamingCallback != nil {
+	if a.streamingCallback != nil && !sdk {
 		opts = append(opts, llm.WithClaudeStreamTranscript(true))
 		opts = append(opts, llm.WithClaudeStreamTmuxScreen(true))
 	}

@@ -136,11 +136,16 @@ func TestApplyAgentSessionHandleAcceptsSameProvider(t *testing.T) {
 				Provider:        "codex-cli",
 				Model:           "gpt-5.2-codex",
 				NativeSessionID: "codex-thread-1",
+				Transport:       "tmux",
+				TmuxSession:     "obsolete-terminal",
 				WorkingDir:      "/work/project",
 			},
 		}
 		if accepted := agent.applyAgentSessionHandle(handle); !accepted {
 			t.Fatal("a same-provider handle must restore")
+		}
+		if snapshot := agent.currentAgentSessionHandle(); snapshot.Provider.Transport != "app-server" || snapshot.Provider.TmuxSession != "" {
+			t.Fatalf("obsolete terminal identity survived restore: %#v", snapshot)
 		}
 		// The configured model wins for the new turn; the native
 		// conversation identity comes from the handle.

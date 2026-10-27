@@ -25,15 +25,18 @@ func TestClaudeNativeQuestionsEmittedOptions(t *testing.T) {
 	t.Setenv("MCP_API_TOKEN", "test-token")
 	for _, enforced := range []bool{false, true} {
 		for _, mode := range []string{codingAgentToolsMCPOnly, codingAgentToolsFull} {
-			for _, scenario := range []string{"attended", "unattended", "nonpersistent", "structured", "unregistered", "unadvertised"} {
+			for _, scenario := range []string{"attended", "unattended", "nonpersistent", "structured", "unregistered", "unadvertised", "sdk"} {
 				t.Run(fmt.Sprintf("%s/%s/enforced=%v", mode, scenario, enforced), func(t *testing.T) {
 					t.Setenv("MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING", fmt.Sprint(enforced))
+					if scenario == "sdk" {
+						t.Setenv("CLAUDE_CODE_TRANSPORT", "sdk")
+					}
 					a := bridgeTestAgent()
 					a.provider = "claude-code"
 					a.sessionID = "claude-question-test"
 					a.codingAgentToolsMode, a.cliSecurityPolicy = mode, confinedTestPolicy()
 					a.userAnswersNativeQuestions = scenario != "unattended"
-					a.claudeCodePersistentInteractiveSession = scenario != "nonpersistent"
+					a.claudeCodePersistentInteractiveSession = scenario != "nonpersistent" && scenario != "sdk"
 					if scenario == "structured" {
 						a.codingAgentTransport = llm.CodingAgentTransportStructured
 					}
@@ -50,7 +53,7 @@ func TestClaudeNativeQuestionsEmittedOptions(t *testing.T) {
 						t.Fatal(err)
 					}
 					metadata := metadataFromCallOptions(opts)
-					want := scenario == "attended"
+					want := scenario == "attended" || scenario == "sdk"
 					for _, key := range []string{claudecode.MetadataKeyTools, claudecode.MetadataKeyAllowedTools} {
 						tools, _ := metadata[key].(string)
 						if slices.Contains(strings.Split(tools, ","), "AskUserQuestion") != want {
@@ -58,7 +61,7 @@ func TestClaudeNativeQuestionsEmittedOptions(t *testing.T) {
 						}
 					}
 					settings, _ := metadata[claudecode.MetadataKeySettings].(string)
-					if strings.Contains(settings, `"matcher":"AskUserQuestion"`) != want {
+					if strings.Contains(settings, `"matcher":"AskUserQuestion"`) != (want && scenario != "sdk") {
 						t.Fatalf("question hook settings enabled=%v: %s", want, settings)
 					}
 					if enforced && !strings.Contains(settings, `"matcher":"*"`) {

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/manishiitg/mcpagent/llm"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,7 +23,8 @@ var claudeNativeQuestionHook string
 // answer lifecycle and a person is attending a retained interactive chat.
 // Keeping this separate from Full CLI prevents scheduled runs from waiting.
 func (a *Agent) claudeNativeQuestionsEnabled() bool {
-	if !a.claudeCodePersistentInteractiveSession || !a.userAnswersNativeQuestions || a.wantsStructuredTransport() || !slices.Contains(a.additionalBridgeTools, "request_clarification") {
+	contract, _ := llm.GetCodingAgentProviderContract(llm.ProviderClaudeCode, a.modelID)
+	if (!a.claudeCodePersistentInteractiveSession && string(contract.Transport) != "sdk") || !a.userAnswersNativeQuestions || a.wantsStructuredTransport() || !slices.Contains(a.additionalBridgeTools, "request_clarification") {
 		return false
 	}
 	_, registered := a.lookupDirectTool("request_clarification")

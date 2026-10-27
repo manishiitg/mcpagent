@@ -87,6 +87,8 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 				t.Fatalf("build agent: %v", err)
 			}
 			defer cleanup()
+			queuedTransport := !agent.supportsSteering()
+			secondWord := "SECOND_" + realBridgeRandHex(6)
 
 			signal := newFirstToolCallSignal()
 			agent.addEventListener(signal)
@@ -94,7 +96,7 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 
 			var nativeSession *Session
 			var capture *turnEndCapture
-			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI {
+			if tc.provider == llm.ProviderCodexCLI || tc.provider == llm.ProviderPiCLI || queuedTransport {
 				capture = &turnEndCapture{toolEnded: make(chan struct{}), arrived: make(chan struct{}, 8)}
 				agent.addEventListener(capture)
 				nativeSession, err = agent.Start(ctx)
@@ -164,6 +166,9 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			if nativeSession != nil {
 				receipt, sendErr := nativeSession.Send(ctx, instruction)
 				err = sendErr
+				if receipt.Status == UserMessageDeliveryStatusQueuedForInjection {
+					delivered.Mode = DeliveryModeQueued
+				}
 				if receipt.Status == UserMessageDeliveryStatusSentToCLI && (receipt.Transport == llm.CodingAgentTransportAppServer || receipt.Transport == llm.CodingAgentTransportRPC) {
 					delivered.Mode = DeliveryModeSteered
 				}
@@ -173,10 +178,20 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Deliver (steer mid-turn): %v", err)
 			}
-			if delivered.Mode != DeliveryModeSteered {
+			expectedMode := DeliveryModeSteered
+			if queuedTransport {
+				expectedMode = DeliveryModeQueued
+			}
+			if delivered.Mode != expectedMode {
 				t.Fatalf("Deliver routed to %q; want %q (a live turn on a steerable transport)", delivered.Mode, DeliveryModeSteered)
 			}
 
+			if queuedTransport {
+				receipt, err := nativeSession.Send(ctx, "Another instruction: also include "+secondWord+" in the final reply, in addition to the previous requested word and COMMAND_DONE.")
+				if err != nil || receipt.Status != UserMessageDeliveryStatusQueuedForInjection {
+					t.Fatalf("second queued request: %#v %v", receipt, err)
+				}
+			}
 			var res turnResult
 			select {
 			case res = <-done:
@@ -206,17 +221,28 @@ func TestCodingSessionDeliverSteerMidTurn(t *testing.T) {
 				t.Fatalf("steer did NOT reach the running turn: answer %q missing the steered word %q", answer, steerWord)
 			}
 
-			rec := agentreview.Write(t, "TestCodingSessionDeliverSteerMidTurn_"+tc.name,
-				tc.name+": Deliver steers a live instruction into a RUNNING turn (pinned open by a sleep tool): the model obeys the mid-turn word in the same turn's reply",
+			if queuedTransport && !strings.Contains(answer, secondWord) {
+				t.Fatalf("lost second queued request: %q", answer)
+			}
+			reviewName := "TestCodingSessionDeliverSteerMidTurn_" + tc.name
+			if queuedTransport {
+				reviewName += "_Queued"
+			}
+			reviewSummary:=tc.name+": live input reaches a running turn"
+			if queuedTransport {reviewSummary=tc.name+": two queued inputs both reach the next native-resumed turn after a real MCP tool completes"}
+			rec := agentreview.Write(t, reviewName,
+				reviewSummary,
 				agyReviewFacts(tc.provider, map[string]any{
-					"provider":            tc.name,
-					"conversation_id":     convID,
-					"delivery_mode":       string(delivered.Mode),
-					"steered_word":        steerWord,
-					"turn_answer":         answer,
-					"tool_completed":      strings.Contains(answer, "COMMAND_DONE"),
-					"steer_word_obeyed":   strings.Contains(answer, steerWord),
-					"steer_reached_model": "steered word only appears if the mid-turn live input reached the model",
+					"provider":                  tc.name,
+					"conversation_id":           convID,
+					"delivery_mode":             string(delivered.Mode),
+					"second_queued_word":        secondWord,
+					"second_queued_word_obeyed": !queuedTransport || strings.Contains(answer, secondWord),
+					"steered_word":              steerWord,
+					"turn_answer":               answer,
+					"tool_completed":            strings.Contains(answer, "COMMAND_DONE"),
+					"steer_word_obeyed":         strings.Contains(answer, steerWord),
+					"steer_reached_model":       "steered word only appears if the mid-turn live input reached the model",
 				}),
 				map[string]any{"steered_mid_turn": strings.Contains(answer, steerWord), "tool_ran": strings.Contains(answer, "COMMAND_DONE")},
 			)

@@ -36,9 +36,12 @@ const (
 // CodingAgentDeliveryError is returned when DeliverUserMessage cannot route a
 // message to the running agent, independently of any continuation/resume logic.
 type CodingAgentDeliveryError struct {
-	Kind     CodingAgentDeliveryErrorKind
-	Provider llm.Provider
-	Reason   string
+	// UnsentMessages were accepted into the queue but never delivered. A NoSession
+	// caller carries them, in order, into the replacement turn (PLAT-872).
+	UnsentMessages []string
+	Kind           CodingAgentDeliveryErrorKind
+	Provider       llm.Provider
+	Reason         string
 }
 
 func (e *CodingAgentDeliveryError) Error() string {
@@ -194,17 +197,19 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 					// died without cleanup, and this send's pool miss proves
 					// its CLI target is gone too. Parking another message
 					// would strand the chat with a silent accept, so break
-					// the stuck turn — reset the stale flag, drop the
+					// the stuck turn — reset the stale flag, recover the
 					// orphaned queue — and report no-target: the caller
 					// starts a fresh turn that re-resolves the current
 					// provider instead.
-					dropped := a.resetStuckTurnState()
+					pending := a.resetStuckTurnState()
 					if a.logger != nil {
-						a.logger.Warn(fmt.Sprintf("stuck steer queue: session=%s provider=%s orphaned=%s dropped=%d; turn flag reset, caller starts a new turn", req.SessionID, provider, age.Round(time.Second), dropped))
+						a.logger.Warn(fmt.Sprintf("stuck steer queue: session=%s provider=%s orphaned=%s recovered=%d; turn flag reset, caller starts a new turn", req.SessionID, provider, age.Round(time.Second), len(pending)))
 					}
-					return result, fmt.Errorf("failed to submit live input to %s: %w", provider, err)
+					return result, &CodingAgentDeliveryError{Kind: DeliveryErrorKindNoSession, Provider: provider, Reason: "native target unavailable; queued input must start a new turn", UnsentMessages: pending}
 				}
-				a.addSteerMessage(message)
+				if !a.addSteerMessage(message) {
+					return result, &CodingAgentDeliveryError{Kind: DeliveryErrorKindNoSession, Provider: provider, Reason: "the turn has finished accepting input; start a new turn"}
+				}
 				if a.logger != nil {
 					a.logger.Warn(fmt.Sprintf("steer message queued for injection: session=%s provider=%s", req.SessionID, provider))
 				}
@@ -232,7 +237,9 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 			Reason:   "no turn is running to take the message; start a new turn",
 		}
 	}
-	a.addSteerMessage(message)
+	if !a.addSteerMessage(message) {
+		return result, &CodingAgentDeliveryError{Kind: DeliveryErrorKindNoSession, Provider: provider, Reason: "the turn has finished accepting input; start a new turn"}
+	}
 	result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
 	return result, nil
 }
