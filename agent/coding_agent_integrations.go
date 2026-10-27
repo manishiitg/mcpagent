@@ -237,7 +237,8 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	} else {
 		opts = append(opts, llm.WithCodexDisableShellTool())
 	}
-	opts = append(opts, llm.WithCodexApprovalPolicy("never"))
+	// App-server chooses on-request only when this turn has an attending user;
+	// unattended work stays never. Explicit caller policies remain authoritative.
 	// Shell/exec containment: WithCodexDisableShellTool above turns OFF codex's
 	// built-in shell_tool + the other native code-exec features (unified_exec,
 	// tool_search, browser/computer use, …) via codex's first-class `--disable`
