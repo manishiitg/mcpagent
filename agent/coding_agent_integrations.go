@@ -326,7 +326,7 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 			a.logger.Info(fmt.Sprintf("🧠 [CODEX_CLI] Reasoning effort set to: %s", effort))
 		}
 	}
-	a.logger.Info("🌉 Using Codex app-server with the configured native tools, MCP bridge, and auto-approval")
+	a.logger.Info("🌉 Using Codex app-server with the configured native tools, MCP bridge, and native permission handling")
 	return opts, nil
 }
 
