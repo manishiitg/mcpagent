@@ -183,11 +183,45 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 	// mirrors SupportsSteering() (coding_session.go). Without this a structured
 	// coding-agent turn would try to tmux-inject into a one-shot process.
 	if isCodingAgent && contract.SupportsLiveInput && !a.usesStructuredTransport() {
-		var err error
-		if req.Intent == UserMessageDeliveryIntentLiveInput {
-			err = llm.SendCodingAgentLiveInput(ctx, provider, a.modelID, req.SessionID, message)
-		} else {
-			err = llm.SendCodingAgentRetainedInput(ctx, provider, a.modelID, req.SessionID, message)
+		if steersNatively(contract.Transport) {
+			// Every caller (Session.Send and direct DeliverAgentInput) passes here, so a second message waits
+			// behind one that is waiting out the turn start and they reach the agent in the order sent.
+			a.nativeSteerMu.Lock()
+			defer a.nativeSteerMu.Unlock()
+		}
+		send := func() error {
+			if req.Intent == UserMessageDeliveryIntentLiveInput {
+				return sendCodingAgentLiveInput(ctx, provider, a.modelID, req.SessionID, message)
+			}
+			return llm.SendCodingAgentRetainedInput(ctx, provider, a.modelID, req.SessionID, message)
+		}
+		err := send()
+		if err != nil && steersNatively(contract.Transport) && inputNotTaken(err) && a.isTurnInFlight() {
+			// A native protocol takes a message mid-turn. "Not taken" while our turn is open usually means its
+			// own turn is still starting (server B 2026-10-27: a message 2s into a Cursor SDK turn was parked
+			// until the first answer ended). Keep offering it for a short while; if our turn closes meanwhile,
+			// the caller starts the next turn with it. A provider turn that already ended keeps the queue below:
+			// this turn's last step takes the message (PLAT-872-24).
+			deadline := time.Now().Add(nativeSteerStartWait)
+			for err != nil && inputNotTaken(err) && a.turnTakesInput() && ctx.Err() == nil && time.Now().Before(deadline) {
+				select {
+				case <-ctx.Done():
+				case <-time.After(nativeSteerRetryInterval):
+				}
+				if ctx.Err() == nil {
+					err = send()
+				}
+			}
+			if err != nil && inputNotTaken(err) && ctx.Err() == nil && !a.isTurnInFlight() {
+				return result, &CodingAgentDeliveryError{Kind: DeliveryErrorKindNoSession, Provider: provider, Reason: "the turn finished before taking the message; start a new turn"}
+			}
+			if err == nil {
+				result.DeliveryStatus = UserMessageDeliveryStatusSentToCLI
+				return result, nil
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, fmt.Errorf("failed to submit live input to %s: %w", provider, ctxErr)
+			}
 		}
 		if err != nil {
 			if (isInteractiveSessionNotRegistered(err) || errors.Is(err, llmtypes.ErrCodingAgentInputNotSent)) && a.isTurnInFlight() {
@@ -249,6 +283,34 @@ func (a *Agent) deliverUserMessage(ctx context.Context, req UserMessageDeliveryR
 	}
 	result.DeliveryStatus = UserMessageDeliveryStatusQueuedForInjection
 	return result, nil
+}
+
+// nativeSteerRetryInterval is how often a message is offered again to a native protocol whose turn is starting;
+// nativeSteerStartWait bounds how long (a native turn starts in a few seconds).
+var (
+	nativeSteerRetryInterval = 200 * time.Millisecond
+	nativeSteerStartWait     = 15 * time.Second
+	sendCodingAgentLiveInput = llm.SendCodingAgentLiveInput
+)
+
+// steersNatively reports whether the transport takes a message in the middle of a turn (the Claude and Cursor
+// SDKs, the Codex app server). Only the others (tmux, ACP, structured) use the steer queue.
+func steersNatively(transport llm.CodingAgentTransport) bool {
+	return transport == llm.CodingAgentTransportSDK || transport == llm.CodingAgentTransportAppServer
+}
+
+// turnTakesInput: a turn is open and has not taken its last step (after the final drain it only closes).
+func (a *Agent) turnTakesInput() bool {
+	if !a.isTurnInFlight() {
+		return false
+	}
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	return !a.steerQueueClosed
+}
+
+func inputNotTaken(err error) bool {
+	return isInteractiveSessionNotRegistered(err) || errors.Is(err, llmtypes.ErrCodingAgentInputNotSent)
 }
 
 // liveInputUsesTmux reports whether live input is typed into a tmux CLI pane

@@ -929,6 +929,7 @@ type Agent struct {
 	// stuck turn instead of parking messages forever.
 	steerQueueClosed       bool
 	pendingSteerMessages   []string
+	nativeSteerMu          sync.Mutex              // keeps messages to a native-steer transport in order while one waits out turn start
 	pendingSteerIDs        []QueuedMessageIdentity // the person's message identity of each queued text (zero for internal callers)
 	pendingSteerEnqueuedAt []time.Time
 	steerMu                sync.Mutex

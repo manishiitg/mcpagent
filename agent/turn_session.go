@@ -500,6 +500,12 @@ func (s *Session) startMuseBackgroundWatcher(nativeSessionID string, baseline in
 // owns that turn through its canonical final-response event; callers receive a
 // fast delivery acknowledgement and do not need to scrape provider panes.
 func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error) {
+	return s.SendIdentified(ctx, input, QueuedMessageIdentity{})
+}
+
+// SendIdentified is Send for a message a person sent: if it has to wait for the turn's next step, the turn records
+// it once under this identity, so the chat matches the bubble the person already sees.
+func (s *Session) SendIdentified(ctx context.Context, input string, identity QueuedMessageIdentity) (DeliveryResult, error) {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	s.stateMu.Lock()
@@ -543,9 +549,11 @@ func (s *Session) Send(ctx context.Context, input string) (DeliveryResult, error
 		intent = UserMessageDeliveryIntentLiveInput
 	}
 	delivery, err := s.agent.deliverUserMessage(ctx, UserMessageDeliveryRequest{
-		SessionID: s.agent.sessionID,
-		Message:   input,
-		Intent:    intent,
+		SessionID:       s.agent.sessionID,
+		Message:         input,
+		Intent:          intent,
+		MessageID:       identity.ID,
+		ClientMessageID: identity.ClientID,
 	})
 	turnID := ""
 	if lifecycle != nil {
