@@ -1206,7 +1206,7 @@ func NewUnifiedCompletionEvent(agentType, agentMode, question, finalResult, stat
 
 // NewUnifiedCompletionEventWithError creates a new unified completion event with error
 func NewUnifiedCompletionEventWithError(agentType, agentMode, question, errorMsg string, duration time.Duration, turns int) *UnifiedCompletionEvent {
-	return &UnifiedCompletionEvent{
+	event := &UnifiedCompletionEvent{
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
 		},
@@ -1220,6 +1220,8 @@ func NewUnifiedCompletionEventWithError(agentType, agentMode, question, errorMsg
 		Error:       errorMsg,
 		Metadata:    make(map[string]interface{}),
 	}
+	event.SetProviderFailureDisplay()
+	return event
 }
 
 // Note: Orchestrator events have been moved to mcp-agent-builder-go/agent_go/pkg/orchestrator/events/

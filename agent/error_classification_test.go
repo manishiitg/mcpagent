@@ -309,7 +309,7 @@ func TestRetryReasonNamesALaunchTimeoutNotAConnectionError(t *testing.T) {
 	if got := retryReasonText("connection_error", &llmerrors.Error{Kind: llmerrors.KindTimeout, Err: fmt.Errorf("deadline exceeded")}); got != "no response in time" {
 		t.Fatalf("plain timeout reason = %q", got)
 	}
-	if got := retryReasonText("connection_error", fmt.Errorf("connection refused")); got != "connection_error" {
-		t.Fatalf("a real connection error keeps its label, got %q", got)
+	if got := retryReasonText("connection_error", fmt.Errorf("connection refused")); got != "connection error: connection refused" {
+		t.Fatalf("a real connection error includes the provider reason, got %q", got)
 	}
 }

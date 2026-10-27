@@ -142,6 +142,7 @@ func (a *Agent) annotateUnifiedCompletionEvent(event *events.UnifiedCompletionEv
 	}
 	event.Metadata["provider"] = string(a.provider)
 	event.Metadata["model_id"] = a.modelID
+	event.SetProviderFailureDisplay()
 	if isCodingCLIProvider(a.provider, a.modelID) {
 		event.Metadata["coding_agent_terminal_format"] = true
 	}

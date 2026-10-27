@@ -157,9 +157,13 @@ func retryOriginalModel(a *Agent, ctx context.Context, errorType string, attempt
 
 // retryReasonText is what the retry notice tells the person. A timeout is not a connection problem: a launch that
 // never produced a screen says what it was stuck on ("Muse did not start in 1m30s: it was showing a plugin hooks
-// review screen"), any other timeout says no response came in time. Everything else keeps its error type.
+// review screen"), any other timeout says no response came in time. Other errors include the provider's reason.
 func retryReasonText(errorType string, err error) string {
 	if llmerrors.KindOf(err) != llmerrors.KindTimeout {
+		display := llmerrors.ProviderDisplay(err)
+		if display.Message != "" {
+			return strings.ReplaceAll(errorType, "_", " ") + ": " + display.Message
+		}
 		return errorType
 	}
 	text := err.Error()
