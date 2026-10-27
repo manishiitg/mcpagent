@@ -86,17 +86,51 @@ func requireFunctionCall(tc llmtypes.ToolCall) (*llmtypes.FunctionCall, error) {
 	return tc.FunctionCall, nil
 }
 
-func injectSteerMessages(ctx context.Context, a *Agent, messages []llmtypes.MessageContent, steerMsgs []string, turn int, logMessage string) []llmtypes.MessageContent {
+func injectSteerMessages(ctx context.Context, a *Agent, messages []llmtypes.MessageContent, steerMsgs []queuedSteer, turn int, logMessage string) []llmtypes.MessageContent {
 	for _, sm := range steerMsgs {
 		messages = append(messages, llmtypes.MessageContent{
 			Role:  llmtypes.ChatMessageTypeHuman,
-			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sm}},
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sm.Text}},
 		})
-		// Emit a standard user_message event so the UI shows the steer exactly when it is picked up.
-		a.emitTypedEvent(ctx, events.NewUserMessageEvent(turn+1, sm, "user"))
+		// One row, recorded where the agent takes the message; a person's message carries its identity so
+		// the chat matches the bubble it already shows (no second copy).
+		a.emitTypedEvent(ctx, steerUserMessageEvent(a, turn+1, sm, "sent_to_cli"))
 		getLogger(a).Info(logMessage, loggerv2.Int("turn", turn+1))
 	}
 	return messages
+}
+
+// steerUserMessageEvent is the user row of a queued message. A person's message carries the same metadata
+// the server writes for a live message (message_id, client_message_id) so the chat matches its bubble.
+func steerUserMessageEvent(a *Agent, turn int, sm queuedSteer, deliveryStatus string) *events.UserMessageEvent {
+	event := events.NewUserMessageEvent(turn, sm.Text, "user")
+	if sm.ID == "" && sm.ClientID == "" {
+		return event
+	}
+	event.Metadata = map[string]interface{}{"source": "coding_agent_live_input", "provider": string(a.provider), "message_id": sm.ID, "delivery_status": deliveryStatus}
+	if sm.ClientID != "" {
+		event.Metadata["client_message_id"] = sm.ClientID
+	}
+	return event
+}
+
+// reportUnsentSteers settles messages still queued when a response stops. A person's message is recorded once
+// as failed (its row offers resend); only unidentified ones need the separate notice.
+func reportUnsentSteers(ctx context.Context, a *Agent, pending []queuedSteer) {
+	var unrecorded []string
+	for _, entry := range pending {
+		if entry.ID == "" && entry.ClientID == "" {
+			unrecorded = append(unrecorded, entry.Text)
+			continue
+		}
+		event := steerUserMessageEvent(a, 0, entry, "failed")
+		event.Metadata["confirmation"] = "failed"
+		event.Metadata["delivery_error"] = "Not sent because the response stopped. Send it again."
+		a.emitTypedEvent(ctx, event)
+	}
+	if len(unrecorded) > 0 {
+		a.emitTypedEvent(ctx, events.NewConversationErrorEvent(strings.Join(unrecorded, "\n\n"), "Queued messages were not sent because this response stopped. Please send them again.", 0, "queued_input_not_sent", 0))
+	}
 }
 
 func (a *Agent) annotateUnifiedCompletionEvent(event *events.UnifiedCompletionEvent) {
@@ -348,9 +382,8 @@ func ensureSystemPromptForContext(ctx context.Context, a *Agent, messages []llmt
 func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	a.openSteerQueue()
 	defer func() {
-		if pending := a.closeSteerQueue(); len(pending) > 0 {
-			a.emitTypedEvent(context.WithoutCancel(ctx), events.NewConversationErrorEvent(strings.Join(pending, "\n\n"), "Queued messages were not sent because this response stopped. Please send them again.", 0, "queued_input_not_sent", 0))
-		}
+		reportUnsentSteers(context.WithoutCancel(ctx), a, a.closeSteerQueue())
+
 	}()
 
 	// Use agent's logger if available, otherwise use default

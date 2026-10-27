@@ -189,7 +189,7 @@ func TestStructuredTransportDeliverQueuesMidTurn(t *testing.T) {
 			inAnswer := strings.Contains(answer, queuedWord)
 			inBuffer := false
 			for _, m := range drained {
-				if strings.Contains(m, queuedWord) {
+				if strings.Contains(m.Text, queuedWord) {
 					inBuffer = true
 					break
 				}

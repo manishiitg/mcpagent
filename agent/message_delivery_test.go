@@ -26,7 +26,7 @@ func TestDeliverUserMessageQueuesForNonCodingProvider(t *testing.T) {
 		t.Fatalf("status = %q, want %q", result.DeliveryStatus, UserMessageDeliveryStatusQueuedForInjection)
 	}
 	got := agent.drainSteerMessages()
-	if len(got) != 1 || got[0] != "remember this" {
+	if len(got) != 1 || got[0].Text != "remember this" {
 		t.Fatalf("queued messages = %#v", got)
 	}
 }
@@ -69,7 +69,7 @@ func TestDeliverUserMessageQueuesWhenTurnInFlightButNoInteractiveSession(t *test
 		t.Fatalf("status = %q, want %q", result.DeliveryStatus, UserMessageDeliveryStatusQueuedForInjection)
 	}
 	got := agent.drainSteerMessages()
-	if len(got) != 1 || got[0] != "steer while API turn runs" {
+	if len(got) != 1 || got[0].Text != "steer while API turn runs" {
 		t.Fatalf("queued messages = %#v", got)
 	}
 }
@@ -184,7 +184,7 @@ func TestNativeTurnNotStartedQueuesAtActiveOuterBoundary(t *testing.T) {
 			t.Fatalf("%s: result=%+v err=%v", provider, result, err)
 		}
 		got := a.drainSteerMessages()
-		if len(got) != 1 || got[0] != "follow up" {
+		if len(got) != 1 || got[0].Text != "follow up" {
 			t.Fatalf("%s: queued=%v", provider, got)
 		}
 	}
@@ -207,7 +207,7 @@ func TestDeliverRejectsQueueAfterFinalDrain(t *testing.T) {
 	if !a.addSteerMessage("unfinished input") {
 		t.Fatal("new turn queue stayed closed")
 	}
-	if pending := a.closeSteerQueue(); len(pending) != 1 || pending[0] != "unfinished input" {
+	if pending := a.closeSteerQueue(); len(pending) != 1 || pending[0].Text != "unfinished input" {
 		t.Fatalf("stopped turn lost its undelivered input: %#v", pending)
 	}
 	a.setTurnInFlight(true)

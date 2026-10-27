@@ -211,7 +211,7 @@ func TestDeliverQueuesOnStructuredCodingAgent(t *testing.T) {
 		t.Fatalf("Deliver mode = %q; want %q (a busy structured coding-agent turn must queue, not steer)", got.Mode, DeliveryModeQueued)
 	}
 	drained := a.drainSteerMessages()
-	if len(drained) != 1 || drained[0] != "please also add tests" {
+	if len(drained) != 1 || drained[0].Text != "please also add tests" {
 		t.Fatalf("queued messages = %v; want the delivered message", drained)
 	}
 }
@@ -261,7 +261,7 @@ func TestDeliverQueuesWhenBusyAndNotSteerable(t *testing.T) {
 		t.Fatalf("Deliver mode = %q; want %q", got.Mode, DeliveryModeQueued)
 	}
 	drained := a.drainSteerMessages()
-	if len(drained) != 1 || drained[0] != "please also add tests" {
+	if len(drained) != 1 || drained[0].Text != "please also add tests" {
 		t.Fatalf("queued messages = %v; want the delivered message", drained)
 	}
 }
