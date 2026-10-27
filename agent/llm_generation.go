@@ -1182,6 +1182,17 @@ func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, mess
 
 	modelProvider := llm.Provider(model.Provider)
 	opts = a.appendCodingAgentInteractiveOptionsForProvider(opts, modelProvider, model.ModelID)
+	if modelProvider == llm.ProviderCursorCLI {
+		// PLAT-872-50: normal native continuation sends only the newest text.
+		// A refused load needs this chat's history and must persist its new ID
+		// before sending, including when the subsequent turn fails.
+		opts = append(opts, func(options *llmtypes.CallOptions) {
+			options.CodingProviderHistory = messages
+			options.OnCodingProviderSession = func(handle llmtypes.CodingProviderSessionHandle) {
+				a.updateCodingProviderSessionHandleFromResponse(&llmtypes.ContentResponse{Choices: []*llmtypes.ContentChoice{{GenerationInfo: &llmtypes.GenerationInfo{CodingProviderSessionHandle: &handle}}}})
+			}
+		})
+	}
 	continuationHandle, hasContinuationHandle := a.codingProviderContinuationHandleForModel(modelProvider, model.ModelID)
 	if launchOnly && !hasContinuationHandle {
 		return nil, fmt.Errorf("cannot launch coding-agent continuation transport: native session handle is missing")
