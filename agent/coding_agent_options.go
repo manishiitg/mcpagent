@@ -97,7 +97,11 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	if workingDir == "" {
 		return opts
 	}
-	cleanupInactiveCodingAgentProjectArtifacts(workingDir, provider)
+	if a.codingAgentRuntimeDir != "" {
+		opts = append(opts, llmtypes.WithCLIRuntimeDir(a.codingAgentRuntimeDir))
+	} else {
+		cleanupInactiveCodingAgentProjectArtifacts(workingDir, provider)
+	}
 	option := llm.CodingAgentWorkingDirOption(provider, workingDir)
 	if option == nil {
 		return opts
@@ -118,6 +122,13 @@ func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.Cal
 	}
 
 	return opts
+}
+
+func (a *Agent) codingAgentArtifactDir() string {
+	if a.codingAgentRuntimeDir != "" {
+		return a.codingAgentRuntimeDir
+	}
+	return a.codingAgentWorkingDir
 }
 
 // isolatedWorkspaceDirForSession derives the isolated workspace path from the

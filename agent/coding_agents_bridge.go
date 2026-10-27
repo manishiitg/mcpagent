@@ -182,8 +182,8 @@ func claudeBridgeAllowedToolIdentifiers(additional []string, admits func(name, t
 // whenever skills are attached. All other MCP tools are discovered via
 // get_api_spec and called through HTTP API endpoints.
 func (a *Agent) buildBridgeMCPConfig() (string, error) {
-	if protect := ProtectManagedProjectionWrites; protect != nil && strings.TrimSpace(a.sessionID) != "" && strings.TrimSpace(a.codingAgentWorkingDir) != "" {
-		protect(a.sessionID, a.codingAgentWorkingDir)
+	if protect := ProtectManagedProjectionWrites; protect != nil && strings.TrimSpace(a.sessionID) != "" && strings.TrimSpace(a.codingAgentArtifactDir()) != "" {
+		protect(a.sessionID, a.codingAgentArtifactDir())
 	}
 	logger := getLogger(a)
 
@@ -341,7 +341,7 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	// Give the bridge an explicit persistent folder under the agent's real
 	// working directory; this remains stable even when the CLI itself runs in an
 	// isolated temporary cwd.
-	if workingDir := strings.TrimSpace(a.codingAgentWorkingDir); workingDir != "" {
+	if workingDir := strings.TrimSpace(a.codingAgentArtifactDir()); workingDir != "" {
 		toolOutputDir := filepath.Join(workingDir, DefaultToolOutputFolder)
 		// Folder Guard grants this path before the first bridge tool executes.
 		// Landlock requires every granted path to exist when its ruleset is built,
@@ -381,7 +381,7 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	// cache-stability benefit to protect in that case anyway, since a
 	// fresh temp directory never had a prior cache entry either.
 	a.bridgeReadyFile = ""
-	if workingDir := strings.TrimSpace(a.codingAgentWorkingDir); workingDir != "" {
+	if workingDir := strings.TrimSpace(a.codingAgentArtifactDir()); workingDir != "" {
 		now := time.Now()
 		useStablePath := true
 		if last, ok := piReadyMarkerLastAcquired.Load(workingDir); ok {
@@ -602,7 +602,7 @@ func marshalBridgeToolDef(name, description string, parameters interface{}, tool
 // lives in the agent's own working directory or a private 0700 directory,
 // never loose in a shared temp directory.
 func (a *Agent) writeBridgeToolsFile(toolsJSON []byte) (string, error) {
-	dir := strings.TrimSpace(a.codingAgentWorkingDir)
+	dir := strings.TrimSpace(a.codingAgentArtifactDir())
 	if dir == "" {
 		// No stable directory to keep it in, so there is no path to keep stable
 		// either: use a fresh 0700 directory, removed when the agent closes.

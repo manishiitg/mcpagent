@@ -199,6 +199,7 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 		return llmtypes.CodingProviderSessionHandle{}, false
 	}
 	handle.WorkingDir = a.resolveContinuationWorkingDir(handle.WorkingDir)
+	handle.RuntimeDir = a.codingAgentRuntimeDir
 	// The continuation identity is the native session ID. The caller's model is
 	// authoritative for the new turn; the handle's model belongs to the turn
 	// that originally created or last persisted the conversation.
@@ -289,6 +290,7 @@ func (a *Agent) withContinuationWorkingDir(handle llmtypes.CodingProviderSession
 		return handle
 	}
 	handle.WorkingDir = a.resolveContinuationWorkingDir(handle.WorkingDir)
+	handle.RuntimeDir = a.codingAgentRuntimeDir
 	return handle
 }
 

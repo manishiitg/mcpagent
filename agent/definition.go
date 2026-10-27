@@ -149,6 +149,8 @@ type MCPRuntimeConfig struct {
 
 type WorkspaceRuntimeConfig struct {
 	CodingAgentWorkingDir string
+	// CodingAgentRuntimeDir separates generated files from a person's project.
+	CodingAgentRuntimeDir string
 	IsolatedSession       bool
 	// OutputDir is an application-admitted, existing artifact directory. With
 	// IsolatedSession, it is linked as output/ without copying its contents.
@@ -385,6 +387,9 @@ func runtimeAgentOptions(runtime RuntimeConfig) []agentOption {
 	workspace := runtime.Workspace
 	if workspace.CodingAgentWorkingDir != "" {
 		options = append(options, withCodingAgentWorkingDir(workspace.CodingAgentWorkingDir))
+	}
+	if workspace.CodingAgentRuntimeDir != "" {
+		options = append(options, func(a *Agent) { a.codingAgentRuntimeDir = strings.TrimSpace(workspace.CodingAgentRuntimeDir) })
 	}
 	if workspace.OutputDir != "" {
 		options = append(options, withCodingAgentOutputDir(workspace.OutputDir))

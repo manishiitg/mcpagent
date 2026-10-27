@@ -746,6 +746,7 @@ type Agent struct {
 
 	// Process working directory for interactive coding CLI providers.
 	codingAgentWorkingDir string
+	codingAgentRuntimeDir string
 
 	// CLISecurityPolicy is resolved by the owning application before launch.
 	// Providers receive an immutable copy through CallOptions. Nil preserves the
@@ -2915,7 +2916,7 @@ func (a *Agent) Close() error {
 		if a.logger != nil {
 			a.logger.Info("IsolatedSessionWorkspace: removed tmp dir " + a.isolatedWorkspacePath)
 		}
-	} else if wd := strings.TrimSpace(a.codingAgentWorkingDir); !a.isolatedSessionWorkspace && wd != "" && llm.IsCodingAgentProvider(a.provider, a.modelID) && !a.codingAgentPersistentInteractiveEnabled(a.provider) {
+	} else if wd := strings.TrimSpace(a.codingAgentArtifactDir()); !a.isolatedSessionWorkspace && wd != "" && llm.IsCodingAgentProvider(a.provider, a.modelID) && !a.codingAgentPersistentInteractiveEnabled(a.provider) {
 		// Real (non-isolated) workdir: the whole-tree rm -rf above never runs, so
 		// skills + the managed system prompt this session projected would otherwise
 		// linger in the operator's repo after a one-shot session. Persistent
