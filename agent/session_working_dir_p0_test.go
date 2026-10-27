@@ -44,7 +44,8 @@ func TestCodingAgentWorkingDirPersistenceAllProvidersP0(t *testing.T) {
 			isolated := variant.isolated
 			t.Run(string(provider)+"/"+variant.name, func(t *testing.T) {
 				expected := filepath.Join(t.TempDir(), "private-runtime")
-				agent := &Agent{sessionID: "chat-a", provider: provider, codingAgentWorkingDir: expected, isolatedSessionWorkspace: isolated}
+				privateArtifacts := t.TempDir() // PLAT-856-145: cwd and private runtime are independent durable identities.
+				agent := &Agent{sessionID: "chat-a", provider: provider, codingAgentWorkingDir: expected, codingAgentRuntimeDir: privateArtifacts, isolatedSessionWorkspace: isolated}
 				if isolated {
 					agent.codingAgentWorkingDir = "/workflow/shared"
 					agent.isolatedWorkspaceOnce.Do(func() { agent.isolatedWorkspacePath = expected; agent.isolatedWorkspaceStable = true })
@@ -65,13 +66,13 @@ func TestCodingAgentWorkingDirPersistenceAllProvidersP0(t *testing.T) {
 				if err := json.Unmarshal(raw, &saved); err != nil {
 					t.Fatal(err)
 				}
-				if saved.Provider.WorkingDir != expected || saved.Provider.NativeSessionID != "native-a" {
+				if saved.Provider.WorkingDir != expected || saved.Provider.RuntimeDir != privateArtifacts || saved.Provider.NativeSessionID != "native-a" {
 					t.Fatalf("incomplete durable handle: %+v", saved.Provider)
 				}
 				restored := &Agent{provider: provider, sessionID: "chat-a"}
 				restored.applyAgentSessionHandle(&saved)
 				got := SnapshotAgentSession(restored)
-				if got.Provider.WorkingDir != expected || got.Provider.NativeSessionID != "native-a" {
+				if got.Provider.WorkingDir != expected || got.Provider.RuntimeDir != privateArtifacts || got.Provider.NativeSessionID != "native-a" {
 					t.Fatalf("restart lost identity: %+v", got.Provider)
 				}
 				continuation, ok := restored.codingProviderContinuationHandleForModel(provider, contract.ModelID)
@@ -81,6 +82,9 @@ func TestCodingAgentWorkingDirPersistenceAllProvidersP0(t *testing.T) {
 				probe := &codingAgentResumeProbe{}
 				if _, err := llm.ContinueCodingAgentSession(context.Background(), probe, continuation, "next message"); err != nil {
 					t.Fatal(err)
+				}
+				if probe.options.CLIRuntimeDir != privateArtifacts {
+					t.Fatal("continuation lost private runtime")
 				}
 				if probe.calls != 1 {
 					t.Fatalf("adapter calls = %d, want exactly one", probe.calls)

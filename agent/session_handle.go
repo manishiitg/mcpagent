@@ -199,7 +199,9 @@ func (a *Agent) codingProviderContinuationHandleForModel(provider llm.Provider, 
 		return llmtypes.CodingProviderSessionHandle{}, false
 	}
 	handle.WorkingDir = a.resolveContinuationWorkingDir(handle.WorkingDir)
-	handle.RuntimeDir = a.codingAgentRuntimeDir
+	if a.codingAgentRuntimeDir != "" {
+		handle.RuntimeDir = a.codingAgentRuntimeDir
+	}
 	// The continuation identity is the native session ID. The caller's model is
 	// authoritative for the new turn; the handle's model belongs to the turn
 	// that originally created or last persisted the conversation.
@@ -290,7 +292,9 @@ func (a *Agent) withContinuationWorkingDir(handle llmtypes.CodingProviderSession
 		return handle
 	}
 	handle.WorkingDir = a.resolveContinuationWorkingDir(handle.WorkingDir)
-	handle.RuntimeDir = a.codingAgentRuntimeDir
+	if a.codingAgentRuntimeDir != "" {
+		handle.RuntimeDir = a.codingAgentRuntimeDir
+	}
 	return handle
 }
 
@@ -307,6 +311,9 @@ func (a *Agent) applyCodingProviderSessionHandle(handle llmtypes.CodingProviderS
 	}
 	if dir := strings.TrimSpace(handle.WorkingDir); dir != "" {
 		a.codingAgentWorkingDir = dir
+	}
+	if a.codingAgentRuntimeDir == "" {
+		a.codingAgentRuntimeDir = strings.TrimSpace(handle.RuntimeDir)
 	}
 	providerID := llm.Provider(provider)
 	if id := strings.TrimSpace(handle.NativeSessionID); id != "" {
@@ -355,6 +362,9 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	// wrong project key: "No conversation found with session ID", turn restarts
 	// fresh, conversation lost. Reuses the same precedence as resume.
 	handle.WorkingDir = a.resolveContinuationWorkingDir("")
+	if a.codingAgentRuntimeDir != "" {
+		handle.RuntimeDir = a.codingAgentRuntimeDir
+	}
 	if handle.NativeSessionID == "" && handle.ProjectDirID == "" && handle.WorkingDir == "" {
 		return llmtypes.CodingProviderSessionHandle{}
 	}
