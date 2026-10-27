@@ -706,3 +706,7 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 func IsO3O4Model(modelID string) bool {
 	return llmproviders.IsO3O4Model(modelID)
 }
+
+func AwaitCursorInputDurable(ctx context.Context, sessionID, message string, timeout time.Duration) (llmtypes.DurableAck, error) {
+	return llmproviders.AwaitCursorInputDurable(ctx, sessionID, message, timeout)
+}

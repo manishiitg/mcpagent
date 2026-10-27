@@ -10,6 +10,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 )
 
@@ -29,6 +30,14 @@ func (a *Agent) appendCodingAgentInteractiveOptions(opts []llmtypes.CallOption) 
 func (a *Agent) appendCodingAgentInteractiveOptionsForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
 	opts = a.appendCodingAgentWorkingDirOptionForProvider(opts, provider, modelID)
 	opts = a.appendCLISecurityPolicyOption(opts, provider)
+	if contract, ok := llm.GetCodingAgentProviderContract(provider, modelID); ok && contract.SupportsTerminalStream && (a.enableStreaming || a.streamingCallback != nil) {
+		switch provider {
+		case llm.ProviderCodexCLI:
+			opts = append(opts, llm.WithCodexStreamTranscript(true), llm.WithCodexStreamTmuxScreen(true))
+		case llm.ProviderCursorCLI:
+			opts = append(opts, cursorcli.WithStreamTranscript(true), cursorcli.WithStreamTmuxScreen(true))
+		}
+	}
 
 	sessionID := strings.TrimSpace(a.sessionID)
 	if sessionID == "" || !codingAgentInteractiveEnabledForProvider(provider, modelID, sessionID) {
@@ -294,7 +303,7 @@ func (a *Agent) appendCursorCLIIntegrationOptions(opts []llmtypes.CallOption) ([
 	if a.logger != nil {
 		a.logger.Info("🌉 [CURSOR_CLI] Configured MCP bridge through .cursor/mcp.json with deny-builtin hooks")
 		a.logger.Info("⏱️ [CURSOR_CLI] No supported MCP-client timeout control; request cancellation and the mcpbridge HTTP backstop remain authoritative")
-		a.logger.Info("🌉 Using Cursor native ACP with the scoped MCP bridge and CLI permissions")
+		a.logger.Info("🌉 Using the selected Cursor transport with the scoped MCP bridge and CLI permissions")
 	}
 
 	return opts, nil
