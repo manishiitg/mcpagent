@@ -2,6 +2,7 @@ package events
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmerrors"
 )
@@ -9,7 +10,9 @@ import (
 // SetProviderFailureDisplay keeps failed-turn policy on the server. Metadata is
 // also carried by stored/resumed completion events, not just the live banner.
 func (e *UnifiedCompletionEvent) SetProviderFailureDisplay() {
-	if e.Error == "" {
+	// A turn the person stopped is not a provider failure (server B 2026-10-28: Stop showed "The provider could
+	// not complete this response").
+	if e.Error == "" || strings.Contains(e.Error, "context canceled") {
 		return
 	}
 	d := llmerrors.ProviderDisplay(errors.New(e.Error))
