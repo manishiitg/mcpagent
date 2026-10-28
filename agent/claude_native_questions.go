@@ -31,6 +31,15 @@ func (a *Agent) claudeNativeQuestionsEnabled() bool {
 	return registered
 }
 
+// claudeNativeQuestionsReason says why native questions are off for this turn, for the log.
+func (a *Agent) claudeNativeQuestionsReason() string {
+	contract, _ := llm.GetCodingAgentProviderContract(llm.ProviderClaudeCode, a.modelID)
+	_, registered := a.lookupDirectTool("request_clarification")
+	return fmt.Sprintf("persistent=%t transport=%s attended=%t structured=%t bridge_tool=%t registered=%t",
+		a.claudeCodePersistentInteractiveSession, contract.Transport, a.userAnswersNativeQuestions, a.wantsStructuredTransport(),
+		slices.Contains(a.additionalBridgeTools, "request_clarification"), registered)
+}
+
 // claudeNativeQuestionHookFile is a prepared hook script: the interpreter and the private file holding the
 // session-scoped bridge credentials.
 type claudeNativeQuestionHookFile struct {

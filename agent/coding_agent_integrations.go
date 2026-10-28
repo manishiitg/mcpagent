@@ -124,6 +124,7 @@ func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, m
 	// prepared the turn runs without AskUserQuestion; failing the turn would be worse for the person
 	// than the agent asking in plain text.
 	nativeQuestions := a.claudeNativeQuestionsEnabled()
+	a.logger.Info("Claude native questions", loggerv2.Any("enabled", nativeQuestions), loggerv2.String("conditions", a.claudeNativeQuestionsReason()))
 	var questionHook claudeNativeQuestionHookFile
 	if nativeQuestions && !sdk {
 		var hookErr error
