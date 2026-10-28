@@ -148,8 +148,15 @@ func (a *Agent) Start(context.Context) (*Session, error) {
 	registerTurnSession(a.sessionID, session)
 	// Question cards exist only where a person answers them (the builder
 	// chat); everywhere else Muse auto-answers and no card is shown.
-	if a.provider == llm.ProviderMuseCLI && a.museWaitsForUserChoice() {
-		session.startMuseQuestionWatcher()
+	if a.provider == llm.ProviderMuseCLI {
+		waits := a.museWaitsForUserChoice()
+		if a.logger != nil {
+			a.logger.Info(fmt.Sprintf("Muse native questions enabled=%t session=%s conditions=persistent=%t user_answers=%t structured=%t",
+				waits, a.sessionID, a.musePersistentInteractiveSession, a.userAnswersNativeQuestions, a.wantsStructuredTransport()))
+		}
+		if waits {
+			session.startMuseQuestionWatcher()
+		}
 	}
 	// A restored Muse session may have task rows committed while this server
 	// was down. Re-scan its native journal on attach; stable native event IDs
@@ -184,6 +191,9 @@ func (s *Session) startMuseQuestionWatcher() {
 			for _, row := range rows {
 				if s.watchCtx.Err() != nil {
 					return
+				}
+				if s.agent.logger != nil {
+					s.agent.logger.Info(fmt.Sprintf("Muse question card event session=%s native=%s seq=%d kind=%s", s.agent.sessionID, row.NativeSessionID, row.Sequence, row.Kind))
 				}
 				s.agent.emitTypedEvent(context.Background(), codingAgentQuestionFromMuse(row))
 			}
