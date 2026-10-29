@@ -39,8 +39,7 @@ const (
 )
 
 const (
-	ClaudeCodeTransportTmux         = llmproviders.ClaudeCodeTransportTmux
-	ClaudeCodeTransportExperimental = llmproviders.ClaudeCodeTransportExperimental
+	ClaudeCodeTransportTmux = llmproviders.ClaudeCodeTransportTmux
 )
 
 type CodingAgentTransport = llmproviders.CodingAgentTransport

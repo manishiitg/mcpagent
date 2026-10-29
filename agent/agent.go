@@ -126,9 +126,8 @@ func withClaudeCodePersistentInteractiveSession(enabled bool) agentOption {
 	}
 }
 
-// withClaudeCodeTransport selects the Claude Code transport for this agent.
-// Use llm.ClaudeCodeTransportExperimental for the normal interactive tmux/no
-// -p path, or llm.ClaudeCodeTransportTmux for explicit tmux transport.
+// withClaudeCodeTransport selects the Claude Code transport for this agent
+// ("sdk" or llm.ClaudeCodeTransportTmux); empty uses CLAUDE_CODE_TRANSPORT.
 func withClaudeCodeTransport(transport string) agentOption {
 	return func(a *Agent) {
 		a.claudeCodeTransport = transport

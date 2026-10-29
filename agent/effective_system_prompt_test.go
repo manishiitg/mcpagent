@@ -155,9 +155,6 @@ func TestReadAgentSystemPromptUsesOutboundComposition(t *testing.T) {
 
 func TestLegacyInventoryIsRemovedForEveryCodingProvider(t *testing.T) {
 	for _, contract := range llm.CodingAgentProviderContracts() {
-		if contract.Deprecated {
-			continue
-		}
 		t.Run(string(contract.Provider), func(t *testing.T) {
 			a := codeExecutionPromptAgent()
 			a.provider = contract.Provider
