@@ -1089,6 +1089,7 @@ func TestBridgeToolsList(t *testing.T) {
 		"agent_browser":             "custom",
 		"get_api_spec":              "virtual",
 		"search_tools":              "virtual",
+		"call_tool":                 "call",
 	}
 
 	if len(bridgeTools) != len(expected) {

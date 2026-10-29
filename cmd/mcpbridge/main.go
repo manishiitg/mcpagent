@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,6 +68,53 @@ type ToolDef struct {
 	Server        string          `json:"server"` // MCP server name (empty for custom/virtual)
 	Type          string          `json:"type"`   // "mcp", "custom", or "virtual"
 	TimeoutMillis *int64          `json:"timeout_ms,omitempty"`
+	// CallTimeoutsMillis (type "call" only) carries the parent's resolved
+	// deadline for every tool call_tool may reach, keyed by tool name.
+	CallTimeoutsMillis map[string]int64 `json:"call_timeouts_ms,omitempty"`
+}
+
+var callToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+
+// callToolTarget resolves a call_tool request to the tool definition a direct
+// call would use: the same per-tool route, session header and deadline. The
+// server's session registry decides whether that tool exists and may run.
+func callToolTarget(def ToolDef, args map[string]any) (ToolDef, map[string]any, error) {
+	name, _ := args["tool_name"].(string)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ToolDef{}, nil, errors.New("tool_name is required: pass the exact name from search_tools or get_api_spec")
+	}
+	if name == def.Name {
+		return ToolDef{}, nil, errors.New("call_tool cannot call itself")
+	}
+	server, _ := args["server_name"].(string)
+	server = strings.TrimSpace(server)
+	// Names become URL path segments; anything but a plain tool identifier is refused.
+	if !callToolNamePattern.MatchString(name) || (server != "" && !callToolNamePattern.MatchString(server)) {
+		return ToolDef{}, nil, fmt.Errorf("unknown tool %q: pass the exact name from search_tools or get_api_spec", name)
+	}
+	target := ToolDef{Name: name, Type: "custom"}
+	if server != "" {
+		target.Server = server
+		target.Type = "mcp"
+	} else if millis, ok := def.CallTimeoutsMillis[name]; ok {
+		target.TimeoutMillis = &millis
+	}
+	callArgs := map[string]any{}
+	switch raw := args["arguments"].(type) {
+	case nil:
+	case map[string]any:
+		callArgs = raw
+	case string:
+		if strings.TrimSpace(raw) != "" {
+			if err := json.Unmarshal([]byte(raw), &callArgs); err != nil {
+				return ToolDef{}, nil, fmt.Errorf("arguments must be a JSON object: %v", err)
+			}
+		}
+	default:
+		return ToolDef{}, nil, errors.New("arguments must be a JSON object")
+	}
+	return target, callArgs, nil
 }
 
 // The trusted parent owns direct-tool deadlines. Dynamic tools must not lose
@@ -215,6 +263,16 @@ func main() {
 		mcpTool := mcp.NewToolWithRawSchema(def.Name, def.Description, inputSchema)
 
 		s.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			def := def
+			args := req.GetArguments()
+			if def.Type == "call" {
+				target, callArgs, err := callToolTarget(def, args)
+				if err != nil {
+					return mcp.NewToolResultText("ERROR: " + err.Error()), nil
+				}
+				bridgeLogf("mcpbridge: call_tool target type=%s server=%s tool=%s session=%s", target.Type, target.Server, target.Name, sessionID)
+				def, args = target, callArgs
+			}
 			// Build endpoint URL based on tool type
 			var url string
 			switch def.Type {
@@ -227,7 +285,6 @@ func main() {
 			}
 
 			// Marshal arguments
-			args := req.GetArguments()
 			argsJSON, err := json.Marshal(args)
 			if err != nil {
 				return mcp.NewToolResultText(fmt.Sprintf("ERROR: failed to marshal arguments: %v", err)), nil

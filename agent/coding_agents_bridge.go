@@ -79,6 +79,9 @@ type BridgeToolDef struct {
 	// Resolved direct-tool timeout; zero means no tool deadline. The CLI bridge
 	// still applies the existing provider/backstop cap (PLAT-861-344).
 	TimeoutMillis *int64 `json:"timeout_ms,omitempty"`
+	// CallTimeoutsMillis (call_tool only): each reachable direct tool's
+	// resolved deadline, so a call through call_tool keeps it.
+	CallTimeoutsMillis map[string]int64 `json:"call_timeouts_ms,omitempty"`
 }
 
 // bridgeTools is the explicit list of tools exposed through the coding-agent MCP
@@ -94,6 +97,7 @@ var bridgeTools = []struct {
 	{"agent_browser", "custom"},
 	{"get_api_spec", "virtual"},
 	{"search_tools", "virtual"},
+	{"call_tool", "call"},
 }
 
 // claudeBridgeAllowedToolIdentifiers returns the full "mcp__api-bridge__<name>"
@@ -544,6 +548,23 @@ func (a *Agent) lookupBridgeTool(name, toolType string, logger loggerv2.Logger) 
 		}
 		return def
 
+	case "call":
+		// call_tool runs a discovered tool through the same per-tool route,
+		// session token and deadline as a direct bridge call; the server's
+		// session registry decides whether that tool exists and may run.
+		def := marshalBridgeToolDef(name, callToolDescription, callToolParameters, toolType, logger)
+		if def != nil {
+			def.CallTimeoutsMillis = map[string]int64{}
+			for _, tool := range a.directToolSnapshot() {
+				timeout := tool.Timeout
+				if timeout < 0 {
+					timeout = getToolExecutionTimeout(a)
+				}
+				def.CallTimeoutsMillis[tool.Name] = timeout.Milliseconds()
+			}
+		}
+		return def
+
 	case "virtual":
 		for _, tool := range a.tools {
 			if tool.Function != nil && tool.Function.Name == name {
@@ -564,6 +585,27 @@ func (a *Agent) lookupBridgeTool(name, toolType string, logger loggerv2.Logger) 
 	default:
 		return nil
 	}
+}
+
+const callToolDescription = "Run a tool you found with search_tools or get_api_spec that is not in your direct tool list. Pass its exact tool_name and its arguments object (as get_api_spec describes); for a connected-app tool also pass server_name. Same access rules as a direct call."
+
+var callToolParameters = map[string]interface{}{
+	"type": "object",
+	"properties": map[string]interface{}{
+		"tool_name": map[string]interface{}{
+			"type":        "string",
+			"description": "Exact tool name from search_tools or get_api_spec.",
+		},
+		"arguments": map[string]interface{}{
+			"type":        "object",
+			"description": "The tool's arguments, matching its get_api_spec input schema.",
+		},
+		"server_name": map[string]interface{}{
+			"type":        "string",
+			"description": "Only for a connected-app (MCP server) tool: its server name from get_api_spec.",
+		},
+	},
+	"required": []string{"tool_name"},
 }
 
 // marshalBridgeToolDef creates a BridgeToolDef, marshalling parameters to JSON.
