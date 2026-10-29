@@ -127,6 +127,12 @@ func StartCodingAgentTransportSession(ctx context.Context, model llmtypes.Model,
 	return llmproviders.StartCodingAgentTransportSession(ctx, model, handle, options...)
 }
 
+// CompactCodingAgentSession runs only the CLI's own compaction on the native
+// session (idle compaction, PLAT-872).
+func CompactCodingAgentSession(ctx context.Context, model llmtypes.Model, handle llmtypes.CodingProviderSessionHandle, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
+	return llmproviders.CompactCodingAgentSession(ctx, model, handle, options...)
+}
+
 func SendCodingAgentLiveInput(ctx context.Context, provider Provider, modelID, ownerSessionID, message string) error {
 	return llmproviders.SendCodingAgentLiveInput(ctx, provider, modelID, ownerSessionID, message)
 }

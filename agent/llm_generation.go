@@ -1258,6 +1258,14 @@ func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, mess
 					transport = string(contract.Transport)
 				}
 			}
+			probe := &llmtypes.CallOptions{}
+			for _, opt := range opts {
+				opt(probe)
+			}
+			if llmtypes.CodingProviderIdleCompactFromOptions(probe) {
+				a.logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Idle compaction of %s (%s) native session %s", model.Provider, transport, continuationHandle.NativeSessionID))
+				return llm.CompactCodingAgentSession(ctx, llmInstance, continuationHandle, opts...)
+			}
 			a.logger.Info(fmt.Sprintf("🔁 [CODING_AGENT_CONTINUATION] Starting %s transport session (%s) for native session %s", model.Provider, transport, continuationHandle.NativeSessionID))
 			return llm.StartCodingAgentTransportSession(ctx, llmInstance, continuationHandle, opts...)
 		}
