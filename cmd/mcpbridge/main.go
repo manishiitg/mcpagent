@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -73,7 +74,7 @@ type ToolDef struct {
 	CallTimeoutsMillis map[string]int64 `json:"call_timeouts_ms,omitempty"`
 }
 
-var callToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+var callToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 // callToolTarget resolves a call_tool request to the tool definition a direct
 // call would use: the same per-tool route, session header and deadline. The
@@ -277,11 +278,11 @@ func main() {
 			var url string
 			switch def.Type {
 			case "mcp":
-				url = fmt.Sprintf("%s/tools/mcp/%s/%s", apiURL, def.Server, def.Name)
+				url = fmt.Sprintf("%s/tools/mcp/%s/%s", apiURL, neturl.PathEscape(def.Server), neturl.PathEscape(def.Name))
 			case "virtual":
-				url = fmt.Sprintf("%s/tools/virtual/%s", apiURL, def.Name)
+				url = fmt.Sprintf("%s/tools/virtual/%s", apiURL, neturl.PathEscape(def.Name))
 			default:
-				url = fmt.Sprintf("%s/tools/custom/%s", apiURL, def.Name)
+				url = fmt.Sprintf("%s/tools/custom/%s", apiURL, neturl.PathEscape(def.Name))
 			}
 
 			// Marshal arguments

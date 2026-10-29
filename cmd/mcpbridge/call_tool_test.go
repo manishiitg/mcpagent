@@ -19,6 +19,8 @@ func TestCallToolTargetUsesDirectRoute(t *testing.T) {
 		{},
 		{"tool_name": "call_tool"},
 		{"tool_name": "../virtual/get_api_spec"},
+		{"tool_name": ".."},
+		{"tool_name": "dashboard", "server_name": ".."},
 		{"tool_name": "dashboard", "server_name": "a/b"},
 		{"tool_name": "dashboard", "arguments": []any{1}},
 	} {
