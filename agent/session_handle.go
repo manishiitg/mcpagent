@@ -278,6 +278,10 @@ func (a *Agent) updateCodingProviderSessionHandleFromResponse(resp *llmtypes.Con
 	}
 	if handle, ok := llmtypes.ExtractCodingProviderSessionHandleFromResponse(resp); ok {
 		handle = a.withContinuationWorkingDir(handle)
+		previous := a.codingProviderSessionHandle
+		if previous.NativeFormat != "" && previous.Provider == handle.Provider && previous.NativeSessionID == handle.NativeSessionID && previous.Transport == handle.Transport {
+			handle.NativeFormat = previous.NativeFormat
+		}
 		a.codingProviderSessionHandle = handle
 		a.applyCodingProviderSessionHandle(handle)
 		notifyNativeRuntime(a)
@@ -371,9 +375,23 @@ func (a *Agent) legacyCodingProviderSessionHandle() llmtypes.CodingProviderSessi
 	return handle
 }
 
-// A saved native conversation does not select today's process transport. Clear
+// An ordinary saved native conversation does not select today's process transport. Clear
 // obsolete terminal identity before the reaper or continuation sees it (PLAT-872).
 func (a *Agent) withCurrentCodingTransport(handle llmtypes.CodingProviderSessionHandle) llmtypes.CodingProviderSessionHandle {
+	// Cursor's SDK and CLI use incompatible native stores. The host validates
+	// the format and runtime availability before persisting an imported handle.
+	if handle.Provider == "cursor-cli" && handle.NativeSessionID != "" {
+		switch handle.NativeFormat {
+		case "cursor-sdk-sqlite":
+			handle.Transport = "sdk"
+			handle.TmuxSession = ""
+			return handle
+		case "cursor-cli-sqlite":
+			handle.Transport = "tmux"
+			return handle
+		}
+	}
+
 	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
 		handle.Transport = string(contract.Transport)
 		if contract.Transport == llm.CodingAgentTransportTmux && a.usesStructuredTransport() {
