@@ -1339,11 +1339,11 @@ func (a *Agent) startCodingAgentTransportSession(ctx context.Context) (*llmtypes
 	if !ok {
 		return nil, fmt.Errorf("agent provider %s/%s is not a coding-agent provider", a.provider, a.modelID)
 	}
-	// A launchable terminal requires an actual tmux pane: refuse when the caller
-	// chose structured (no pane exists) or the provider contract isn't tmux.
-	// Same resolver as every other transport decision so this can't drift.
-	if a.wantsStructuredTransport() || contract.Transport != llm.CodingAgentTransportTmux {
-		return nil, fmt.Errorf("agent provider %s/%s does not expose a launchable terminal transport (%s)", a.provider, a.modelID, contract.Transport)
+	// PLAT-856-442: imported Cursor CLI stores require tmux even when the
+	// destination defaults to SDK. Use the same normalized handle as the turn.
+	transport := a.codingAgentLaunchTransport(string(contract.Transport))
+	if transport != llmtypes.CodingProviderTransportTmux {
+		return nil, fmt.Errorf("agent provider %s/%s does not expose a launchable terminal transport (%s)", a.provider, a.modelID, transport)
 	}
 	if err := a.prepareCodingAgentTransportLaunch(); err != nil {
 		return nil, err
@@ -1369,6 +1369,17 @@ func (a *Agent) startCodingAgentTransportSession(ctx context.Context) (*llmtypes
 		return &providerHandle, nil
 	}
 	return nil, fmt.Errorf("coding-agent transport session started without provider handle")
+}
+
+func (a *Agent) codingAgentLaunchTransport(defaultTransport string) string {
+	if a.wantsStructuredTransport() {
+		return llmtypes.CodingProviderTransportStructured
+	}
+	handle := a.withCurrentCodingTransport(a.codingProviderSessionHandle)
+	if handle.Transport != "" {
+		return handle.Transport
+	}
+	return defaultTransport
 }
 
 func (a *Agent) prepareCodingAgentTransportLaunch() error {
