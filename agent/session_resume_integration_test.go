@@ -384,6 +384,19 @@ func TestCodingProviderContinuationHandleUsesRequestedModel(t *testing.T) {
 	if handle.Model != "claude-sonnet-5" {
 		t.Fatalf("continuation model = %q, want requested Pulse model", handle.Model)
 	}
+	// PLAT-856-442: imported Cursor formats keep their compatible runtime;
+	// ordinary chats and shared Claude/Codex journals still follow defaults.
+	for _, tc := range []struct{ format, transport string }{{"cursor-sdk-sqlite", "sdk"}, {"cursor-cli-sqlite", "tmux"}} {
+		cursor := &Agent{provider: llm.ProviderCursorCLI, modelID: "composer-2.5", codingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{Provider: "cursor-cli", NativeSessionID: "native-import", Transport: tc.transport, NativeFormat: tc.format}}
+		h := cursor.currentAgentSessionHandle()
+		if h.Provider.Transport != tc.transport {
+			t.Fatalf("format %s routed to %s", tc.format, h.Provider.Transport)
+		}
+		cursor.updateCodingProviderSessionHandleFromResponse(&llmtypes.ContentResponse{Choices: []*llmtypes.ContentChoice{{GenerationInfo: &llmtypes.GenerationInfo{CodingProviderSessionHandle: &llmtypes.CodingProviderSessionHandle{Provider: "cursor-cli", NativeSessionID: "native-import", Transport: tc.transport}}}}})
+		if cursor.currentAgentSessionHandle().Provider.NativeFormat != tc.format {
+			t.Fatal("native format lost after a turn")
+		}
+	}
 }
 
 func TestCodingProviderContinuationHandleForModelRequiresMatchingNativeHandle(t *testing.T) {
