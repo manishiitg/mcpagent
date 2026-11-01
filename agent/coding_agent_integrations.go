@@ -103,7 +103,7 @@ func (a *Agent) nativeCodingToolsEnabled() bool {
 
 func (a *Agent) appendClaudeCodeIntegrationOptions(opts []llmtypes.CallOption, model LLMModel) ([]llmtypes.CallOption, error) {
 	claudeHTTPHooksEnabled := claudeHTTPRoutingHooksEnabled()
-	contract, _ := llm.GetCodingAgentProviderContract(llm.ProviderClaudeCode, model.ModelID)
+	contract, _ := llm.GetCodingAgentProviderContractForTransport(llm.ProviderClaudeCode, model.ModelID, a.claudeCodeTransport)
 	sdk := string(contract.Transport) == "sdk"
 
 	// Use restricted permissions instead of skipping them entirely. Allow our

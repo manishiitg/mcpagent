@@ -23,7 +23,7 @@ var claudeNativeQuestionHook string
 // answer lifecycle and a person is attending a retained interactive chat.
 // Keeping this separate from Full CLI prevents scheduled runs from waiting.
 func (a *Agent) claudeNativeQuestionsEnabled() bool {
-	contract, _ := llm.GetCodingAgentProviderContract(llm.ProviderClaudeCode, a.modelID)
+	contract, _ := llm.GetCodingAgentProviderContractForTransport(llm.ProviderClaudeCode, a.modelID, a.claudeCodeTransport)
 	if (!a.claudeCodePersistentInteractiveSession && string(contract.Transport) != "sdk") || !a.userAnswersNativeQuestions || a.wantsStructuredTransport() || !slices.Contains(a.additionalBridgeTools, "request_clarification") {
 		return false
 	}
@@ -33,7 +33,7 @@ func (a *Agent) claudeNativeQuestionsEnabled() bool {
 
 // claudeNativeQuestionsReason says why native questions are off for this turn, for the log.
 func (a *Agent) claudeNativeQuestionsReason() string {
-	contract, _ := llm.GetCodingAgentProviderContract(llm.ProviderClaudeCode, a.modelID)
+	contract, _ := llm.GetCodingAgentProviderContractForTransport(llm.ProviderClaudeCode, a.modelID, a.claudeCodeTransport)
 	_, registered := a.lookupDirectTool("request_clarification")
 	return fmt.Sprintf("persistent=%t transport=%s attended=%t structured=%t bridge_tool=%t registered=%t",
 		a.claudeCodePersistentInteractiveSession, contract.Transport, a.userAnswersNativeQuestions, a.wantsStructuredTransport(),

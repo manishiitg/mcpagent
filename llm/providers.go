@@ -61,6 +61,12 @@ func GetCodingAgentProviderContract(provider Provider, modelID string) (CodingAg
 	return llmproviders.GetCodingAgentProviderContract(provider, modelID)
 }
 
+// GetCodingAgentProviderContractForTransport is the contract of a chat whose
+// Claude Code runs on the transport it chose; empty uses the server's setting.
+func GetCodingAgentProviderContractForTransport(provider Provider, modelID, claudeTransport string) (CodingAgentProviderContract, bool) {
+	return llmproviders.GetCodingAgentProviderContractForTransport(provider, modelID, claudeTransport)
+}
+
 func IsCodingAgentProvider(provider Provider, modelID string) bool {
 	return llmproviders.IsCodingAgentProvider(provider, modelID)
 }
