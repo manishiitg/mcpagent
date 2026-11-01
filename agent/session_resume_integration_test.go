@@ -392,6 +392,16 @@ func TestCodingProviderContinuationHandleUsesRequestedModel(t *testing.T) {
 		if h.Provider.Transport != tc.transport {
 			t.Fatalf("format %s routed to %s", tc.format, h.Provider.Transport)
 		}
+		// Actual Mac CLI -> SDK-default server failed before the terminal
+		// prelaunch guard consulted the imported format (PLAT-856-442).
+		if got := cursor.codingAgentLaunchTransport("sdk"); got != tc.transport {
+			t.Fatalf("format %s prelaunch routed to %s", tc.format, got)
+		}
+		cursor.codingAgentTransport = llm.CodingAgentTransportStructured
+		if got := cursor.codingAgentLaunchTransport("sdk"); got != "structured" {
+			t.Fatalf("explicit structured choice ignored: %s", got)
+		}
+		cursor.codingAgentTransport = ""
 		cursor.updateCodingProviderSessionHandleFromResponse(&llmtypes.ContentResponse{Choices: []*llmtypes.ContentChoice{{GenerationInfo: &llmtypes.GenerationInfo{CodingProviderSessionHandle: &llmtypes.CodingProviderSessionHandle{Provider: "cursor-cli", NativeSessionID: "native-import", Transport: tc.transport}}}}})
 		if cursor.currentAgentSessionHandle().Provider.NativeFormat != tc.format {
 			t.Fatal("native format lost after a turn")
