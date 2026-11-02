@@ -1335,7 +1335,7 @@ func (a *Agent) startCodingAgentTransportSession(ctx context.Context) (*llmtypes
 	if a == nil {
 		return nil, fmt.Errorf("agent is nil")
 	}
-	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID)
+	contract, ok := a.codingContract()
 	if !ok {
 		return nil, fmt.Errorf("agent provider %s/%s is not a coding-agent provider", a.provider, a.modelID)
 	}

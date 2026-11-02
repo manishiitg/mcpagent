@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
-	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -25,7 +24,7 @@ func CompactAgentSessionIdle(ctx context.Context, agent *Agent) (llmtypes.IdleCo
 }
 
 func (a *Agent) compactCodingAgentSessionIdle(ctx context.Context) (llmtypes.IdleCompactResult, error) {
-	if _, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); !ok {
+	if _, ok := a.codingContract(); !ok {
 		return llmtypes.IdleCompactResult{Reason: llmtypes.IdleCompactReasonUnsupported}, nil
 	}
 	if _, ok := a.codingProviderContinuationHandleForModel(a.provider, a.modelID); !ok {

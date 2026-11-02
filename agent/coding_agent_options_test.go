@@ -412,6 +412,21 @@ func TestWithClaudeCodeTransport(t *testing.T) {
 	if agent.claudeCodeTransport != llm.ClaudeCodeTransportTmux {
 		t.Fatalf("ClaudeCodeTransport = %q, want %q", agent.claudeCodeTransport, llm.ClaudeCodeTransportTmux)
 	}
+	// PLAT-872-100: on a server whose default is the Agent SDK, a chat with the terminal on resumed its saved
+	// conversation on the SDK (the handle took the server-wide contract) and never showed a live terminal.
+	t.Setenv("CLAUDE_CODE_TRANSPORT", "sdk")
+	agent.provider, agent.modelID = llm.ProviderClaudeCode, "claude-sonnet-5-5"
+	saved := llmtypes.CodingProviderSessionHandle{Provider: "claude-code", Transport: "sdk", NativeSessionID: "native-1"}
+	if got := agent.withCurrentCodingTransport(saved).Transport; got != llmtypes.CodingProviderTransportTmux {
+		t.Fatalf("terminal chat resumes on %q, want tmux", got)
+	}
+	if !agent.supportsSteering() {
+		t.Fatal("a terminal chat must take live input")
+	}
+	agent.claudeCodeTransport = ""
+	if got := agent.withCurrentCodingTransport(saved).Transport; got != "sdk" {
+		t.Fatalf("chat without a choice resumes on %q, want the server's sdk", got)
+	}
 }
 
 // Cursor's --mode ask is a conversational stance that refuses natural-language
