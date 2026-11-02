@@ -356,7 +356,7 @@ func (a *Agent) usesStructuredTransport() bool {
 	// withCodingAgentTransport opt-in (which appends
 	// WithMuseStructuredTransport alongside). A persistent-interactive muse
 	// chat therefore steers and records tmux handles like cursor.
-	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
+	if contract, ok := a.codingContract(); ok {
 		return contract.Transport == llm.CodingAgentTransportStructured
 	}
 	return false
@@ -394,7 +394,7 @@ func (a *Agent) supportsSteering() bool {
 	if a.usesStructuredTransport() {
 		return false
 	}
-	contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID)
+	contract, ok := a.codingContract()
 	return ok && contract.SupportsLiveInput
 }
 

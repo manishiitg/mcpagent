@@ -392,7 +392,7 @@ func (a *Agent) withCurrentCodingTransport(handle llmtypes.CodingProviderSession
 		}
 	}
 
-	if contract, ok := llm.GetCodingAgentProviderContract(a.provider, a.modelID); ok {
+	if contract, ok := a.codingContract(); ok {
 		handle.Transport = string(contract.Transport)
 		if contract.Transport == llm.CodingAgentTransportTmux && a.usesStructuredTransport() {
 			handle.Transport = llmtypes.CodingProviderTransportStructured
@@ -402,4 +402,11 @@ func (a *Agent) withCurrentCodingTransport(handle llmtypes.CodingProviderSession
 		}
 	}
 	return handle
+}
+
+// codingContract is this agent's coding-provider contract for the transport its chat chose: a Claude chat
+// with the terminal on is a tmux chat even where the server's default is the Agent SDK. The server-wide
+// default here resumed terminal chats on the SDK and refused to start their terminal.
+func (a *Agent) codingContract() (llm.CodingAgentProviderContract, bool) {
+	return llm.GetCodingAgentProviderContractForTransport(a.provider, a.modelID, a.claudeCodeTransport)
 }
