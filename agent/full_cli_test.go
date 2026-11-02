@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"testing"
 
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 )
@@ -12,7 +13,7 @@ import (
 // explicitly unconfined); a "full" request that is not confined runs as
 // mcp_only, never with native tools. A stored "hybrid" reads as "full".
 func TestFullCLIRequiresConfinement(t *testing.T) {
-	a := &Agent{codingAgentToolsMode: codingAgentToolsFull, provider: "claude-code"}
+	a := &Agent{codingAgentToolsMode: codingAgentToolsFull, provider: "claude-code", logger: loggerv2.NewDefault()}
 	if a.fullCLIEnabled() || a.nativeCodingToolsEnabled() {
 		t.Fatal("native tools applied without a confining policy")
 	}
