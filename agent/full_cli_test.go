@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 )
 
 // There are two modes. Full CLI applies only when the CLI is confined (or
@@ -20,7 +21,43 @@ func TestFullCLIRequiresConfinement(t *testing.T) {
 	if a.fullCLIEnabled() != want || a.nativeCodingToolsEnabled() != want {
 		t.Fatalf("confined Full CLI on %s: enabled=%v native=%v", runtime.GOOS, a.fullCLIEnabled(), a.nativeCodingToolsEnabled())
 	}
-	if !(&Agent{codingAgentToolsMode: codingAgentToolsFull, provider: "claude-code", cliSecurityPolicy: confinedTestPolicy()}).nativeCodingToolsEnabled() {
+	// PLAT-856-508: only the explicit personal-Windows launch capability can
+	// allow native tools without confinement, and never on Linux/macOS.
+	t.Setenv("LOCAL_MODE", "true")
+	t.Setenv("MULTI_USER_MODE", "")
+	a.cliSecurityPolicy = &llmtypes.CLISecurityPolicy{Mode: llmtypes.CLISecurityModeCompatibility, ApprovedCapabilities: []string{"personal_windows"}}
+	if a.fullCLIEnabled() != (runtime.GOOS == "windows") || a.cliSecurityPolicy.Confined() {
+		t.Fatal("personal Windows capability widened to another OS or claimed a sandbox")
+	}
+	t.Setenv("MCP_BRIDGE_BINARY", "mcpbridge")
+	t.Setenv("MCP_API_URL", "http://localhost:8080")
+	t.Setenv("MCP_API_TOKEN", "test-token")
+	opts, err := a.appendCodexCLIIntegrationOptions(nil, LLMModel{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSandbox := "read-only"
+	if runtime.GOOS == "windows" {
+		wantSandbox = "danger-full-access"
+	}
+	if got := metadataFromCallOptions(opts)[codexcli.MetadataKeySandbox]; got != wantSandbox {
+		t.Fatalf("personal Windows Codex sandbox = %v, want %s", got, wantSandbox)
+	}
+	t.Setenv("MULTI_USER_MODE", "true")
+	if a.fullCLIEnabled() {
+		t.Fatal("multi-user Windows gained unsandboxed native tools")
+	}
+	t.Setenv("MULTI_USER_MODE", "")
+	t.Setenv("LOCAL_MODE", "false")
+	if a.fullCLIEnabled() {
+		t.Fatal("server-mode Windows gained unsandboxed native tools")
+	}
+	t.Setenv("LOCAL_MODE", "true")
+	a.cliSecurityPolicy.Mode = llmtypes.CLISecurityModeIsolated
+	if a.fullCLIEnabled() {
+		t.Fatal("personal Windows capability bypassed an isolated policy")
+	}
+	if got := (&Agent{codingAgentToolsMode: codingAgentToolsFull, provider: "claude-code", cliSecurityPolicy: confinedTestPolicy()}).nativeCodingToolsEnabled(); got != (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
 		t.Fatal("confined full must run with native tools")
 	}
 }

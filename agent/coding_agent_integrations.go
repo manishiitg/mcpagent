@@ -3,6 +3,9 @@ package mcpagent
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -65,8 +68,8 @@ const (
 	codingAgentToolsMCPOnly = "mcp_only"
 	// codingAgentToolsFull is the CLI's own toolset (reads, shell, edits,
 	// subagents) alongside the bridge (PLAT-364 Full CLI). It takes effect only
-	// when the CLI is confined (Landlock on Linux, Seatbelt on a Mac); an
-	// unconfined "full" runs as mcp_only, never with native tools.
+	// when the CLI is confined or explicitly admitted as personal Windows.
+	// Other unconfined requests run as mcp_only.
 	codingAgentToolsFull     = "full"
 	codingAgentApprovalsAuto = "provider_auto"
 	codingAgentApprovalsAll  = "approve_all"
@@ -80,10 +83,19 @@ const (
 const claudeFullCLINativeTools = "WebSearch,WebFetch,Read,Grep,Glob,Skill,Agent,TaskCreate,TaskGet,TaskUpdate,TaskList,TodoWrite,Bash,Write,Edit,MultiEdit,NotebookEdit"
 
 // fullCLIEnabled reports Full CLI: the mode asks for it AND the CLI starts
-// confined (the Landlock launcher on Linux, Seatbelt on a Mac), which limits
-// those native writes and commands to the chat's folders. Unconfined, Full CLI never applies.
+// confined, or trusted app code explicitly admits personal Windows execution.
+// A missing policy never authorizes native tools.
 func (a *Agent) fullCLIEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFull) && a.cliSecurityPolicy.Confined()
+	if !strings.EqualFold(strings.TrimSpace(a.codingAgentToolsMode), codingAgentToolsFull) {
+		return false
+	}
+	policy := a.cliSecurityPolicy
+	// PLAT-856-508: trusted app code admits personal, local Windows execution.
+	// This capability never claims confinement and cannot enable a Unix host.
+	personalWindows := runtime.GOOS == "windows" && os.Getenv("LOCAL_MODE") == "true" && os.Getenv("MULTI_USER_MODE") != "true" && policy != nil &&
+		llmtypes.NormalizeCLISecurityMode(policy.Mode) == llmtypes.CLISecurityModeCompatibility &&
+		slices.Contains(policy.ApprovedCapabilities, "personal_windows")
+	return policy.Confined() || personalWindows
 }
 
 func (a *Agent) agyNativeToolsMode() string {
@@ -94,7 +106,7 @@ func (a *Agent) agyNativeToolsMode() string {
 }
 
 // nativeCodingToolsEnabled reports whether this CLI runs with its own tools:
-// only in Full CLI that actually applies (the CLI is confined). There is no
+// only in Full CLI that actually applies. There is no
 // reads-only middle state: anything else is
 // mcp_only. Pi stays bridge-only until it has a confined full mode.
 func (a *Agent) nativeCodingToolsEnabled() bool {
@@ -277,6 +289,10 @@ func (a *Agent) appendCodexCLIIntegrationOptions(opts []llmtypes.CallOption, mod
 	// confinement (Landlock, Seatbelt) bounds everything else.
 	if native {
 		sandboxMode = "workspace-write"
+		if !a.cliSecurityPolicy.Confined() {
+			// fullCLIEnabled admits only the explicit personal Windows exception.
+			sandboxMode = "danger-full-access"
+		}
 	}
 	opts = append(opts, llm.WithCodexSandbox(sandboxMode))
 	configOverrides := make([]string, 0, 2)
