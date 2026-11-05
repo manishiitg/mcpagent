@@ -110,8 +110,11 @@ func mcpToolAliases(servers []string) map[string]string {
 
 // mcpVisibleToolName is the model-facing name of an MCP tool: alias__tool,
 // valid for every provider. A name over 64 characters keeps its start and
-// ends in a short hash of the real server and tool, so it stays unique.
-func mcpVisibleToolName(alias, server, tool string) string {
+// ends in a short hash of the alias and tool, so it stays unique. The hash uses
+// the model-facing alias, not the runtime server name: a server name that
+// carries a per-session credential scope gave the same tool a new name every
+// session, and the model kept calling the old one ("tool not found").
+func mcpVisibleToolName(alias, tool string) string {
 	toolPart := sanitizeToolNamePart(tool)
 	if toolPart == "" {
 		toolPart = "tool"
@@ -122,12 +125,12 @@ func mcpVisibleToolName(alias, server, tool string) string {
 	}
 	if len(name) <= maxToolNameLength {
 		// Sanitizing changed the name, so two real names could meet; the hash keeps them apart.
-		suffix := "_" + shortHash(server, tool)[:6]
+		suffix := "_" + shortHash(alias, tool)[:6]
 		if len(name)+len(suffix) <= maxToolNameLength {
 			return name + suffix
 		}
 	}
-	suffix := "_" + shortHash(server, tool)[:8]
+	suffix := "_" + shortHash(alias, tool)[:8]
 	return strings.TrimRight(name[:maxToolNameLength-len(suffix)], "_-") + suffix
 }
 
