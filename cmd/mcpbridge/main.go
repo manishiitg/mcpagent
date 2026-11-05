@@ -179,6 +179,10 @@ func bridgeRequestError(toolType, toolName, sessionID string, timeout time.Durat
 }
 
 func main() {
+	// `mcpbridge secret NAME` prints one secret's current value for this chat (no MCP server).
+	if len(os.Args) >= 2 && os.Args[1] == "secret" {
+		os.Exit(runSecretCommand(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	// If MCP_BRIDGE_LOG is set, tee all log output to that file in addition to stderr.
 	// This lets the Go server capture mcpbridge startup/crash messages for debugging.
 	if logPath := os.Getenv("MCP_BRIDGE_LOG"); logPath != "" {

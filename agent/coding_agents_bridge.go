@@ -288,6 +288,7 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 		apiURL = os.Getenv("MCP_API_URL")
 	}
 	apiToken := a.apiToken
+	sessionToken := false
 	if apiToken == "" {
 		apiToken = os.Getenv("MCP_API_TOKEN")
 		// A consumer that authenticates the shared executor per session hands
@@ -298,6 +299,7 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 		if mint := BridgeTokenForSession; mint != nil && strings.TrimSpace(a.sessionID) != "" {
 			if token := mint(a.sessionID); token != "" {
 				apiToken = token
+				sessionToken = true
 			}
 		}
 	}
@@ -339,6 +341,19 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	}
 	if a.sessionID != "" {
 		bridgeEnv["MCP_SESSION_ID"] = a.sessionID
+	}
+	// The CLI's own shell gets the same session credentials, so a command can read a secret's current value with
+	// `mcpbridge secret NAME`. Only a token minted for this session; an agent configured with the process-wide
+	// token gives its shell nothing.
+	a.bridgeShellEnvironment = nil
+	if sessionToken && a.sessionID != "" {
+		a.bridgeShellEnvironment = map[string]string{
+			"MCP_API_URL":    apiURL,
+			"MCP_API_TOKEN":  apiToken,
+			"MCP_SESSION_ID": a.sessionID,
+			// The scoped child environment admits SECRET_*, VAR_* and the MCP routes only.
+			"VAR_AGENTWORKS_BRIDGE": bridgePath,
+		}
 	}
 	// Coding CLI providers call mcpbridge outside the normal Agent conversation
 	// loop, so their large tool results are handled by the bridge.
@@ -678,4 +693,20 @@ func (a *Agent) writeBridgeToolsFile(toolsJSON []byte) (string, error) {
 		return "", fmt.Errorf("bridge_start_failed: write tool list file %q (%d bytes): %v %v", path, len(toolsJSON), writeErr, closeErr)
 	}
 	return path, nil
+}
+
+// codingAgentShellEnvironment is the coding CLI child's extra environment: its selected secrets and, when the bridge
+// carries a session-bound token, that session's bridge credentials (bridgeShellEnvironment).
+func (a *Agent) codingAgentShellEnvironment() map[string]string {
+	if len(a.bridgeShellEnvironment) == 0 {
+		return a.codingAgentSecretEnvironment
+	}
+	env := make(map[string]string, len(a.codingAgentSecretEnvironment)+len(a.bridgeShellEnvironment))
+	for name, value := range a.codingAgentSecretEnvironment {
+		env[name] = value
+	}
+	for name, value := range a.bridgeShellEnvironment {
+		env[name] = value
+	}
+	return env
 }

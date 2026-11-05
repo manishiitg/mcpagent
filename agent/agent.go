@@ -885,6 +885,10 @@ type Agent struct {
 	// codingAgentSecretEnvironment is copied into each provider call option and
 	// is never included in instructions, history, or observability payloads.
 	codingAgentSecretEnvironment map[string]string
+	// bridgeShellEnvironment lets the coding CLI's own shell reach this session's bridge (`mcpbridge secret NAME`):
+	// the API URL, the session-bound token, the session ID and the bridge binary. Set by buildBridgeMCPConfig only
+	// when the token was minted for this session, never the process-wide token.
+	bridgeShellEnvironment map[string]string
 	// codingAgentApprovalsMode is interpreted only when native tools are
 	// enabled. Empty maps to provider_auto.
 	codingAgentApprovalsMode string
