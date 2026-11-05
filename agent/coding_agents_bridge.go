@@ -342,17 +342,20 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 	if a.sessionID != "" {
 		bridgeEnv["MCP_SESSION_ID"] = a.sessionID
 	}
-	// The CLI's own shell gets the same session credentials, so a command can read a secret's current value with
-	// `mcpbridge secret NAME`. Only a token minted for this session; an agent configured with the process-wide
-	// token gives its shell nothing.
+	// The CLI's own shell can read a secret's current value with `mcpbridge secret NAME`. It gets a token that
+	// only reads secrets (minted for "<session>"+SecretReadTokenSuffix, refused on every tool route), never the
+	// bridge's tool token, so a shell command cannot call a tool the turn may not use. Only when the bridge itself
+	// has a session-bound token; an agent on the process-wide token gives its shell nothing.
 	a.bridgeShellEnvironment = nil
-	if sessionToken && a.sessionID != "" {
-		a.bridgeShellEnvironment = map[string]string{
-			"MCP_API_URL":    apiURL,
-			"MCP_API_TOKEN":  apiToken,
-			"MCP_SESSION_ID": a.sessionID,
-			// The scoped child environment admits SECRET_*, VAR_* and the MCP routes only.
-			"VAR_AGENTWORKS_BRIDGE": bridgePath,
+	if mint := BridgeTokenForSession; sessionToken && mint != nil && a.sessionID != "" {
+		if readToken := mint(a.sessionID + SecretReadTokenSuffix); readToken != "" {
+			a.bridgeShellEnvironment = map[string]string{
+				"MCP_API_URL":    apiURL,
+				"MCP_SESSION_ID": a.sessionID,
+				// The scoped child environment admits SECRET_*, VAR_* and the MCP routes only.
+				"VAR_AGENTWORKS_SECRET_READ_TOKEN": readToken,
+				"VAR_AGENTWORKS_BRIDGE":            bridgePath,
+			}
 		}
 	}
 	// Coding CLI providers call mcpbridge outside the normal Agent conversation
@@ -710,3 +713,7 @@ func (a *Agent) codingAgentShellEnvironment() map[string]string {
 	}
 	return env
 }
+
+// SecretReadTokenSuffix marks a token that reads only secrets for its session (`mcpbridge secret NAME`): the server
+// accepts it on the secret read alone, never on a tool route.
+const SecretReadTokenSuffix = "#secret-read"

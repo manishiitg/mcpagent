@@ -20,7 +20,7 @@ func runSecretCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	name := strings.TrimPrefix(strings.TrimSpace(args[0]), "SECRET_")
 	apiURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MCP_API_URL")), "/")
-	token := strings.TrimSpace(os.Getenv("MCP_API_TOKEN"))
+	token := strings.TrimSpace(os.Getenv("VAR_AGENTWORKS_SECRET_READ_TOKEN"))
 	session := strings.TrimSpace(os.Getenv("MCP_SESSION_ID"))
 	if apiURL == "" || token == "" || session == "" {
 		fmt.Fprintln(stderr, "mcpbridge secret: this shell is not connected to a chat session")
