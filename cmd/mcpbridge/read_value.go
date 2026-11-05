@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -19,10 +20,16 @@ func runSecretCommand(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	name := strings.TrimPrefix(strings.TrimSpace(args[0]), "SECRET_")
-	apiURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MCP_API_URL")), "/")
-	token := strings.TrimSpace(os.Getenv("VAR_AGENTWORKS_SECRET_READ_TOKEN"))
-	session := strings.TrimSpace(os.Getenv("MCP_SESSION_ID"))
-	if apiURL == "" || token == "" || session == "" {
+	// The server writes this chat's read details into its CLI's private home at every turn start (the home is per
+	// chat session); nothing travels in the environment, which is fixed when the CLI starts.
+	home, _ := os.UserHomeDir()
+	var turn struct{ URL, Session, Token string }
+	raw, err := os.ReadFile(filepath.Join(home, ".agentworks", "secret-read"))
+	if err == nil {
+		err = json.Unmarshal(raw, &turn)
+	}
+	apiURL, token, session := strings.TrimRight(strings.TrimSpace(turn.URL), "/"), strings.TrimSpace(turn.Token), strings.TrimSpace(turn.Session)
+	if err != nil || apiURL == "" || token == "" || session == "" {
 		fmt.Fprintln(stderr, "mcpbridge secret: this shell is not connected to a chat session")
 		return 1
 	}
@@ -31,7 +38,7 @@ func runSecretCommand(args []string, stdout, stderr io.Writer) int {
 	if base, _, scoped := strings.Cut(apiURL, "/s/"); scoped {
 		apiURL = base
 	}
-	req, err := http.NewRequest(http.MethodPost, apiURL+"/bridge/secret-read", strings.NewReader(string(body))) // #nosec G107 -- MCP_API_URL is set by the launcher for this session
+	req, err := http.NewRequest(http.MethodPost, apiURL+"/bridge/secret-read", strings.NewReader(string(body))) // #nosec G107 -- the URL comes from the server's per-turn file in this chat's private home
 	if err != nil {
 		fmt.Fprintln(stderr, "mcpbridge secret: "+err.Error())
 		return 1

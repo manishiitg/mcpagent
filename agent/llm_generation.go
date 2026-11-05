@@ -1188,9 +1188,6 @@ func (a *Agent) executeLLMInnerAttempt(ctx context.Context, model LLMModel, mess
 	opts = a.appendCodingAgentInteractiveOptionsForProvider(opts, modelProvider, model.ModelID)
 	// Building the coding options above made this session's bridge; its shell credentials join the child's
 	// environment (the later option replaces the earlier secrets-only one).
-	if len(a.bridgeShellEnvironment) > 0 {
-		opts = append(opts, llmtypes.WithCodingAgentSecretEnvironment(a.codingAgentShellEnvironment()))
-	}
 	if modelProvider == llm.ProviderCursorCLI {
 		// PLAT-872-50: normal native continuation sends only the newest text.
 		// A refused load needs this chat's history and must persist its new ID
