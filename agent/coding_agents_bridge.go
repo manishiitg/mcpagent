@@ -358,6 +358,11 @@ func (a *Agent) buildBridgeMCPConfig() (string, error) {
 			}
 		}
 	}
+	if a.logger != nil {
+		// Names and conditions only: shows whether this turn's shell can run `mcpbridge secret NAME`.
+		a.logger.Info("[SECRET_READ] shell_env", loggerv2.Any("set", len(a.bridgeShellEnvironment) > 0), loggerv2.Any("session_token", sessionToken),
+			loggerv2.Any("own_api_token", strings.TrimSpace(a.apiToken) != ""), loggerv2.String("session", a.sessionID))
+	}
 	// Coding CLI providers call mcpbridge outside the normal Agent conversation
 	// loop, so their large tool results are handled by the bridge.
 	// Give the bridge an explicit persistent folder under the agent's real
