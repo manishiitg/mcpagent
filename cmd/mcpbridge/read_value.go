@@ -27,13 +27,16 @@ func runSecretCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	body, _ := json.Marshal(map[string]string{"name": name})
-	req, err := http.NewRequest(http.MethodPost, apiURL+"/tools/secret", strings.NewReader(string(body))) // #nosec G107 -- MCP_API_URL is set by the launcher for this session
+	// The read has its own route (it takes only the shell's secret-read token); a session-scoped base drops its /s/<id>.
+	if base, _, scoped := strings.Cut(apiURL, "/s/"); scoped {
+		apiURL = base
+	}
+	req, err := http.NewRequest(http.MethodPost, apiURL+"/bridge/secret-read", strings.NewReader(string(body))) // #nosec G107 -- MCP_API_URL is set by the launcher for this session
 	if err != nil {
 		fmt.Fprintln(stderr, "mcpbridge secret: "+err.Error())
 		return 1
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-Session-ID", session)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
