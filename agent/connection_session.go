@@ -337,7 +337,7 @@ func NewAgentConnectionWithSession(
 		// Merge tools with deduplication
 		for i, llmTool := range result.tools {
 			realName := result.toolNames[i]
-			toolName := mcpVisibleToolName(aliases[result.serverName], result.serverName, realName)
+			toolName := mcpVisibleToolName(aliases[result.serverName], realName)
 			if seenTools[toolName] {
 				logger.Warn(fmt.Sprintf("Duplicate tool %s from server %s, skipping", realName, result.serverName))
 				continue

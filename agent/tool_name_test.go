@@ -25,9 +25,9 @@ func TestMCPToolAliasesAndVisibleNames(t *testing.T) {
 	}
 
 	long := strings.Repeat("very_long_tool_name_", 5)
-	first := mcpVisibleToolName("neon_46fb", "s", long+"a")
-	second := mcpVisibleToolName("neon_46fb", "s", long+"b")
-	odd := mcpVisibleToolName("neon_46fb", "s", "notion.search page")
+	first := mcpVisibleToolName("neon_46fb", long+"a")
+	second := mcpVisibleToolName("neon_46fb", long+"b")
+	odd := mcpVisibleToolName("neon_46fb", "notion.search page")
 	for _, name := range []string{first, second, odd} {
 		if !isValidToolName(name) || !strings.HasPrefix(name, "neon_46fb__") {
 			t.Errorf("visible name %q is not a valid prefixed tool name", name)
