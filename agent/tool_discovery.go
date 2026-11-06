@@ -78,7 +78,7 @@ func (a *Agent) handleSearchTools(ctx context.Context, args map[string]interface
 			if !a.serverIsAvailable(tool.Source) {
 				continue
 			}
-			server = strings.ReplaceAll(tool.Source, "-", "_")
+			server = tool.agentServerName()
 			servers[server] = true
 		} else if tool.DisplayGroup != "" {
 			groups[tool.DisplayGroup] = true
@@ -86,7 +86,7 @@ func (a *Agent) handleSearchTools(ctx context.Context, args map[string]interface
 		if values["group"] != "" && (tool.Kind != toolImplementationDirect || tool.DisplayGroup != values["group"]) {
 			continue
 		}
-		if values["server_name"] != "" && server != strings.ReplaceAll(values["server_name"], "-", "_") {
+		if values["server_name"] != "" && normalizeServerKey(server) != normalizeServerKey(values["server_name"]) {
 			continue
 		}
 		description := ""

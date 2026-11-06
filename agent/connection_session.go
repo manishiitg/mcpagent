@@ -35,6 +35,7 @@ type serverConnectionResult struct {
 	client     mcpclient.ClientInterface
 	tools      []llmtypes.Tool
 	toolNames  []string // tool names in order, for toolToServer mapping
+	toolAlias  string   // alias the host declared (MCPServerConfig.ToolAlias), if any
 	wasCreated bool
 	isLazy     bool // true = tools loaded from cache, connection deferred until first tool call
 	mcpCount   int  // number of MCP tools discovered (for logging)
@@ -66,6 +67,7 @@ type serverConnectionResult struct {
 //   - clients: Map of server name to client interface
 //   - toolToServer: Map of model-facing tool name (<alias>__<tool>) to server name
 //   - realToolNames: Map of model-facing tool name to the name the server registered
+//   - serverAliases: Map of server name to the alias its host declared (MCPServerConfig.ToolAlias)
 //   - tools: List of LLM tools
 //   - servers: List of server names
 //   - systemPrompt: Combined system prompt from servers
@@ -81,7 +83,7 @@ func NewAgentConnectionWithSession(
 	disableCache bool,
 	runtimeOverrides mcpclient.RuntimeOverrides,
 	userID string,
-) (map[string]mcpclient.ClientInterface, map[string]string, map[string]string, []llmtypes.Tool, []string, string, error) {
+) (map[string]mcpclient.ClientInterface, map[string]string, map[string]string, map[string]string, []llmtypes.Tool, []string, string, error) {
 
 	connectionStartTime := time.Now()
 
@@ -113,7 +115,7 @@ func NewAgentConnectionWithSession(
 	// Load merged MCP configuration
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", fmt.Errorf("failed to load merged MCP config: %w", err)
+		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
 
 	// Determine which servers to connect to
@@ -138,7 +140,7 @@ func NewAgentConnectionWithSession(
 	// Handle special case: no servers requested
 	if len(servers) == 0 {
 		logger.Info("No servers requested, returning empty result")
-		return make(map[string]mcpclient.ClientInterface), make(map[string]string), make(map[string]string), nil, servers, "", nil
+		return make(map[string]mcpclient.ClientInterface), make(map[string]string), make(map[string]string), nil, nil, servers, "", nil
 	}
 
 	registry := mcpclient.GetSessionRegistry()
@@ -165,6 +167,7 @@ func NewAgentConnectionWithSession(
 					return
 				}
 			}
+			result.toolAlias = serverConfig.ToolAlias
 			// Apply runtime overrides if provided for this server
 			if runtimeOverrides != nil && !extra {
 				if override, hasOverride := runtimeOverrideForServer(runtimeOverrides, srvName); hasOverride {
@@ -312,12 +315,16 @@ func NewAgentConnectionWithSession(
 	var connectedServers []string
 	seenTools := make(map[string]bool)
 	aliasServers := make([]string, 0, len(results))
+	declaredAliases := make(map[string]string)
 	for _, result := range results {
 		if result.err == nil && (result.client != nil || result.isLazy) {
 			aliasServers = append(aliasServers, result.serverName)
+			if result.toolAlias != "" {
+				declaredAliases[result.serverName] = result.toolAlias
+			}
 		}
 	}
-	aliases := mcpToolAliases(aliasServers)
+	aliases := mcpToolAliases(aliasServers, declaredAliases)
 
 	for _, result := range results {
 		if result.err != nil {
@@ -335,9 +342,10 @@ func NewAgentConnectionWithSession(
 		connectedServers = append(connectedServers, result.serverName)
 
 		// Merge tools with deduplication
+		visibleNames := mcpclient.ToolNames(aliases[result.serverName], result.toolNames, result.toolAlias != "")
 		for i, llmTool := range result.tools {
 			realName := result.toolNames[i]
-			toolName := mcpVisibleToolName(aliases[result.serverName], realName)
+			toolName := visibleNames[realName]
 			if seenTools[toolName] {
 				logger.Warn(fmt.Sprintf("Duplicate tool %s from server %s, skipping", realName, result.serverName))
 				continue
@@ -400,7 +408,7 @@ func NewAgentConnectionWithSession(
 		loggerv2.Int("tools_count", len(allTools)),
 		loggerv2.String("duration", connectionDuration.String()))
 
-	return clients, toolToServer, realToolNames, allTools, connectedServers, systemPrompt, nil
+	return clients, toolToServer, realToolNames, declaredAliases, allTools, connectedServers, systemPrompt, nil
 }
 
 // canonicalizeRequestedServers resolves sanitized aliases to their configured

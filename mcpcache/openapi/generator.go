@@ -179,7 +179,8 @@ func GenerateCompactSpec(serverName string, tools []llmtypes.Tool, baseURL strin
 		if tool.Function == nil {
 			continue
 		}
-		path := fmt.Sprintf("/tools/mcp/%s/%s", sanitized, SanitizePathSegment(tool.Function.Name))
+		// The exact name, so an agent sees one spelling in search_tools and here.
+		path := fmt.Sprintf("/tools/mcp/%s/%s", sanitized, tool.Function.Name)
 		writeCompactEntry(&sb, "POST", path, tool.Function.Description, tool.Function.Parameters)
 	}
 

@@ -100,6 +100,11 @@ type MCPServerConfig struct {
 	// transport, OAuth -- goes through a public-only client (netguard), so the
 	// server cannot make the platform reach its own network.
 	PublicOnly bool `json:"public_only,omitempty"`
+	// ToolAlias is the stable name agents see for this server, from ToolAlias().
+	// A host sets it when the server name carries a credential scope or
+	// connection ID: the name then stays internal, and the server's tools are
+	// treated as "<namespace>__<tool>", shown as "<alias>__<tool>".
+	ToolAlias string `json:"tool_alias,omitempty"`
 }
 
 // RuntimeConfigOverride allows runtime modification of MCP server configuration

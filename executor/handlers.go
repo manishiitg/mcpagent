@@ -857,21 +857,23 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 // failure into an unreadable log; logging none of them means the line says a
 // tool failed without saying what was asked of it.
 
-// realToolName maps a sanitized tool name (SanitizePathSegment: hyphens to underscores, lowercased)
-// back to the name the server lists. It answers only when the asked name is not itself a listed
-// tool and exactly one listed tool sanitizes to it.
+// realToolName maps a name an agent was given (sanitized by a route, or the model-facing
+// <alias>__<tool>) back to the name the server lists. It answers only when the asked name is not
+// itself a listed tool and exactly one listed tool matches.
 func realToolName(tools []mcp.Tool, asked string) (string, bool) {
-	match := ""
+	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		if tool.Name == asked {
 			return "", false
 		}
-		if strings.ToLower(strings.ReplaceAll(tool.Name, "-", "_")) == asked {
-			if match != "" {
-				return "", false
-			}
-			match = tool.Name
-		}
+		names = append(names, tool.Name)
 	}
-	return match, match != ""
+	if real, _ := mcpclient.MatchToolName(asked, "", names, false); real != "" {
+		return real, true
+	}
+	if _, word, ok := strings.Cut(asked, mcpclient.ToolNameSeparator); ok {
+		real, _ := mcpclient.MatchToolName(word, "", names, false)
+		return real, real != ""
+	}
+	return "", false
 }

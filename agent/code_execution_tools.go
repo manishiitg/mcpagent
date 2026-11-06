@@ -119,15 +119,17 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 			continue
 		}
 
-		// The spec documents the bridge route, which carries the real tool name.
+		// The spec documents the bridge route. A tool whose host declared an alias
+		// keeps the names search_tools gave; the server maps them back. Any other
+		// route carries the real server and tool name.
 		definition := registered.Definition
-		if definition.Function != nil && registered.realName() != definition.Function.Name {
+		if registered.MCPServerAlias == "" && definition.Function != nil && registered.realName() != definition.Function.Name {
 			function := *definition.Function
 			function.Name = registered.realName()
 			definition.Function = &function
 		}
-		normalizedServer := strings.ReplaceAll(srvName, "-", "_")
-		mcpToolsByServer[normalizedServer] = append(mcpToolsByServer[normalizedServer], definition)
+		specServer := registered.agentServerName()
+		mcpToolsByServer[specServer] = append(mcpToolsByServer[specServer], definition)
 	}
 
 	if len(unknown) > 0 || len(notAllowed) > 0 {
