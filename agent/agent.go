@@ -700,6 +700,9 @@ type Agent struct {
 	// mcpToolRealNames maps each MCP tool's model-facing name (<alias>__<tool>,
 	// PLAT-519) to the name its server registered; see tool_name.go.
 	mcpToolRealNames map[string]string
+	// mcpServerAliases maps a server to the alias its host declared. Agents
+	// see that alias as the server's name; the server name stays internal.
+	mcpServerAliases map[string]string
 
 	llmModel llmtypes.Model
 	tracers  []observability.Tracer // Support multiple tracers
@@ -1554,7 +1557,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	// Check if session-scoped connection management is enabled
 	var clients map[string]mcpclient.ClientInterface
 	var toolToServer map[string]string
-	var realToolNames map[string]string
+	var realToolNames, serverAliases map[string]string
 	var allLLMTools []llmtypes.Tool
 	var servers []string
 	var systemPrompt string
@@ -1568,7 +1571,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 
 	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.sessionID))
-	clients, toolToServer, realToolNames, allLLMTools, servers, systemPrompt, err =
+	clients, toolToServer, realToolNames, serverAliases, allLLMTools, servers, systemPrompt, err =
 		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.sessionID, string(ag.traceID), ag.tracers, logger, ag.disableCache, ag.runtimeOverrides, ag.userID)
 
 	connectionDuration := time.Since(connectionStartTime)
@@ -1582,6 +1585,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	ag.clients = clients
 	ag.toolToServer = toolToServer
 	ag.mcpToolRealNames = realToolNames
+	ag.mcpServerAliases = serverAliases
 	if err := ag.initializeCanonicalToolRegistry(allLLMTools, toolToServer); err != nil {
 		return nil, fmt.Errorf("initialize canonical tool registry: %w", err)
 	}

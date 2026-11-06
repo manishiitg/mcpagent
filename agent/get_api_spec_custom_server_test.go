@@ -252,3 +252,32 @@ func TestGetAPISpecCompatibilityServerCannotChangeRouting(t *testing.T) {
 		t.Fatalf("compatibility server_name changed the internal MCP route:\n%s", spec)
 	}
 }
+
+// Agents copied the server name with its credential scope and mixed the spellings of two
+// lists (PLAT-856): discovery and the spec now show one short name, with no internal ID.
+func TestDiscoveryShowsTheDeclaredAliasNotTheScopedServer(t *testing.T) {
+	const scoped = "vault_c-94acea49__scope_86accc00"
+	agent := &Agent{
+		tools:            []llmtypes.Tool{toolFixture("notion__notion-fetch")},
+		toolToServer:     map[string]string{"notion__notion-fetch": scoped},
+		mcpToolRealNames: map[string]string{"notion__notion-fetch": "notion_c-94acea49__notion-fetch"},
+		mcpServerAliases: map[string]string{scoped: "notion"},
+		toolFilter:       NewToolFilter(nil, nil, nil, nil, nil),
+	}
+	found, err := agent.handleSearchTools(context.Background(), map[string]interface{}{"query": "notion fetch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(found, `"name":"notion__notion-fetch"`) || !strings.Contains(found, `"server_name":"notion"`) || strings.Contains(found, "__scope_") {
+		t.Fatalf("search_tools showed an internal name: %s", found)
+	}
+	for _, asked := range []string{"notion__notion-fetch", "notion__notion_fetch", "notion_c_94acea49__notion-fetch"} {
+		spec, err := agent.handleGetAPISpec(context.Background(), map[string]interface{}{"tool_name": asked, "server_name": "notion"})
+		if err != nil {
+			t.Fatalf("spec for %q: %v", asked, err)
+		}
+		if !strings.Contains(spec, "/tools/mcp/notion/notion__notion-fetch") || strings.Contains(spec, "__scope_") {
+			t.Fatalf("spec for %q showed another name:\n%s", asked, spec)
+		}
+	}
+}

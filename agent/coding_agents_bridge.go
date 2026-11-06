@@ -587,7 +587,7 @@ func (a *Agent) lookupBridgeTool(name, toolType string, logger loggerv2.Logger) 
 	}
 }
 
-const callToolDescription = "Run a tool you found with search_tools or get_api_spec that is not in your direct tool list. Pass its exact tool_name and its arguments object (as get_api_spec describes); for a connected-app tool also pass server_name. Same access rules as a direct call."
+const callToolDescription = "Run a tool you found with search_tools or get_api_spec that is not in your direct tool list. Pass its exact tool_name and its arguments object (as get_api_spec describes); for a connected-app tool, server_name is optional. Same access rules as a direct call."
 
 var callToolParameters = map[string]interface{}{
 	"type": "object",

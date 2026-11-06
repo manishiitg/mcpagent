@@ -15,6 +15,11 @@ func TestCallToolTargetUsesDirectRoute(t *testing.T) {
 	if err != nil || target.Type != "mcp" || target.Server != "github" || args["title"] != "x" {
 		t.Fatalf("mcp target = %+v args=%v err=%v", target, args, err)
 	}
+	// A connected-app name finds its app without server_name (PLAT-856).
+	target, _, err = callToolTarget(def, map[string]any{"tool_name": "notion__notion-fetch"})
+	if err != nil || target.Type != "mcp" || target.Server != "notion" || target.Name != "notion__notion-fetch" {
+		t.Fatalf("app target = %+v err=%v", target, err)
+	}
 	for _, bad := range []map[string]any{
 		{},
 		{"tool_name": "call_tool"},

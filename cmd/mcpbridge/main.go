@@ -100,6 +100,10 @@ func callToolTarget(def ToolDef, args map[string]any) (ToolDef, map[string]any, 
 		target.Type = "mcp"
 	} else if millis, ok := def.CallTimeoutsMillis[name]; ok {
 		target.TimeoutMillis = &millis
+	} else if app, _, namespaced := strings.Cut(name, "__"); namespaced && app != "" {
+		// A connected-app tool's name starts with its app: notion__notion-fetch.
+		target.Server = app
+		target.Type = "mcp"
 	}
 	callArgs := map[string]any{}
 	switch raw := args["arguments"].(type) {

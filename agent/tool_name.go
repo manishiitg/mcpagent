@@ -6,11 +6,14 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
-// Every MCP tool is offered to the model as "<alias>__<tool>" (PLAT-519): the
-// alias is a short, stable name for the connection the tool comes from, and
-// platform (direct/virtual) tools keep their own names. So an MCP tool can
+// Every MCP tool is offered to the model as "<alias>__<tool>" (PLAT-519; the
+// naming rule itself is mcpclient.ToolNames): the alias is a short, stable name
+// for the connection the tool comes from, and platform (direct/virtual) tools
+// keep their own names. So an MCP tool can
 // never take a platform tool's name, and two connections of the same server
 // (one person with two Neon accounts) both stay callable.
 //
@@ -22,31 +25,17 @@ import (
 // ($MCP_MCP/<server>/<tool>) and saved server:tool selections keep using the
 // real names.
 
-const (
-	mcpToolNameSeparator = "__"
-	maxToolNameLength    = 64 // Anthropic and OpenAI both cap tool names at 64
-	maxMCPAliasLength    = 24
-)
+const mcpToolNameSeparator = mcpclient.ToolNameSeparator
 
 var (
 	personalServerPrefix = regexp.MustCompile(`^u[0-9a-f]{32}__`)
 	connectionIDSuffix   = regexp.MustCompile(`_([0-9a-f]{8,})$`)
-	invalidToolNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
-	repeatedUnderscores  = regexp.MustCompile(`_{2,}`)
 	validToolName        = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 )
 
 func shortHash(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])
-}
-
-// sanitizeToolNamePart keeps [a-zA-Z0-9_-] and never leaves "__" inside, so
-// the first "__" of a visible name is always the alias separator.
-func sanitizeToolNamePart(value string) string {
-	value = invalidToolNameChars.ReplaceAllString(value, "_")
-	value = repeatedUnderscores.ReplaceAllString(value, "_")
-	return strings.Trim(value, "_")
 }
 
 // mcpAliasBase is a connection's alias before disambiguation, plus the
@@ -58,9 +47,9 @@ func mcpAliasBase(server string) (alias, connectionID string) {
 		connectionID = match[1]
 		name = name[:len(name)-len(match[0])]
 	}
-	alias = sanitizeToolNamePart(strings.ToLower(name))
-	if len(alias) > maxMCPAliasLength {
-		alias = strings.TrimRight(alias[:maxMCPAliasLength], "_-")
+	alias = mcpclient.CleanToolNamePart(strings.ToLower(name))
+	if len(alias) > mcpclient.MaxToolAliasLength {
+		alias = strings.TrimRight(alias[:mcpclient.MaxToolAliasLength], "_-")
 	}
 	if alias == "" {
 		alias = "mcp"
@@ -68,10 +57,12 @@ func mcpAliasBase(server string) (alias, connectionID string) {
 	return alias, connectionID
 }
 
-// mcpToolAliases gives each connected server its alias. Servers that would
-// share an alias get a 4-character suffix from their connection id (or from a
-// hash of the server name); if even that collides, 8 characters of the hash.
-func mcpToolAliases(servers []string) map[string]string {
+// mcpToolAliases gives each connected server its alias. A server whose host
+// declared one (MCPServerConfig.ToolAlias, for a server name that changes with
+// its credentials) keeps it as given. Other servers that would share an alias
+// get a 4-character suffix from their connection id (or from a hash of the
+// server name); if even that collides, 8 characters of the hash.
+func mcpToolAliases(servers []string, declared map[string]string) map[string]string {
 	sorted := append([]string(nil), servers...)
 	sort.Strings(sorted)
 	bases := make(map[string]string, len(sorted))
@@ -82,6 +73,9 @@ func mcpToolAliases(servers []string) map[string]string {
 			continue
 		}
 		base, id := mcpAliasBase(server)
+		if alias := declared[server]; alias != "" {
+			base, id = alias, ""
+		}
 		bases[server], ids[server] = base, id
 		count[base]++
 	}
@@ -92,7 +86,7 @@ func mcpToolAliases(servers []string) map[string]string {
 			continue
 		}
 		alias := bases[server]
-		if count[alias] > 1 {
+		if count[alias] > 1 && declared[server] == "" {
 			suffix := ids[server]
 			if suffix == "" {
 				suffix = shortHash(server)
@@ -106,32 +100,6 @@ func mcpToolAliases(servers []string) map[string]string {
 		aliases[server] = alias
 	}
 	return aliases
-}
-
-// mcpVisibleToolName is the model-facing name of an MCP tool: alias__tool,
-// valid for every provider. A name over 64 characters keeps its start and
-// ends in a short hash of the alias and tool, so it stays unique. The hash uses
-// the model-facing alias, not the runtime server name: a server name that
-// carries a per-session credential scope gave the same tool a new name every
-// session, and the model kept calling the old one ("tool not found").
-func mcpVisibleToolName(alias, tool string) string {
-	toolPart := sanitizeToolNamePart(tool)
-	if toolPart == "" {
-		toolPart = "tool"
-	}
-	name := alias + mcpToolNameSeparator + toolPart
-	if len(name) <= maxToolNameLength && toolPart == tool {
-		return name
-	}
-	if len(name) <= maxToolNameLength {
-		// Sanitizing changed the name, so two real names could meet; the hash keeps them apart.
-		suffix := "_" + shortHash(alias, tool)[:6]
-		if len(name)+len(suffix) <= maxToolNameLength {
-			return name + suffix
-		}
-	}
-	suffix := "_" + shortHash(alias, tool)[:8]
-	return strings.TrimRight(name[:maxToolNameLength-len(suffix)], "_-") + suffix
 }
 
 // isValidToolName reports whether a name is accepted by every provider.

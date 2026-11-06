@@ -1,19 +1,15 @@
 package mcpagent
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // PLAT-519: aliases are short and never the internal key; two connections of
-// one server get stable distinct aliases; any name stays valid and unique
-// within the 64-character provider limit.
+// one server get stable distinct aliases.
 func TestMCPToolAliasesAndVisibleNames(t *testing.T) {
 	aliases := mcpToolAliases([]string{
 		"ue03d5aec7071d9d6e888aca57a337a56__neon_46fb2cad6010",
 		"ue03d5aec7071d9d6e888aca57a337a56__neon_9c1d00aa7713",
 		"google-sheets",
-	})
+	}, nil)
 	for server, want := range map[string]string{
 		"ue03d5aec7071d9d6e888aca57a337a56__neon_46fb2cad6010": "neon_46fb",
 		"ue03d5aec7071d9d6e888aca57a337a56__neon_9c1d00aa7713": "neon_9c1d",
@@ -24,16 +20,11 @@ func TestMCPToolAliasesAndVisibleNames(t *testing.T) {
 		}
 	}
 
-	long := strings.Repeat("very_long_tool_name_", 5)
-	first := mcpVisibleToolName("neon_46fb", long+"a")
-	second := mcpVisibleToolName("neon_46fb", long+"b")
-	odd := mcpVisibleToolName("neon_46fb", "notion.search page")
-	for _, name := range []string{first, second, odd} {
-		if !isValidToolName(name) || !strings.HasPrefix(name, "neon_46fb__") {
-			t.Errorf("visible name %q is not a valid prefixed tool name", name)
-		}
-	}
-	if first == second {
-		t.Errorf("two long tool names collapsed to %q", first)
+	// A server name that changes with its credentials must not reach the alias:
+	// the host's declared alias stands, and a plain server sharing it moves aside.
+	scoped := "vault_c-94acea49e7a07fde__scope_86accc0011223344"
+	aliases = mcpToolAliases([]string{scoped, "notion"}, map[string]string{scoped: "notion"})
+	if aliases[scoped] != "notion" || aliases["notion"] == "notion" {
+		t.Errorf("declared alias lost: %v", aliases)
 	}
 }
