@@ -344,9 +344,12 @@ var problemReportingTools = map[string]bool{
 	"get_pulse_review_result":       true,
 	"get_workflow_command_guidance": true,
 	"query_workflow_db":             true,
-	"record_pulse_worklist":         true,
-	"organize_global_learnings":     true,
-	"consolidate_knowledgebase":     true,
+	// PLAT-746: a recorded failed Python check is typed domain data.
+	// A genuine handler/transport error still produces a failure envelope.
+	"python_automation":         true,
+	"record_pulse_worklist":     true,
+	"organize_global_learnings": true,
+	"consolidate_knowledgebase": true,
 	// PLAT-127. A message-sequence orchestrator step's route catalog dump
 	// (get_route_description with no route_id, listing every configured route's
 	// full behavior prose) hit this same shape on 2026-08-17: 12 of 12 suspects

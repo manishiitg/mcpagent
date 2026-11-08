@@ -82,36 +82,38 @@ func TestHandleCustomExecuteStillSuppressesContentBearingTools(t *testing.T) {
 	logger := loggerv2.NewNoop()
 	sessionID := "canonical-failure-suppressed-session"
 
-	// query_workflow_db is in problemReportingTools precisely because rows like
-	// this are normal domain data, not a transport failure.
-	const domainDataDescribingAFailure = `{"rows":[{"status":"failed","note":"a finding describing a bug, not a tool failure"}]}`
-
-	codeexec.InitRegistryForSession(sessionID, map[string]func(context.Context, map[string]interface{}) (string, error){
-		"query_workflow_db": func(context.Context, map[string]interface{}) (string, error) {
-			return domainDataDescribingAFailure, nil
-		},
-	}, logger)
-	t.Cleanup(func() { codeexec.CleanupSession(sessionID) })
-
-	handler := NewExecutorHandlers("", logger)
-	body, err := json.Marshal(CustomExecuteRequest{
-		Tool:      "query_workflow_db",
-		SessionID: sessionID,
-		Args:      map[string]interface{}{},
-	})
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/tools/custom/query_workflow_db", strings.NewReader(string(body)))
-	rr := httptest.NewRecorder()
-
-	handler.HandleCustomExecute(rr, req)
-
-	var resp CustomExecuteResponse
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if !resp.Success {
-		t.Fatalf("Success = false for suppressed tool's own domain data, want true. Error=%q", resp.Error)
+	for _, tc := range []struct{ name, payload string }{
+		{"query_workflow_db", `{"rows":[{"status":"failed","note":"a finding describing a bug, not a tool failure"}]}`},
+		// A failed check was recorded successfully. Keep its typed failed result
+		// and completed log receipt inside an ordinary success envelope.
+		{"python_automation", `{"ok":false,"error":"expected failed check","log_file":"/example/run/check.log","log_complete":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			codeexec.InitRegistryForSession(sessionID, map[string]func(context.Context, map[string]interface{}) (string, error){
+				tc.name: func(context.Context, map[string]interface{}) (string, error) { return tc.payload, nil },
+			}, logger)
+			t.Cleanup(func() { codeexec.CleanupSession(sessionID) })
+			handler := NewExecutorHandlers("", logger)
+			req := httptest.NewRequest(http.MethodPost, "/tools/custom/"+tc.name, strings.NewReader(`{}`))
+			req.Header.Set("X-Session-ID", sessionID)
+			rr := httptest.NewRecorder()
+			handler.HandlePerToolCustomRequest(rr, req, tc.name)
+			var reply CustomExecuteResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &reply); err != nil {
+				t.Fatal(err)
+			}
+			if !reply.Success || reply.Result != tc.payload {
+				t.Fatalf("domain receipt lost: %+v", reply)
+			}
+			codeexec.CleanupSession(sessionID)
+			codeexec.InitRegistryForSession(sessionID, map[string]func(context.Context, map[string]interface{}) (string, error){}, logger)
+			rr = httptest.NewRecorder()
+			req = httptest.NewRequest(http.MethodPost, "/tools/custom/"+tc.name, strings.NewReader(`{}`))
+			req.Header.Set("X-Session-ID", sessionID)
+			handler.HandlePerToolCustomRequest(rr, req, tc.name)
+			if err := json.Unmarshal(rr.Body.Bytes(), &reply); err != nil || reply.Success || !strings.Contains(reply.Error, "not registered") {
+				t.Fatalf("missing handler reported success: %+v %v", reply, err)
+			}
+		})
 	}
 }
