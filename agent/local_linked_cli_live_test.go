@@ -68,10 +68,10 @@ func TestLocalLinkedCLIArtifactsAndResume(t *testing.T) {
 			if err := os.Symlink(project, filepath.Join(runtime, "project")); err != nil {
 				t.Fatal(err)
 			}
-			a.addInstructions(isolatedOutputInstructions + "\nFor native search/glob, always supply project or output as the search path. Do not search the runtime root. Use only these fixture directories.")
-			prompt := fmt.Sprintf("Local fixture check. Discover the unknown .txt filename under project/ using an explicit search path and read its exact contents. Discover the unknown .txt filename under output/ and read its exact contents. Write output/result.txt containing both exact file contents on separate lines and verify it. Use enabled native tools; if restricted, use the registered execute_shell_command bridge with the absolute link paths %s/project and %s/output. Do not bypass restrictions or read other folders. Remember the code word %s without writing it into any file. Reply DONE.", runtime, runtime, word)
+			a.addInstructions(isolatedOutputInstructions + "\nFor native search/glob, use the exact absolute fixture paths in the request.")
+			prompt := fmt.Sprintf("Local fixture check. Discover the unknown .txt filename under %q using an explicit search path and read its exact contents. Discover the unknown .txt filename under %q and read its exact contents. Write %q containing both exact file contents on separate lines and verify it. Use enabled native tools. Do not bypass restrictions or read other folders. Remember the code word %s without writing it into any file. Reply DONE.", project, output, filepath.Join(output, "result.txt"), word)
 			if tc.name == "Claude" {
-				prompt += " Use native Glob with path project and pattern *.txt, then native Glob with path output and pattern *.txt. Use native Read. Write using whichever output tool the active policy admits."
+				prompt += " Use native Glob with the exact directory paths above and pattern *.txt, then native Read."
 			}
 			answer, err := a.ask(ctx, prompt)
 			if err != nil {
@@ -91,7 +91,7 @@ func TestLocalLinkedCLIArtifactsAndResume(t *testing.T) {
 				for _, receipt := range receipts {
 					if receipt.name == "Glob" {
 						projectGlob = projectGlob || strings.Contains(receipt.arguments, "project")
-						outputGlob = outputGlob || strings.Contains(receipt.arguments, "output")
+						outputGlob = outputGlob || strings.Contains(receipt.arguments, output)
 					}
 				}
 				if !projectGlob || !outputGlob {
@@ -102,8 +102,8 @@ func TestLocalLinkedCLIArtifactsAndResume(t *testing.T) {
 				t.Logf("LOCAL_LINKED_TOOL provider=%s tool=%s args=%s result=%s", tc.name, receipt.name, receipt.arguments, receipt.result)
 			}
 			handle := a.currentAgentSessionHandle()
-			if handle == nil || handle.Provider.Empty() || filepath.Clean(handle.Provider.WorkingDir) != filepath.Clean(runtime) {
-				t.Fatalf("missing private native resume handle: %#v", handle)
+			if handle == nil || handle.Provider.Empty() || filepath.Clean(handle.Provider.WorkingDir) != filepath.Clean(output) || filepath.Clean(handle.Provider.RuntimeDir) != filepath.Clean(runtime) {
+				t.Fatalf("native resume lost its output cwd or private runtime: %#v", handle)
 			}
 			cleanup()
 			b, cleanup2, err := buildRealBridgeAgent(ctx, tc, t.TempDir(), root, session, true)
@@ -115,7 +115,7 @@ func TestLocalLinkedCLIArtifactsAndResume(t *testing.T) {
 			b.codingAgentOutputDir = output
 			b.codingAgentToolsMode = codingAgentToolsFull
 			b.cliSecurityPolicy = confinedTestPolicy()
-			b.addInstructions(isolatedOutputInstructions + "\nFor native search/glob, always supply project or output as the search path. Do not search the runtime root. Use only these fixture directories.")
+			b.addInstructions(isolatedOutputInstructions + "\nFor native search/glob, use the exact absolute fixture paths in the request.")
 			if err := b.prepareIsolatedOutputLink(); err != nil {
 				t.Fatal(err)
 			}
@@ -134,7 +134,7 @@ func TestLocalLinkedCLIArtifactsAndResume(t *testing.T) {
 			if err != nil || !strings.Contains(string(contents), projectToken) || !strings.Contains(string(contents), outputToken) {
 				t.Fatal("session cleanup lost authoritative output")
 			}
-			t.Logf("LOCAL_LINKED_PASS provider=%s discovery=random-filenames read=both-links write=real-output native-resume=pass cleanup=preserved", tc.name)
+			t.Logf("LOCAL_LINKED_PASS provider=%s discovery=random-filenames read=both-fixtures write=real-output native-resume=pass cleanup=preserved", tc.name)
 		})
 	}
 }

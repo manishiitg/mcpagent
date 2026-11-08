@@ -96,11 +96,15 @@ func codingAgentInteractiveEnabledForProvider(provider llm.Provider, modelID, se
 
 func (a *Agent) appendCodingAgentWorkingDirOptionForProvider(opts []llmtypes.CallOption, provider llm.Provider, modelID string) []llmtypes.CallOption {
 	workingDir := strings.TrimSpace(a.codingAgentWorkingDir)
-	// All turns of an isolated session use the same private cwd. Linked-output
-	// setup is validated at construction and again before provider integration.
+	// Linked steps work directly in their admitted output folder; generated
+	// provider files stay in the existing private runtime. Splitting Landlock
+	// grants around managed records otherwise prevents new run-root entries.
 	if a.isolatedSessionWorkspace {
 		if tmpDir := a.ensureIsolatedWorkspaceDir(); tmpDir != "" {
 			workingDir = tmpDir
+		}
+		if a.codingAgentOutputDir != "" {
+			workingDir = a.codingAgentOutputDir
 		}
 	}
 	if workingDir == "" {

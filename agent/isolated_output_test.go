@@ -69,8 +69,11 @@ func TestIsolatedOutputProviderLaunchPolicies(t *testing.T) {
 			if resolved.CLISecurity == nil || resolved.CLISecurity.Provider != string(provider) {
 				t.Fatal("missing provider launch policy")
 			}
-			if keys := codingAgentResumeOptionKeys[provider]; resolved.Metadata == nil || resolved.Metadata.Custom[keys.directory] != a.isolatedWorkspacePath {
-				t.Fatal("provider did not receive the private runtime cwd")
+			if keys := codingAgentResumeOptionKeys[provider]; resolved.Metadata == nil || resolved.Metadata.Custom[keys.directory] != output {
+				t.Fatal("provider did not receive its admitted output cwd")
+			}
+			if resolved.CLIRuntimeDir != a.isolatedWorkspacePath || a.resolveContinuationWorkingDir("") != output {
+				t.Fatal("working directory and private generated files were not kept separate on resume")
 			}
 			if len(resolved.CLISecurity.WorkspaceWritePaths) != 2 || resolved.CLISecurity.WorkspaceWritePaths[0] != output || resolved.CLISecurity.WorkspaceWritePaths[1] != a.isolatedWorkspacePath {
 				t.Fatalf("wrong writes: %#v", resolved.CLISecurity)
@@ -216,7 +219,7 @@ func TestNewAgentLinkedOutputInstructionsAndFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	if !strings.Contains(a.systemPrompt, "output/") || !strings.Contains(a.systemPrompt, "bridge paths") {
+	if !strings.Contains(a.systemPrompt, "STEP_OUTPUT_DIR") || !strings.Contains(a.systemPrompt, "bridge paths") {
 		t.Fatal("missing output path contract")
 	}
 	// mcp_only: native file tools and shell are disabled, so a paragraph about "native file tools" would

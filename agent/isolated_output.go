@@ -10,17 +10,12 @@ import (
 const isolatedOutputInstructions = `
 
 ## Step output directory
-Your private CLI runtime contains output/, a directory link to this invocation's
-real STEP_OUTPUT_DIR. Save deliverable files under output/ when using native file
-tools, or cd output before native shell commands. Files written there are already
-the workflow's iteration artifacts; no copy or sync is needed. Search and glob
-tools may skip directory links when searching the current directory: explicitly
-pass output (or output/<folder>) as the search path to find iteration artifacts.
+Native file tools and shell commands start in this invocation's STEP_OUTPUT_DIR.
+Save deliverable files there directly; no copy or sync is needed.
 Keep generated instructions, skills, CLI configuration and scratch files in the
 private runtime.
-AgentWorks bridge paths and STEP_OUTPUT_DIR remain unchanged; do not add output/
-to bridge paths. The link grants no extra permissions and does not change which
-native tools are enabled. Read inputs through the existing admitted paths/tools.
+AgentWorks bridge paths and STEP_OUTPUT_DIR remain unchanged. Read inputs through
+the existing admitted paths/tools.
 `
 
 func withCodingAgentOutputDir(dir string) agentOption {
@@ -60,6 +55,9 @@ func (a *Agent) prepareIsolatedOutputLink() error {
 	}
 	if info, err := os.Lstat(runtime); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("linked step runtime is not a private directory: %q", runtime)
+	}
+	if a.codingAgentRuntimeDir == "" {
+		a.codingAgentRuntimeDir = runtime
 	}
 	if rel, err := filepath.Rel(runtime, target); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("step output must persist outside its private runtime")

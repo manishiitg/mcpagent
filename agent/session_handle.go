@@ -227,6 +227,9 @@ func (a *Agent) resolveContinuationWorkingDir(handleWorkingDir string) string {
 	if dir := strings.TrimSpace(handleWorkingDir); dir != "" {
 		return dir
 	}
+	if a.isolatedSessionWorkspace && a.codingAgentOutputDir != "" {
+		return a.codingAgentOutputDir
+	}
 	if a.isolatedSessionWorkspace {
 		if dir := strings.TrimSpace(a.ensureIsolatedWorkspaceDir()); dir != "" {
 			return dir
