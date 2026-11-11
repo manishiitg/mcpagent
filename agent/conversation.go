@@ -825,6 +825,7 @@ func askWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						shown = plain
 					}
 					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, shown, turn+1, "conversation_error", time.Since(conversationStartTime))
+					conversationErrorEvent.Metadata = events.ProviderFailureMetadata(genErr)
 					a.emitTypedEvent(ctx, conversationErrorEvent)
 				}
 
