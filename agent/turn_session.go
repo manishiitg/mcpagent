@@ -340,6 +340,9 @@ func (s *Session) Run(ctx context.Context, turn Turn) (result Result, err error)
 				completion.Error = err.Error()
 			}
 			s.agent.annotateUnifiedCompletionEvent(completion)
+			if err != nil {
+				completion.SetProviderFailure(err)
+			}
 			s.agent.emitTypedEvent(ctx, completion)
 		}
 		s.agent.setTurnInFlight(false)
