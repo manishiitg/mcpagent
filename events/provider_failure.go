@@ -21,6 +21,9 @@ func (e *UnifiedCompletionEvent) SetProviderFailureDisplay() {
 
 // SetProviderFailure keeps typed quota metadata before the event becomes JSON.
 func (e *UnifiedCompletionEvent) SetProviderFailure(err error) {
+	if err == nil || strings.Contains(err.Error(), "context canceled") {
+		return
+	}
 	if e.Metadata == nil {
 		e.Metadata = make(map[string]interface{})
 	}
