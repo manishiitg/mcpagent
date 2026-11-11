@@ -157,16 +157,7 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 	// Merge custom tools - UPDATE existing ones (orchestrator-wrapped executors should replace unwrapped)
 	// This ensures folder guard validation is always applied when orchestrator wraps executors
 	for toolName, executor := range customTools {
-		if existing, exists := globalRegistry.customTools[toolName]; exists {
-			// Replace existing executor with new one (orchestrator may have wrapped it with folder guard)
-			globalRegistry.customTools[toolName] = executor
-			logger.Debug("Custom tool already exists, updating with new executor (may be wrapped with folder guard)",
-				loggerv2.String("tool", toolName))
-			_ = existing // Reference for logging/debugging
-		} else {
-			globalRegistry.customTools[toolName] = executor
-			logger.Debug("Added custom tool", loggerv2.String("tool", toolName))
-		}
+		globalRegistry.customTools[toolName] = executor
 	}
 
 	// Merge virtual tools - UPDATE existing ones (new agent's handler should take priority)
@@ -500,9 +491,6 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 	// Register all custom tools for this session
 	for toolName, executor := range customTools {
 		globalRegistry.sessionCustomTools[sessionID][toolName] = executor
-		logger.Debug("Registered session-scoped custom tool",
-			loggerv2.String("session_id", sessionID),
-			loggerv2.String("tool", toolName))
 	}
 
 	logger.Info("Session-scoped custom tools registered",
