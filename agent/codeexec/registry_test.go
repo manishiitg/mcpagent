@@ -218,6 +218,10 @@ func TestCallCustomToolWithSessionDoesNotBorrowGlobalExecutor(t *testing.T) {
 	if err == nil {
 		t.Fatal("CallCustomToolWithSession() error = nil, want missing session tool error")
 	}
+	// PLAT-746-873: an unavailable bridge tool must explain discovery, not invite retries.
+	if !strings.Contains(err.Error(), "search_tools -> get_api_spec -> call_tool") {
+		t.Fatalf("missing session tool error has no discovery guidance: %v", err)
+	}
 	if globalCalls != 0 {
 		t.Fatalf("global executor calls = %d, want 0", globalCalls)
 	}
