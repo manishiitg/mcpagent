@@ -121,3 +121,6 @@ generated/*
 # Compiled binaries at repo root
 /mcpbridge
 /server
+
+# Built Node SDK output (made by npm run build, not kept in git)
+sdk-node/dist/
