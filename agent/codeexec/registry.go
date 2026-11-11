@@ -802,7 +802,7 @@ func (registry *ToolRegistry) customToolExecutor(sessionID, toolName string) (fu
 					}
 				}
 			}
-			return nil, fmt.Errorf("custom tool %s is not registered for session %s", toolName, sessionID)
+			return nil, fmt.Errorf("custom tool %s is not registered for session %s; use this session’s declared tools: search_tools -> get_api_spec -> call_tool when available; do not retry this unregistered name or bypass it with shell HTTP calls", toolName, sessionID)
 		}
 		// No registry exists for this session yet. Keep the legacy global path for
 		// non-workflow callers that have not initialized session-scoped tools.
