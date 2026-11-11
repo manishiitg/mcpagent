@@ -3,7 +3,9 @@ package mcpagent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -229,6 +231,20 @@ func TestToolRegistrationBatchPublishesCurrentScopedClosuresOnce(t *testing.T) {
 	if _, err := codeexec.CallCustomToolWithSession(context.Background(), session, "batch_owned", nil); err == nil {
 		t.Fatal("batch was published before setup ended")
 	}
+	var workers sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		workers.Add(1)
+		go func(i int) {
+			defer workers.Done()
+			end := a.DeferToolRegistryPublication()
+			defer end()
+			if err := a.registerCustomTool(fmt.Sprintf("batch_parallel_%d", i), "parallel setup", objectSchema(), noopTool, "custom"); err != nil {
+				t.Error(err)
+			}
+			end()
+		}(i)
+	}
+	workers.Wait()
 	finish()
 	got, err := codeexec.CallCustomToolWithSession(context.Background(), session, "batch_owned", nil)
 	if err != nil || got != "current" {

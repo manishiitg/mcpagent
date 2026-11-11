@@ -1039,8 +1039,9 @@ type Agent struct {
 	// stream its own intent events. Consumers that need authoritative bridge
 	// receipts can select these events by server_name="direct_execution".
 	directToolExecutionEvents bool
-	toolRegistrationDepth     int
-	toolRegistryDirty         bool
+	// mu serializes registration, batch state, and publication.
+	toolRegistrationDepth int
+	toolRegistryDirty     bool
 
 	// Pre-filtered tool set used for the outgoing LLM call. Updated by
 	// request-scoped allow-list filters and otherwise mirrors the registered tools.
@@ -3265,6 +3266,8 @@ func (a *Agent) registerCustomTool(name string, description string, parameters m
 }
 
 func (a *Agent) registerDirectTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), timeout time.Duration, category string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	// Category is required at compile time, but still validate non-empty in case
 	// a caller passes an empty literal.
 	if category == "" {
@@ -3421,7 +3424,7 @@ func (a *Agent) registerDirectTool(name string, description string, parameters m
 
 	// Canonical registration is immediate; publish once after a setup batch.
 	a.toolRegistryDirty = true
-	a.publishCustomToolRegistry()
+	a.publishCustomToolRegistryLocked()
 
 	return nil
 }
