@@ -10,17 +10,18 @@ import (
 
 func TestRuntimeHTTPSkillLifecycle(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		code bool
+		name  string
+		code  bool
+		shell bool
 	}{
-		{"code-execution", true}, {"native-api", false},
+		{"workflow-bridge-shell", true, true}, {"native-crew-without-bridge-shell", true, false}, {"native-api", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			config := filepath.Join(t.TempDir(), "mcp.json")
 			if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
 				t.Fatal(err)
 			}
-			a, err := NewAgentFromDefinition(context.Background(), AgentDefinition{Instructions: "product policy", Tools: ToolSet{Direct: []ToolDefinition{{Name: "read_fact", Description: "Read one fact.", InputSchema: map[string]interface{}{"type": "object"}, Execute: func(context.Context, map[string]interface{}) (string, error) { return "fact", nil }}}}}, RuntimeConfig{Model: linkedOutputFakeModel{}, MCPConfigPath: config, Tools: ToolRuntimeConfig{CodeExecution: tc.code}})
+			a, err := NewAgentFromDefinition(context.Background(), AgentDefinition{Instructions: "product policy", Tools: ToolSet{Direct: []ToolDefinition{{Name: "read_fact", Description: "Read one fact.", InputSchema: map[string]interface{}{"type": "object"}, Execute: func(context.Context, map[string]interface{}) (string, error) { return "fact", nil }}}}}, RuntimeConfig{Model: linkedOutputFakeModel{}, MCPConfigPath: config, Tools: ToolRuntimeConfig{CodeExecution: tc.code}, Coding: CodingRuntimeConfig{BridgeToolAdmit: func(name string) bool { return name != "execute_shell_command" || tc.shell }}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -42,6 +43,12 @@ func TestRuntimeHTTPSkillLifecycle(t *testing.T) {
 					if skill.Name == runtimeHTTPSkillName {
 						body = skill.Content
 					}
+				}
+				if !tc.shell {
+					if strings.Contains(body, "execute_shell_command") || strings.Contains(body, "$MCP_AUTH") || !strings.Contains(body, "call_tool") {
+						t.Fatal("native Crew skill advertises an unavailable shell or omits the callable bridge")
+					}
+					return
 				}
 				for _, rule := range []string{"get_api_spec", "MCP_AUTH", "--fail-with-body", "nonzero HTTP-failure", "response envelope"} {
 					if !strings.Contains(body, rule) {
