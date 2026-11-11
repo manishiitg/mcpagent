@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manishiitg/mcpagent/agent/codeexec"
 	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -208,4 +210,32 @@ func objectSchema() map[string]interface{} {
 
 func noopTool(context.Context, map[string]interface{}) (string, error) {
 	return "ok", nil
+}
+
+// PLAT-746-876: N setup registrations previously republished all executors N times.
+func TestToolRegistrationBatchPublishesCurrentScopedClosuresOnce(t *testing.T) {
+	const session = "batch-registry-regression"
+	a := &Agent{sessionID: session, clients: map[string]mcpclient.ClientInterface{}, toolToServer: map[string]string{}, toolRegistry: directToolRegistry()}
+	codeexec.InitRegistryForSession(session, nil, nil)
+	t.Cleanup(func() { codeexec.CleanupSession(session) })
+	finish := a.DeferToolRegistryPublication()
+	defer finish()
+	for _, value := range []string{"old", "current"} {
+		value := value
+		if err := a.registerCustomTool("batch_owned", "owned", objectSchema(), func(context.Context, map[string]interface{}) (string, error) { return value, nil }, "custom"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := codeexec.CallCustomToolWithSession(context.Background(), session, "batch_owned", nil); err == nil {
+		t.Fatal("batch was published before setup ended")
+	}
+	finish()
+	got, err := codeexec.CallCustomToolWithSession(context.Background(), session, "batch_owned", nil)
+	if err != nil || got != "current" {
+		t.Fatalf("published closure = %q, %v", got, err)
+	}
+	finish() // deferred and explicit completion must not publish twice.
+	if a.toolRegistrationDepth != 0 || a.toolRegistryDirty {
+		t.Fatal("batch did not finish")
+	}
 }

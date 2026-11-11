@@ -1039,6 +1039,8 @@ type Agent struct {
 	// stream its own intent events. Consumers that need authoritative bridge
 	// receipts can select these events by server_name="direct_execution".
 	directToolExecutionEvents bool
+	toolRegistrationDepth     int
+	toolRegistryDirty         bool
 
 	// Pre-filtered tool set used for the outgoing LLM call. Updated by
 	// request-scoped allow-list filters and otherwise mirrors the registered tools.
@@ -3417,41 +3419,9 @@ func (a *Agent) registerDirectTool(name string, description string, parameters m
 		a.openAPISpecCacheMu.Unlock()
 	}
 
-	// Update registry with new custom tool
-	if a.clients != nil {
-		customToolExecutors := a.directToolExecutors()
-		if a.logger != nil {
-			a.logger.Debug("🔧 [CODE_EXECUTION] Updating registry with custom tools",
-				loggerv2.Int("count", len(customToolExecutors)),
-				loggerv2.String("including", name))
-			// Log all custom tool names for debugging
-			toolNames := make([]string, 0, len(customToolExecutors))
-			for toolName := range customToolExecutors {
-				toolNames = append(toolNames, toolName)
-			}
-			a.logger.Debug("🔧 [CODE_EXECUTION] Custom tools in registry", loggerv2.Any("tools", toolNames))
-		}
-		codeexec.InitRegistry(a.clients, customToolExecutors, a.realToolToServer(), a.logger)
-		// Also register session-scoped tools
-		if a.sessionID != "" {
-			codeexec.InitRegistryForSession(a.sessionID, customToolExecutors, a.logger)
-		}
-		if a.logger != nil {
-			a.logger.Debug("🔧 [CODE_EXECUTION] Registry updated successfully for tool", loggerv2.String("tool", name))
-		}
-	} else {
-		if a.logger != nil {
-			a.logger.Warn("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil for tool", loggerv2.String("tool", name))
-		}
-	}
-
-	// Debug logging
-	if a.logger != nil {
-		a.logger.Info("🔧 Registered custom tool", loggerv2.String("tool", name), loggerv2.String("category", toolCategory))
-		a.logger.Info("🔧 Total custom tools registered", loggerv2.Int("count", len(a.directToolSnapshot())))
-		a.logger.Info("🔧 Total tools in agent", loggerv2.Int("count", len(a.tools)))
-		a.logger.Info("🔧 Total filtered tools", loggerv2.Int("count", len(a.filteredTools)))
-	}
+	// Canonical registration is immediate; publish once after a setup batch.
+	a.toolRegistryDirty = true
+	a.publishCustomToolRegistry()
 
 	return nil
 }
