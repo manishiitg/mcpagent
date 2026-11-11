@@ -2,6 +2,12 @@ package mcpagent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/manishiitg/mcpagent/agent/codeexec"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -111,4 +117,54 @@ type definitionFakeModel struct{ llmtypes.Model }
 
 func definitionNoopTool(context.Context, map[string]interface{}) (string, error) {
 	return "ok", nil
+}
+
+// PLAT-746-876: the live finalizer constructs a replacement Agent, so batching
+// the earlier wrapper instance did not stop 1..33 registry publications.
+func TestNewAgentFromDefinitionBatchesDirectToolPublication(t *testing.T) {
+	publications := []int{}
+	for _, count := range []int{1, 33} {
+		dir := t.TempDir()
+		config := filepath.Join(dir, "mcp.json")
+		if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		logPath := filepath.Join(dir, "registry.log")
+		logger, err := loggerv2.New(loggerv2.Config{Level: "info", Format: "json", Output: logPath})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer logger.Close()
+		session := fmt.Sprintf("definition-batch-%d", count)
+		definition := AgentDefinition{}
+		for i := 0; i < count; i++ {
+			definition.Tools.Direct = append(definition.Tools.Direct, ToolDefinition{Name: fmt.Sprintf("batch_tool_%d", i), Description: "Read a fact", InputSchema: map[string]interface{}{"type": "object"}, Execute: func(context.Context, map[string]interface{}) (string, error) { return "fact", nil }})
+		}
+		a, err := NewAgentFromDefinition(context.Background(), definition, RuntimeConfig{Model: linkedOutputFakeModel{}, MCPConfigPath: config, MCP: MCPRuntimeConfig{SessionID: session}, Observability: ObservabilityRuntimeConfig{Logger: logger}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := codeexec.CallCustomToolWithSession(context.Background(), session, fmt.Sprintf("batch_tool_%d", count-1), map[string]interface{}{})
+		if err != nil || got != "fact" {
+			t.Fatalf("final tool unavailable: %q %v", got, err)
+		}
+		data, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, line := range strings.Split(string(data), "\n") {
+			var row struct {
+				Message string `json:"msg"`
+			}
+			if json.Unmarshal([]byte(line), &row) == nil && row.Message == "Session-scoped custom tools registered" {
+				n++
+			}
+		}
+		publications = append(publications, n)
+		_ = a.Close()
+	}
+	if publications[0] == 0 || publications[1] != publications[0] {
+		t.Fatalf("registry publications grow with tools: %v", publications)
+	}
 }

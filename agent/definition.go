@@ -213,7 +213,11 @@ func NewAgentFromDefinition(ctx context.Context, definition AgentDefinition, run
 	if err != nil {
 		return nil, err
 	}
+	finishToolRegistration := agent.DeferToolRegistryPublication()
+	defer finishToolRegistration()
 	fail := func(cause error) (*Agent, error) {
+		// Flush before Close so the deferred finish cannot republish a closed session.
+		finishToolRegistration()
 		_ = agent.Close()
 		return nil, cause
 	}
