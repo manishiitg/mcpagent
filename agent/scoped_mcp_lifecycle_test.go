@@ -30,6 +30,10 @@ func (c *scopeCloseClient) Close() error {
 	}
 	return nil
 }
+func (c *scopeCloseClient) ListTools(context.Context) ([]mcp.Tool, error) {
+	return []mcp.Tool{mcp.NewTool("work")}, nil
+}
+
 func (c *scopeCloseClient) CallTool(ctx context.Context, _ string, _ map[string]interface{}) (*mcp.CallToolResult, error) {
 	close(c.started)
 	select {
