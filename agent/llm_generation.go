@@ -630,6 +630,16 @@ func contentChunkSource(chunk llmtypes.StreamChunk) string {
 // delta (marked with llmtypes.ContentDeltaMetadataKey by providers whose stream
 // splits mid-word, e.g. pi's markers) so the mcpagent StreamingChunkEvent can
 // carry that granularity to downstream consumers.
+// Only presentation framing crosses this boundary; unrelated provider metadata
+// must not become app event policy or model input.
+func assistantBlockMetadata(chunk llmtypes.StreamChunk) map[string]interface{} {
+	id, _ := chunk.Metadata[llmtypes.AssistantBlockIDMetadataKey].(string)
+	if id == "" {
+		return nil
+	}
+	return map[string]interface{}{llmtypes.AssistantBlockIDMetadataKey: id}
+}
+
 func contentChunkIsDelta(chunk llmtypes.StreamChunk) bool {
 	if chunk.Metadata == nil {
 		return false
@@ -691,6 +701,27 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				}
 			}
 
+		case llmtypes.StreamChunkTypeAssistantBlock:
+			metadata := assistantBlockMetadata(chunk)
+			phase, _ := chunk.Metadata[llmtypes.AssistantBlockPhaseMetadataKey].(string)
+			if metadata == nil || sm.suppressEvents {
+				continue
+			}
+			metadata[llmtypes.AssistantBlockPhaseMetadataKey] = phase
+			switch phase {
+			case "start":
+				// A real native text start, not a turn start. Reuse the existing
+				// stream envelope so replay and row positioning have one path.
+				sm.contentChunkIndex = 0
+				a.emitTypedEvent(ctx, &events.StreamingStartEvent{BaseEventData: events.BaseEventData{Timestamp: time.Now(), Metadata: metadata}, Model: a.modelID, Provider: string(a.provider)})
+			case "end":
+				sm.contentChunkIndex++
+				a.emitTypedEvent(ctx, &events.StreamingChunkEvent{BaseEventData: events.BaseEventData{Timestamp: time.Now(), Metadata: metadata}, Content: chunk.Content, ChunkIndex: sm.contentChunkIndex, Source: events.StreamingChunkSourceTranscript})
+			}
+			if sm.callback != nil {
+				sm.callback(chunk)
+			}
+
 		case llmtypes.StreamChunkTypeContent:
 			if chunk.Content != "" {
 				sm.contentChunkIndex++
@@ -702,7 +733,7 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 
 				if !sm.suppressEvents {
 					a.emitTypedEvent(ctx, &events.StreamingChunkEvent{
-						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+						BaseEventData: events.BaseEventData{Timestamp: time.Now(), Metadata: assistantBlockMetadata(chunk)},
 						Content:       chunk.Content,
 						ChunkIndex:    sm.contentChunkIndex,
 						IsToolCall:    false,

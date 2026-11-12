@@ -1160,3 +1160,37 @@ func TestStreamingManagerRecoversToolNameBeforeFailureClassification(t *testing.
 		t.Fatalf("CLI history did not retain the recovered name: %#v", sm.CLIToolCalls)
 	}
 }
+
+// Native framing survives the wrapper without becoming a turn completion or
+// a second content delta; per-block indices keep existing prefix replay valid.
+func TestStreamingManagerForwardsNativeAssistantBlocks(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	a := &Agent{sessionID: "native-block-chat", listeners: []AgentEventListener{listener}}
+	sm := &streamingManager{streamChan: make(chan llmtypes.StreamChunk, 8), streamingDone: make(chan bool, 1)}
+	go sm.processChunks(context.Background(), a)
+	for _, block := range []string{"a", "b"} {
+		meta := map[string]interface{}{llmtypes.AssistantBlockIDMetadataKey: block, llmtypes.AssistantBlockPhaseMetadataKey: "start", "unrelated": "not forwarded"}
+		sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeAssistantBlock, Metadata: meta}
+		sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeContent, Content: block, Metadata: map[string]interface{}{llmtypes.AssistantBlockIDMetadataKey: block, llmtypes.ContentDeltaMetadataKey: true, "unrelated": "not forwarded"}}
+		sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeAssistantBlock, Content: block, Metadata: map[string]interface{}{llmtypes.AssistantBlockIDMetadataKey: block, llmtypes.AssistantBlockPhaseMetadataKey: "end"}}
+	}
+	close(sm.streamChan)
+	<-sm.streamingDone
+	if len(listener.events) != 6 {
+		t.Fatalf("events=%d", len(listener.events))
+	}
+	for i, id := range []string{"a", "b"} {
+		start, ok := listener.events[3*i].Data.(*events.StreamingStartEvent)
+		if !ok || start.Metadata[llmtypes.AssistantBlockIDMetadataKey] != id || start.Metadata["unrelated"] != nil {
+			t.Fatalf("start=%+v", start)
+		}
+		delta := listener.events[3*i+1].Data.(*events.StreamingChunkEvent)
+		end := listener.events[3*i+2].Data.(*events.StreamingChunkEvent)
+		if delta.ChunkIndex != 1 || !delta.IsDelta || delta.Metadata[llmtypes.AssistantBlockIDMetadataKey] != id || delta.Metadata["unrelated"] != nil {
+			t.Fatalf("delta=%+v", delta)
+		}
+		if end.Source != events.StreamingChunkSourceTranscript || end.IsDelta || end.Content != id || end.Metadata[llmtypes.AssistantBlockPhaseMetadataKey] != "end" {
+			t.Fatalf("end=%+v", end)
+		}
+	}
+}
