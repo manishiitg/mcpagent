@@ -3,8 +3,12 @@ package mcpclient
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -297,7 +301,88 @@ func LoadConfig(configPath string, logger loggerv2.Logger) (*MCPConfig, error) {
 
 // LoadMergedConfig loads the merged configuration (base + user additions)
 // This mirrors the logic from mcp_config_routes.go to ensure consistency
+type configFileStamp struct {
+	Size     int64
+	Modified time.Time
+	Exists   bool
+}
+type mergedConfigEntry struct {
+	Base, User configFileStamp
+	Config     *MCPConfig
+}
+
+var mergedConfigs = struct {
+	sync.Mutex
+	entries map[string]mergedConfigEntry
+}{entries: make(map[string]mergedConfigEntry)}
+
+func configStamp(path string) (configFileStamp, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return configFileStamp{}, nil
+	}
+	if err != nil {
+		return configFileStamp{}, err
+	}
+	return configFileStamp{info.Size(), info.ModTime(), true}, nil
+}
+
+// A caller may add runtime servers or replace credentials. Never share mutable
+// maps, slices or OAuth pointers with another caller or with the cached catalog.
+func cloneMCPConfig(config *MCPConfig) *MCPConfig {
+	out := &MCPConfig{MCPServers: make(map[string]MCPServerConfig, len(config.MCPServers))}
+	for name, cfg := range config.MCPServers {
+		cfg.Args = slices.Clone(cfg.Args)
+		cfg.Env = maps.Clone(cfg.Env)
+		cfg.Headers = maps.Clone(cfg.Headers)
+		if cfg.PoolConfig != nil {
+			pool := *cfg.PoolConfig
+			cfg.PoolConfig = &pool
+		}
+		if cfg.OAuth != nil {
+			auth := *cfg.OAuth
+			auth.Scopes = slices.Clone(auth.Scopes)
+			auth.ExtraAuthParams = maps.Clone(auth.ExtraAuthParams)
+			cfg.OAuth = &auth
+		}
+		out.MCPServers[name] = cfg
+	}
+	return out
+}
+
+// LoadMergedConfig decodes unchanged base/user files once. Each caller receives
+// its own mutable catalog so per-person OAuth and runtime overrides stay private.
 func LoadMergedConfig(configPath string, logger loggerv2.Logger) (*MCPConfig, error) {
+	if configPath == "" {
+		return loadMergedConfigUncached(configPath, logger)
+	}
+	absolute, err := filepath.Abs(configPath)
+	if err != nil {
+		return nil, err
+	}
+	mergedConfigs.Lock()
+	defer mergedConfigs.Unlock()
+	base, err := configStamp(absolute)
+	if err != nil {
+		return nil, err
+	}
+	user, err := configStamp(strings.Replace(absolute, ".json", "_user.json", 1))
+	if err != nil {
+		return nil, err
+	}
+	if cached, ok := mergedConfigs.entries[absolute]; ok && cached.Base == base && cached.User == user {
+		return cloneMCPConfig(cached.Config), nil
+	}
+	config, err := loadMergedConfigUncached(absolute, logger)
+	if err != nil {
+		delete(mergedConfigs.entries, absolute)
+		return nil, err
+	}
+	mergedConfigs.entries[absolute] = mergedConfigEntry{base, user, config}
+	return cloneMCPConfig(config), nil
+}
+
+func loadMergedConfigUncached(configPath string, logger loggerv2.Logger) (*MCPConfig, error) {
 	userConfigPath := strings.Replace(configPath, ".json", "_user.json", 1)
 	if logger != nil {
 		logger.Debug("Starting LoadMergedConfig",

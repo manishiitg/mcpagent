@@ -1545,9 +1545,6 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	logger.Info("✅ [DEBUG] newAgent: Merged MCP config loaded successfully", loggerv2.String("duration", configLoadDuration.String()), loggerv2.Int("server_count", len(config.MCPServers)))
 
 	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
-	for name := range config.MCPServers {
-		logger.Debug("Server found", loggerv2.String("server_name", name))
-	}
 
 	if modelID == "unknown" {
 		logger.Warn("Could not extract model ID from LLM instance, using 'unknown'",
@@ -1575,7 +1572,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.sessionID))
 	clients, toolToServer, realToolNames, serverAliases, allLLMTools, servers, systemPrompt, err =
-		NewAgentConnectionWithSession(ctx, llm, serverName, configPath, ag.sessionID, string(ag.traceID), ag.tracers, logger, ag.disableCache, ag.runtimeOverrides, ag.userID)
+		newAgentConnectionWithConfig(ctx, llm, serverName, configPath, ag.sessionID, string(ag.traceID), ag.tracers, logger, ag.disableCache, ag.runtimeOverrides, ag.userID, config)
 
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {

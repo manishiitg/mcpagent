@@ -85,6 +85,27 @@ func NewAgentConnectionWithSession(
 	userID string,
 ) (map[string]mcpclient.ClientInterface, map[string]string, map[string]string, map[string]string, []llmtypes.Tool, []string, string, error) {
 
+	config, err := mcpclient.LoadMergedConfig(configPath, logger)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, "", err
+	}
+	return newAgentConnectionWithConfig(ctx, llm, serverName, configPath, sessionID, traceID, tracers, logger, disableCache, runtimeOverrides, userID, config)
+}
+
+func newAgentConnectionWithConfig(
+	ctx context.Context,
+	llm llmtypes.Model,
+	serverName, configPath string,
+	sessionID string,
+	traceID string,
+	tracers []observability.Tracer,
+	logger loggerv2.Logger,
+	disableCache bool,
+	runtimeOverrides mcpclient.RuntimeOverrides,
+	userID string,
+	config *mcpclient.MCPConfig,
+) (map[string]mcpclient.ClientInterface, map[string]string, map[string]string, map[string]string, []llmtypes.Tool, []string, string, error) {
+
 	connectionStartTime := time.Now()
 
 	logger.Info("NewAgentConnectionWithSession starting",
@@ -110,12 +131,6 @@ func NewAgentConnectionWithSession(
 				logger.Warn("Failed to emit connection start event to tracer", loggerv2.Error(err))
 			}
 		}
-	}
-
-	// Load merged MCP configuration
-	config, err := mcpclient.LoadMergedConfig(configPath, logger)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
 
 	// Determine which servers to connect to
