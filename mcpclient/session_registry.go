@@ -532,3 +532,14 @@ func (r *SessionConnectionRegistry) CloseAllSessions() {
 		r.CloseSession(sessionID)
 	}
 }
+
+// CloseServerConnections drops an exact retired authorization scope from every
+// live/pending session. The caller must hold its last-user lifetime lock.
+func (r *SessionConnectionRegistry) CloseServerConnections(serverName string) {
+	r.sessions.Range(func(key, value interface{}) bool {
+		conns := value.(*sessionConnections)
+		conns.pendingConfigs.Delete(serverName)
+		r.CloseSessionServer(key.(string), serverName)
+		return true
+	})
+}

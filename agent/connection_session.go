@@ -89,7 +89,7 @@ func NewAgentConnectionWithSession(
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, "", err
 	}
-	return newAgentConnectionWithConfig(ctx, llm, serverName, configPath, sessionID, traceID, tracers, logger, disableCache, runtimeOverrides, userID, config)
+	return newAgentConnectionWithConfig(ctx, llm, serverName, configPath, sessionID, traceID, tracers, logger, disableCache, runtimeOverrides, userID, config, nil)
 }
 
 func newAgentConnectionWithConfig(
@@ -104,6 +104,7 @@ func newAgentConnectionWithConfig(
 	runtimeOverrides mcpclient.RuntimeOverrides,
 	userID string,
 	config *mcpclient.MCPConfig,
+	retain func(string),
 ) (map[string]mcpclient.ClientInterface, map[string]string, map[string]string, map[string]string, []llmtypes.Tool, []string, string, error) {
 
 	connectionStartTime := time.Now()
@@ -205,6 +206,10 @@ func newAgentConnectionWithConfig(
 					loggerv2.String("server", srvName),
 					loggerv2.String("user_id", userID),
 					loggerv2.String("token_file", userTokenFile))
+			}
+
+			if retain != nil {
+				retain(srvName)
 			}
 
 			// Lazy connection: if tool definitions are cached, defer subprocess spawn
