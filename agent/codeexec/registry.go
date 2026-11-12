@@ -182,13 +182,15 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 				if globalRegistry.reportedToolMappingConflicts == nil {
 					globalRegistry.reportedToolMappingConflicts = make(map[string]struct{})
 				}
-				conflictKey := toolName + "\x00" + existing + "\x00" + serverName
+				conflictKey := toolName + "\x00" + mappingLogServer(existing) + "\x00" + mappingLogServer(serverName)
 				if _, reported := globalRegistry.reportedToolMappingConflicts[conflictKey]; !reported {
 					globalRegistry.reportedToolMappingConflicts[conflictKey] = struct{}{}
-					logger.Warn("Tool already mapped to different server, new mapping will be ignored",
-						loggerv2.String("tool", toolName),
-						loggerv2.String("existing_server", existing),
-						loggerv2.String("new_server", serverName))
+					fields := []loggerv2.Field{loggerv2.String("tool", toolName), loggerv2.String("existing_server", mappingLogServer(existing)), loggerv2.String("new_server", mappingLogServer(serverName))}
+					if mappingLogServer(existing) == mappingLogServer(serverName) {
+						logger.Debug("Tool mapping reused across delegation scopes", fields...)
+					} else {
+						logger.Warn("Tool already mapped to different server, new mapping will be ignored", fields...)
+					}
 				}
 			}
 		} else {

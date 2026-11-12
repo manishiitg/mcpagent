@@ -1552,7 +1552,8 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 	}
 	logger.Info("✅ [DEBUG] newAgent: Merged MCP config loaded successfully", loggerv2.String("duration", configLoadDuration.String()), loggerv2.Int("server_count", len(config.MCPServers)))
 
-	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
+	scopedKeys, scopedLive := codeexec.ScopedMCPCounts()
+	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)), loggerv2.Int("scoped_key_count", scopedKeys), loggerv2.Int("scoped_client_count", scopedLive))
 
 	if modelID == "unknown" {
 		logger.Warn("Could not extract model ID from LLM instance, using 'unknown'",

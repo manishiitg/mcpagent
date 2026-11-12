@@ -48,12 +48,16 @@ func (c *scopeCloseClient) CallTool(ctx context.Context, _ string, _ map[string]
 // Agent/Session close must drop its client and pending lazy configs. Ordinary
 // global clients and another delegation's authorization scope must survive.
 func TestScopedMCPClientsReleasedAfterLastAgentOrSessionCloses(t *testing.T) {
+	baseKeys, baseClients := codeexec.ScopedMCPCounts()
 	key := "vault_example__scope_" + strings.Repeat("a", 32)
 	otherKey := "vault_example__scope_" + strings.Repeat("b", 32)
 	first, second, other := &Agent{}, &Agent{}, &Agent{}
 	first.retainScopedMCPClient(key)
 	second.retainScopedMCPClient(key)
 	other.retainScopedMCPClient(otherKey)
+	if keys, clients := codeexec.ScopedMCPCounts(); keys != baseKeys+2 || clients != baseClients {
+		t.Fatalf("lazy configs counted as clients: keys=%d clients=%d", keys, clients)
+	}
 	defer first.Close()
 	defer second.Close()
 	defer other.Close()
@@ -131,6 +135,9 @@ func TestScopedMCPClientsReleasedAfterLastAgentOrSessionCloses(t *testing.T) {
 		t.Fatal("old close removed replacement")
 	}
 	_ = replacement.Close()
+	if keys, clients := codeexec.ScopedMCPCounts(); keys != baseKeys || clients != baseClients {
+		t.Fatalf("released scopes still counted: keys=%d clients=%d", keys, clients)
+	}
 	if live.closed.Load() != 1 {
 		t.Fatal("replacement leaked")
 	}
