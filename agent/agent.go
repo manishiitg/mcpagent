@@ -689,6 +689,7 @@ func isCodingCLIBridgeProvider(provider llm.Provider, modelID string) bool {
 // backend services, or test suites. It manages conversation history, tool execution, context window
 // optimization, and observability.
 type Agent struct {
+	scopedMCPReleases []func()
 	// Context for cancellation and lifecycle management
 	ctx context.Context
 
@@ -1500,6 +1501,13 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 		option(ag)
 	}
 
+	initialized := false
+	defer func() {
+		if !initialized {
+			ag.releaseScopedMCPClients()
+		}
+	}()
+
 	// If provider is not set, try to extract it from LLM
 	if ag.provider == "" {
 		ag.provider = extractProviderFromLLM(llm)
@@ -1572,7 +1580,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	logger.Info("Using session-scoped connection management", loggerv2.String("session_id", ag.sessionID))
 	clients, toolToServer, realToolNames, serverAliases, allLLMTools, servers, systemPrompt, err =
-		newAgentConnectionWithConfig(ctx, llm, serverName, configPath, ag.sessionID, string(ag.traceID), ag.tracers, logger, ag.disableCache, ag.runtimeOverrides, ag.userID, config)
+		newAgentConnectionWithConfig(ctx, llm, serverName, configPath, ag.sessionID, string(ag.traceID), ag.tracers, logger, ag.disableCache, ag.runtimeOverrides, ag.userID, config, ag.retainScopedMCPClient)
 
 	connectionDuration := time.Since(connectionStartTime)
 	if err != nil {
@@ -1993,6 +2001,7 @@ func newAgent(ctx context.Context, llm llmtypes.Model, configPath string, option
 
 	// Agent initialization complete
 
+	initialized = true
 	return ag, nil
 }
 
@@ -2929,6 +2938,7 @@ func getClientNames(clients map[string]mcpclient.ClientInterface) []string {
 // It iterates through all active MCP client connections and closes them.
 // This method should be called when the agent is no longer needed to prevent resource leaks.
 func (a *Agent) Close() error {
+	defer a.releaseScopedMCPClients()
 	// Invalidate a durable Session only when it still belongs to this exact
 	// Agent. A newer immutable Agent may already have replaced it under the same
 	// conversation ID, and closing the old Agent must not remove that session.
@@ -2937,10 +2947,10 @@ func (a *Agent) Close() error {
 	// Stop periodic cleanup routine
 	a.closeStreamingTracers()
 
-	// Connections are shared and managed by the session registry. Do not close
-	// them here; they persist until CloseSession(sessionID) is called.
+	// Ordinary connections remain shared. Delegation-scoped clients are released
+	// below only when their last Agent/Session owner closes.
 	if a.logger != nil {
-		a.logger.Info("Agent closed (connections persist in session registry)",
+		a.logger.Info("Agent closed (ordinary connections remain pooled)",
 			loggerv2.String("session_id", a.sessionID),
 			loggerv2.Int("client_count", len(a.clients)))
 	}
@@ -3620,3 +3630,20 @@ func (a *Agent) closeSteerQueue() []queuedSteer {
 	return a.takeSteerLocked()
 }
 func (a *Agent) openSteerQueue() { a.steerMu.Lock(); a.steerQueueClosed = false; a.steerMu.Unlock() }
+
+// Retains include lazy clients: they may connect later through the registry.
+func (a *Agent) retainScopedMCPClient(server string) {
+	release := codeexec.RetainScopedMCPServer(server)
+	a.mu.Lock()
+	a.scopedMCPReleases = append(a.scopedMCPReleases, release)
+	a.mu.Unlock()
+}
+func (a *Agent) releaseScopedMCPClients() {
+	a.mu.Lock()
+	releases := a.scopedMCPReleases
+	a.scopedMCPReleases = nil
+	a.mu.Unlock()
+	for _, release := range releases {
+		release()
+	}
+}

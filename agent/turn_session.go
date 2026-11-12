@@ -972,6 +972,9 @@ func (s *Session) Events() <-chan *events.AgentEvent {
 }
 
 func (s *Session) Close() error {
+	if s.agent != nil {
+		defer s.agent.releaseScopedMCPClients()
+	}
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	s.stateMu.Lock()
