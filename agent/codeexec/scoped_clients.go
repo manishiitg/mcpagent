@@ -1,7 +1,9 @@
 package codeexec
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
+	"log"
 	"strings"
 	"sync"
 
@@ -34,6 +36,8 @@ func RetainScopedMCPServer(server string) func() {
 			scopedClients.Lock()
 			defer scopedClients.Unlock()
 			scopedClients.users[server]--
+			hash := sha256.Sum256([]byte(server))
+			log.Printf("[MCP_SCOPED] released key=%x remaining=%d", hash[:16], scopedClients.users[server])
 			if scopedClients.users[server] > 0 {
 				return
 			}
@@ -61,4 +65,30 @@ func RetainScopedMCPServer(server string) func() {
 			mcpclient.GetSessionRegistry().CloseServerConnections(server)
 		})
 	}
+}
+
+// ScopedMCPCounts reports owned delegation keys and their client entries in the
+// connection pool. Pending lazy configs are keys, not connected clients.
+func ScopedMCPCounts() (keys, clients int) {
+	scopedClients.Lock()
+	defer scopedClients.Unlock()
+	live := mcpclient.GetSessionRegistry().GetSessionConnections("global")
+	for key := range scopedClients.users {
+		keys++
+		if live[key] != nil {
+			clients++
+		}
+	}
+	return
+}
+
+// Used only for log deduplication, never for selecting a connection or access.
+func mappingLogServer(server string) string {
+	public, scope, ok := strings.Cut(server, "__scope_")
+	if ok && (strings.HasPrefix(public, "vault_") || strings.HasPrefix(public, "srv_")) && len(scope) == 32 {
+		if _, err := hex.DecodeString(scope); err == nil {
+			return public
+		}
+	}
+	return server
 }
