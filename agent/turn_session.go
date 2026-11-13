@@ -115,6 +115,8 @@ type Session struct {
 	watchCancel            context.CancelFunc
 	museBackgroundWatching bool
 	museBackgroundRequests uint64
+	museBackgroundNativeID string
+	museBackgroundSequence int64
 	museQuestionWatching   bool
 
 	// runLiveInputs tracks tmux live input sent while a Session.Run is active.
@@ -477,6 +479,13 @@ func (s *Session) startMuseBackgroundWatcher(nativeSessionID string, baseline in
 		s.stateMu.Unlock()
 		return
 	}
+	if s.museBackgroundNativeID != nativeSessionID {
+		s.museBackgroundNativeID, s.museBackgroundSequence = nativeSessionID, 0
+	}
+	if s.museBackgroundSequence > baseline {
+		baseline = s.museBackgroundSequence
+	}
+	s.museBackgroundSequence = baseline
 	s.museBackgroundWatching = true
 	s.stateMu.Unlock()
 	reader := musecli.NewBackgroundTaskReaderForOwner(s.agent.sessionID, nativeSessionID, baseline)
@@ -519,6 +528,11 @@ func (s *Session) startMuseBackgroundWatcher(nativeSessionID string, baseline in
 					RunID: row.RunID, TaskID: row.TaskID, NativeSequence: row.Sequence,
 					Kind: row.Kind, Message: row.Message,
 				})
+				s.stateMu.Lock()
+				if s.museBackgroundNativeID == nativeSessionID && row.Sequence > s.museBackgroundSequence {
+					s.museBackgroundSequence = row.Sequence
+				}
+				s.stateMu.Unlock()
 			}
 			// Stop polling after the turn and all known native tasks end. In
 			// particular a restored session with no journal must not glob forever.
@@ -744,6 +758,13 @@ func (s *Session) runRetainedCompletionWatch(watch retainedWatch) {
 	}
 	if endedReader == nil {
 		endedReader = llmproviders.ReadCodingAgentRetainedTurnEndedWithoutReply
+	}
+	// Direct sends and adopted terminal input share this retained-turn path.
+	// Idle observers must restart here as well as after Session.Run.
+	if provider == llm.ProviderMuseCLI {
+		if handle := s.agent.currentAgentSessionHandle(); handle != nil {
+			s.startMuseBackgroundWatcher(handle.Provider.NativeSessionID, 0)
+		}
 	}
 	if progressReader == nil {
 		progressReader = func(provider llm.Provider, ownerSessionID string) []llmtypes.MessageContent {

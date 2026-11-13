@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,6 +79,63 @@ func TestMuseBackgroundWatcherEmitsAfterForegroundTerminal(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
+	// Exercise the real retained-turn start used by SendIdentified and
+	// ObserveNativeInput, not another manual background-watcher call.
+	agent.provider = llm.ProviderMuseCLI
+	agent.codingProviderSessionHandle = llmtypes.CodingProviderSessionHandle{Provider: "muse-cli", NativeSessionID: nativeID}
+	var finalReady atomic.Bool
+	session.retainedFinalResponse = func(llm.Provider, string, time.Time) string {
+		if finalReady.Load() {
+			return "done"
+		}
+		return ""
+	}
+	session.retainedEndedWithoutReply = func(llm.Provider, string, time.Time) (string, bool) { return "", false }
+	session.retainedProgressMessages = func(llm.Provider, string) []llmtypes.MessageContent { return nil }
+	session.startRetainedCompletionWatchFor(newCanonicalTurnLifecycle(""), "next native turn", llm.ProviderMuseCLI, llm.CodingAgentTransportTmux, false, time.Now())
+	appendRow(4, "run", "task_backgrounded")
+	waitTask := func(sequence int64) {
+		t.Helper()
+		deadline := time.After(4 * time.Second)
+		for {
+			select {
+			case event := <-ch:
+				if event.Type != events.CodingAgentBackgroundTask {
+					continue
+				}
+				data, ok := event.Data.(*events.CodingAgentBackgroundTaskEvent)
+				if !ok {
+					t.Fatal("unexpected task event")
+				}
+				if data.NativeSequence <= 3 {
+					t.Fatal("idle restart replayed previously published task rows")
+				}
+				if data.NativeSequence == sequence {
+					return
+				}
+			case <-deadline:
+				t.Fatal("retained turn did not restart native background observation")
+			}
+		}
+	}
+	waitTask(4)
+	finalReady.Store(true)
+	deadline = time.Now().Add(4 * time.Second)
+	for {
+		session.stateMu.Lock()
+		active := session.retainedActive
+		session.stateMu.Unlock()
+		if !active {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("retained foreground did not finish")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	appendRow(5, "task", "completed")
+	waitTask(5)
 }
 
 func TestMuseRestoredSessionReplaysNativeTaskRows(t *testing.T) {
