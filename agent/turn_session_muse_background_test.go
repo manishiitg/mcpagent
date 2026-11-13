@@ -62,8 +62,21 @@ func TestMuseBackgroundWatcherEmitsAfterForegroundTerminal(t *testing.T) {
 		if !ok || data.Kind != "completed" || data.NativeSequence != 3 {
 			t.Fatalf("late event=%+v", event)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(4 * time.Second):
 		t.Fatal("late completion not emitted")
+	}
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		session.stateMu.Lock()
+		watching := session.museBackgroundWatching
+		session.stateMu.Unlock()
+		if !watching {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("completed background task left its watcher running")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -105,4 +118,51 @@ func TestMuseRestoredSessionReplaysNativeTaskRows(t *testing.T) {
 	if kinds[0] != "task_backgrounded" || kinds[1] != "completed" {
 		t.Fatalf("restored kinds=%v", kinds)
 	}
+}
+
+// PLAT-746-961: an idle restored session with no native journal polled/globbed forever.
+func TestMuseMissingLogWatcherStopsWhenTurnEndsAndRestarts(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	a := &Agent{sessionID: "missing-log-idle", logger: loggerv2.NewDefault()}
+	s, err := a.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wait := func(want bool) {
+		t.Helper()
+		deadline := time.Now().Add(4 * time.Second)
+		for {
+			s.stateMu.Lock()
+			got := s.museBackgroundWatching
+			s.stateMu.Unlock()
+			if got == want {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("watching=%t want=%t", got, want)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	s.stateMu.Lock()
+	s.runActive = true
+	s.stateMu.Unlock()
+	s.startMuseBackgroundWatcher("missing-native", 0)
+	wait(true)
+	// End the real foreground lane: no known background work remains.
+	s.stateMu.Lock()
+	s.runActive = false
+	s.stateMu.Unlock()
+	wait(false)
+	// A later turn may start its observer again; idle stopping is not permanent.
+	s.stateMu.Lock()
+	s.runActive = true
+	s.stateMu.Unlock()
+	s.startMuseBackgroundWatcher("missing-native", 0)
+	wait(true)
+	s.stateMu.Lock()
+	s.runActive = false
+	s.stateMu.Unlock()
+	wait(false)
 }
