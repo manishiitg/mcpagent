@@ -114,6 +114,7 @@ type Session struct {
 	watchCtx               context.Context
 	watchCancel            context.CancelFunc
 	museBackgroundWatching bool
+	museBackgroundRequests uint64
 	museQuestionWatching   bool
 
 	// runLiveInputs tracks tmux live input sent while a Session.Run is active.
@@ -467,7 +468,12 @@ func (s *Session) startMuseBackgroundWatcher(nativeSessionID string, baseline in
 		return
 	}
 	s.stateMu.Lock()
-	if s.closed || s.museBackgroundWatching {
+	if s.closed {
+		s.stateMu.Unlock()
+		return
+	}
+	s.museBackgroundRequests++
+	if s.museBackgroundWatching {
 		s.stateMu.Unlock()
 		return
 	}
@@ -475,10 +481,15 @@ func (s *Session) startMuseBackgroundWatcher(nativeSessionID string, baseline in
 	s.stateMu.Unlock()
 	reader := musecli.NewBackgroundTaskReaderForOwner(s.agent.sessionID, nativeSessionID, baseline)
 	go func() {
-		ticker := time.NewTicker(250 * time.Millisecond)
+		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		readFailureReported := false
+		pending := map[string]bool{}
+		ended := map[string]bool{}
 		for {
+			s.stateMu.Lock()
+			generation := s.museBackgroundRequests
+			s.stateMu.Unlock()
 			rows, readErr := reader.Poll()
 			if readErr != nil {
 				if !readFailureReported && s.agent.logger != nil {
@@ -489,6 +500,16 @@ func (s *Session) startMuseBackgroundWatcher(nativeSessionID string, baseline in
 				readFailureReported = false
 			}
 			for _, row := range rows {
+				key := row.RunID + "\x00" + row.TaskID
+				switch row.Kind {
+				case "completed", "failed", "cancelled", "rejected":
+					delete(pending, key)
+					ended[key] = true
+				default:
+					if !ended[key] {
+						pending[key] = true
+					}
+				}
 				if s.watchCtx.Err() != nil {
 					return
 				}
@@ -498,6 +519,17 @@ func (s *Session) startMuseBackgroundWatcher(nativeSessionID string, baseline in
 					RunID: row.RunID, TaskID: row.TaskID, NativeSequence: row.Sequence,
 					Kind: row.Kind, Message: row.Message,
 				})
+			}
+			// Stop polling after the turn and all known native tasks end. In
+			// particular a restored session with no journal must not glob forever.
+			s.stateMu.Lock()
+			idle := !s.runActive && !s.retainedActive && !s.retainedStarting && len(pending) == 0 && generation == s.museBackgroundRequests && readErr == nil
+			if idle {
+				s.museBackgroundWatching = false
+			}
+			s.stateMu.Unlock()
+			if idle {
+				return
 			}
 			select {
 			case <-s.watchCtx.Done():
