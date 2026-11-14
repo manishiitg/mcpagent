@@ -11,6 +11,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmerrors"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 func TestLegacyFallbackConfigurationIsDiscarded(t *testing.T) {
@@ -125,5 +126,23 @@ func TestQuotaCooldownIsScopedToAccount(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// PLAT-746: a native goal operation can have taken effect before a transport
+// failure. Never retry it as a fresh operation or switch its selected program.
+func TestNativeGoalOperationIsNotRetried(t *testing.T) {
+	calls := 0
+	cause := &llmerrors.Error{Kind: llmerrors.KindNetwork, Provider: "codex-cli", Err: errors.New("connection lost after native operation")}
+	keys := &llm.ProviderAPIKeys{ResolveConnection: func(context.Context, llm.Provider, string) (*llm.ProviderAPIKeys, error) { calls++; return nil, cause }}
+	model := LLMModel{Provider: "codex-cli", ModelID: "goal-test-model", ConnectionID: "goal-account"}
+	agent := &Agent{sessionID: "goal-chat", provider: llm.ProviderCodexCLI, modelID: model.ModelID, llmConfig: AgentLLMConfiguration{Primary: model}, logger: loggerv2.NewNoop(), apiKeys: keys}
+	ctx := llmtypes.WithNativeGoalCommand(context.Background(), llmtypes.NativeGoalCommand{SessionID: "goal-chat", Action: "set", Objective: "finish task"})
+	_, _, err := generateContentWithRetry(agent, ctx, nil, nil, 1)
+	if !errors.Is(err, cause) || calls != 1 {
+		t.Fatalf("goal operation retried: calls=%d err=%v", calls, err)
+	}
+	if agent.provider != llm.ProviderCodexCLI || agent.modelID != model.ModelID {
+		t.Fatal("goal switched its program")
 	}
 }

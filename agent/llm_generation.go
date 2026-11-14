@@ -666,6 +666,13 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 
 	for chunk := range sm.streamChan {
 		switch chunk.Type {
+		case llmtypes.StreamChunkTypeNativeGoal:
+			if chunk.NativeGoal != nil {
+				a.emitTypedEvent(ctx, &events.NativeGoalEvent{BaseEventData: events.BaseEventData{Timestamp: time.Now()}, Update: *chunk.NativeGoal})
+				if sm.callback != nil {
+					sm.callback(chunk)
+				}
+			}
 		case llmtypes.StreamChunkTypeNativeSubagentTranscript:
 			raw, err := json.Marshal(chunk.Metadata["native_subagents"])
 			if err == nil {
@@ -1600,6 +1607,13 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		}
 
 		if llmerrors.KindOf(err) == llmerrors.KindUserInputRequired {
+			return nil, usage, err
+		}
+		// A native goal control/activation may already have changed its thread.
+		// Retrying it could clear that goal or repeat work; native goals own
+		// their continuation and never fall back to another program here.
+		if _, goalCommand := llmtypes.NativeGoalCommandForSession(ctx, a.sessionID); goalCommand {
+			logger.Info(fmt.Sprintf("[AGENT_GOAL] session=%s action=failed status=unknown reason=native_goal_operation_failed", a.sessionID))
 			return nil, usage, err
 		}
 		errorType := classifyLLMError(err)
