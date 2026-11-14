@@ -916,7 +916,11 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				if retry.Phase == "end" {
 					phase = "native_retry_end"
 				}
-				notice := events.NewRetryAttemptEvent(sm.turn, attempt-1, retry.MaxAttempts, a.modelID, retry.Provider, phase, retry.Success, time.Duration(retry.DelayMS)*time.Millisecond, "The provider request is being retried.")
+				retryError := ""
+				if retry.Phase == "end" && !retry.Success {
+					retryError = "The provider request failed after retrying."
+				}
+				notice := events.NewRetryAttemptEvent(sm.turn, attempt-1, retry.MaxAttempts, a.modelID, retry.Provider, phase, retry.Success, time.Duration(retry.DelayMS)*time.Millisecond, retryError)
 				notice.Metadata = map[string]interface{}{"source": "native_cli", "native_session_id": retry.NativeSessionID, "native_turn_id": retry.NativeTurnID}
 				a.emitTypedEvent(ctx, notice)
 			}
