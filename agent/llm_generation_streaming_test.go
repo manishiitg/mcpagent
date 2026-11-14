@@ -1221,3 +1221,24 @@ func TestNativeGoalStreamStaysOutOfContentAndUsage(t *testing.T) {
 		t.Fatal("goal counted as assistant content")
 	}
 }
+
+// PLAT-746-941: native retry progress uses the existing retry UI event and
+// never becomes assistant answer text or a new model request.
+func TestStreamingManagerForwardsNativeProviderRetry(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{sessionID: "native-retry", listeners: []AgentEventListener{listener}}
+	sm := &streamingManager{streamChan: make(chan llmtypes.StreamChunk, 1), streamingDone: make(chan bool, 1), startTime: time.Now()}
+	go sm.processChunks(context.Background(), agent)
+	sm.streamChan <- llmtypes.StreamChunk{Type: llmtypes.StreamChunkTypeProviderRetry, ProviderRetry: &llmtypes.ProviderRetry{Provider: "codex-cli", Attempt: 2, MaxAttempts: 5, DelayMS: 4000}}
+	close(sm.streamChan)
+	<-sm.streamingDone
+	count := 0
+	for _, event := range listener.events {
+		if _, ok := event.Data.(*events.RetryAttemptEvent); ok {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("retry events=%d", count)
+	}
+}

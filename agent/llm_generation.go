@@ -673,6 +673,10 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 					sm.callback(chunk)
 				}
 			}
+		case llmtypes.StreamChunkTypeProviderRetry:
+			if retry := chunk.ProviderRetry; retry != nil {
+				a.emitTypedEvent(ctx, events.NewRetryAttemptEvent(sm.turn, retry.Attempt, retry.MaxAttempts, a.modelID, retry.Provider, "retry", false, time.Duration(retry.DelayMS)*time.Millisecond, "Provider is retrying"))
+			}
 		case llmtypes.StreamChunkTypeNativeSubagentTranscript:
 			raw, err := json.Marshal(chunk.Metadata["native_subagents"])
 			if err == nil {
