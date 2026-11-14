@@ -26,7 +26,7 @@ func TestStreamingManagerCarriesNativeRetryLifecycle(t *testing.T) {
 			notices = append(notices, notice)
 		}
 	}
-	if len(notices) != 2 || notices[0].Phase != "native_retry_start" || notices[1].Phase != "native_retry_end" || !notices[1].Success || notices[0].AttemptIndex != 1 || notices[0].Duration != "1.2s" {
+	if len(notices) != 2 || notices[0].Phase != "native_retry_start" || notices[1].Phase != "native_retry_end" || !notices[1].Success || notices[0].AttemptIndex != 1 || notices[0].Duration != "1.2s" || notices[0].Error != "" || notices[1].Error != "" {
 		t.Fatalf("native retry facts lost: %+v", notices)
 	}
 	if notices[0].Metadata["native_turn_id"] != "turn" || notices[0].SessionID != "retry-chat" {
