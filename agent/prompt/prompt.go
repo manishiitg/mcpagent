@@ -4,7 +4,7 @@ import "strings"
 
 // SystemPromptTemplate is the complete system prompt template with placeholders
 const SystemPromptTemplate = `<session_info>
-**Date**: {{CURRENT_DATE}} | **Time**: {{CURRENT_TIME}}
+**Date**: {{CURRENT_DATE}}
 </session_info>
 
 {{CORE_PRINCIPLES}}
@@ -20,7 +20,6 @@ const (
 	ToolsPlaceholder               = "{{TOOLS}}"
 	VirtualToolsSectionPlaceholder = "{{VIRTUAL_TOOLS_SECTION}}"
 	CurrentDatePlaceholder         = "{{CURRENT_DATE}}"
-	CurrentTimePlaceholder         = "{{CURRENT_TIME}}"
 	CorePrinciplesPlaceholder      = "{{CORE_PRINCIPLES}}"
 	ToolUsagePlaceholder           = "{{TOOL_USAGE}}"
 )

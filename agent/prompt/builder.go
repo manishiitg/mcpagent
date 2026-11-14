@@ -16,10 +16,10 @@ func GetCodeExecutionInstructions() string {
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 func BuildSystemPromptWithoutTools(useCodeExecutionMode bool, enableParallelToolExecution bool) string {
 
-	// Get current date and time
+	// Date-only context remains stable between turns; a ticking system prompt
+	// forces native CLI sessions to relaunch on every message.
 	now := time.Now()
 	currentDate := now.Format("2006-01-02")
-	currentTime := now.Format("15:04:05")
 
 	// Build core principles section based on mode
 	var corePrinciplesSection string
@@ -88,7 +88,6 @@ func BuildSystemPromptWithoutTools(useCodeExecutionMode bool, enableParallelTool
 	prompt = strings.ReplaceAll(prompt, ToolUsagePlaceholder, toolUsageSection)
 	prompt = strings.ReplaceAll(prompt, VirtualToolsSectionPlaceholder, "")
 	prompt = strings.ReplaceAll(prompt, CurrentDatePlaceholder, currentDate)
-	prompt = strings.ReplaceAll(prompt, CurrentTimePlaceholder, currentTime)
 
 	return prompt
 }
