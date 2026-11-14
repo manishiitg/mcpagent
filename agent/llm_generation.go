@@ -528,6 +528,8 @@ func isTmuxLossContinuationError(err error) bool {
 
 // streamingManager handles streaming state and goroutine management
 type streamingManager struct {
+	lastPlanSnapshot  string
+	toolArgsByCallID  map[string]string
 	streamChan        chan llmtypes.StreamChunk
 	streamingDone     chan bool
 	contentChunkIndex int
@@ -795,6 +797,12 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			}
 
 		case llmtypes.StreamChunkTypeToolCallStart:
+			if sm.toolArgsByCallID == nil {
+				sm.toolArgsByCallID = map[string]string{}
+			}
+			if chunk.ToolCallID != "" {
+				sm.toolArgsByCallID[chunk.ToolCallID] = chunk.ToolArgs
+			}
 			// Determine source label from provider
 			sourceLabel := string(a.provider)
 			if sourceLabel == "" {
@@ -861,6 +869,13 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				toolErrorEvent.ToolCallID = chunk.ToolCallID
 				a.emitTypedEvent(ctx, toolErrorEvent)
 			} else {
+				args := chunk.ToolArgs
+				if args == "" {
+					args = sm.toolArgsByCallID[chunk.ToolCallID]
+				}
+				if plan, ok := llmtypes.CodingAgentToolPlan(toolName, args); ok {
+					sm.emitCodingAgentPlan(ctx, a, plan)
+				}
 				toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(
 					sm.turn,
 					toolName,
@@ -883,6 +898,9 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 			if sm.callback != nil {
 				sm.callback(chunk)
 			}
+
+		case llmtypes.StreamChunkTypeCodingAgentPlan:
+			sm.emitCodingAgentPlan(ctx, a, chunk.CodingAgentPlan)
 
 		case llmtypes.StreamChunkTypeContextCompaction:
 			// Like status lines and terminal frames, compaction is not
