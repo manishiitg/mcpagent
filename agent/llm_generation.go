@@ -1612,7 +1612,7 @@ func generateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		// A native goal control/activation may already have changed its thread.
 		// Retrying it could clear that goal or repeat work; native goals own
 		// their continuation and never fall back to another program here.
-		if _, goalCommand := llmtypes.NativeGoalCommandForSession(ctx, a.sessionID); goalCommand {
+		if _, goalCommand := llmtypes.NativeGoalCommandForSession(ctx, a.sessionID); goalCommand && llmerrors.KindOf(err) != llmerrors.KindQuotaExhausted {
 			logger.Info(fmt.Sprintf("[AGENT_GOAL] session=%s action=failed status=unknown reason=native_goal_operation_failed", a.sessionID))
 			return nil, usage, err
 		}
