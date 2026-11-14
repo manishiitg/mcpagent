@@ -267,3 +267,40 @@ func TestRetainedProgressSendsThinkingAsThinking(t *testing.T) {
 		t.Fatalf("thinking leaked into reply chunks: %q", replies)
 	}
 }
+
+// PLAT-746-984: Session.Send on a retained CLI must publish its native todo list too.
+func TestRetainedProgressPublishesNativeChecklistAfterSuccessfulTool(t *testing.T) {
+	capture := &retainedProgressCapture{events: make(chan *events.AgentEvent, 16)}
+	s := &Session{agent: &Agent{sessionID: "retained-plan", listeners: []AgentEventListener{capture}}, retainedActive: true, retainedSeq: 1}
+	lifecycle := newCanonicalTurnLifecycle("")
+	tools := map[string]retainedNativeTool{}
+	index := 0
+	s.emitRetainedProgress(lifecycle, 1, llm.ProviderClaudeCode, func(llm.Provider, string) []llmtypes.MessageContent {
+		return []llmtypes.MessageContent{
+			{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.ToolCall{ID: "todo", FunctionCall: &llmtypes.FunctionCall{Name: "TodoWrite", Arguments: `{"todos":[{"content":"Inspect","status":"completed"}]}`}}}},
+		}
+	}, &index, tools)
+	// Completion arrives in a later native read and has no argument payload of its own.
+	s.emitRetainedProgress(lifecycle, 1, llm.ProviderClaudeCode, func(llm.Provider, string) []llmtypes.MessageContent {
+		return []llmtypes.MessageContent{
+			{Role: llmtypes.ChatMessageTypeTool, Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: "todo", Content: "Updated"}}},
+		}
+	}, &index, tools)
+	var plans []*events.AgentEvent
+	for len(capture.events) > 0 {
+		event := <-capture.events
+		if event.Type == events.CodingAgentPlan {
+			plans = append(plans, event)
+		}
+	}
+	if len(plans) != 1 || plans[0].TurnID != lifecycle.id {
+		t.Fatalf("retained plan missing or wrong turn: %+v", plans)
+	}
+	plan := plans[0].Data.(*events.CodingAgentPlanEvent)
+	if plan.Items[0].Status != "completed" || plan.Provider != string(llm.ProviderClaudeCode) || plan.SessionID != "retained-plan" {
+		t.Fatalf("wrong native checklist: %+v", plan)
+	}
+	if !s.retainedActive {
+		t.Fatal("a checklist must not settle the retained turn")
+	}
+}

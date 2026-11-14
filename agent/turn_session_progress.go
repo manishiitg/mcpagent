@@ -14,6 +14,7 @@ import (
 // committed narration through the same transcript events used by normal turns.
 // The final-response reader remains the only authority for completion.
 type retainedNativeTool struct {
+	args        string
 	name        string
 	startedAt   time.Time
 	bridgeOwned bool
@@ -48,7 +49,7 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 			case llmtypes.ToolCall:
 				if text.FunctionCall != nil {
 					bridgeOwned := s.retainedBridgeOwnsTool(text.FunctionCall.Name)
-					tools[text.ID] = retainedNativeTool{name: text.FunctionCall.Name, startedAt: time.Now(), bridgeOwned: bridgeOwned}
+					tools[text.ID] = retainedNativeTool{name: text.FunctionCall.Name, args: text.FunctionCall.Arguments, startedAt: time.Now(), bridgeOwned: bridgeOwned}
 					if bridgeOwned {
 						continue
 					}
@@ -80,6 +81,10 @@ func (s *Session) emitRetainedProgress(lifecycle *canonicalTurnLifecycle, seq ui
 					event.ToolCallID = text.ToolCallID
 					s.agent.emitTypedEvent(withCanonicalTurnLifecycle(context.Background(), lifecycle), event)
 					continue
+				}
+				if plan, ok := llmtypes.CodingAgentToolPlan(name, tool.args); ok {
+					plan.Provider = string(provider)
+					(&streamingManager{}).emitCodingAgentPlan(withCanonicalTurnLifecycle(context.Background(), lifecycle), s.agent, plan)
 				}
 				event := events.NewToolCallEndEvent(0, name, text.Content, "native", duration, text.ToolCallID)
 				event.ToolCallID = text.ToolCallID
