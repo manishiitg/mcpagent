@@ -1194,3 +1194,30 @@ func TestStreamingManagerForwardsNativeAssistantBlocks(t *testing.T) {
 		}
 	}
 }
+
+// PLAT-746: an objective is private chat state, never assistant reply text,
+// token usage or a generic account status snapshot.
+func TestNativeGoalStreamStaysOutOfContentAndUsage(t *testing.T) {
+	listener := &recordingAgentEventListener{}
+	agent := &Agent{sessionID: "goal-chat", listeners: []AgentEventListener{listener}}
+	manager := &streamingManager{streamChan: make(chan llmtypes.StreamChunk, 2), streamingDone: make(chan bool, 1), startTime: time.Now()}
+	go manager.processChunks(context.Background(), agent)
+	manager.streamChan <- llmtypes.NativeGoalChunk(llmtypes.NativeGoalUpdate{Provider: "codex-cli", NativeSessionID: "native-thread", Goal: &llmtypes.NativeGoal{Objective: "private objective", Status: "active"}})
+	manager.streamChan <- llmtypes.NativeGoalChunk(llmtypes.NativeGoalUpdate{Provider: "codex-cli", NativeSessionID: "native-thread", Goal: nil})
+	close(manager.streamChan)
+	<-manager.streamingDone
+	goals := []*events.NativeGoalEvent{}
+	for _, event := range listener.events {
+		if goal, ok := event.Data.(*events.NativeGoalEvent); ok {
+			goals = append(goals, goal)
+		} else {
+			t.Fatalf("goal became another event: %s", event.Type)
+		}
+	}
+	if len(goals) != 2 || goals[0].Update.NativeSessionID != "native-thread" || goals[0].Update.Goal.Objective != "private objective" || goals[1].Update.Goal != nil {
+		t.Fatal("native goal update/clear lost")
+	}
+	if manager.totalChunks != 0 || manager.contentChunkIndex != 0 {
+		t.Fatal("goal counted as assistant content")
+	}
+}
