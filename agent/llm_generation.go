@@ -906,6 +906,21 @@ func (sm *streamingManager) processChunks(ctx context.Context, a *Agent) {
 				sm.callback(chunk)
 			}
 
+		case llmtypes.StreamChunkTypeNativeRetry:
+			if retry := chunk.NativeRetry; retry != nil && (retry.Phase == "start" || retry.Phase == "end") {
+				attempt := retry.Attempt
+				if attempt < 1 {
+					attempt = 1
+				}
+				phase := "native_retry_start"
+				if retry.Phase == "end" {
+					phase = "native_retry_end"
+				}
+				notice := events.NewRetryAttemptEvent(sm.turn, attempt-1, retry.MaxAttempts, a.modelID, retry.Provider, phase, retry.Success, time.Duration(retry.DelayMS)*time.Millisecond, "The provider request is being retried.")
+				notice.Metadata = map[string]interface{}{"source": "native_cli", "native_session_id": retry.NativeSessionID, "native_turn_id": retry.NativeTurnID}
+				a.emitTypedEvent(ctx, notice)
+			}
+
 		case llmtypes.StreamChunkTypeCodingAgentPlan:
 			sm.emitCodingAgentPlan(ctx, a, chunk.CodingAgentPlan)
 
