@@ -146,3 +146,31 @@ func TestNativeGoalOperationIsNotRetried(t *testing.T) {
 		t.Fatal("goal switched its program")
 	}
 }
+
+// PLAT-746-988: native read/pause/clear do not invoke a model, even when cold.
+// They still resolve the authorized account; set/resume/children keep cooldown.
+func TestNativeGoalNonModelControlsPreserveQuotaCooldown(t *testing.T) {
+	for _, tc := range []struct {
+		action, session string
+		allowed         bool
+	}{{"show", "chat", true}, {"pause", "chat", true}, {"clear", "chat", true}, {"set", "chat", false}, {"resume", "chat", false}, {"clear", "child", false}} {
+		calls := 0
+		stop := errors.New("stopped at authorized account resolution")
+		model := LLMModel{Provider: "codex-cli", ModelID: "goal-nonmodel-" + tc.action + tc.session, ConnectionID: "account"}
+		key := modelQuotaKey(model)
+		reset := time.Now().Add(time.Hour)
+		agent := &Agent{sessionID: "chat", logger: loggerv2.NewNoop(), llmConfig: AgentLLMConfiguration{Primary: model}, apiKeys: &llm.ProviderAPIKeys{ResolveConnection: func(context.Context, llm.Provider, string) (*llm.ProviderAPIKeys, error) { calls++; return nil, stop }}, quotaExhaustedModels: map[quotaModelKey]time.Time{key: reset}}
+		ctx := llmtypes.WithNativeGoalCommand(context.Background(), llmtypes.NativeGoalCommand{SessionID: tc.session, Action: tc.action})
+		_, _, err := generateContentWithRetry(agent, ctx, nil, nil, 1)
+		if tc.allowed {
+			if !errors.Is(err, stop) || calls != 1 {
+				t.Fatalf("non-model control did not reach account: %s %v", tc.action, err)
+			}
+		} else if llmerrors.KindOf(err) != llmerrors.KindQuotaExhausted || calls != 0 {
+			t.Fatal("model/child work bypassed quota", err)
+		}
+		if !agent.quotaExhaustedModels[key].Equal(reset) {
+			t.Fatal("native control erased quota cooldown")
+		}
+	}
+}
