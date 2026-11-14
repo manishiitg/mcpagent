@@ -184,12 +184,14 @@ github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114080847-bd19fd1082e0
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114080847-bd19fd1082e0/go.mod h1:43kXVOvCYR7eyS0UFtDV8t2lVEEdgAZZLR5KLqch4DM=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081355-31e0041b2a0e h1:ryhMGkXC3EM6jOYOCzX9bhXO0GXzwXRsv55bSl68inU=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081355-31e0041b2a0e/go.mod h1:43kXVOvCYR7eyS0UFtDV8t2lVEEdgAZZLR5KLqch4DM=
-github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081716-e7aceaa1e246 h1:ExkRqEiWbAQvbb6NqUtIaPUxej9+1exy89Lsw7y5b88=
-github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081716-e7aceaa1e246/go.mod h1:43kXVOvCYR7eyS0UFtDV8t2lVEEdgAZZLR5KLqch4DM=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081624-e40444e1c78d h1:AizhSeoNXSckCO6l0uQ0ZzWAqIjz9cqhkVhjPIVhBec=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081624-e40444e1c78d/go.mod h1:43kXVOvCYR7eyS0UFtDV8t2lVEEdgAZZLR5KLqch4DM=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081716-e7aceaa1e246 h1:ExkRqEiWbAQvbb6NqUtIaPUxej9+1exy89Lsw7y5b88=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081716-e7aceaa1e246/go.mod h1:43kXVOvCYR7eyS0UFtDV8t2lVEEdgAZZLR5KLqch4DM=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081925-93801611be69 h1:qIhURGsBLkR0GbSBxOziAXuqM4hCDhpo2ATk1IGhlNA=
 github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114081925-93801611be69/go.mod h1:43kXVOvCYR7eyS0UFtDV8t2lVEEdgAZZLR5KLqch4DM=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114082028-a3567d8295e6 h1:UCFW17PWK4pKmOKRLoTfqnRBOtTvNJEv+Ra6PdZl4iA=
+github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20261114082028-a3567d8295e6/go.mod h1:43kXVOvCYR7eyS0UFtDV8t2lVEEdgAZZLR5KLqch4DM=
 github.com/mark3labs/mcp-go v1.0.0 h1:CZqCzXwUiTOstkIdW1MyOZGuM+LaKMEJSu+ZYluN4DU=
 github.com/mark3labs/mcp-go v1.0.0/go.mod h1:r2fW4o3wsoJ7IMsx1Wuq5xeP8PRGXPDfNveoGAYbb/s=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
