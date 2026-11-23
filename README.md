@@ -1,5 +1,7 @@
 # mcpagent
 
+> **This repository has moved.** It now lives in [manishiitg/agentworks](https://github.com/manishiitg/agentworks/tree/dev/mcpagent) as the `mcpagent/` folder, with its full history (#3608). This repository is archived and no longer updated. The Go module path `github.com/manishiitg/mcpagent` is unchanged.
+
 Go runtime for AgentWorks agents, MCP connections and coding-agent sessions.
 
 ## Use the Go runtime
